@@ -7,11 +7,12 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.secure-file :as secure-file]
             [envelope.model :as envelope-model]
             [envelope.seal-jvm :as envelope])
   (:import (java.nio.charset StandardCharsets)
            (java.nio.file Files StandardCopyOption)
-           (java.nio.file.attribute PosixFilePermissions)
+
            (java.security MessageDigest)
            (java.util UUID)))
 
@@ -48,9 +49,7 @@
                                 :key/public (envelope/b64url pub)})
                        StandardCharsets/UTF_8
                        (make-array java.nio.file.OpenOption 0))
-    (try
-      (Files/setPosixFilePermissions tmp (PosixFilePermissions/fromString "rw-------"))
-      (catch UnsupportedOperationException _))
+    (secure-file/harden! tmp "rw-------")
     (Files/move tmp target
                 (into-array java.nio.file.CopyOption
                             [StandardCopyOption/ATOMIC_MOVE

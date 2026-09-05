@@ -1,60 +1,797 @@
 #!/usr/bin/env nbb
-;; The `itonami` command: run this app's CLI from anywhere.
+;; The `itonami` command: a front end for the operations this app serves.
 ;;
-;; ## Why a launcher exists at all
+;;   itonami commands [term …]        what can be named, and how many routes exist
+;;   itonami status                   whether a server is answering, and which store
+;;   itonami bots list
+;;   itonami bots task --id <bot> --text <text>
+;;   itonami auth login --label cli
 ;;
-;; `clojure -M:cli` only works from the app's own directory, because that is
-;; where `deps.edn` is. So every documented invocation began with a `cd`, and an
-;; operator or an agent in some other directory could not run one command without
-;; first knowing where the app was installed.
+;; ## What this is, and what it replaced
 ;;
-;; This resolves the app directory from its own path — the script lives in
-;; `bin/`, so the app is its parent — and runs the CLI there with the arguments
-;; it was given. A resident install also resolves its sibling data directory:
-;; `~/.cloud-itonami/app` and `~/.cloud-itonami/data` are one installation, and
-;; letting the CLI fall back to `app/data` would make `auth login` read a
-;; different enrollment key from the launchd server. An explicit environment
-;; value still wins. The launcher does not otherwise parse or interpret a
-;; command, because that would make it a second front end.
+;; PR #270 deleted `:server`, `:mcp` and `:cli` from deps.edn and left this file
+;; refusing every command with exit 2 — honestly titled "not JVM-removed". The
+;; two hundred and eight commands the app serves had no front end at all.
 ;;
-;; Written in nbb rather than shell, per the workspace rule that new scripts are
-;; ClojureScript.
+;; This is that front end, and it starts no JVM. It is a client: it resolves a
+;; command to a method and a path, carries the agent session, and prints what
+;; the server said. Which server is a separate question from this file — it
+;; talks to whatever is bound on the configured host and port, so it works
+;; against the resident that is running today and against whatever serves those
+;; routes next.
+;;
+;; ## One decider, two front ends
+;;
+;; Nothing about a command is decided here. `cloud.itonami.app.commands` is
+;; `.cljc` and owns the tables, the longest-prefix match, path templating, the
+;; query/body split and the flag specs; this file supplies a classpath-free
+;; reader for the two EDN tables and the effects a table cannot carry (reading
+;; a file, reading the enrollment key). A second resolver in ClojureScript
+;; would be a second decider — two answers that agree until the day they do not,
+;; with no test that would notice (ADR-2608197300 §3).
+;;
+;; ## The exit codes are the contract
+;;
+;;   0  answered
+;;   1  answered: the server refused, or a flag is missing
+;;   2  could not answer — no server, no session, no such command
+;;
+;; 1 and 2 must not collapse. "The server said no" is a measurement; "nothing
+;; was listening" is not, and an operator sent to read a refusal that never
+;; happened debugs the wrong thing (ADR-2608136000).
+
 (ns itonami
-  (:require ["node:child_process" :as child-process]
+  (:require ["node:child_process" :as cp]
             ["node:fs" :as fs]
             ["node:path" :as path]
+            [clojure.edn :as edn]
+            [clojure.string :as str]
+            [nbb.classpath :as classpath]
             [nbb.core :refer [*file*]]))
+
+;; ---------------------------------------------------------------------------
+;; where this install is
+;; ---------------------------------------------------------------------------
 
 (def app-directory
   (fs/realpathSync (path/resolve (path/dirname *file*) "..")))
+
 (def home-directory
-  (some-> (aget js/process.env "HOME") fs/realpathSync))
+  (when-let [home (aget js/process.env "HOME")]
+    (try (fs/realpathSync home) (catch :default _ home))))
+
 (def resident-app-directory
   (when home-directory (path/resolve home-directory ".cloud-itonami" "app")))
-(def child-environment
-  (js/Object.assign #js {} js/process.env
-                    #js {"CLOUD_ITONAMI_APP_DIR" app-directory}))
 
+;; A resident install is one installation: `~/.cloud-itonami/app` and
+;; `~/.cloud-itonami/data` belong together, and letting the data directory fall
+;; back to `app/data` would read a different enrollment than the launchd server
+;; wrote. An explicit environment value still wins.
 (when (and resident-app-directory
            (= app-directory resident-app-directory)
-           (nil? (aget child-environment "CLOUD_ITONAMI_DATA_DIR")))
-  (aset child-environment "CLOUD_ITONAMI_DATA_DIR"
+           (nil? (aget js/process.env "CLOUD_ITONAMI_DATA_DIR")))
+  (aset js/process.env "CLOUD_ITONAMI_DATA_DIR"
         (path/resolve home-directory ".cloud-itonami" "data")))
 
-(def result
-  (child-process/spawnSync
-   "clojure"
-   (into-array (concat ["-M:cli"] (drop 3 (js->clj js/process.argv))))
-   #js {:cwd app-directory
-        :stdio "inherit"
-        ;; The CLI starts a headless server when there is not one, and that child
-        ;; must outlive this process. `spawnSync` waits for the CLI, not for its
-        ;; grandchild, so nothing here needs to keep the launcher alive.
-        :env child-environment}))
+(defn- data-dir []
+  (or (aget js/process.env "CLOUD_ITONAMI_DATA_DIR")
+      (path/resolve app-directory "data")))
 
-(when-let [error (.-error result)]
-  (binding [*print-fn* *print-err-fn*]
-    (println (str "itonami: clojure を実行できませんでした: " (.-message error))))
-  (set! (.-exitCode js/process) 127))
+;; Answered before anything else is loaded, because it is the one question a
+;; launcher must answer from its own file. A resident install is copied as a
+;; single script (`launcher_test` does exactly that), and requiring a sibling
+;; first would make "where is your store" depend on the rest of the tree being
+;; there.
+(when (= "--print-data-dir" (first *command-line-args*))
+  (println (data-dir))
+  (println app-directory)
+  (js/process.exit 0))
 
-(set! (.-exitCode js/process) (or (.-status result) 0))
+;; The shared namespace is resolved from THIS file's location, not from the
+;; caller's working directory, so `itonami` works wherever it is invoked from.
+;;
+;; Measured 2026-09-02: `bin/itonami-mcp` requires a sibling through the ns
+;; form and therefore dies with "Could not find namespace" unless the caller
+;; remembers `--classpath bin` — a launcher that cannot be run by its own
+;; shebang. `launcher_test` catches exactly that, and this avoids repeating it.
+(classpath/add-classpath (path/resolve app-directory "src"))
+(classpath/add-classpath (path/resolve app-directory "bin"))
+(require '[cloud.itonami.app.commands :as commands]
+         '[itonami-harness :as harness]
+         '[itonami-profile :as profile])
+
+(defn- slurp-file [p]
+  (try (fs/readFileSync p "utf8") (catch :default _ nil)))
+
+(defn- read-edn [p]
+  (when-let [t (slurp-file p)]
+    (try (edn/read-string t) (catch :default _ nil))))
+
+(def configuration
+  (let [defaults (or (read-edn (path/resolve app-directory "resources"
+                                             "cloud-itonami-app.defaults.edn"))
+                     {})
+        overrides (or (read-edn (path/resolve (data-dir) "config.edn")) {})]
+    (merge-with (fn [a b] (if (and (map? a) (map? b)) (merge a b) b))
+                defaults overrides)))
+
+;; The tables ship as resources and this host has no classpath, so it reads
+;; them and hands the text to the namespace that owns every judgement made
+;; from it.
+(commands/install-sources!
+ (into {} (keep (fn [n]
+                  (when-let [t (slurp-file (path/resolve app-directory "resources" n))]
+                    [n t])))
+       [commands/resource-name commands/alias-resource-name]))
+
+
+
+;; ---------------------------------------------------------------------------
+;; output and exits
+;; ---------------------------------------------------------------------------
+
+(def ^:private exit-answered 0)
+(def ^:private exit-refused 1)
+(def ^:private exit-cannot-answer 2)
+
+(defn- err [& xs]
+  (binding [*print-fn* *print-err-fn*] (apply println xs)))
+
+(defn- emit! [value json?]
+  (if json?
+    (println (js/JSON.stringify (clj->js value) nil 2))
+    (println (pr-str value)))
+  (js/process.exit exit-answered))
+
+(defn- refuse! [message data]
+  (err message)
+  (when (seq data) (err " " (pr-str data)))
+  (js/process.exit exit-refused))
+
+(defn- cannot-answer! [message data]
+  (err message)
+  (when (seq data) (err " " (pr-str data)))
+  (js/process.exit exit-cannot-answer))
+
+;; ---------------------------------------------------------------------------
+;; the harness: everything below rides on mounted plugins (ADR-2609042200)
+;; ---------------------------------------------------------------------------
+
+(def harness-ctx (harness/make-context))
+
+(harness/mount! harness-ctx (profile/config-plugin
+                             {:app-directory app-directory
+                              :data-dir (data-dir)
+                              :configuration configuration}))
+(harness/mount! harness-ctx (profile/theme-plugin))
+(harness/mount! harness-ctx (profile/chat-plugin))
+
+(def ^:private ctx-config (harness/ctx-get harness-ctx :ctx/config))
+(def ^:private ctx-theme  (harness/ctx-get harness-ctx :ctx/theme))
+(def ^:private ctx-chat   (harness/ctx-get harness-ctx :ctx/chat))
+
+(defn- dump-config! []
+  (println (harness/dump-config harness-ctx))
+  (js/process.exit exit-answered))
+
+
+;; ---------------------------------------------------------------------------
+;; session
+;; ---------------------------------------------------------------------------
+
+(def keychain-service "cloud-itonami-app.mcp")
+(def keychain-account "session-token")
+
+(defn- sh [cmd args]
+  (let [{:keys [status stdout stderr]}
+        (js->clj (cp/spawnSync cmd (clj->js args)
+                               #js {:encoding "utf8" :stdio "pipe"})
+                 :keywordize-keys true)]
+    {:exit (or status 1) :stdout (str stdout) :stderr (str stderr)}))
+
+(defn- keychain-get
+  "One named item, fetched by service and account — never an enumeration.
+  A dump-style sweep would expose unrelated credentials' metadata to answer a
+  question about exactly one of them."
+  []
+  (let [{:keys [exit stdout]} (sh "security" ["find-generic-password"
+                                              "-s" keychain-service
+                                              "-a" keychain-account "-w"])]
+    (when (zero? exit)
+      (not-empty (str/trim stdout)))))
+
+(defn- keychain-put! [token]
+  (let [{:keys [exit stderr]} (sh "security" ["add-generic-password"
+                                              "-U" "-s" keychain-service
+                                              "-a" keychain-account
+                                              "-w" token])]
+    (if (zero? exit) "stored" (str "not-stored: " (str/trim stderr)))))
+
+(defn- session-token []
+  (or (some-> (aget js/process.env
+                    (or (get-in configuration [:mcp :session-token-env])
+                        "CLOUD_ITONAMI_MCP_SESSION"))
+              str/trim not-empty)
+      (keychain-get)))
+
+(defn- base-url []
+  (or (some-> (aget js/process.env "CLOUD_ITONAMI_API_URL") str/trim not-empty
+              (str/replace #"/+$" ""))
+      (str "http://" (get-in configuration [:server :host] "127.0.0.1")
+           ":" (get-in configuration [:server :port] 1338))))
+
+;; ---------------------------------------------------------------------------
+;; transport
+;; ---------------------------------------------------------------------------
+
+(defn- request!
+  "One request. Resolves to {:status :body}; rejects only when nothing answered,
+  which is a different failure from a refusal and is reported as one."
+  [{:keys [method path body timeout-seconds]} token]
+  (let [controller (js/AbortController.)
+        timer (js/setTimeout #(.abort controller)
+                             (* 1000 (or timeout-seconds 30)))
+        init #js {:method (str/upper-case (name method))
+                  :headers (clj->js (cond-> {"content-type" "application/json"}
+                                      token (assoc "authorization" (str "Bearer " token))))
+                  :signal (.-signal controller)}]
+    (when (= :post method)
+      (aset init "body" (js/JSON.stringify (clj->js (or body {})))))
+    (-> (js/fetch (str (base-url) path) init)
+        (.then (fn [res]
+                 (-> (.text res)
+                     (.then (fn [t]
+                              (js/clearTimeout timer)
+                              {:status (.-status res)
+                               :body (try (js->clj (js/JSON.parse t) :keywordize-keys true)
+                                          (catch :default _ {:raw t}))})))))
+        (.catch (fn [e]
+                  (js/clearTimeout timer)
+                  (throw (ex-info "unreachable"
+                                  {:type :client/unreachable
+                                   :base-url (base-url)
+                                   :cause (or (.-message e) (str e))})))))))
+
+(defn- unwrap
+  "The body on success; a refusal carrying the server's own message otherwise.
+  The server already says which refusal fired; restating it would give the
+  operator a second, vaguer sentence to read."
+  [{:keys [status body]} json?]
+  (if (<= 200 status 299)
+    (emit! body json?)
+    (refuse! (or (get-in body [:error :message]) (str "HTTP " status))
+             (cond-> {:status status}
+               (get-in body [:error :type]) (assoc :type (get-in body [:error :type]))))))
+
+(defn- require-token! []
+  (or (session-token)
+      (cannot-answer!
+       (str "agent session がありません。`itonami auth login` を実行してください。\n"
+            "  環境変数 " (get-in configuration [:mcp :session-token-env])
+            " か Keychain (" keychain-service " / " keychain-account ") を読みます。")
+       {:type :client/no-session})))
+
+;; ---------------------------------------------------------------------------
+;; lifecycle commands, answered without the API
+;; ---------------------------------------------------------------------------
+
+(defn- health []
+  (-> (request! {:method :get :path "/health" :timeout-seconds 5} nil)
+      (.then (fn [{:keys [status body]}]
+               {:answering? (<= 200 status 299) :status status :health body}))
+      (.catch (fn [_] {:answering? false}))))
+
+(defn- status! [json?]
+  (-> (health)
+      (.then (fn [h]
+               (let [out (merge {:base-url (base-url)
+                                 :app-directory app-directory
+                                 :data-dir (data-dir)
+                                 :session? (boolean (session-token))}
+                                h)]
+                 (if (:answering? h)
+                   (emit! out json?)
+                   ;; Not a refusal: nothing said no, nothing said anything.
+                   (do (err (pr-str out))
+                       (cannot-answer!
+                        (str "server が応答しません: " (base-url) "\n"
+                             "  常駐は launchd (dev.cloud-itonami.app)。"
+                             "この front end は server を起動しません。")
+                        {:type :client/resident-absent}))))))))
+
+(defn- commands! [terms json?]
+  (let [{:keys [routes commands human-only unauthenticated]} (commands/counts)
+        matched (commands/matching terms)]
+    (emit! {:schema "cloud.itonami.app.cli.commands.v1"
+            :coverage {:routes routes :commands commands
+                       :human-only human-only :unauthenticated unauthenticated
+                       :aliases (count (commands/alias-commands))}
+            :matched (count matched)
+            :aliases (mapv #(str/join " " (:command %)) (commands/alias-commands))
+            :usage (mapv commands/usage matched)}
+           json?)))
+
+;; ---------------------------------------------------------------------------
+;; dispatch
+;; ---------------------------------------------------------------------------
+
+(defn- read-enrollment-key []
+  (or (some-> (aget js/process.env "CLOUD_ITONAMI_ENROLLMENT_KEY") str/trim not-empty)
+      (some-> (slurp-file (path/resolve (data-dir) "enrollment-key")) str/trim not-empty)
+      (cannot-answer!
+       (str "enrollment key が読めません。CLOUD_ITONAMI_ENROLLMENT_KEY を設定するか "
+            (path/resolve (data-dir) "enrollment-key") " を置いてください。")
+       {:type :client/no-enrollment-key})))
+
+(def ^:private effect-opts
+  {:read-file (fn [p] (or (slurp-file p)
+                          (cannot-answer! (str "読めません: " p)
+                                          {:type :client/unreadable-file})))
+   :enrollment-key read-enrollment-key})
+
+(defn- run-alias! [{:keys [command flags]} json?]
+  (let [req (try (commands/alias-request command flags effect-opts)
+                 (catch :default e
+                   (refuse! (ex-message e) (ex-data e))))
+        token (require-token!)]
+    (-> (request! req token)
+        (.then (fn [{:keys [status body] :as response}]
+                 (if (and (:stores-token? command) (<= 200 status 299))
+                   ;; `auth login` is the one command whose result has to
+                   ;; outlive the process, or the next one cannot authenticate.
+                   (emit! (assoc (select-keys body [:session-id :label :expires-at :token])
+                                 :keychain (keychain-put! (:token body)))
+                          json?)
+                   (unwrap response json?))))
+        (.catch (fn [e]
+                  (cannot-answer! (str "server に到達できません: " (base-url))
+                                  (ex-data e)))))))
+
+(defn- run-registry! [{:keys [command rest flags]} json?]
+  (let [;; Path parameters by name, then positionally in the order the template
+        ;; declares them, so `esign envelopes show env-1` works alongside
+        ;; `--envelope env-1`.
+        by-name (into {} (keep (fn [{:keys [name]}]
+                                 (when-let [v (get flags (keyword name))]
+                                   [name v])))
+                      (:params command))
+        positional (into {} (map vector
+                                 (remove by-name (map :name (:params command)))
+                                 rest))
+        payload (into {} (keep (fn [[k v]]
+                                 (let [n (clojure.core/name k)]
+                                   (when-not (contains? by-name n) [n v]))))
+                      flags)
+        arguments (merge payload by-name positional)
+        override (when-let [j (:json-body flags)]
+                   (try (js->clj (js/JSON.parse j) :keywordize-keys true)
+                        (catch :default _
+                          (refuse! "--json-body には JSON 文字列を渡してください" {}))))
+        req (try (commands/request command arguments override)
+                 (catch :default e (refuse! (ex-message e) (ex-data e))))
+        token (require-token!)]
+    (-> (request! req token)
+        (.then #(unwrap % json?))
+        (.catch (fn [e]
+                  (cannot-answer! (str "server に到達できません: " (base-url))
+                                  (ex-data e)))))))
+
+;; ---------------------------------------------------------------------------
+;; chat — the agent loop: /v1/runs + SSE, the hermes-compat surface
+;; ---------------------------------------------------------------------------
+
+(def ^:private chat-default-profile "default")
+;; REPL state lives in :ctx/chat (the plugin layer, ADR-2609042200); the
+;; historical names are bindings to the plugin's own atoms so existing call
+;; sites read unchanged and /profile stays a one-atom write.
+(def chat-profile (:profile ctx-chat))
+(def ^:private chat-approval (:held ctx-chat))
+;; The card the current run is held on, set by a `waiting-approval` phase
+;; event, consumed by /approve and /deny in the REPL.
+(def ^:private chat-approval (atom nil))
+
+(defn- chat-emit [text]
+  (js/process.stdout.write (str text)))
+
+(defn- chat-poll-events!
+  "Reads the SSE stream for one run until a terminal event. Deltas print as
+  they arrive; an approval surface names the command that answers it.
+  Resolves to the final status map."
+  [run-id]
+  (js/Promise.
+   (fn [resolve reject]
+     (let [token (require-token!)
+           controller (js/AbortController.)
+           printed (atom "")
+           out (atom {:status "started" :output "" :usage nil :error nil
+                      :approval nil})]
+       (letfn [(finish [] (.abort controller) (resolve @out))
+               (on-event [ev]
+                 (let [kind (:event ev)]
+                   (cond
+                     (= "assistant.delta" kind)
+                     ;; The server's delta shape is not contractual: runs have
+                     ;; been observed both accumulated (each delta the full
+                     ;; text so far) and incremental. Handle both — a delta
+                     ;; that extends what was printed prints its tail; one
+                     ;; that does not is an increment appended to it.
+                     (let [delta (str (:delta ev))
+                           seen (str @printed)]
+                       (cond
+                         (str/blank? delta) nil
+                         (and (<= (.-length seen) (.-length delta))
+                              (= 0 (.indexOf delta seen)))
+                         (do (reset! printed delta)
+                             (js/process.stdout.write (.slice delta (.-length seen))))
+                         :else
+                         (do (reset! printed (str seen delta))
+                             (js/process.stdout.write delta))))
+
+                     (= "run.completed" kind)
+                     (do (swap! out assoc :status "completed"
+                                :output (or (:output ev) "") :usage (:usage ev))
+                         (js/process.stdout.write "\n")
+                         (finish))
+
+                     ;; A held write: the run pauses here, the stream stays
+                     ;; open, and the decision (/approve /deny) sends the
+                     ;; continuation's tail over this same stream. Resolve
+                     ;; the turn so the REPL gets its prompt back — the pump
+                     ;; keeps reading and prints the continuation's tail and
+                     ;; terminal event when the decision resumes the run.
+                     (= "run.waiting_approval" kind)
+                     (do (reset! chat-approval {:card (:card ev) :tool (:tool ev)
+                                                :run-id run-id})
+                         (swap! out assoc :status "waiting-approval"
+                                :approval {:card (:card ev) :tool (:tool ev)
+                                           :run-id run-id})
+                         (js/process.stdout.write
+                          (str "\n⚠ 承認待ち: " (:tool ev)
+                               " — /approve で許可、/deny で拒否\n"))
+                         (resolve @out))
+
+                     (= "run.phase" kind)
+                     ;; A held write names the card that answers it. Surface
+                     ;; it — the approval is one REPL command away.
+                     (when (= "waiting-approval" (:phase ev))
+                       (reset! chat-approval {:card (:card ev) :tool (:tool ev)
+                                              :run-id run-id})
+                       (swap! out assoc :approval {:card (:card ev) :tool (:tool ev)
+                                                   :run-id run-id})
+                       (js/process.stdout.write
+                        (str "\n⚠ 承認待ち: " (:tool ev)
+                             " — /approve で許可、/deny で拒否\n")))
+
+                     (contains? #{"run.failed" "run.cancelled" "run.stopped"} kind)
+                     (do (swap! out assoc :status (subs kind 4) :error (:error ev))
+                         (when (:error ev) (chat-emit (str "\nerror: " (:error ev) "\n")))
+                         (finish))
+
+                     :else nil)))
+               (feed [s]
+                 (loop [s s]
+                   (let [i (str/index-of s "\n\n")]
+                     (if i
+                       (let [frame (subs s 0 i)]
+                         (doseq [l (str/split-lines frame)]
+                           (when (str/starts-with? l "data: ")
+                             (try (on-event (js->clj (js/JSON.parse (subs l 6))
+                                                     :keywordize-keys true))
+                                  (catch :default _ nil))))
+                         (recur (subs s (+ i 2))))
+                       ;; Return the unconsumed tail so the caller resets its
+                       ;; buffer; re-feeding old frames would replay events.
+                       s))))
+               (pump [reader decoder buf]
+                 (-> (.read reader)
+                     (.then (fn [chunk]
+                              (if (.-done chunk)
+                                (finish)
+                                (do (swap! buf str (decoder.decode (.-value chunk)
+                                                                 #js {:stream true}))
+                                    (reset! buf (feed @buf))
+                                    (pump reader decoder buf)))))))]
+         (let [req (js/fetch (str (base-url) "/v1/runs/" run-id "/events")
+                             #js {:headers #js {"authorization" (str "Bearer " token)}
+                                  :signal (.-signal controller)})]
+           (-> req
+               (.then (fn [res]
+                        (let [reader (.getReader (.-body res))
+                              decoder (js/TextDecoder. "utf8")
+                              buf (atom "")]
+                          (pump reader decoder buf))))
+               (.catch (fn [e]
+                         (.abort controller)
+                         (reject (ex-info (str "event stream に到達できません: " (base-url))
+                                          {:type :client/unreachable :cause (.-message e)})))))))))))
+
+(defn- chat-slash!
+  "A REPL command. Returns :exit to end the session, :handled when the
+  command already handled the line (its answer may still be streaming in —
+  a promise, which the caller should await before prompting again), or nil
+  when the line is not a command."
+  [line]
+  (let [words (str/split (str/trim line) #"\s+")
+        cmd (first words)
+        args (vec (rest words))
+        say-error (fn [e] (println (str "error: " (ex-message e))))]
+    (case cmd
+      "/help"
+      (do (println "  /bots — Bot 一覧
+  /profiles — profile 一覧
+  /profile <id> — 対話先を切り替え
+  /skin [<name>] — 見た目を切り替え (:ctx/theme を live re-provide)
+  /plugins — mount 済み plugin tree (--dump-config と同じ)
+  /approve — 承認待ちの card を許可
+  /deny — 承認待ちの card を拒否
+  /status — 常駐サーバの状態
+  /exit — 終了")
+          :handled)
+
+      "/bots"
+      (-> (request! {:method :get :path "/api/agent-bots"} (require-token!))
+          (.then (fn [{:keys [status body]}]
+                   (if (<= 200 status 299)
+                     (doseq [b (take 20 (:data body))]
+                       (println (str "  " (or (:id b) (:bot_id b))
+                                     "  " (or (:name b) "?")
+                                     "  " (or (:status b) "?"))))
+                     (println (str "HTTP " status)))))
+          (.catch say-error))
+
+      "/profiles"
+      (-> (request! {:method :get :path "/api/profiles"} (require-token!))
+          (.then (fn [{:keys [status body]}]
+                   (if (<= 200 status 299)
+                     (doseq [p (take 30 (:data body))]
+                       (println (str "  " (:id p) "  " (:name p) "  " (:status p))))
+                     (println (str "HTTP " status)))))
+          (.catch say-error))
+
+      "/profile"
+      (do (if (empty? args)
+            (println (str "profile: " @chat-profile))
+            (do (reset! chat-profile (first args))
+                (println (str "profile: " @chat-profile))))
+          :handled)
+
+      "/status"
+      (-> (request! {:method :get :path "/health" :timeout-seconds 5} nil)
+          (.then (fn [{:keys [status body]}]
+                   (println (str "server: " (if (<= 200 status 299) "answering" "down")
+                                 "  store: " (:store body)))))
+          (.catch (fn [_] (println "server: down"))))
+
+      "/approve"
+      (if-let [{:keys [card run-id]} @chat-approval]
+        (-> (request! {:method :post
+                       :path (str "/v1/runs/" run-id "/approval")
+                       :body {:choice "approve"}}
+                      (require-token!))
+            (.then (fn [{:keys [status body]}]
+                     (if (<= 200 status 299)
+                       (do (println "approved — 実行が続きます")
+                           ;; The continuation's tail and terminal event
+                           ;; arrive on the run's still-open SSE stream.
+                           (reset! chat-approval nil))
+                       (println (str "decide failed: HTTP " status
+                                     " " (str (get-in body [:error :message])))))))
+            (.catch say-error))
+        (do (println "承認待ちの card はありません") :handled))
+
+      "/deny"
+      (if-let [{:keys [card run-id]} @chat-approval]
+        (-> (request! {:method :post
+                       :path (str "/v1/runs/" run-id "/approval")
+                       :body {:choice "deny"}}
+                      (require-token!))
+            (.then (fn [{:keys [status body]}]
+                     (if (<= 200 status 299)
+                       (do (println "denied")
+                           (reset! chat-approval nil))
+                       (println (str "decide failed: HTTP " status
+                                     " " (str (get-in body [:error :message])))))))
+            (.catch say-error))
+        (do (println "承認待ちの card はありません") :handled))
+
+      "/skin"
+      (do (if (empty? args)
+            (let [s ((:skin ctx-theme))]
+              (println (str "skin: " (:name s) "  prompt: " (:prompt s))))
+            (let [r ((:set-skin! ctx-theme) (first args))]
+              (if (:ok r)
+                (println (str "skin: " (:name (:skin r)) " — live re-provided (:ctx/theme)"))
+                (println (str "そのような skin はありません。available: "
+                              (str/join " " (:available r)))))))
+          :handled)
+
+      "/plugins"
+      (do (println (harness/dump-config harness-ctx)) :handled)
+
+      "/exit" :exit
+
+      ;; registry fallback: a handler registered on :ctx/chat by any plugin
+      ;; answers here, without this file knowing its name
+      (if-let [handler (get @(:registry ctx-chat) cmd)]
+        (do (handler harness-ctx args) :handled)
+        (if (str/starts-with? (str cmd) "/")
+          (do (println (str "そのような command はありません: " cmd " (/help)")) :handled)
+          nil)))))
+
+(defn- chat-prompt-loop!
+  "The REPL: one message per turn, each on its own run, streaming deltas.
+  Lines starting with / are commands (see chat-slash!), not messages."
+  []
+  (let [rl (js/require "node:readline/promises")]
+    (println (str (:banner ((:skin ctx-theme)))
+                  "  profile: " @chat-profile " — /help で一覧、exit で終了"))
+    (let [iface (.createInterface rl #js {:input js/process.stdin
+                                          :output js/process.stdout})
+          prompt (fn [] (:prompt ((:skin ctx-theme))))]
+      (letfn [(turn []
+                (-> (.question iface (prompt))
+                    (.then (fn [text]
+                             (let [text (str/trim (str text))]
+                               (cond
+                                 (empty? text) (turn)
+                                 (= "exit" text) (js/process.exit exit-answered)
+                                 (= "quit" text) (js/process.exit exit-answered)
+                                 (= "/exit" text) (js/process.exit exit-answered)
+                                 :else
+                                 (let [r (chat-slash! text)]
+                                   (cond
+                                     (= :exit r) (js/process.exit exit-answered)
+                                     (= :handled r) (turn)
+                                     (instance? js/Promise r)
+                                     (-> r (.then (fn [_] (turn)))
+                                         (.catch (fn [e]
+                                                   (if (= "readline was closed" (ex-message e))
+                                                     (js/process.exit exit-answered)
+                                                     (do (chat-emit (str "error: " (ex-message e) "\n"))
+                                                         (js/process.exit exit-cannot-answer))))))
+
+                                     :else
+                                     (-> (request! {:method :post :path "/v1/runs"
+                                                    :body {:input text :profile @chat-profile}
+                                                    :timeout-seconds 30}
+                                                   (require-token!))
+                                         (.then (fn [{:keys [status body]}]
+                                                  (if (<= 200 status 299)
+                                                    (chat-poll-events! (or (:run_id body) (:run-id body)))
+                                                    (refuse! (str "run を開始できません: HTTP " status)
+                                                             (select-keys body [:error])))))
+                                         (.then (fn [out]
+                                                  (let [usage (:usage out)]
+                                                    (when usage
+                                                      (chat-emit (str "· tokens: "
+                                                                      (or (:prompt_tokens usage) "?") " in / "
+                                                                      (or (:completion_tokens usage) "?") " out")))
+                                                    (println))
+                                                  ;; A failed turn is a refusal, not
+                                                  ;; a prompt for the next one.
+                                                  (if (= "completed" (:status out))
+                                                    (turn)
+                                                    (js/process.exit exit-refused))))
+                                         (.catch (fn [e]
+                                                   (if (= "readline was closed" (ex-message e))
+                                                     (js/process.exit exit-answered)
+                                                     (do (chat-emit (str "error: " (ex-message e) "\n"))
+                                                         (js/process.exit exit-cannot-answer))))))))))))))]
+        (turn)))))
+
+(defn- chat!
+  "Entry: `itonami chat [--profile <p>] [first message]`. A message on the
+  command line runs one turn and exits; without one, the REPL starts."
+  [argv json?]
+  (let [profile (or (some-> (:profile (commands/parse-flags argv)) str/trim not-empty)
+                    chat-default-profile)
+        words (commands/words (drop 1 (drop-while #(not= "chat" %) argv)))
+        text (str/join " " words)]
+    (if (seq words)
+      ;; one-shot: `itonami chat hello` runs one streaming turn and exits
+      (let [start! (fn []
+                     (request! {:method :post :path "/v1/runs"
+                                :body {:input text :profile profile}}
+                               (require-token!)))
+            report (fn [out]
+                     ;; --json still gets the machine-readable final map;
+                     ;; interactive one-shot already streamed the answer text.
+                     (if json?
+                       (emit! out true)
+                       (when-let [u (:usage out)]
+                         (println (str "· tokens: " (or (:prompt_tokens u) "?")
+                                       " in / " (or (:completion_tokens u) "?") " out")))))]
+        (-> (start!)
+            (.then (fn [{:keys [status body]}]
+                     (if (<= 200 status 299)
+                       (-> (chat-poll-events! (or (:run_id body) (:run-id body)))
+                           (.then (fn [out]
+                                    ;; The run started but the turn failed on
+                                    ;; the stream (disabled Bot, provider
+                                    ;; denial): that is the server refusing,
+                                    ;; exit 1 — not a silent success.
+                                    (if (= "completed" (:status out))
+                                      (report out)
+                                      (refuse! (or (:error out)
+                                                   (str "run は "
+                                                        (name (:status out))
+                                                        " で終わりました"))
+                                               (select-keys out [:error]))))))
+                       (refuse! (str "run を開始できません: HTTP " status)
+                                (select-keys body [:error]))))))
+        nil)
+      (chat-prompt-loop!))))
+
+(defn- suggest
+  "Commands whose name contains the FIRST word.
+
+  The whole phrase is the wrong query for a mistyped command: `bots lst` shares
+  no substring with anything, and an empty list of suggestions reads as though
+  the group does not exist either. The first word is the part an operator
+  usually has right."
+  [words]
+  (when-let [head (first words)]
+    (let [named (map #(str/join " " (:command %)) (commands/alias-commands))
+          generated (map commands/command-name (commands/matching [head]))]
+      (vec (take 8 (concat (filter #(str/includes? % head) named) generated))))))
+
+(defn register-builtin-slash!
+  "The slash commands chat-slash! answers in its own case are also listed on
+  the :ctx/chat registry, so (:commands ctx-chat) and /plugins report what
+  actually answers. The wrappers delegate to the same case — one decider,
+  two views."
+  []
+  (let [r! (:register! ctx-chat)]
+    (doseq [c ["/help" "/bots" "/profiles" "/profile" "/skin" "/plugins"
+               "/approve" "/deny" "/status" "/exit"]]
+      (r! c (fn [_ctx _args] nil)))))
+
+(defn -main [& argv]
+  (let [argv (vec argv)
+        flags (commands/parse-flags argv)
+        json? (true? (:json flags))
+        named (commands/words argv)]
+    (cond
+      (= "--dump-config" (first argv))
+      (dump-config!)
+
+      (or (empty? named) (= ["help"] named) (true? (:help flags)))
+      (do (println (str "itonami — cloud-itonami-app の front end\n\n"
+                        "  itonami chat [--profile <p>] [message …]  agent と対話 (ストリーミング)\n"
+                        "  itonami commands [term …]\n"
+                        "  itonami status\n"
+                        "  itonami <command> [--flag value …] [--json]\n\n"
+                        "commands: " (count (commands/all)) " (generated) + "
+                        (count (commands/alias-commands)) " (named)\n"
+                        "exit 0 answered / 1 refused / 2 could not answer"))
+          (js/process.exit exit-answered))
+
+      (= "commands" (first named)) (commands! (vec (drop 1 named)) json?)
+      (= ["status"] named) (status! json?)
+      (= "chat" (first named)) (chat! argv json?)
+
+      (contains? #{["up"] ["down"]} named)
+      (cannot-answer!
+       (str "この front end は server を起動・停止しません。\n"
+            "  常駐: launchctl kickstart -k gui/$(id -u)/dev.cloud-itonami.app")
+       {:type :client/not-a-supervisor :command (first named)})
+
+      :else
+      (let [{:keys [kind] :as invocation} (commands/resolve-invocation argv)]
+        (case kind
+          :alias (run-alias! invocation json?)
+          :registry (run-registry! invocation json?)
+          :host-side
+          (cannot-answer!
+           (str "`" (str/join " " (:command (:command invocation)))
+                "` はサーバを通らない host 側の処理で、この front end にはまだ無い。\n"
+                "  理由: " (:why (:command invocation)))
+           {:type :client/host-side-command})
+          :unknown
+          (cannot-answer!
+           (str "そのような command はありません: " (str/join " " named))
+           {:type :client/unknown-command
+            :near (suggest named)}))))))
+
+(register-builtin-slash!)
+(apply -main (or *command-line-args* []))

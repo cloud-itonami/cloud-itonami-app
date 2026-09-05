@@ -9,7 +9,9 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [cloud.itonami.app.bot-import :as subject]))
+            [cloud.itonami.app.bot-import :as subject]
+            [cloud.itonami.app.bots :as bots]
+            [cloud.itonami.app.hermes-migration :as migration]))
 
 (defn- temp-dir [prefix]
   (.toFile (java.nio.file.Files/createTempDirectory
@@ -21,6 +23,175 @@
     (.mkdirs (.getParentFile file))
     (spit file (json/write-str {:jobs jobs :updated_at "2026-08-30T00:00:00Z"}))
     home))
+
+(defn- full-hermes-home! []
+  (let [home (temp-dir "itonami-hermes-full-")
+        named (io/file home "profiles" "research")
+        executable (io/file home "hermes-agent" "venv" "bin" "hermes")]
+    (doseq [[path content]
+            [["SOUL.md" "default persona"]
+             ["MEMORY.md" "default memory"]
+             ["cron/jobs.json" "{\"jobs\":[]}"]
+             ["sessions/session-1.jsonl" "{\"role\":\"user\",\"content\":\"hello\"}"]
+             [".env" "SECRET=must-not-cross"]]]
+      (let [file (io/file home path)]
+        (.mkdirs (.getParentFile file))
+        (spit file content)))
+    (doseq [[path content]
+            [["config.yaml" "model: example/model"]
+             ["SOUL.md" "research persona"]
+             ["state.db" "fixture database bytes"]
+             ["skills/research/SKILL.md" "research skill"]
+             ["auth.json" "{\"token\":\"must-not-cross\"}"]]]
+      (let [file (io/file named path)]
+        (.mkdirs (.getParentFile file))
+        (spit file content)))
+    (.mkdirs (.getParentFile executable))
+    (spit executable "#!/bin/sh\nexit 0\n")
+    (.setExecutable executable true)
+    home))
+
+(deftest full-hermes-preview-covers-every-profile-and-keeps-authority-out
+  (let [home (full-hermes-home!)
+        manifest (migration/preview
+                  {:home home :business "test-business"
+                   :migration-id "hermes-test"
+                   :captured-at "2026-09-01T00:00:00Z"})]
+    (is (= migration/schema (:schema manifest)))
+    (is (= ["default" "research"] (mapv :id (:profiles manifest))))
+    (is (= 6 (count (:coverage manifest)))
+        "persona/config, memory, skills, cron and complete sessions are named")
+    (is (= 2 (get-in manifest [:summary :profiles])))
+    (is (pos? (get-in manifest [:summary :portable-files])))
+    (testing "credential values and destination grants never enter the bundle"
+      (is (false? (get-in manifest [:safety :copies-credentials])))
+      (is (false? (get-in manifest [:safety :copies-grants])))
+      (is (= #{"credential-file" "provider-and-account-bindings"
+               "cloud-itonami-grants"}
+             (set (map :kind (get-in manifest [:profiles 0 :rebind-required])))))
+      (is (= 3 (count (get-in manifest [:profiles 1 :rebind-required])))))
+    (testing "preview is an optimistic lock over all portable source files"
+      (let [before (get-in manifest [:source :revision])
+            heartbeat (io/file home "cron" "ticker_heartbeat")]
+        (spit heartbeat "2026-09-01T00:00:01Z")
+        (is (= before
+               (get-in (migration/preview {:home home}) [:source :revision]))
+            "the live Hermes scheduler heartbeat is exported but is not a control lock")
+        (spit (io/file home "profiles" "research" "SOUL.md") "changed persona")
+        (is (not= before
+                  (get-in (migration/preview {:home home}) [:source :revision])))))))
+
+(deftest stage-uses-the-same-manifest-and-source-native-redacted-artifacts
+  (let [home (full-hermes-home!)
+        data-dir (temp-dir "itonami-hermes-stage-")
+        preview (migration/preview
+                 {:home home :migration-id "hermes-stage-test"
+                  :captured-at "2026-09-01T00:00:00Z"})]
+    (binding [migration/*export-profile!*
+              (fn [_ _ profile-id output]
+                (spit output (str "portable:" profile-id)))
+              migration/*write-runtime-context!*
+              (fn [profile-id _ output]
+                (spit output (str "redacted context:" profile-id)))
+              migration/*export-sessions!*
+              (fn [_ profile-home output]
+                (spit output (json/write-str
+                              {:profile (.getName (io/file profile-home))
+                               :messages [{:content "redacted"}]})))]
+      (let [staged (migration/stage!
+                    {:home home :data-dir data-dir :manifest preview
+                     :staged-by {:user-id "user-1" :organization-id "org-1"}})
+            bundle (io/file data-dir "bot-imports" "hermes-stage-test")]
+        (is (= (:migration-id preview) (:migration-id staged)))
+        (is (= (:schema preview) (:schema staged)))
+        (is (= "staged" (:status staged)))
+        (is (= 6 (count (mapcat :artifacts (:profiles staged)))))
+        (is (.isFile (io/file bundle "manifest.json")))
+        (is (every? #(and (= "staged" (:state %))
+                          (pos? (:bytes %))
+                          (= 64 (count (:sha256 %))))
+                    (mapcat :artifacts (:profiles staged))))
+        (is (= 2 (count (filter #(= "hermes-runtime-context" (:kind %))
+                                (mapcat :artifacts (:profiles staged)))))
+        (is (false? (get-in staged [:safety :creates-bots]))))))))
+
+(deftest provision-connects-every-profile-to-an-inert-bot-and-scores-the-result
+  (let [home (full-hermes-home!)
+        data-dir (temp-dir "itonami-hermes-provision-")
+        preview (migration/preview
+                 {:home home :migration-id "hermes-provision-test"})
+        captured (atom [])]
+    (binding [migration/*export-profile!*
+              (fn [_ _ profile-id output]
+                (spit output (str "portable:" profile-id)))
+              migration/*write-runtime-context!*
+              (fn [profile-id _ output]
+                (spit output (str "redacted context:" profile-id)))
+              migration/*export-sessions!*
+              (fn [_ profile-home output]
+                (spit output
+                      (json/write-str
+                       {:id (str "session-" (.getName (io/file profile-home)))
+                        :last_active "2026-09-01T00:00:00Z"
+                        :messages [{:id "u" :role "user" :content "hello"}
+                                   {:id "a" :role "assistant" :content "hi"}]})))]
+      (let [staged (migration/stage!
+                    {:home home :data-dir data-dir :manifest preview})]
+        (with-redefs [bots/create-hermes-import!
+                      (fn [_ _ request]
+                        (swap! captured conj request)
+                        {:id (str "bot-" (:profile-id request))})]
+          (let [result
+                (migration/provision!
+                 {:configuration
+                  {:providers [{:id "murakumo"
+                                :models ["example/model"]}]}
+                  :session {:user-id "u" :organization-id "o"}
+                  :data-dir data-dir :manifest staged})]
+            (is (= "provisioned" (:status result)))
+            (is (= 2 (count (:profiles result))))
+            (is (= ["default" "research"] (mapv :profile-id @captured)))
+            (is (every? #(= 2 (count (:seed %))) @captured))
+            (is (every? empty? (map #(select-keys % [:tools :accounts]) @captured)))
+            (is (= 85 (get-in result [:compatibility :execution-model :percent])))
+            (is (= 75 (get-in result [:compatibility :semantic-system :percent])))
+            (is (= 65 (get-in result [:compatibility :zero-adjustment-runtime
+                                      :percent])))
+            (is (= 100 (get-in result [:compatibility :drop-in-core-api :percent])))
+            (is (= {:exact 1 :profiles 2 :percent 50}
+                   (get-in result [:compatibility :model-preservation])))))))))
+
+(deftest stage-refuses-a-stale-or-different-manifest
+  (let [home (full-hermes-home!)
+        preview (migration/preview {:home home :migration-id "hermes-stale"})]
+    (spit (io/file home "MEMORY.md") "changed after preview")
+    (is (= :bot-import/source-changed
+           (:type (ex-data
+                   (try
+                     (migration/stage! {:home home
+                                        :data-dir (temp-dir "itonami-stale-")
+                                        :manifest preview})
+                     (catch clojure.lang.ExceptionInfo error error))))))))
+
+(deftest migration-ids-and-profile-links-cannot-escape-the-bundle
+  (let [home (full-hermes-home!)]
+    (testing "the manifest id cannot become a destination path"
+      (is (= :bot-import/invalid-migration-id
+             (:type (ex-data
+                     (try
+                       (migration/preview {:home home
+                                           :migration-id "hermes-../../outside"})
+                       (catch clojure.lang.ExceptionInfo error error)))))))
+    (testing "inventory does not follow a profile symlink outside Hermes"
+      (let [before (migration/preview {:home home :migration-id "hermes-before"})
+            external (temp-dir "itonami-external-")
+            _ (spit (io/file external "must-not-cross.txt") "outside")
+            link (.toPath (io/file home "profiles" "research" "linked-out"))]
+        (java.nio.file.Files/createSymbolicLink
+         link (.toPath external) (make-array java.nio.file.attribute.FileAttribute 0))
+        (let [after (migration/preview {:home home :migration-id "hermes-after"})]
+          (is (= (get-in before [:profiles 1 :source])
+                 (get-in after [:profiles 1 :source]))))))))
 
 (def ^:private measured-hermes-job
   {:id "8cf8421b60f9" :name "mailbox-triage" :prompt "" :script "mailbox-triage.py"

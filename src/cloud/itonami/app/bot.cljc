@@ -51,7 +51,8 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [cloud.itonami.app.kotoba-oracle :as oracle]
-            [cloud.itonami.app.work-governance :as governance]))
+            [cloud.itonami.app.work-governance :as governance])
+  #?(:clj (:import [java.security MessageDigest])))
 
 (def schema "cloud.itonami.app.bot.v1")
 
@@ -68,6 +69,38 @@
   [:circle :bean :block :wide :wedge :cloud :wave :drop])
 
 (def default-avatar {:avatar/color :blue :avatar/glyph :circle})
+
+;; A Bot that never picked a colour still needs one, and it must be the SAME
+;; one after every restart and reload — the sidebar's whole point is that a
+;; person recognises a Bot by its face. SHA-256 of the Bot's own id, not
+;; `.hashCode`: hashCode's contract makes no promise across JVM versions, and
+;; a Bot changing colour on the next server upgrade is exactly the failure
+;; this rules out by construction.
+
+(defn face-hash
+  "A deterministic non-negative hash of `id`, from the first 6 bytes of its
+  SHA-256 digest. 48 bits is far more than the colour x glyph space needs;
+  the point is drawing straight from the digest rather than hashing again."
+  [id]
+  #?(:clj
+     (let [digest (.digest (MessageDigest/getInstance "SHA-256")
+                           (.getBytes (str id) "UTF-8"))]
+       (reduce (fn [acc b] (+ (* acc 256) (bit-and (long b) 0xff)))
+               0 (take 6 digest)))
+     :cljs
+     (throw (ex-info "bot/face-hash has no ClojureScript implementation yet"
+                     {:type :bot/unsupported-platform}))))
+
+(defn face
+  "The presentation triple a Bot draws when nobody has picked one: colour,
+  glyph and a small mood-cycling variant number, all derived from `id` alone
+  so the same Bot always has the same face."
+  [id]
+  (let [h (face-hash id)]
+    {:avatar/color (nth avatar-colors (mod h (count avatar-colors)))
+     :avatar/glyph (nth avatar-glyphs (mod (quot h (count avatar-colors))
+                                            (count avatar-glyphs)))
+     :variant (mod h 7)}))
 
 (def max-name 60)
 (def max-brief 2000)
@@ -101,6 +134,8 @@
 (def max-responsibilities 12)
 (def max-responsibility 1000)
 (def max-capability-policy 40)
+(def max-skill-packages 4)
+(def max-skill-instructions 12000)
 
 (def capability-decisions
   #{:autonomous :voice-required :approval-required :blocked})
@@ -129,6 +164,33 @@
             {:capability capability :decision decision
              :note (some-> (:note entry) str str/trim not-empty)}))
         (take max-capability-policy values)))
+
+(def skill-id-pattern #"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+(def skill-sha256-pattern #"^[0-9a-f]{64}$")
+
+(defn- skill-packages [values]
+  (when (> (count (or values [])) max-skill-packages)
+    (throw (ex-info "too many workforce Skill packages"
+                    {:type :bot/invalid :field :bot/skills})))
+  (let [packages
+        (mapv
+         (fn [package]
+           (let [id (some-> (:id package) str str/trim)
+                 sha256 (some-> (:sha256 package) str str/lower-case str/trim)
+                 instructions (some-> (:instructions package) str str/trim)]
+             (when-not (and (re-matches skill-id-pattern (or id ""))
+                            (re-matches skill-sha256-pattern (or sha256 ""))
+                            (seq instructions)
+                            (<= (count instructions) max-skill-instructions))
+               (throw (ex-info "invalid workforce Skill package"
+                               {:type :bot/invalid :field :bot/skills
+                                :id id})))
+             {:id id :sha256 sha256 :instructions instructions}))
+         (or values []))]
+    (when-not (= (count packages) (count (set (map :id packages))))
+      (throw (ex-info "duplicate workforce Skill package"
+                      {:type :bot/invalid :field :bot/skills})))
+    packages))
 
 ;; ── the record ──────────────────────────────────────────────────────────
 
@@ -208,6 +270,9 @@
         email (optional-name (:bot/email value) :bot/email 320)
         workspace (optional-name (:bot/workspace value)
                                  :bot/workspace max-workspace)
+        workspace-kind (some-> (:bot/workspace-kind value) clojure.core/name keyword)
+        workspace-sync-id (optional-name (:bot/workspace-sync-id value)
+                                         :bot/workspace-sync-id 80)
         tools (into (sorted-set) (map str) (:bot/tools value))]
     (when (contains? value :bot/status)
       (throw (ex-info "a Bot does not carry a status; it is computed"
@@ -273,6 +338,8 @@
      ;; It changes WHEN an already-admitted write runs, never WHAT is admitted.
      :bot/omakase? (boolean (:bot/omakase? value))
      :bot/workspace workspace
+     :bot/workspace-kind workspace-kind
+     :bot/workspace-sync-id workspace-sync-id
      ;; Workforce metadata explains a job; it is deliberately not consulted by
      ;; tool admission. `:bot/tools`, workspace/coding and the existing effect
      ;; governor remain the complete execution authority.
@@ -282,6 +349,10 @@
      :bot/role (:bot/role value)
      :bot/responsibilities (responsibilities (:bot/responsibilities value))
      :bot/capability-policy (capability-policy (:bot/capability-policy value))
+     ;; Governed instructions are persisted with their digest so a live Bot
+     ;; can prove which revision it used. They are never consulted by tool
+     ;; admission, account selection, workspace reach, or effect approval.
+     :bot/skills (skill-packages (:bot/skills value))
      :bot/enabled? (if (contains? value :bot/enabled?)
                      (boolean (:bot/enabled? value))
                      true)

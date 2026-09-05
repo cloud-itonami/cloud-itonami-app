@@ -97,7 +97,8 @@
 (def ^:private runnable
   #{"workspace_read" "workspace_list" "workspace_search"
     "git_status" "git_log" "workspace_write_file" "git_commit"
-    "disk_space_status" "disk_space_cleanup"})
+    "disk_space_status" "disk_space_cleanup"
+    "disk_space_inventory" "disk_space_reclaim"})
 
 (deftest the-capability-policy-decides-and-not-only-in-the-prompt
   ;; Before this, a Bot's capability policy reached exactly one place: its
@@ -118,7 +119,18 @@
           (is (not (contains? inspect-only "disk_space_cleanup"))))
         (let [both (admit [{:capability :disk.inspect :decision :autonomous}
                            {:capability :disk.cleanup :decision :autonomous}])]
-          (is (every? both ["disk_space_status" "disk_space_cleanup"]))))
+          (is (every? both ["disk_space_status" "disk_space_cleanup"]))
+          (is (not (contains? both "disk_space_inventory")))
+          (is (not (contains? both "disk_space_reclaim"))))
+        (let [inventory-only
+              (admit [{:capability :disk.candidate.inspect :decision :autonomous}])]
+          (is (contains? inventory-only "disk_space_inventory"))
+          (is (not (contains? inventory-only "disk_space_reclaim"))))
+        (let [candidate-cleanup
+              (admit [{:capability :disk.candidate.inspect :decision :autonomous}
+                      {:capability :disk.reclaimable.cleanup :decision :autonomous}])]
+          (is (every? candidate-cleanup
+                      ["disk_space_inventory" "disk_space_reclaim"]))))
 
       (testing "a capability a human still decides does NOT authorise the tool"
         (is (not (contains? (admit [{:capability :patch.create :decision :approval-required}])
@@ -176,3 +188,75 @@
         (testing "a token declaring scopes reaches exactly those"
           (let [t (bot-authority/issue bot [{:capability :patch.create :decision :autonomous}])]
             (is (= 1 (count (:grant/scopes (bot-authority/->grant t)))))))))))
+
+;; ── a Bot narrowing its own authority ───────────────────────────────────────
+;;
+;; Until 2026-09-01 this namespace said a Bot could not do this, because
+;; `token/append` needs the key the previous block names and no Bot held one.
+;; It held one all along -- `bot-did` is the public half of
+;; derive-seed(fleet, bot-id) -- and what was missing was a caller.
+;;
+;; The load-bearing assertion is NOT that a narrowed token still works. It is
+;; that the narrowing REMOVED something, and that a block cannot add. A reader
+;; that folded only the first block would pass every refusal below and fail
+;; only these.
+
+(deftest a-bot-narrows-its-own-token-and-the-narrowing-holds
+  (let [dir (temp-dir)]
+    (with-keys dir
+      (let [bot {:bot/id "b1" :bot/workforce-key "mangaka/work-yamainu"}
+            t (bot-authority/issue bot policy)
+            holder (bot-identity/bot-did "b1")
+            sub-did (bot-identity/bot-did "b2")
+            ok? (fn [tok k] (bot-authority/authorized?
+                             tok "mangaka/work-yamainu" k
+                             {:now now :holder holder}))
+            narrowed (bot-authority/attenuate
+                      bot t
+                      [(bot-authority/capability->scope "mangaka/work-yamainu" :metrics.read)]
+                      sub-did)]
+
+        (testing "the Bot could sign at all -- the key its own did names"
+          (is (some? (bot-identity/bot-signing-seed "b1")))
+          (is (some? narrowed) "attenuate must not answer nil for a Bot with a seed"))
+
+        (testing "the narrowed token still verifies against the fleet root"
+          ;; The issuer was never consulted, and the chain is still whole.
+          (is (:ok? (bot-authority/verify narrowed))))
+
+        (testing "what the Bot kept is still authority"
+          (is (ok? narrowed :metrics.read)))
+
+        (testing "what the Bot gave up is GONE"
+          ;; The assertion this test exists for. patch.create was autonomous on
+          ;; the issued token; after narrowing to metrics.read it must not be.
+          (is (ok? t :patch.create) "precondition: the wide token had it")
+          (is (not (ok? narrowed :patch.create))
+              "a reader answering true here would make attenuation decorative"))))))
+
+(deftest appending-cannot-widen-a-bot-token
+  (let [dir (temp-dir)]
+    (with-keys dir
+      (let [bot {:bot/id "b1" :bot/workforce-key "mangaka/work-yamainu"}
+            t (bot-authority/issue bot policy)
+            holder (bot-identity/bot-did "b1")
+            widened (bot-authority/attenuate
+                     bot t
+                     [(bot-authority/capability->scope "mangaka/work-yamainu" :deploy.production)]
+                     (bot-identity/bot-did "b1"))]
+        (testing "claiming a capability the policy BLOCKED grants nothing"
+          (is (:ok? (bot-authority/verify widened)))
+          (is (not (bot-authority/authorized? widened "mangaka/work-yamainu"
+                                              :deploy.production
+                                              {:now now :holder holder}))))))))
+
+(deftest attenuate-refuses-rather-than-passing-the-wide-token-on
+  (let [dir (temp-dir)]
+    (with-keys dir
+      (let [bot {:bot/id "b1" :bot/workforce-key "mangaka/work-yamainu"}
+            t (bot-authority/issue bot policy)]
+        (testing "no scopes, no recipient, no token -- each answers nil, never t"
+          (is (nil? (bot-authority/attenuate bot t [] (bot-identity/bot-did "b2"))))
+          (is (nil? (bot-authority/attenuate bot t ["kotoba://cap/x"] nil)))
+          (is (nil? (bot-authority/attenuate bot nil ["kotoba://cap/x"]
+                                             (bot-identity/bot-did "b2")))))))))

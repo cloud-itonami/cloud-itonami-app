@@ -1,0 +1,246 @@
+[{:db/id -1
+  :adr/id "adr-2609111230-valueflows-xmile-bot-integration"
+  :adr/title "Bots get a Valueflows economic plane and an XMILE simulation face — the sync is read from shared planes, not from bot-to-bot messages"
+  :adr/status "accepted"
+  :adr/date "2026-09-03"
+  :adr/related "adr-2608151900-bots-durable-goal-orchestrator adr-2608200400-bots-get-a-did-and-authority-as-a-biscuit"
+  :adr/body
+  "## Context
+
+The bots that exist today (4,260 in `manifest/repo-bots.edn`; the imported Hermes
+workforce in this app) share no design plane for economic coordination. What
+exists is measured and real, and none of it connects bots to each other:
+
+- **Valueflows (REA) is the economic vocabulary of itonami** — ADR-2608153000
+  (root, 2026-08-15). `ws-valueflo-vocabulary` carries the 19-action behaviour
+  table and `valueflows.event`; `ws-valueflo-algorithms` carries the 8
+  network-based algorithms. `scripts/itonami-valueflows-bind.cljs` already
+  projects itonami business onto `90-docs/valueflows/itonami-business-vf.datoms.edn`.
+  ADR-2608153000's own gaps: cloud-itonami-app Contracts are still not written
+  as vf:Agreement; multi-stage recipes never ran.
+- **XMILE is the simulation formalism** — `org-oasis-open-xmile` +
+  `xmile.execute`, running today in this app's portfolio (`portfolio.clj`
+  re-runs per business), `ux_score.clj`, and the root `90-docs/system-dynamics/`
+  corpus. ADR-2608153000 fixed the boundary: **VF flow is an economic event,
+  XMILE flow is a continuous rate — `:different-formalism`, not convertible,
+  and that stays.**
+- **Bots have authority but no economic surface.** A workforce Bot's
+  capabilities become biscuit scopes `kotoba://cap/<workforce-key>/<cap>` and
+  are enforced by `authority.grant/covers?` inside this process. AgentRun /
+  Goal gives durable execution. Organism workers already have the
+  intent → admission → receipt shape (`organism_gateway.clj`,
+  `kotoba.ao.worker-intent.v1`), with `:receipt/capability` and
+  `:receipt/effect-status :not-executed` — admission never claims execution.
+- The owner asked (2026-09-03): bots に valueflow / xmile を使った連携・同期を
+  設計せよ、そして 能力はどう与えるか。
+
+## Decision
+
+**1. The sync plane is shared data, not messages.** Bots do not talk to each
+other. A bot that produces an economic fact writes an immutable event to a
+shared VF event log; a bot that consumes it reads the same log. Every
+cross-bot coordination question becomes one of (a) what event happened,
+(b) which commitments does it fulfil or violate, (c) what does the shared
+model now say. This is the same split the repo-bots already use — roster is
+data, running is state — raised to the economic level.
+
+Concretely: a per-organization VF event journal
+(`:vf/event-log`, append-only, one entry per `valueflows.event/apply-event`
+shape: agent, action, resource, quantity, time). Bots append through the
+existing intent admission path — an intent whose capability is
+`vf.event.append` and whose payload validates as a conforming EconomicEvent.
+The receipt (`:receipt/status :admitted`, `:receipt/effect-status
+:not-executed`) proves admission; the append itself is the effect, and its
+own receipt entry records the applied state root, exactly as the
+root ADR-2608153000 corpus commits state roots alongside projections.
+
+**2. Agents get capability, not role strings.** Answering the owner's
+question directly: a bot's economic authority is a biscuit scope over the
+event plane, issued by the existing `bot-authority/issue` root, of the form
+
+    kotoba://vf/<org>/<plane>/<action>
+
+where `<plane>` ∈ `#{event commitment agreement resource}` and `<action>`
+carries the VF action verb (produce transfer consume give …). Read of the
+shared planes needs `kotoba://vf/<org>/event/read`; append needs the
+narrower `.../event/append`; a bot that may promise on another's behalf
+holds `.../commitment/commit`. The mapping from loop-yakuwari capability
+keywords to these scopes is mechanical and total, in the same way
+`capability->scope` is today — a dropped capability is a bot quietly
+holding less than its role says, so none are dropped silently.
+
+The decider stays `covers?`. What changes is what the scopes name: economic
+planes in the shared journal, not tool invocations in this process. The
+biscuit still verifies off-process, still attenuates (`attenuate` exists:
+a bot may narrow its own token before handing a slice on), and still never
+widens. **Admission is not execution** — an admitted `vf.event.append`
+intent still waits for the journal's own effect receipt, and a bot can
+never mint events on a plane its biscuit does not cover. A bot holding
+`:vf` read-only scopes is exactly the observer bot; observation requires
+no grant beyond presence, so most bots should get read-only first.
+
+**3. XMILE is the shared model each bot reads, not a plane bots write.**
+Each business already has a model face. The bots' view of 'where are we' is
+the current run of that model over the measured inputs, recomputed when the
+event journal advances — the same re-run `portfolio.clj` already does per
+business, moved behind the journal-advance hook. A bot never writes flow
+rates. A bot that measures something appends a VF event; the model's
+constants get recalibrated from the journal; the next run reflects it. The
+formalism boundary stays: `:different-formalism`, calibration is the only
+bridge.
+
+**4. bot 名簿レベル (repo-bots) も同じ面を読む。** The 4,260 repo-resident
+bots' charters stay repo-scoped, but their state rows gain a VF projection:
+what this repo produced or consumed in economic terms is already in
+`90-docs/valueflows/*` datoms; a bot measuring repo health may cite it. No
+new bot type is created. The first concrete consumer is `ws-valueflo-*`'s
+own bots: algorithm readiness is already a datoms file
+(`valueflows/algorithm-readiness.datoms.edn`).
+
+## What this does not do
+
+- It does not create bot-to-bot messaging. If two bots must negotiate,
+  each writes a vf:Proposal to the shared journal and reads the other's;
+  `valueflows.proposal/reciprocity` and `agreement-balance` are the
+  negotiation's arithmetic. Negotiation-in-messages is exactly the shape
+  ADR-2608153000's false-friends list warns about.
+- It does not make XMILE convertible to VF. The bridge is calibration
+  from measured events, one direction only.
+- It does not move the run loop on-mesh. ADR-0092's split stands: turns
+  stay on the JVM resident until `capability-llm-infer` admits a provider;
+  the event journal is durable plane, not execution substrate.
+
+## Capability grant order (concrete, for the workforce as it exists)
+
+1. Read scopes `kotoba://vf/<org>/event/read` (+ commitment/agreement
+   read) — all imported workforce bots. Observation first; it is what
+   'idle but at work' ADR-2608190400 already assumes a bot can do.
+2. `kotoba://vf/<org>/event/append` — bots with a measured production
+   surface (commerce tools admitted today: product upsert, shipment
+   booking). Their existing tool calls become the sources of EconomicEvents.
+3. `kotoba://vf/<org>/commitment/commit` — codinator-class coordinators
+   only, and the journal requires the corresponding vf:Agreement to exist
+   before such a commitment admits (a commitment without an agreement is
+   the false-friend shape).
+4. Attenuation is how a coordinator hands a bounded slice to a worker bot:
+   `attenuate` with `recipient-did`, scopes narrowed to one org-plane-action.
+   The issuer is never consulted; the token cannot widen.
+
+## Verification (this ADR lands as design; each slice gates on its own proof)
+
+- Event journal: an appended event that fails `valueflows.event` conformance
+  produces a rejected intent receipt, and the journal state root is
+  unchanged. Two implementations (vocabulary's `apply-event` and the
+  gateway's admission) agree on the rejection reason.
+- Capability mapping: every loop-yakuwari capability keyword maps to
+  exactly one scope; `covers?` on the new scopes passes the
+  `kotoba://graph/alice*` / `alice-evil` class of test (prefix must not
+  cross bot boundaries).
+- XMILE bridge: appending a measured event changes exactly the calibrated
+  constants named by its resource, and the next model run's inputs match
+  the journal — nothing else moves.
+- Grant order: a read-only bot attempting append is refused at intent
+  admission with `capability-not-granted`, before any journal write.
+
+## Slice 1 landed: the event journal (2026-09-03)
+
+`cloud.itonami.app.vf-journal` (this app, `deps.edn` pins
+`io.github.kotoba-lang/ws-valueflo-vocabulary` at the west pin
+`4c1e0106`) — per-org append-only EDN journal, gated in fixed order:
+conform (`valueflows.conform/conform-event`, bad payload) then fold
+(`valueflows.event/apply-event` over the CURRENT inventory, event does not
+fit this state), each rejection its own stage; accepted events carry the
+post-fold inventory root (sha256) in their own line, and replay CHECKS the
+recorded root — a hand-edited line (internally-consistent EDN that is not
+what the fold would produce) refuses to load instead of papering over.
+Proofs, all measured: conform-reject leaves the journal byte-empty;
+conform-pass/fold-reject is a distinct stage; two accepted events fold in
+order and the replayed root equals the appended root exactly; the
+hand-edited-root tamper is refused. Remaining known failures
+(bundle/graph CID lock, bulky-waste HTTP) reproduce identically on the
+pre-change base — pre-existing, not this slice's.
+
+## Slice 2 landed: the capability mapping (2026-09-03)
+
+`cloud.itonami.app.vf-authority` — `kotoba://vf/<org>/<plane>/<action>` as
+the wire form, with the plane/action table closed (an undefined pair, e.g.
+`resource/append`, is refused, never minted). The loop-yakuwari mapping is
+three keywords — `:vf.read` → `event/read`, `:vf.append` →
+`event/append`, `:vf.commit` → `commitment/commit` — and deliberately
+closed with them: a capability outside the set is nil here (it stays a
+tool scope under `bot_authority/capability->scope`), because a guessed
+scope is invented authority. Decider unchanged: every verdict below is
+`authority.scope/covers?` / `covered?` through `authority.grant`, measured
+— `org-a` does not cover `org-ab` (segment equality, not prefix);
+`event/read` does not reach `event/append` or `commitment/commit` (separate
+leaves, the grant order holds as scopes); the decider's `:*` wildcard
+covers strictly longer scopes and never the namespace itself;
+`attenuate-slices` narrows a coordinator's scopes to the slice it hands on
+via `scope/meet`, and an incomparable ask (coordinator holds read, asks
+for append) has no meet — nothing is synthesised.
+
+## Slice 3 landed: the XMILE calibration hook (2026-09-03)
+
+`cloud.itonami.app.vf-calibrate` — the bridge stays one-directional and
+the `:different-formalism` boundary is not crossed: no flow rate is ever
+written, no event is converted into a rate. The correspondence table
+(`:vf/xmile`, org → {resource-id → constant name}) is the only place a
+resource becomes a model constant. `calibrated-model` rebases each bound
+LEAF constant (bare-number equation — the exact shape `loops/sensitivity`
+perturbs) to the resource's folded `:onhand-quantity`, and refuses a
+binding onto a computed variable (overwriting a derived value would not be
+calibration, it would be a different model). `calibration` is the
+observer's report: `:rebased` (from → to), `:unmatched` (binding without a
+measurement — a stale operating point, the actionable kind of nothing),
+`:ignored` (measurement without a leaf-constant place to go). Proof,
+measured: a produce of 17 moves ONLY the named constant (28 → 17.0; flow
+and aux untouched; the original model unchanged — immutable update); the
+next `execute/run` reflects exactly that operating point (final Backlog 20
+→ 2.0, the arithmetic of the rebased initial condition); an unnamed
+resource leaves the model identical; two appended events land the FOLD's
+arithmetic (5+5=10) as the operating point, not the last event. The run
+inputs match the journal — nothing else moves.
+
+## Slice 4 landed: hyakka residents emit VF produce events on the datom plane (2026-09-04)
+
+The hyakka wiki residents (network-awai/cloud-itonami #582, worker
+`cd12102a`, pin `d183756a`) now attach one deterministic `:produce`
+EconomicEvent per observation to their kotobase projection: provider =
+resident DID, receiver = the wiki, quantity = number of claims in the
+observation, resource = the observation record CID. The event id is
+digest-keyed (same observation → same event → idempotent upsert), so a
+retry after a 5xx cannot double-count a produce. This is the first bot
+population writing VF events on the shared datom plane at runtime —
+before this slice the only VF writers were library tests and the
+`itonami-valueflows-bind.cljs` offline projection.
+
+Scope note (honest boundary): these events land as datoms on the tenant
+graph, **not** in `vf-journal/append-event!` — the per-org EDN journal
+and its fold/inventory-root checks are not in the resident's write path
+yet. The two planes carry the same vocabulary but do not yet join: the
+XMILE calibration hook (slice 3) reads only the journal, so resident
+produce events do not rebase model constants until a slice moves them
+into the journal (or teaches `vf-calibrate` a datom-plane reader). Until
+then the resident events are provenance on the datom plane, and the
+journal remains the calibration source. Live proof 2026-09-04: after the
+chunked-client + gateway enforce-schema opt-out + engine hydration-skip
+chain landed, engine-side transacts went from total 502 CPU-limit
+failure to Ok 321 / Canceled 26 / Exceeded 15 in the 05:00-07:00 window
+(wrangler tail on kotobase-cf-wasm-staging).
+
+## Still open
+
+- Resident ↔ journal join: the hyakka residents' VF events (slice 4) sit
+  on the datom plane only; either a resident-side journal append or a
+  `vf-calibrate` datom reader is needed before they can calibrate an
+  XMILE model.
+- Intent-path wiring: `vf.event.append` intents admitted by
+  `organism_gateway` do not yet drive `vf-journal/append-event!` in the
+  gateway's effect phase; the journal and the admission receipts are two
+  working halves not yet one loop (the ADR's Verification line about
+  agreement of rejection reasons is satisfied at the vocabulary level,
+  not yet end-to-end through the gateway).
+- The workforce grant rollout (who holds read / append / commit) is an
+  operational decision per imported bot, not code.
+- `valueflows.proposal` / `agreement-balance` negotiation arithmetic is in
+  the vocabulary; nothing in this app reads it yet."}]

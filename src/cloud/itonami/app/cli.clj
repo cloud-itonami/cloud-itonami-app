@@ -51,27 +51,18 @@
   It cannot create or widen a Bot. It may submit work and, only for a Bot whose
   owner enabled omakase in the app, approve its held shell/mail/Git write.
 
-  Usage:
+  Usage of this leftover namespace (the `:cli` alias is gone from
+  deps.edn; `bin/itonami` does not start it):
 
-    itonami up | down | status
-    itonami kaiyu [--days 7]        ; このマシンの回遊（送信しない）
+    auth login --label <name> [--ttl-days 30] [--organization <slug>]
+    auth status | auth revoke --id session-…
+    tenant list | tenant connect | tenant status | tenant renew | tenant revoke
+    tenant repository-read | tenant repository-write | tenant repository-publish
+    business list | business create | business bind
+
+    itonami up | down | status     ; leftover verbs; launcher is closed
+    itonami kaiyu [--days 7]
     itonami commands [term …]
-    itonami <command words> [--flag value …] [--json '{…}']
-
-    clojure -M:cli auth login --label \"claude-code\" [--ttl-days 30] [--organization <slug>]
-    clojure -M:cli auth status
-    clojure -M:cli auth revoke --id session-…
-    clojure -M:cli tenant list
-    clojure -M:cli tenant connect --tenant acme --cap workspace.read,actor.invoke
-    clojure -M:cli tenant status --connection tc-…
-    clojure -M:cli tenant renew --connection tc-… [--ttl-seconds 3600]
-    clojure -M:cli tenant revoke --connection tc-…
-    clojure -M:cli tenant repository-read --connection tc-…
-    clojure -M:cli tenant repository-write --connection tc-… --file state.edn
-    clojure -M:cli tenant repository-publish --connection tc-…
-    clojure -M:cli business list
-    clojure -M:cli business create --slug cloud-itonami-vc --name \"…\"
-    clojure -M:cli business bind --id business-… --repos a,b,c [--canvas …]
 
   The CLI resolves the server's address and the data directory from the same
   config the server does, so it must run with the same `CLOUD_ITONAMI_DATA_DIR`
@@ -100,46 +91,24 @@
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.server-process :as server-process]
             [cloud.itonami.app.west-kotoba-refactor :as west-refactor])
-  (:import [java.nio.file Files LinkOption]
+  (:import [java.net URLEncoder]
+           [java.nio.charset StandardCharsets]
+           [java.nio.file Files LinkOption]
            [java.util.concurrent TimeUnit]))
 
 ;; ---------------------------------------------------------------------------
 ;; arguments
 ;; ---------------------------------------------------------------------------
 
-(defn parse-flags
-  "`--key value` pairs into a map. A flag with no value is `true`, so `--json`
-  works without inventing a second syntax."
-  [args]
-  (loop [args args acc {}]
-    (if-let [head (first args)]
-      (if (str/starts-with? head "--")
-        (let [k (keyword (subs head 2))
-              v (second args)]
-          (if (and v (not (str/starts-with? v "--")))
-            (recur (drop 2 args) (assoc acc k v))
-            (recur (rest args) (assoc acc k true))))
-        (recur (rest args) acc))
-      acc)))
+(def parse-flags
+  "Moved to `cloud.itonami.app.commands` when a second front end appeared.
+  Re-exported so this namespace's call sites and its tests keep one name for
+  one implementation."
+  commands/parse-flags)
 
-(defn words
-  "The arguments that name a command: not flags, and not a flag's value.
-
-  Walked rather than filtered. `--label claude-code` puts a bare token after a
-  flag, and a filter would read `claude-code` as a command word — which matters
-  now that the words are looked up in a registry rather than matched against a
-  fixed list, because an unexpected word turns a valid call into 'no such
-  command'."
-  [args]
-  (loop [args args acc []]
-    (if-let [head (first args)]
-      (if (str/starts-with? head "--")
-        (let [v (second args)]
-          (if (and v (not (str/starts-with? v "--")))
-            (recur (drop 2 args) acc)
-            (recur (rest args) acc)))
-        (recur (rest args) (conj acc head)))
-      acc)))
+(def words
+  "See `parse-flags`. One definition, two front ends."
+  commands/words)
 
 (defn- comma-list [v]
   (when (string? v)
@@ -500,6 +469,11 @@
 (defn bot-list [configuration]
   (client/request! configuration :get "/api/agent-bots"))
 
+(defn org-list [configuration]
+  "The tenants this session's user belongs to, with per-tenant Bot counts and
+  which one the session currently acts in."
+  (client/request! configuration :get "/api/agent-bots/orgs" {}))
+
 (defn bot-workforce [configuration]
   (client/request! configuration :get "/api/agent-bots/workforce"))
 
@@ -550,6 +524,56 @@
                    (str "/api/agent-bots/" (required-flag flags :id)
                         "/messages/" (required-flag flags :run) "/cancel") {}))
 
+(defn- url-segment [value]
+  (URLEncoder/encode (str value) (.name StandardCharsets/UTF_8)))
+
+(defn itonami-profile-list [configuration]
+  (client/request! configuration :get "/api/profiles"))
+
+(defn itonami-session-list [configuration flags]
+  (let [profile (or (:profile flags) "default")]
+    (client/request! configuration :get
+                     (str "/p/" (url-segment profile) "/api/sessions"))))
+
+(defn itonami-session-messages [configuration flags]
+  (let [profile (or (:profile flags) "default")
+        session (or (:session flags) profile)]
+    (client/request! configuration :get
+                     (str "/p/" (url-segment profile) "/api/sessions/"
+                          (url-segment session) "/messages"))))
+
+(defn itonami-run [configuration flags]
+  (let [profile (or (:profile flags) "default")]
+    (client/request! configuration :post
+                     (str "/p/" (url-segment profile) "/v1/runs")
+                     (cond-> {:input (required-flag flags :input)}
+                       (:instructions flags)
+                       (assoc :instructions (:instructions flags))
+                       (:goal flags)
+                       (assoc :goal (contains? #{"true" "1" "yes" true}
+                                                (:goal flags)))))))
+
+(defn itonami-run-status [configuration flags]
+  (client/request! configuration :get
+                   (str "/v1/runs/" (url-segment (required-flag flags :run)))))
+
+(defn itonami-steer [configuration flags]
+  (client/request! configuration :post
+                   (str "/v1/runs/" (url-segment (required-flag flags :run))
+                        "/steer")
+                   {:input (required-flag flags :input)}))
+
+(defn itonami-stop [configuration flags]
+  (client/request! configuration :post
+                   (str "/v1/runs/" (url-segment (required-flag flags :run))
+                        "/stop") {}))
+
+(defn itonami-approve [configuration flags]
+  (client/request! configuration :post
+                   (str "/v1/runs/" (url-segment (required-flag flags :run))
+                        "/approval")
+                   {:choice (or (:choice flags) "once")}))
+
 (defn bot-hygiene
   "The git hygiene the Git Maintainer Bot reads, on demand.
 
@@ -563,25 +587,50 @@
                           (git-hygiene/workspace-root))))
 
 (defn bot-import-report
-  "Read one external source's bots and render the roles they would become.
+  "Preview or stage one external source's migration.
 
-  `existing` comes from this workforce's own list rather than from a name the
-  caller passed: re-running an import must be able to say `already-present`,
-  and the only place that is true is the live registry projection.
+  Hermes uses the API's v2 migration manifest verbatim.  `--stage true` posts
+  the preview it just received back to the stage endpoint, so the CLI cannot
+  grow a second bundle shape or omit a profile the API would retain.
+  `--provision true` additionally creates the inert, credential-free Bots and
+  returns the measured compatibility matrix from that same server-side record.
 
-  Nothing is created here. The output is EDN for `loop-yakuwari`, and the Bot
-  appears at the next `itonami bots provision` -- see `bot-import`'s docstring
-  for why the import is not allowed to be the thing that creates it."
+  Grok retains the v1 role-proposal report.  Neither path creates a Bot; a
+  staged Hermes bundle still needs review, capability rebinding and normal
+  workforce provisioning."
   [configuration flags]
-  (let [source (or (:source flags) (required-flag flags :source))
-        existing (try (mapv :name (:bots (bot-list configuration)))
-                      (catch Exception _ []))]
-    (bot-import/import-report
-     source
-     {:business (or (:business flags) "cloud-itonami")
-      :home (:home flags)
-      :base (:base flags)
-      :existing existing})))
+  (let [source (or (:source flags) (required-flag flags :source))]
+    (if (= "hermes" source)
+      (let [request (cond-> {:business (or (:business flags) "cloud-itonami")}
+                      (:home flags) (assoc :home (:home flags)))
+            preview (client/request-with-timeout!
+                     configuration :post
+                     "/api/agent-bots/imports/hermes/preview" 120 request)]
+        (if (or (contains? #{true "true" "1" "yes"} (:stage flags))
+                (contains? #{true "true" "1" "yes"} (:provision flags)))
+          (let [staged
+                (client/request-with-timeout!
+                 configuration :post "/api/agent-bots/imports/hermes/stage" 3600
+                 (cond-> {:manifest preview}
+                   (:home flags) (assoc :home (:home flags))))]
+            (if (contains? #{true "true" "1" "yes"} (:provision flags))
+              (client/request-with-timeout!
+               configuration :post
+               (str "/api/agent-bots/imports/" (:migration-id staged)
+                    "/provision")
+               3600 (if (contains? #{true "true" "1" "yes"}
+                                   (:carry-over-permissions flags))
+                      {:carry-over-permissions true}
+                      {}))
+              staged))
+          preview))
+      (let [existing (try (mapv :name (:bots (bot-list configuration)))
+                          (catch Exception _ []))]
+        (bot-import/import-report
+         source
+         {:business (or (:business flags) "cloud-itonami")
+          :base (:base flags)
+          :existing existing})))))
 
 (defn- refactor-root [configuration flags]
   (or (:root flags)
@@ -652,6 +701,7 @@
        "  business bind --id <business-id> [--repos a,b] [--canvas c]\n"
        "                [--model path] [--leverage path] [--adoptions a,b] [--lei L]\n\n"
        "  bots list\n"
+      "  orgs list              所属 organization 一覧（Bot 数 / active 表示）\n"
        "  bots workforce\n"
        "  bots provision\n"
        "  bots messages --id <bot-id>\n"
@@ -662,12 +712,25 @@
        "  bots cancel --id <bot-id> --run <run-id>\n"
        "  bots hygiene [--root <west-root>]\n"
        "                         west 全 checkout の git 衛生状態（読み取りのみ）\n\n"
-       "  bots import hermes [--home <hermes-home>] [--business <slug>]\n"
+       "  bots import hermes [--home <hermes-home>] [--business <slug>] [--stage true]\n"
+       "                     [--provision true] [--carry-over-permissions true]\n"
+       "                         carry-over-permissions: ソース profile の観測された tool 権限\n"
+       "                         (command_allowlist と default-enabled toolset) を destination\n"
+       "                         grant に変換して引き継ぐ。omakase と peers は対象外。\n"
        "  bots import grok   [--base <url>] [--business <slug>]\n"
-       "                         外部 bot を role 提案として読み込みます（Bot は作りません）\n\n"
+       "                         Hermes は全 profile の共通 v2 manifest を preview/stage します\n"
+       "                         credential/grant は移送せず rebind-required になります（Bot は作りません）\n\n"
        "  bots refactor scan --root <west-root> [--limit 25]\n"
        "  bots refactor inspect --root <west-root> --repo <west-name> [--limit 8]\n"
        "  bots refactor start --root <west-root> --repo <west-name> --id <bot-id>\n\n"
+       "  itonami profile list\n"
+       "  itonami session list [--profile <bot-id|default>]\n"
+       "  itonami session messages [--profile P] [--session S]\n"
+       "  itonami run --profile <bot-id|default> --input <依頼> [--instructions X] [--goal true]\n"
+       "  itonami run-status --run <run-id>\n"
+       "  itonami steer --run <run-id> --input <追加指示>\n"
+       "  itonami stop --run <run-id>\n"
+       "  itonami approve --run <run-id> [--choice once|session|always|deny]\n\n"
        "CLI では Bot の model route だけ変更できます。権限設定と通常モードの承認はブラウザ専用です。\n"
        "CLI承認はおまかせBotだけです。\n"))
 
@@ -696,6 +759,7 @@
       ["business" "create"] (business-create configuration flags)
       ["business" "bind"] (business-bind configuration flags)
       ["bots" "list"] (bot-list configuration)
+      ["orgs" "list"] (org-list configuration)
       ["bots" "workforce"] (bot-workforce configuration)
       ["bots" "provision"] (bot-workforce-provision configuration)
       ["bots" "messages"] (bot-messages configuration flags)
@@ -705,6 +769,22 @@
       ["bots" "decide"] (bot-decide configuration flags)
       ["bots" "cancel"] (bot-cancel configuration flags)
       ["bots" "hygiene"] (bot-hygiene configuration flags)
+      ["itonami" "profile"]
+      (if (= "list" (nth named 2 nil))
+        (itonami-profile-list configuration)
+        (throw (ex-info "itonami profile は list を指定してください"
+                        {:type :cli/usage})))
+      ["itonami" "session"]
+      (case (nth named 2 nil)
+        "list" (itonami-session-list configuration flags)
+        "messages" (itonami-session-messages configuration flags)
+        (throw (ex-info "itonami session は list / messages を指定してください"
+                        {:type :cli/usage})))
+      ["itonami" "run"] (itonami-run configuration flags)
+      ["itonami" "run-status"] (itonami-run-status configuration flags)
+      ["itonami" "steer"] (itonami-steer configuration flags)
+      ["itonami" "stop"] (itonami-stop configuration flags)
+      ["itonami" "approve"] (itonami-approve configuration flags)
       ["bots" "import"]
       (bot-import-report
        configuration

@@ -1,5 +1,48 @@
 
   document.addEventListener('DOMContentLoaded', () => {
+    // Appearance (ADR-0091). One attribute on `.workspace` is the whole mode;
+    // the stylesheet reads it, nothing below cares. Precedence: `?appearance=`
+    // in the URL, then this device's remembered choice, then what the server
+    // rendered from configuration. The URL form exists so a link can open the
+    // 8-bit floor for someone who has never pressed the toggle.
+    (() => {
+      const workspace = document.querySelector('.workspace');
+      const toggle = document.getElementById('appearance-toggle');
+      if (!workspace) return;
+      const modes = ['light', '8bit', 'grok'];
+      const key = 'cloud-itonami-appearance';
+      const normalize = (v) => (modes.includes(v) ? v : null);
+      const read = () => {
+        try { return normalize(localStorage.getItem(key)); } catch (_) { return null; }
+      };
+      const remember = (mode) => {
+        try { localStorage.setItem(key, mode); } catch (_) { /* private window: not remembered */ }
+      };
+      const apply = (mode) => {
+        workspace.dataset.appearance = mode;
+        document.documentElement.dataset.appearance = mode;
+        if (toggle) {
+          const next = modes[(modes.indexOf(mode) + 1) % modes.length];
+          toggle.dataset.mode = mode;
+          toggle.dataset.next = next;
+          toggle.setAttribute('aria-pressed', mode === 'light' ? 'false' : 'true');
+          toggle.textContent = next === '8bit' ? '8-BIT' : (next === 'grok' ? 'GROK' : 'DADS');
+          toggle.title = next === '8bit' ? '8-BIT MODE にする'
+            : (next === 'grok' ? 'grokモードにする' : '標準表示に戻す');
+        }
+      };
+      const fromUrl = normalize(new URLSearchParams(location.search).get('appearance'));
+      const initial = fromUrl || read() || normalize(workspace.dataset.appearance) || 'light';
+      apply(initial);
+      if (fromUrl) remember(fromUrl);
+      if (toggle) {
+        toggle.addEventListener('click', () => {
+          const next = toggle.dataset.next || 'light';
+          apply(next);
+          remember(next);
+        });
+      }
+    })();
     const $ = (selector, root = document) => root.querySelector(selector);
     const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
     const make = (tag, className, text) => {
@@ -9855,10 +9898,20 @@
       } catch (error) { $('#context-status').textContent = error.message; }
       finally { button.disabled = false; }
     });
+    const botMood = (avatar, status) => {
+      const variant = Number.parseInt(avatar?.variant || 0, 10) || 0;
+      if (status === 'working') return variant % 3 === 0 ? 'hurry' : 'focus';
+      if (status === 'waiting-approval' || status === 'waiting-connection') return 'nervous';
+      if (status === 'blocked') return 'upset';
+      if (status === 'disabled') return 'sleep';
+      if (status === 'idle') return variant % 2 === 0 ? 'joy' : 'nap';
+      return 'focus';
+    };
     const botAvatar = (node, avatar, status = null) => {
       node.dataset.color = avatar?.color || 'blue';
       node.dataset.glyph = avatar?.glyph || 'circle';
       node.dataset.variant = String(avatar?.variant || 0);
+      node.dataset.mood = botMood(avatar, status);
       if (status) node.dataset.status = status;
       else delete node.dataset.status;
       node.setAttribute('aria-hidden', 'true');
@@ -10855,6 +10908,35 @@
           : '（読み取りのみ）'}`));
       panel.append(make('div', null,
         `Model: ${bot['provider-id']} / ${bot.model}`));
+      const workspaceSync = bot['workspace-sync'];
+      if (workspaceSync) {
+        const workspaceCard = make('div', 'bots-card');
+        const stateLabels = {
+          pending:'同期準備中', ok:'同期済み', error:'同期エラー'
+        };
+        const workspaceState = make('div', 'bots-card__summary',
+          `${workspaceSync.mode === 'network' ? 'ネットワーク同期' : 'この端末のDrive'} · ` +
+          `${stateLabels[workspaceSync.state] || workspaceSync.state}`);
+        const workspacePath = make('div', 'bots-card__summary', workspaceSync.path || '');
+        const syncNow = make('button', 'tool-button', '今すぐ同期');
+        syncNow.type = 'button';
+        syncNow.addEventListener('click', async () => {
+          syncNow.disabled = true;
+          workspaceState.textContent = '同期中…';
+          try {
+            const result = await postJSON(`/api/bots/${bot.id}/workspace/sync`, {}, true);
+            const changed = ['pushed', 'pulled', 'remote-trashed', 'local-trashed', 'conflicts']
+              .reduce((total, key) => total + (result[key] || []).length, 0);
+            workspaceState.textContent = `同期済み · 変更 ${changed}件`;
+            await loadBots({keepSelection:true});
+          } catch (error) {
+            workspaceState.textContent = `同期エラー · ${error.message}`;
+          } finally { syncNow.disabled = false; }
+        });
+        workspaceCard.append(make('strong', null, 'Cloud Itonami workspace'),
+          workspaceState, workspacePath, syncNow);
+        panel.append(workspaceCard);
+      }
       const commerce = bot.commerce || {};
       const commerceReadiness = commerce.readiness || {};
       const commerceStore = commerce.store || {};
@@ -11192,6 +11274,10 @@
       workspaceInput.value = bot.workspace || '';
       workspaceInput.placeholder = '/Users/name/github/project';
       workspaceInput.setAttribute('aria-label', 'Git workspace の絶対パス');
+      if (bot['workspace-sync']) {
+        workspaceInput.readOnly = true;
+        workspaceInput.setAttribute('aria-label', 'Cloud Itonami 管理workspace');
+      }
       const saveCoding = make('button', 'tool-button', 'Workspace を変更');
       saveCoding.type = 'button';
       saveCoding.addEventListener('click', async () => {
@@ -11425,7 +11511,7 @@
               'virtual-shell?':bot['virtual-shell?'],
               'goal?':bot['goal?'],
               'omakase?':bot['omakase?'],
-              workspace:bot.workspace,
+              workspace:bot['workspace-sync'] ? null : bot.workspace,
               'provider-id':bot['provider-id'],
               model:bot.model
             }, true);
@@ -11693,10 +11779,6 @@
       const button = $('#bots-create');
       const name = $('#bots-name').value.trim();
       if (!name) { $('#bots-create-status').textContent = '名前を入れてください。'; return; }
-      if (!$('#bots-workspace').value.trim()) {
-        $('#bots-create-status').textContent = 'Git workspace の絶対パスを入れてください。';
-        return;
-      }
       button.disabled = true;
       $('#bots-create-status').textContent = '作成しています…';
       try {
@@ -11712,7 +11794,7 @@
           'peers?':true,
           'coding?':true,
           'virtual-shell?':false,
-          workspace:$('#bots-workspace').value.trim()
+          workspace:null
         }, true);
         botsState.bots = data.bots || [];
         botsState.catalog = data.catalog || [];

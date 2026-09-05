@@ -16,28 +16,47 @@
 ;; Standing on `openrouter/free` from this profile (ADR-2608272200) was the
 ;; 77% failure mode: pinned free ids die in ~24h.
 ;;
-;; Routing, after the gateway is configured:
-;;   z-ai/glm-5.3-flash → qwen/qwen3.8-flash → murakumo-main
+;; Routing (owner decision 2026-09-02, ADR-0092 / root ADR-2609021200):
+;;   awai-network/basho → z-ai/glm-5.3-flash → qwen/qwen3.8-flash → murakumo-main
+;; `awai-network/basho` is awai.network's chat model on murakumo.cloud, whose
+;; API base today is GLM-5.3 on a vendor serverless Model API (Baseten first,
+;; Together second) behind a 200,000 JPY/month budget the gateway enforces.
+;; When that budget is spent, or the vendor backend is not yet attested, the
+;; gateway answers 503 (`self_model_monthly_budget_exhausted` /
+;; `self_model_backend_unavailable`) and this profile's fallback carries the
+;; turn on GLM-5.3-Flash — still through api.murakumo.cloud, still labelled as
+;; the model that actually served.
+;; Video generation uses `awai-network/hokusai` through the same provider
+;; record's `:media` block (Bot tools video_generate / video_status).
 ;; Identity is MURAKUMO_API_KEY (shared token). That is the operator rail —
 ;; credits debit identified customers, not this token (double-charge vs
 ;; OpenRouter, and a zero wallet would 402 Domain Steward).
+;;
+;; This profile is the CLOUD-AGENT profile: the resident it configures is the
+;; one placed on murakumo.cloud (`:residency :cloud`), not a person's laptop.
+;; It binds loopback like every resident; the public hostname reaches it
+;; through the tunnel described in ADR-0092.
 ;;
 ;; This is the operator's act of reviewing, which is the only place it can
 ;; happen: `resources/cloud-itonami-app.defaults.edn` ships every destination
 ;; that leaves the machine as `:reviewed? false :enabled? false`.
 ;;
-;;   MURAKUMO_API_KEY=<key> CLOUD_ITONAMI_PROFILE=itonami clojure -M:server
+;;   MURAKUMO_API_KEY=<key> CLOUD_ITONAMI_PROFILE=itonami nbb --classpath bin bin/cloud-itonami-server
 {:auth {:allow-signup? true}
  :cloud-relay {:base-url "https://hooks.itonami.cloud"
                :access-token-env "CLOUD_ITONAMI_RELAY_ACCESS_TOKEN"}
  :bots {:mail-domain "mail.itonami.cloud"
-        :workforce {:model "z-ai/glm-5.3-flash"}}
+        :workforce {:model "awai-network/basho"}}
  :providers [{:id "murakumo"
               :enabled? true
               :reviewed? true
-              :default-model "z-ai/glm-5.3-flash"
+              :default-model "awai-network/basho"
               :max-transient-retries 2}
              {:id "openrouter" :enabled? false}]
  :routing {:default-provider "murakumo"
-           :default-model "z-ai/glm-5.3-flash"
-           :cloud-enabled? true}}
+           :default-model "awai-network/basho"
+           :cloud-enabled? true}
+ :residency {:plane :cloud
+             :substrate "murakumo.cloud"
+             :ingress "agent.itonami.cloud"}
+ :ui {:appearance :light}}

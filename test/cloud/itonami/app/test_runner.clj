@@ -9,6 +9,9 @@
             [clojure.string :as str]
             [clojure.test :as test]
             [cloud.itonami.app.authority-test]
+            [cloud.itonami.app.vf-journal-test]
+            [cloud.itonami.app.vf-authority-test]
+            [cloud.itonami.app.vf-calibrate-test]
             [cloud.itonami.app.business-test]
             [cloud.itonami.app.agent-session-test]
             [cloud.itonami.app.a2a-test]
@@ -21,17 +24,22 @@
             [cloud.itonami.app.card-statement-test]
             [cloud.itonami.app.cli-test]
             [cloud.itonami.app.west-kotoba-refactor-test]
+            [cloud.itonami.app.cli-aliases-test]
             [cloud.itonami.app.commands-test]
             [cloud.itonami.app.connectors-test]
             [cloud.itonami.app.desktop-test]
             [cloud.itonami.app.device-test]
             [cloud.itonami.app.decision-method-test]
             [cloud.itonami.app.disk-space-test]
+            [cloud.itonami.app.appearance-test]
+            [cloud.itonami.app.hokusai-test]
+            [cloud.itonami.app.media-tools-test]
             [cloud.itonami.app.git-hygiene-test]
             [cloud.itonami.app.domain-tools-test]
             [cloud.itonami.app.bot-import-test]
             [cloud.itonami.app.bot-test]
             [cloud.itonami.app.bot-slo-test]
+            [cloud.itonami.app.bot-cache-test]
             [cloud.itonami.app.bot-authority-test]
             [cloud.itonami.app.bot-dispatcher-test]
             [cloud.itonami.app.bot-identity-test]
@@ -66,6 +74,10 @@
             [cloud.itonami.app.trust-discovery-http-test]
             [cloud.itonami.app.humanity-trust-test]
             [cloud.itonami.app.humanity-trust-http-test]
+            [cloud.itonami.app.human-work-test]
+            [cloud.itonami.app.human-work-assurance-test]
+            [cloud.itonami.app.human-work-http-test]
+            [cloud.itonami.app.human-work-x402-test]
             [cloud.itonami.app.fleet-core-kotoba-parity-test]
             [cloud.itonami.app.organism-worker-kotoba-parity-test]
             ;; b17e0c6 added this and did not register it, so the runner's own
@@ -130,6 +142,7 @@
             [cloud.itonami.app.config-test]
             [cloud.itonami.app.contracts-test]
             [cloud.itonami.app.chronicle-test]
+            [cloud.itonami.app.screen-guest-test]
             [cloud.itonami.app.core-test]
             [cloud.itonami.app.credential-http-test]
             [cloud.itonami.app.credential-rdf-test]
@@ -189,6 +202,10 @@
             [cloud.itonami.app.namespaces-test]
             [cloud.itonami.app.fleet-tools-test]
             [cloud.itonami.app.openai-compat-test]
+            [cloud.itonami.app.hermes-compat-test]
+            [cloud.itonami.app.hermes-migration-test]
+            [cloud.itonami.app.hermes-carry-over-test]
+            [cloud.itonami.app.hermes-compat-http-test]
             [cloud.itonami.app.provider-test]
             [cloud.itonami.app.pageview-test]
             [cloud.itonami.app.passkey-test]
@@ -216,6 +233,9 @@
 
 (def ^:private namespaces
   '[cloud.itonami.app.authority-test
+    cloud.itonami.app.vf-journal-test
+    cloud.itonami.app.vf-authority-test
+    cloud.itonami.app.vf-calibrate-test
     cloud.itonami.app.a2a-test
     cloud.itonami.app.business-test
     cloud.itonami.app.agent-session-test
@@ -228,15 +248,20 @@
     cloud.itonami.app.card-statement-test
     cloud.itonami.app.cli-test
     cloud.itonami.app.west-kotoba-refactor-test
+    cloud.itonami.app.cli-aliases-test
     cloud.itonami.app.commands-test
     cloud.itonami.app.connectors-test
     cloud.itonami.app.desktop-test
     cloud.itonami.app.device-test
     cloud.itonami.app.decision-method-test
     cloud.itonami.app.disk-space-test
+    cloud.itonami.app.appearance-test
+    cloud.itonami.app.hokusai-test
+    cloud.itonami.app.media-tools-test
     cloud.itonami.app.git-hygiene-test
     cloud.itonami.app.bot-test
     cloud.itonami.app.bot-slo-test
+    cloud.itonami.app.bot-cache-test
     cloud.itonami.app.bot-authority-test
     cloud.itonami.app.bot-dispatcher-test
     cloud.itonami.app.bot-identity-test
@@ -270,6 +295,10 @@
     cloud.itonami.app.trust-discovery-http-test
     cloud.itonami.app.humanity-trust-test
     cloud.itonami.app.humanity-trust-http-test
+    cloud.itonami.app.human-work-test
+    cloud.itonami.app.human-work-assurance-test
+    cloud.itonami.app.human-work-http-test
+    cloud.itonami.app.human-work-x402-test
     cloud.itonami.app.fleet-core-kotoba-parity-test
     cloud.itonami.app.organism-worker-kotoba-parity-test
     cloud.itonami.app.kotoba-oracle-test
@@ -309,6 +338,7 @@
     cloud.itonami.app.config-test
     cloud.itonami.app.contracts-test
     cloud.itonami.app.chronicle-test
+    cloud.itonami.app.screen-guest-test
     cloud.itonami.app.core-test
     cloud.itonami.app.credential-http-test
     cloud.itonami.app.credential-rdf-test
@@ -369,6 +399,10 @@
     cloud.itonami.app.namespaces-test
     cloud.itonami.app.fleet-tools-test
     cloud.itonami.app.openai-compat-test
+    cloud.itonami.app.hermes-compat-test
+    cloud.itonami.app.hermes-migration-test
+    cloud.itonami.app.hermes-carry-over-test
+    cloud.itonami.app.hermes-compat-http-test
     cloud.itonami.app.provider-test
     cloud.itonami.app.pageview-test
     cloud.itonami.app.passkey-test

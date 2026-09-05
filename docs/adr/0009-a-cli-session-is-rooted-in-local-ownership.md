@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted. 2026-07-31.
+Accepted. 2026-07-31. 2026-09-02: `deps.edn` alias `:cli` is gone. Do not
+run `clojure -M:cli`.
 
 ## Context
 

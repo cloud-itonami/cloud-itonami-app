@@ -29,7 +29,7 @@
   `~/.cloud-itonami/app` and `~/.cloud-itonami/data` are one installation, and
   `bin/itonami` already says so -- it exports `CLOUD_ITONAMI_DATA_DIR` before
   spawning the CLI. That covered commands run THROUGH the launcher and nothing
-  else. A bare `clojure -M:cli` or `-M:server` in the same directory fell back
+  else. A bare leftover JVM CLI or leftover JVM server in the same directory fell back
   to the relative `data` and created a THIRD store at
   `~/.cloud-itonami/app/data`, holding an enrollment key no running server had
   ever written. Measured 2026-08-20 on this machine: that directory existed,

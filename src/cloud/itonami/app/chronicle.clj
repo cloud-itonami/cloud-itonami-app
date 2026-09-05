@@ -11,9 +11,11 @@
             [clojure.set :as set]
             [clojure.string :as str]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.screen-guest :as screen-guest]
+            [cloud.itonami.app.secure-file :as secure-file]
             [cloud.itonami.app.store :as store])
   (:import [java.nio.file Files]
-           [java.nio.file.attribute PosixFilePermissions]
+
            [java.security MessageDigest]
            [java.util UUID]
            [java.util.concurrent Executors ScheduledExecutorService ThreadFactory
@@ -118,9 +120,7 @@
   (io/file (config/data-dir) "chronicle" (subs (digest user-id) 0 24)))
 
 (defn- secure-permissions! [file permissions]
-  (Files/setPosixFilePermissions
-   (.toPath (io/file file))
-   (PosixFilePermissions/fromString permissions))
+  (secure-file/harden! (io/file file) permissions)
   file)
 
 (defn- frontmost-application []
@@ -194,15 +194,32 @@
           previous (->> (vals (get-in (store/snapshot)
                                       (user-path user-id :frames) {}))
                         (sort-by :captured-at-ms >) first)
+          ;; Frame dedup judgment rides the compiled screen gate
+          ;; (kotoba-lang/screen artifacts/, run through kotoba.kir) rather
+          ;; than an inline equality. chronicle-keep? answers 1 = keep,
+          ;; 0 = drop (same combined digest = same context); the inline
+          ;; rule this replaces was "same text digest = duplicate = drop".
+          ;; The gate fails open to KEEP (the host-native answer) when
+          ;; unavailable, so capture never stalls on a bridge defect.
           duplicate? (and (not (str/blank? text))
-                          (= (digest text) (:text-digest previous)))]
+                          (not (screen-guest/frame-keep? (:text-digest previous)
+                                                         (digest text))))]
       (if duplicate?
-        (do (remove-file! (.getCanonicalPath image)) previous)
+        (do (remove-file! (.getCanonicalPath image))
+            ;; A successful capture pass (even a duplicate) means the
+            ;; permission gate opened again: clear a stale failure record so
+            ;; the operator's overview does not report a problem that has
+            ;; already healed.
+            (store/transact! dissoc (user-path user-id) :last-error)
+            previous)
         (let [frame {:id id :captured-at (store/now) :captured-at-ms now-ms
                      :application (frontmost-application)
                      :ocr text :text-digest (when-not (str/blank? text) (digest text))
                      :image-path (.getCanonicalPath image)}]
           (store/transact! assoc-in (user-path user-id :frames id) frame)
+          ;; Same heal-signal as the duplicate branch: a successful capture
+          ;; means the permission gate opened again.
+          (store/transact! dissoc (user-path user-id) :last-error)
           (prune! user-id)
           frame)))))
 

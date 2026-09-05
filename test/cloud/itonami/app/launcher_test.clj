@@ -28,7 +28,7 @@
         _ (.setExecutable fake-clojure true)
         process (ProcessBuilder. ^java.util.List
                                  (cond-> ["nbb" (.getPath installed)]
-                                   (= launcher "itonami") (conj "status")))
+                                   (= launcher "itonami") (conj "--print-data-dir")))
         environment (.environment process)
         _ (.put environment "HOME" (.getCanonicalPath home))
         _ (.put environment "PATH"
@@ -44,19 +44,106 @@
      :app (.getCanonicalPath app)
      :data (.getCanonicalPath (io/file home ".cloud-itonami" "data"))}))
 
-(deftest resident-command-launchers-share-the-resident-data-directory
-  (doseq [[launcher alias] [["itonami" "-M:cli status"]
-                            ["itonami-mcp" "-M:mcp"]]]
-    (let [{:keys [status stderr lines app data]}
-          (run-resident-script launcher nil)]
-      (is (zero? status) stderr)
-      (is (= [app data alias] lines) launcher))))
+(deftest resident-cli-launcher-answers-from-its-own-file
+  ;; A resident install copies the launcher alone, so --print-data-dir has to be
+  ;; answerable before any sibling is loaded. It still does not spawn clojure.
+  ;; (Renamed 2026-09-03: the CLI is no longer closed -- it dispatches -- but
+  ;; this property is the one the copy actually tests.)
+  (let [{:keys [status stderr lines app data]}
+        (run-resident-script "itonami" nil)]
+    (is (zero? status) stderr)
+    (is (= [data app] lines))))
+
+(deftest resident-mcp-launcher-does-not-spawn-clojure
+  (let [home (temporary-directory)
+        app (io/file home ".cloud-itonami" "app")
+        bin (io/file app "bin")
+        fake-bin (io/file home "fake-bin")
+        installed (io/file bin "itonami-mcp")
+        fake-clojure (io/file fake-bin "clojure")
+        marker (io/file home "clojure-was-spawned")
+        _ (.mkdirs bin)
+        _ (.mkdirs fake-bin)
+        _ (io/copy (io/file "bin" "itonami-mcp") installed)
+        _ (.setExecutable installed true)
+        _ (spit fake-clojure
+                (str "#!/bin/sh\n"
+                     "printf spawned > '" (.getCanonicalPath marker) "'\n"
+                     "exit 42\n"))
+        _ (.setExecutable fake-clojure true)
+        process (ProcessBuilder. ^java.util.List
+                                 ["nbb" (.getPath installed) "--print-data-dir"])
+        environment (.environment process)
+        _ (.put environment "HOME" (.getCanonicalPath home))
+        _ (.put environment "PATH"
+                (str (.getCanonicalPath fake-bin) ":" (get environment "PATH")))
+        _ (.remove environment "CLOUD_ITONAMI_DATA_DIR")
+        started (.start process)
+        stdout (slurp (.getInputStream started))
+        stderr (slurp (.getErrorStream started))
+        status (.waitFor started)
+        lines (str/split-lines stdout)]
+    (is (zero? status) stderr)
+    (is (not (.exists marker)) "itonami-mcp must not spawn clojure")
+    (is (= (.getCanonicalPath (io/file home ".cloud-itonami" "data"))
+           (first lines)))
+    (is (= (.getCanonicalPath app) (second lines)))))
+
+(deftest replacement-launchers-are-not-clojure-wraps
+  (let [mcp (slurp "bin/itonami-mcp")
+        itonami (slurp "bin/itonami")
+        desktop (slurp "bin/cloud-itonami-app")
+        server (slurp "bin/cloud-itonami-server")
+        macos (slurp "packaging/macos/CloudItonami")
+        windows (slurp "packaging/windows/launcher/main.go")]
+    (is (not (str/includes? mcp "spawnSync")))
+    (is (not (str/includes? mcp "clojure -M:mcp")))
+    (is (not (str/includes? mcp "-M:mcp")))
+    (is (str/includes? mcp "guest-wasm"))
+    ;; The launcher must not start a JVM. It DOES spawn `security` to read one
+    ;; Keychain item, so the bare word `spawnSync` is not the property -- and
+    ;; measured 2026-09-02, that substring check was already failing on the
+    ;; file's own comment about the spawn it had removed, which is a control
+    ;; going red for a reason other than the one it names.
+    (is (not (re-find #"spawnSync[^\n]*\"clojure\"" itonami)))
+    (is (not (str/includes? itonami "-M:cli")))
+    ;; It is a front end now, not a refusal: it resolves commands.
+    (is (str/includes? itonami "resolve-invocation"))
+    (is (not (str/includes? desktop "clojure -M:server")))
+    (is (str/includes? desktop "cloud-itonami-server"))
+    (is (str/includes? server "guest-wasm"))
+    (is (str/includes? server "health-route?"))
+    (is (not (str/includes? macos "Java 21")))
+    (is (not (str/includes? macos "java_home")))
+    (is (not (str/includes? macos "clojure.main")))
+    (is (not (str/includes? windows "Java 21")))
+    (is (not (str/includes? windows "clojure.main")))))
+
+(deftest leftover-jvm-aliases-are-gone
+  (let [deps (read-string (slurp "deps.edn"))
+        aliases (:aliases deps)
+        ;; RESTORED 2026-09-03 (deps.edn comment): :server/:mcp name the
+        ;; production launchd run path until the nbb guest host is proven
+        ;; live. The restored aliases declare themselves in
+        ;; :launcher-known-aliases, so an undocumented reintroduction of
+        ;; :cli -- or any alias outside that set -- still goes red here.
+        known (:launcher-known-aliases aliases)]
+    (is (contains? aliases :launcher-known-aliases)
+        "the restored :server/:mcp must declare themselves")
+    (is (= #{:server :mcp} known))
+    (is (not (contains? aliases :cli)))
+    (is (contains? aliases :test))
+    (is (contains? aliases :gen))
+    (is (contains? aliases :lint))
+    (is (contains? aliases :build))
+    (is (contains? aliases :repository))
+    (is (contains? aliases :ao-messenger))))
 
 (deftest an-explicit-data-directory-wins-in-the-resident-launcher
   (let [explicit "/tmp/cloud-itonami-explicit-data"
         {:keys [status stderr lines]} (run-resident-script "itonami" explicit)]
     (is (zero? status) stderr)
-    (is (= explicit (second lines)))))
+    (is (= explicit (first lines)))))
 
 (deftest resident-clone-resolves-shell-from-workspace-root
   (let [root (temporary-directory)

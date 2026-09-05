@@ -88,6 +88,21 @@
   (let [c (or (get-in parsed [:error :code]) (:code parsed))]
     (when (integer? c) c)))
 
+(def ^:private permanent-error-codes
+  "String codes a gateway sends with a retryable-looking status for a
+  condition that cannot clear within a retry window. murakumo answers 503 for
+  Basho's spent monthly budget and for a backend that is not attested
+  (ADR-0092); both are also typed `invalid_request_error`, but the code is
+  pinned here so a change of type upstream cannot turn them into a retry
+  storm. Fallback still applies (`:provider/http-error`), retry does not."
+  #{"self_model_monthly_budget_exhausted"
+    "self_model_backend_unavailable"
+    "self_model_budget_unconfigured"})
+
+(defn- body-error-code-name [parsed]
+  (let [c (or (get-in parsed [:error :code]) (:code parsed))]
+    (when (string? c) (str/lower-case c))))
+
 (defn transient-response?
   "Is this failed response worth sending again?
 
@@ -103,6 +118,7 @@
   (let [type (body-error-type parsed)
         code (body-error-code parsed)]
     (cond
+      (contains? permanent-error-codes (body-error-code-name parsed)) false
       (contains? permanent-error-types type) false
       (contains? transient-error-types type) true
       (and code (contains? retryable-http-statuses code)) true

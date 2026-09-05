@@ -136,6 +136,11 @@
   at all, which is either infrastructure or a step in a browser handshake."
   [body]
   (cond
+    ;; A route in a dedicated HttpHandler can be followed in source by a
+    ;; different handler whose body contains an auth call. The scanner slices
+    ;; text between route clauses, so the final clause needs an explicit bound.
+    ;; This marker is used only for genuinely public infrastructure routes.
+    (str/includes? body "route-gate:none") :none
     (str/includes? body "require-human-session!") :human
     (str/includes? body "require-app-session!") :app
     (str/includes? body "require-session!") :session

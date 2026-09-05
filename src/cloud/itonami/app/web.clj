@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.web
   "DADS-backed WebKit workspace hosted by kotoba-lang/shell."
   (:require [clojure.java.io :as io]
+            [cloud.itonami.app.appearance :as appearance]
             [hanmen.svg :as hanmen-svg]
             [jp-go-dds.core :as dds]
             [jp-go-dds.page :as page]))
@@ -413,6 +414,35 @@
   .bot-avatar[data-status='working']{--bot-breathe-time:2.4s;--bot-look-time:4.2s}
   .bot-avatar[data-status='waiting-approval'],
   .bot-avatar[data-status='waiting-connection']{--bot-look-time:4.8s}
+  /* Mood is a deterministic projection of operational state plus the avatar
+     variant. It adds character without replacing the readable status text. */
+  .bot-avatar[data-mood='hurry']{animation:bot-hurry .42s steps(2,end) infinite}
+  .bot-avatar[data-mood='hurry']::after{box-shadow:.62em 0 0 var(--color-neutral-solid-gray-900),
+    1.18em -.72em 0 .08em #73eff7}
+  .bot-avatar[data-mood='nap'],.bot-avatar[data-mood='sleep']{
+    animation:bot-nap 2.8s steps(2,end) infinite}
+  .bot-avatar[data-mood='nap']::before,.bot-avatar[data-mood='sleep']::before{
+    height:.12em;top:48%;border-radius:999px;background:var(--color-neutral-solid-gray-800);
+    box-shadow:.62em 0 0 var(--color-neutral-solid-gray-800);animation:none}
+  .bot-avatar[data-mood='nap']::after,.bot-avatar[data-mood='sleep']::after{
+    content:'z';width:auto;height:auto;left:auto;right:-.35em;top:-.45em;
+    color:var(--color-neutral-solid-gray-700);background:transparent;box-shadow:none;
+    font-size:.72em;font-weight:800;animation:bot-dream 2.8s steps(2,end) infinite}
+  .bot-avatar[data-mood='joy']{animation:bot-joy .8s steps(2,end) infinite}
+  .bot-avatar[data-mood='joy']::before{height:.2em;top:40%;transform:scaleY(.6);
+    animation:none}
+  .bot-avatar[data-mood='joy']::after{width:.58em;height:.3em;left:calc(50% - .29em);top:58%;
+    border-radius:0 0 999px 999px;border-bottom:.12em solid var(--color-neutral-solid-gray-900);
+    background:transparent;box-shadow:none;animation:none}
+  .bot-avatar[data-mood='nervous']{animation:bot-nervous .32s steps(2,end) infinite}
+  .bot-avatar[data-mood='nervous']::before{transform:scale(1.15);animation:none}
+  .bot-avatar[data-mood='nervous']::after{animation:bot-nervous-look .64s steps(2,end) infinite}
+  .bot-avatar[data-mood='upset']::before{height:.22em;top:42%;border-radius:999px;
+    transform:rotate(-8deg);animation:none}
+  .bot-avatar[data-mood='upset']::after{width:.55em;height:.22em;left:calc(50% - .275em);top:66%;
+    border-radius:999px 999px 0 0;border-top:.1em solid var(--color-neutral-solid-gray-900);
+    background:transparent;box-shadow:none;animation:none}
+  /* Disabled remains still even though its projected mood is sleep. */
   .bot-avatar[data-status='disabled']{animation:none;filter:saturate(.35)}
   .bot-avatar[data-status='disabled']::before{animation:none;transform:scaleY(.22)}
   .bot-avatar[data-status='disabled']::after{animation:none}
@@ -423,6 +453,16 @@
   @keyframes bot-look{0%,18%,82%,100%{transform:translateX(0)}
     28%,42%{transform:translateX(.1em)}
     58%,72%{transform:translateX(-.08em)}}
+  @keyframes bot-hurry{0%,100%{transform:translateX(-.08rem) rotate(-2deg)}
+    50%{transform:translateX(.08rem) rotate(2deg)}}
+  @keyframes bot-nap{0%,100%{transform:translateY(0)}50%{transform:translateY(.08rem)}}
+  @keyframes bot-dream{0%,100%{transform:translateY(0);opacity:.55}
+    50%{transform:translateY(-.18rem);opacity:1}}
+  @keyframes bot-joy{0%,100%{transform:translateY(0) rotate(-2deg)}
+    50%{transform:translateY(-.16rem) rotate(3deg)}}
+  @keyframes bot-nervous{0%,100%{transform:rotate(-2deg)}50%{transform:rotate(2deg)}}
+  @keyframes bot-nervous-look{0%,100%{transform:translateX(-.08em)}
+    50%{transform:translateX(.1em)}}
   .bot-avatar--xl{width:4.5rem;height:4.5rem;font-size:1.75rem}
   .bot-avatar[data-glyph='circle']{border-radius:50%}
   .bot-avatar[data-glyph='bean']{border-radius:50% 50% 45% 55% / 55% 45% 55% 45%}
@@ -1604,8 +1644,12 @@
   arrives with the version that emits the markup needing it. It brings no
   colour and no font — everything in it is `currentColor` and `inherit`,
   which is why this can concatenate it without checking it against the
-  tokens `core-test` guards."
-  (str base-css "\n  " hanmen-svg/stylesheet "\n"))
+  tokens `core-test` guards.
+
+  The 8-bit appearance layer (`cloud.itonami.app.appearance/css`) is
+  concatenated LAST so that its overrides win, and so that the same token
+  guard covers it: every `--eightbit-*` it references it also declares."
+  (str base-css "\n  " hanmen-svg/stylesheet "\n" appearance/css "\n"))
 
 (def interaction-js
   "The page's interaction layer, which is JavaScript and now lives in a
@@ -1919,6 +1963,8 @@
         provider (get-in configuration [:routing :default-provider])
         model (get-in configuration [:routing :default-model])
         brand (get-in configuration [:brand :name] "Cloud Itonami")
+        mode (appearance/resolve-mode configuration)
+        residency (appearance/residency-plane configuration)
         css (slurp (io/resource "jp_go_dds/dds.css"))]
     (page/->page
      {:title (str "Bots | " brand)
@@ -1927,7 +1973,11 @@
       :head [[:link {:rel "icon" :type "image/png" :href "/icon.png"}]
              [:link {:rel "apple-touch-icon" :href "/icon.png"}]
              [:script signal-js] [:script interaction-js]]}
-     [:div {:class "workspace" :data-brand brand}
+     ;; `data-appearance` is the whole of a mode (ADR-0091): the server renders
+     ;; the configured default, `interaction.js` flips it to the device's
+     ;; remembered choice, and the stylesheet reads it. Nothing else differs.
+     [:div {:class "workspace" :data-brand brand :data-appearance mode
+            :data-residency (name residency)}
       (comment-layer)
       [:aside {:class "sidebar" :aria-label "メインメニュー"}
        [:div {:class "brand"}
@@ -1996,11 +2046,18 @@
         ;; egress was impossible; with a reviewed cloud provider admitted it
         ;; was a badge claiming the opposite of what the app was doing.
         [:strong (if cloud? "● 許可済み接続あり" "● ローカルのみ")]
+        ;; Where the agent itself lives (ADR-0092): `local` is this machine's
+        ;; resident; `cloud` is the resident placed on murakumo.cloud, which
+        ;; the person reaches instead of running one. Read from configuration
+        ;; because the process cannot tell from inside — both bind loopback.
+        [:span {:id "workspace-residency" :data-residency (name residency)}
+         (if (= :cloud residency) "cloud-agent · murakumo.cloud" "local-agent · この端末")]
         [:span {:id "workspace-status"} "既存サービスを確認中…"]]]
       [:div {:class "main"}
        [:header {:class "topbar" :data-kotoba-window-drag "true"}
         [:h2 {:class "topbar__title" :id "current-view"} "Bots"]
         (comment-mode-toggle)
+        (appearance/toggle-button mode)
         [:div {:class "topbar__context authenticated-only" :id "project-titlebar-context"
                :data-topbar-view "chat" :hidden true}
          [:button {:class "context-button" :id "chat-context-button" :type "button"
@@ -2166,7 +2223,7 @@
             [:div {:class "bots-onboard__step" :id "bots-step-services"}
              (dds/heading 2 "必要なら外部サービスを追加" {:size "28"})
              [:p {:class "view-lead"}
-              "Bot は local Git workspace を中心に働きます。Gmail・Driveなどは、その Bot の仕事に必要な場合だけ追加してください。何も選ばず進められます。"]
+              "Bot は Cloud Itonami 専用workspaceを持ちます。Gmailなどは、その Bot の仕事に必要な場合だけ追加してください。何も選ばず進められます。"]
              [:input {:class "bots-search" :id "bots-service-search" :type "search"
                       :placeholder "探す" :autocomplete "off"}]
              [:div {:class "bots-grid" :id "bots-service-grid"}]
@@ -2174,21 +2231,15 @@
              [:button {:class "primary-action" :id "bots-services-next" :type "button"}
               "次へ"]]
             [:div {:class "bots-onboard__step" :id "bots-step-create" :hidden true}
-             (dds/heading 2 "Local workspace で働く Bot" {:size "28"})
+             (dds/heading 2 "Cloud Itonami workspace で働く Bot" {:size "28"})
              [:p {:class "view-lead"}
-              "まずフォルダ・ソース・Git履歴を読み、必要な変更を提案します。外部サービスは追加能力です。"]
-             [:div {:class "field"}
-              [:label {:for "bots-workspace"} "作業する Git workspace"]
-              [:input {:id "bots-workspace" :type "text" :maxlength "4096"
-                       :autocomplete "off"
-                       :placeholder "/Users/name/github/project"}]
-              [:span {:class "form-help"}
-               "既存Git repositoryのrootを正確に指定します。この範囲の外は読めません。"]]
+              "Bot専用フォルダをこのMacに自動作成し、Cloud Itonami Driveと双方向同期します。別の端末やWebでの変更も同じworkspaceに届きます。"]
+             [:input {:id "bots-workspace" :type "hidden" :value ""}]
              [:div {:class "bots-permission bots-permission--summary"}
               [:span {:class "bots-permission__copy"}
                [:span "自律モードで開始します"]
                [:span {:class "bots-permission__help"}
-                (str "このworkspace内の読み取り・ファイル変更・local commitを自律実行します。"
+                (str "Bot専用workspace内の読み取り・ファイル変更・local commitを自律実行します。"
                      "push、外部アカウント、Wallet署名は自動では付与されません。"
                      "細かな権限やModelは、作成後にBot設定から変更できます。")]]]
              [:button {:class "tool-button" :id "bots-pick-services" :type "button"}

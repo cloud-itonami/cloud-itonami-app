@@ -73,10 +73,18 @@ context envelopes, grants, approval and replay. See
 ## Requirements
 
 - macOS 14 or later for the native shell, EventKit, and Keychain integrations
-- Java 21+
-- Clojure CLI
+- Node.js 22+ and `nbb` (host adapter for the loopback server and MCP stdio)
+- `amu` (`kotoba-lang/amu`) to emit wasm / sealed KEXE
 - `jq` and `curl`
 - Ollama or another configured OpenAI-compatible provider
+
+The run path is the nbb hosts that load the guest wasm
+(`bin/cloud-itonami-server`, `bin/itonami-mcp`). `deps.edn` has no
+`:server`, `:mcp`, or `:cli` aliases. Java and the Clojure CLI remain
+leftover for `:test`, `:gen`, `:repository`, `:ao-messenger`, `:lint`,
+and `:build`. Default CI is `amu-jvm-free-emit` (java/clojure off PATH).
+`clojure -M:test` is leftover (`.github/workflows/leftover-jvm-tests.yml`,
+workflow_dispatch only).
 
 Pure tests and the loopback web surface also run on Linux.
 
@@ -84,7 +92,7 @@ Pure tests and the loopback web surface also run on Linux.
 
 Developer-preview builds are published on the
 [GitHub Releases](https://github.com/cloud-itonami/cloud-itonami-app/releases)
-page. All builds currently require Java 21+.
+page. Packaged launchers start the nbb host adapter; they do not require Java.
 
 - **macOS 14+, Apple Silicon:** DMG and ZIP. The app is ad-hoc signed, not
   Apple notarized, so macOS may require Control-click → Open on first launch.
@@ -149,33 +157,26 @@ pinned jsign 7.5 release, verified against its published SHA-256 before use;
 the updater rejects a package unless Windows validates its Authenticode chain
 and the signer certificate SHA-256 matches the current installation.
 
-## iOS and Android
-
-There is a phone app, and it is a different shape from the desktop one. The
-desktop app is a window onto the JVM server on `localhost:1338`; neither iOS
-nor Android has a JVM, so the mobile app instead **carries a web bundle** and
-reads over HTTPS from the Cloudflare Worker that ADR-2608081500 moved the
-server surface onto. `kotoba-lang/shell` supplies the native host, the in-app
-provider bridge and the signing/packaging half.
-
-What is on the phone is exactly what the edge serves, which today is the fleet
-directory — chat, mail, drive, calendar and every write surface are still
-JVM-only. They arrive on the phone as the remaining slices land.
-
-Built and measured 2026-08-31: a real `app-debug.apk` carrying the bundle; the
-bundle itself driven in a real browser at phone size, including the offline
-path. iOS scaffolds and has not been compiled on this workstation — Xcode has
-no iOS platform installed here, which `xcodebuild -downloadPlatform iOS` fixes.
-See [`mobile/README.md`](mobile/README.md) and
-[ADR-0087](docs/adr/0087-the-mobile-app-carries-a-bundle-and-reads-the-edge.md).
-
 ## Run
 
 ```bash
-clojure -P
-clojure -M:server
+nbb --classpath bin bin/cloud-itonami-server
 open http://localhost:1338
 ```
+
+`GET /health` is admitted by the guest export `health-route?` in
+`server_main.wasm`. Compile first:
+
+```bash
+AMU=<amu launcher> bin/kotoba compile src/cloud/itonami/app/server_main.kotoba --target wasm --json
+AMU=<amu launcher> bin/kotoba compile src/cloud/itonami/app/mcp_main.kotoba --target wasm --json
+```
+
+ADAPTER-EMIT HOLD: the file on disk plus the **app-local** adapter
+envelope (`cloud-itonami-app/bin/kotoba`). That is not `:compile/emitted`
+from the Release/v0.6.29 kotoba CLI. Production pin stays
+`:git/tag v0.6.29`. The amu canary (`nbb --classpath bin bin/compile-amu`)
+also writes sealed `.kexe` plus provenance. KEXE is not a Mach-O executable.
 
 `bin/cloud-itonami-app` opens the web surface as an application window — no tab
 strip, no address bar — and starts the server only when nothing already answers
@@ -197,7 +198,7 @@ Until that is fixed, use the launcher's own documented fallback, which is the
 same surface in an application window:
 
 ```bash
-clojure -M:server &
+nbb --classpath bin bin/cloud-itonami-server &
 open -na "Google Chrome" --args --app="http://localhost:1338/" \
   --window-size=430,860 --window-position=140,60
 ```
@@ -231,6 +232,12 @@ The CLI can inventory checked-out west projects locally, then submit one
 compatibility-preserving migration slice to a coding Bot. `scan` and `inspect`
 do not start the app server and never edit a checkout.
 
+> **Not yet on the nbb front end.** `scan` and `inspect` read west metadata on
+> this machine rather than calling a route, so the client refuses them by name
+> (`:client/host-side-command`) instead of reporting "no such command". They are
+> listed in `:host-side` in `resources/cloud-itonami-app.cli-aliases.edn`, with
+> the reason, so the gap is a named entry rather than a silence.
+
 ```bash
 bin/itonami bots refactor scan --root /path/to/com-junkawasaki --limit 25
 bin/itonami bots refactor inspect --root /path/to/com-junkawasaki \
@@ -249,32 +256,70 @@ rebase, and west pin changes; those remain release operations outside the Bot.
 
 ## Sign-in and sign-up
 
-The product entrance is Passkey/WebAuthn through `auth.itonami.cloud`, with
-device-local Passkey recovery and invitation enrolment. Email magic links and
-provider SSO do not mint application sessions. Provider OAuth exists only for
-delegated service connections, so connecting mailbox, Drive, or repository
-access cannot become a login ceremony. Payment, e-signature, federation, and
-outward-authority approval retain their dedicated Passkey ceremonies.
+The product entrance is Passkey/WebAuthn through `auth.itonami.cloud`, with a
+device-local Passkey recovery path and optional one-time Email links. Provider
+SSO is not exposed by the default or `itonami` profile. The backend retains an
+explicit compatibility option for a deployment that deliberately supplies an
+SSO provider list and OAuth clients.
+
+SSO authentication scopes are separate from delegated service connections:
+signing in never grants mailbox, Drive, or repository access. A provider
+subject is unique to one local User, and a matching Email address never merges
+accounts automatically. To add another provider to an existing User, sign in
+first and use the explicit link controls in Settings. Payment, e-signature,
+federation, and outward-authority approval retain their dedicated Passkey
+ceremonies as step-up authentication.
 
 The Settings page also lists this User's active sessions, can revoke another
-device, and clears the current HttpOnly cookie on sign-out. Legacy linked
-identities may remain readable for migration, but they are not login roots.
-Session responses never contain token digests or CSRF values.
+device, clears the current HttpOnly cookie on sign-out, and can unlink a legacy
+Email or SSO identity only while another login root remains. Session responses
+never contain token digests or CSRF values.
+
+For a compatibility deployment, Google and Microsoft can be configured without
+distributing a secret:
+
+```edn
+{:auth {:sso-enabled? true
+        :sso-providers [:google :microsoft :github]
+        :sso-clients
+        {:google {:client-id "PUBLIC-DESKTOP-CLIENT-ID"
+                  :public-client? true}
+         :microsoft {:client-id "PUBLIC-DESKTOP-CLIENT-ID"
+                     :public-client? true}}}}
+```
+
+The client ID is public configuration; the token exchange still requires the
+per-transaction PKCE verifier. GitHub's browser OAuth exchange requires a
+client secret, so GitHub remains a credential-store/hosted-broker deployment
+until a separate device-flow UX is selected; setting `:public-client? true`
+does not falsely mark it configured.
 
 ## `itonami` — the command line, without opening the app
 
-`bin/itonami` runs any of the app's operations from any directory. It starts a
-headless server if one is not already running, so nothing here needs the desktop
-window (ADR-0018).
+`bin/itonami` runs any of the app's operations from any directory. It starts no
+JVM: it is an nbb client that resolves a command to a method and a path, carries
+the agent session, and prints what the server said.
+
+It does **not** start a server. The resident is launchd's
+(`dev.cloud-itonami.app`), and `up` / `down` say so rather than pretending to
+supervise it.
+
+Two name sources, one resolver (`cloud.itonami.app.commands`, `.cljc`, shared
+with the JVM side): the generated registry in
+`resources/cloud-itonami-app.commands.edn`, and the named commands an operator
+actually types in `resources/cloud-itonami-app.cli-aliases.edn`.
+
+Exit codes are the contract: **0** answered, **1** the server refused or a flag
+is missing, **2** could not answer — no server, no session, no such command.
 
 ```bash
-bin/itonami up                    # start a headless server (no window)
 bin/itonami status                # where the server is, and whether you can act
 bin/itonami commands              # every command, with the coverage counts
 bin/itonami commands drive        # just the ones matching "drive"
-bin/itonami down                  # stop the server this data directory started
 
 bin/itonami auth login --label claude-code
+bin/itonami bots list
+bin/itonami bots task --id bot-1 --text "調べて"
 bin/itonami workspace inbox
 bin/itonami workspace drive search --q invoice
 bin/itonami workspace drive documents rename --document doc-1 --title "New"
@@ -294,7 +339,7 @@ serving process opened, `itonami status` prints it next to this terminal's own
 as `store` / `server-store` / `serves-this-store?`, and a command aimed at a
 server serving a different store is refused before it is sent rather than
 acted on. `~/.cloud-itonami/app` resolves `~/.cloud-itonami/data` whether it is
-entered through `bin/itonami` or with a bare `clojure -M:cli`.
+entered through `bin/itonami` (data-dir only; the leftover JVM CLI is closed).
 
 The commands are generated from the routes `server.clj` serves, not written by
 hand — `commands-test` re-derives them and fails if the checked-in registry has
@@ -512,17 +557,15 @@ Transport is stdio, so nothing new listens on the network.
 {
   "mcpServers": {
     "cloud-itonami-fleet": {
-      "command": "clojure",
-      "args": ["-M:mcp"],
+      "command": "nbb",
+      "args": ["--classpath", "bin", "bin/itonami-mcp"],
       "cwd": "/path/to/cloud-itonami-app"
     }
   }
 }
 ```
 
-There is no wrapper script on purpose: MCP clients launch a command directly, and
-putting another process in the middle of a stdio protocol stream only risks its
-framing.
+`bin/itonami-mcp` is the stdio server (nbb). It does not `spawnSync` `clojure`.
 
 Two tools, the same ones the in-app agent uses — the descriptors and behaviour
 live in `cloud.itonami.app.fleet`, and `cloud.itonami.app.mcp` is an adapter over
@@ -733,6 +776,25 @@ of the connectors you picked and nothing else.
   first write tool stops the loop and becomes an approval card. A Bot may carry
   out what was approved; it may not approve, and no session it could hold makes
   it able to.
+- **Physical work goes to a verified person.** A Bot can create and publish a
+  HumanWorkRequest for work it cannot finish in software. Matching rechecks the
+  person's organization-verified service location, licence, qualification,
+  permit, insurance, training or asset scopes, jurisdiction, expiry,
+  availability and overlapping assignments. The Bot stays a `:system`; only a
+  Human User accepts and submits evidence. Exact addresses are withheld until
+  acceptance, and verification remains an owner/admin Human action. See
+  [ADR-0083](docs/adr/0083-bots-outsource-human-work-to-verified-people.md).
+
+- **Public Human Work marketplace and external assurance** — `/human-work` and
+  `/api/human-work/requests` expose only redacted public/open work. Fixed HTTPS
+  authority adapters can bind an issuer or identity-provider receipt to the
+  exact person, organization, and claim version. Optional x402 v2
+  `auth-capture` funding holds USDC for the accepted worker, blocks work start
+  until the onchain authorization settles, captures only after evidenced work
+  is verified, and voids cancelled or rejected work. Payer signatures are not
+  retained. All integrations ship disabled until the facilitator and custom
+  escrow operator are configured.
+  See [ADR-0084](docs/adr/0084-human-work-assurance-marketplace-and-held-payouts.md).
 - **An approval belongs to the instruction it was asked under.** If you say
   something else instead of answering the card, the request is retired rather
   than left waiting: the card says 古い指示のため取り下げ, the Bot stops
@@ -811,13 +873,6 @@ the eight startup businesses (`cloud-itonami`, `nexus-x402`, `club-shinshi`,
 product manager, engineer, QA, designer, sales, marketer, supporter,
 financial chief, and the explicitly declared kaizen roles where applicable.
 
-Cloud Itonami also provisions a dedicated `Domain Steward`. Its concrete tool
-surface is only the local Domain Authority: catalog/price/registration/DNS
-reads and exact proposal operations. It inherits no repository, Commerce,
-Wallet or browser tools. Standing omakase may let it create proposals and retry
-commits, but the authority host still refuses registration billing, auto-renew
-changes and DNS mutation until a human Passkey approved that exact proposal.
-
 Each Bot carries its responsibility and capability policy, but those fields do
 not grant execution. The concrete grant is deliberately narrower: one admitted
 business Git repository, no connector, browser, virtual shell, or omakase
@@ -886,8 +941,15 @@ private key remains in the authenticator. Legacy records may have filled a
 blank User DID from a Passkey, but adding or revoking a Passkey must not rename
 an established Principal. Organization information can be entered later.
 
-The session proof model is shared with `kotoba-lang/authentication` (Passkey
-factors, decisions, and assurance levels), and its default-deny access
+Returning active Users may also sign in through a ten-minute, single-use email
+magic link when `:email-login` delivery is configured. Email proves control of
+the registered address for that session; it does not create a User, replace the
+Passkey-rooted `did:key`, enroll an invited User, or approve a governed action.
+Money, signatures, and outward authorities continue to require their own
+operation-bound WebAuthn assertion.
+
+The session proof model is shared with `kotoba-lang/authentication` (email and
+Passkey factors, decisions, and assurance levels), and its default-deny access
 decision is evaluated by `kotoba-lang/authorization`. Cloud Itonami retains the
 runtime adapters—Yubico WebAuthn, mail delivery, cookies/CSRF, persistence—and
 the Tenant/Membership and operation-approval policy. See ADR-0012 for the exact
@@ -1194,7 +1256,7 @@ The stdio MCP server publishes these as tools — but only when it can resolve a
 ```bash
 security add-generic-password -s cloud-itonami-app.mcp -a session-token -w
 export CLOUD_ITONAMI_MCP_SESSION=…   # takes precedence over the Keychain
-clojure -M:mcp
+nbb --classpath bin bin/itonami-mcp
 ```
 
 | tool | |
@@ -1295,8 +1357,8 @@ and every test drives an injected transport. See
 Set a named profile or an EDN file path:
 
 ```bash
-CLOUD_ITONAMI_PROFILE=gftd clojure -M:server
-CLOUD_ITONAMI_PROFILE=/secure/path/company.edn clojure -M:server
+CLOUD_ITONAMI_PROFILE=gftd nbb --classpath bin bin/cloud-itonami-server
+CLOUD_ITONAMI_PROFILE=/secure/path/company.edn nbb --classpath bin bin/cloud-itonami-server
 ```
 
 Profiles contain branding and non-secret service coordinates. Secrets remain
@@ -1310,10 +1372,21 @@ The included gftd profile maps:
 - public addresses to `@gftd.ai`;
 - relay calls to `https://relay.gftd.ai`.
 
-The included `itonami` profile is also Passkey-only. Older resident files may
-still contain Email or provider SSO configuration, but the public auth contract
-does not advertise it and the server exposes no route that can mint a session
-from it (ADR-0083).
+The included itonami profile turns email sign-in on and points it at
+`https://itonami.cloud/api/auth/magic-link/deliver`:
+
+```bash
+CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN=<bearer> CLOUD_ITONAMI_PROFILE=itonami \
+  nbb --classpath bin bin/cloud-itonami-server
+```
+
+Email sign-in stays off in the shipped defaults, and that is not an oversight.
+ADR-0012 left delivery to "a deployment-owned HTTPS endpoint", and until one
+existed the form was never shown — a complete feature nothing could reach. A
+tenant-neutral install that mailed through somebody else's sending reputation
+would be choosing for the operator, and a bounce would land on a domain they do
+not own. The bearer must match the endpoint's `MAGIC_LINK_DELIVERY_TOKEN`
+secret; it is read from the environment per call and never persisted.
 
 Enabling `:publish-did-web?` is a deployment assertion: the operator must
 actually serve the DID documents over HTTPS.
@@ -1429,6 +1502,14 @@ See [`.env.example`](.env.example), [the architecture](docs/architecture.md),
 and [the tenant model](docs/tenant-model.md).
 
 ## Verify
+
+Default CI gate (no `clojure -M`):
+
+```bash
+AMU=<amu launcher> bash scripts/ci-jvm-free-emit
+```
+
+Leftover JVM suite (not the required path):
 
 ```bash
 clojure -M:test

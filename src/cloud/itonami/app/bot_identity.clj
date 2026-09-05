@@ -41,10 +41,11 @@
             [clojure.string :as str]
             [ed25519.core :as ed]
             [identity.model :as identity-model]
-            [cloud.itonami.app.config :as config])
+            [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.secure-file :as secure-file])
   (:import [java.security MessageDigest SecureRandom]
            [java.nio.file Files LinkOption]
-           [java.nio.file.attribute PosixFilePermission PosixFilePermissions]))
+))
 
 (def seed-bytes 32)
 
@@ -52,11 +53,7 @@
   (io/file (config/data-dir) "bot-identity.seed"))
 
 (defn- owner-only! [^java.io.File file]
-  (try
-    (Files/setPosixFilePermissions
-     (.toPath file)
-     (PosixFilePermissions/fromString "rw-------"))
-    (catch Exception _ nil)))
+  (secure-file/harden! file "rw-------"))
 
 (defn- read-seed []
   (let [file (seed-file)]
@@ -94,6 +91,39 @@
     (.update digest (byte-array 1))
     (.update digest (.getBytes bot-id "UTF-8"))
     (.digest digest)))
+
+(defn bot-signing-seed
+  "The 32-byte Ed25519 seed whose public half IS `bot-did` for this Bot.
+
+  ## This issues nothing. The key already existed.
+
+  `bot-did` is `did-key-from-seed(derive-seed(fleet, bot-id))`, so the private
+  half has been derivable from the seed file since Bots had dids at all. What
+  did not exist was a caller able to reach it, which is why
+  `bot-authority` could mint a token naming the Bot as the only party who may
+  append after the first block, and no Bot could append.
+
+  ## What a holder of this can do, and what it cannot
+
+  It can sign one more block onto that Bot's own token, which under Biscuit
+  can only NARROW -- `biscuit.authority/->grant` meets each block onto the
+  last, and meet never widens. So the worst a leaked bot seed does to
+  authority is let somebody hand out a SMALLER slice of what that one Bot
+  already had.
+
+  It cannot reach the fleet seed or any sibling: `derive-seed` is
+  SHA-256(fleet || 0x00 || bot-id), one-way and domain-separated, so this is
+  the leaf of a tree and not a step toward its root.
+
+  It is still a signing key for that Bot's identity, and this is the sentence
+  to read twice before calling it: whoever holds it can sign AS that Bot
+  anywhere that Bot's did is trusted, which is more than attenuation. Pass it
+  to the append and let it go; do not store it, log it, or hand it across a
+  process boundary."
+  [bot-id]
+  (when-let [id (some-> bot-id str not-empty)]
+    (when-let [fleet (fleet-seed)]
+      (try (derive-seed fleet id) (catch Exception _ nil)))))
 
 (defn bot-did
   "`did:key:z6Mk…` for this Bot, or nil when there is no identity seed.

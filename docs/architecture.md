@@ -1355,8 +1355,8 @@ See ADR-0077.
 
 ## MCP surface
 
-`cloud.itonami.app.mcp` is one dispatcher with two adapters. `clojure -M:mcp`
-keeps stdio for a process the operator launched. `POST /mcp` exposes the same
+`cloud.itonami.app.mcp` is one dispatcher with two adapters. `bin/itonami-mcp`
+(nbb host) keeps stdio for a process the operator launched. `POST /mcp` exposes the same
 manifest over stateless Streamable HTTP, with bearer authentication, Origin
 validation, protocol negotiation and RFC 9728 protected-resource discovery.
 Externally issued tokens are introspected and audience/scope checked; local

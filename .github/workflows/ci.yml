@@ -8,38 +8,25 @@ on:
 permissions:
   contents: read
 
+# Default required path is JVM-free emit. It does not run clojure -M:test.
+# Leftover JVM suite lives in leftover-jvm-tests.yml (workflow_dispatch only).
+# Do not rename that leftover into this file and pretend it is gone.
+
 jobs:
-  test:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+  amu-jvm-free-emit:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Pinned, and not left to the runner's default. `kagitaba` signs with
-      # ML-DSA-65 (FIPS 204), which the JDK gained in 24; the runners default to
-      # 21, so every CI run since that dependency landed has failed with
-      # "ML-DSA-65 KeyPairGenerator not available" — eleven errors in
-      # contracts-test, on main, for everyone. It passed locally only because
-      # local `clojure` happened to pick up a newer JDK.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-node@v4
         with:
-          distribution: temurin
-          java-version: "25"
-      - uses: DeLaGuardo/setup-clojure@13.4
-        with:
-          cli: latest
-      - name: Resolve standalone dependencies
-        run: clojure -P
-      - name: Test
-        run: clojure -M:test
-      - name: Lint
-        run: clojure -M:lint
-      - name: Audit all repository storage profiles
-        if: matrix.os == 'ubuntu-latest'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: clojure -M -m cloud.itonami.app.repository-profile-ci
+          node-version: "22"
+      - name: Install nbb host
+        run: npm ci
+      - name: JVM-free emit + guest load (no java/clojure)
+        run: bash scripts/ci-jvm-free-emit
+        # No actions/setup-java. PATH is reconstructed without java/clojure.
+        # kexe verify on Linux is HOLD and must not be faked as :ok.
+        # bin/kotoba is this app's compile adapter, not production kotoba v0.6.29.
 
   secret-scan:
     runs-on: ubuntu-latest
@@ -55,3 +42,73 @@ jobs:
         run: go install github.com/zricethezav/gitleaks/v8@v8.28.0
       - name: Scan Git history
         run: gitleaks git --redact --no-banner
+
+  # Smoke-tests the Windows launch path end to end: jar build, launcher exe
+  # build, packaged layout, first-boot health. The 2026-09-03 v0.4.1 report
+  # (UnsupportedOperationException 'posix:permissions' on agent-enrollment.key,
+  # localhost:1338 never answering) was invisible to the Linux-only jobs above.
+  windows-launch-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate git deps (private kotoba-lang repos)
+        run: git config --global url."https://x-access-token:${{ github.token }}@github.com/".insteadOf "https://github.com/"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: DeLaGuardo/setup-clojure@13.4
+        with:
+          cli: latest
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false
+      - name: Build the app jar
+        run: clojure -T:build uber
+      - name: Assemble the packaged layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          layout="$PWD/target/release/windows-stage/Cloud Itonami"
+          mkdir -p "$layout"
+          cp target/release/cloud-itonami-app.jar "$layout/cloud-itonami-app.jar"
+          cp packaging/windows/README.txt "$layout/README.txt"
+          # Launcher, cross-compiled exactly as scripts/build-windows-release does.
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+            go build -trimpath -ldflags "-s -w" \
+            -o "$layout/CloudItonami.exe" packaging/windows/launcher/main.go
+          # CI-only JVM server shim (the real server binary is packaged elsewhere).
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+            go build -trimpath \
+            -o "$layout/cloud-itonami-server.exe" packaging/windows/smoke/main.go
+      - name: Launch and wait for /health
+        shell: bash
+        run: |
+          set -euo pipefail
+          layout="$PWD/target/release/windows-stage/Cloud Itonami"
+          data_dir="$PWD/target/release/ci-data"
+          mkdir -p "$data_dir"
+          export CLOUD_ITONAMI_DATA_DIR="$data_dir"
+          cd "$layout"
+          ./CloudItonami.exe &
+          ok=0
+          for attempt in $(seq 1 240); do
+            if curl -fsS http://127.0.0.1:1338/health >/dev/null 2>&1; then
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$ok" != 1 ]]; then
+            echo "::error::Windows launch smoke test failed: /health never returned 200"
+            echo "--- server.log ---"
+            cat "$data_dir/logs/server.log" || true
+            echo "--- launcher-error.log ---"
+            cat "$data_dir/logs/launcher-error.log" || true
+            exit 1
+          fi
+          curl -fsS http://127.0.0.1:1338/health
+          echo ""
+          echo "Windows launch smoke test: /health returned 200"
+

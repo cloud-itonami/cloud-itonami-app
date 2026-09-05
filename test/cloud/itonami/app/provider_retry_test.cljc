@@ -18,6 +18,23 @@
   (is (retry/transient-response?
        400 {:message "Loading model" :type "unavailable_error" :code 503})))
 
+(deftest a-spent-basho-budget-is-never-retried-whatever-its-type
+  ;; murakumo answers 503 for a spent monthly budget and for an unattested
+  ;; backend (ADR-0092). Neither clears in a retry window; the fallback route
+  ;; is the answer. Pinned by CODE so a change of `type` upstream cannot
+  ;; turn either into three calls and six seconds of sleep per turn.
+  (doseq [code ["self_model_monthly_budget_exhausted"
+                "self_model_backend_unavailable"
+                "self_model_budget_unconfigured"]]
+    (is (false? (retry/transient-response?
+                 503 {:error {:type "server_error" :code code}}))
+        code)
+    (is (false? (retry/transient-response?
+                 503 {:error {:type "invalid_request_error" :code code}}))
+        code))
+  (testing "an ordinary 503 without such a code is still transient"
+    (is (true? (retry/transient-response? 503 {:error {:message "upstream"}})))))
+
 (deftest an-authentication-failure-is-never-retried
   ;; The control that keeps the rule above from being a hole. These arrived on
   ;; the SAME status as the case it exists for, so "retry 400s" would have

@@ -99,7 +99,11 @@
 
     :else (throw error))))
 
-(defn- request-json
+(defn request-json
+  "One JSON round trip with the typed failures every provider call shares
+  (`timeout->typed`, `:provider/http-error` with `:status`/`:response`).
+  Public so other outbound callers (`media-tools`) do not grow a second copy
+  that files a timeout as an internal error."
   ([method url body] (request-json method url body nil))
   ([method url body api-key]
    (request-json method url body api-key nil))
@@ -506,10 +510,12 @@
   ;; api.murakumo.cloud routes murakumo-main to a reasoning model. When this is
   ;; omitted the public gateway supplies 512, and the model can spend the whole
   ;; allowance on reasoning: HTTP 200, finish_reason=length, content="". A Bot
-  ;; then appears to accept the person's message without answering. 16384 is
-  ;; the gateway's public ceiling since 2026-08-29 (raised from 2048 on owner
-  ;; instruction to move output budgets toward the model maximum); endpoints
-  ;; that serve less are handled by the observed-ceiling bound below.
+  ;; then appears to accept the person's message without answering. This is the
+  ;; provider-layer fallback when neither the request nor the provider record
+  ;; names a cap. It is not the murakumo shipped install default -- that is
+  ;; 400 in cloud-itonami-app.defaults.edn. Do not copy 16384 into an overlay
+  ;; "to match shipped default". Endpoints that serve less are handled by the
+  ;; observed-ceiling bound below.
   16384)
 
 (defn- requested-max-tokens

@@ -1,0 +1,250 @@
+;; The commands an operator actually types, as data.
+;;
+;; `cloud-itonami-app.commands.edn` is GENERATED from server.clj's routes and
+;; covers 208 of them. It does not cover the ones people use most: measured
+;; 2026-09-02, `GET /api/agent-bots`, `POST /api/agent-session`, `/api/profiles`
+;; and `/api/sessions` are all absent from it. Those are the routes behind
+;; `bots list`, `auth login` and the itonami commands, so a front end driven by
+;; the registry alone would be a front end for the part nobody types.
+;;
+;; They were absent because they were hand-written in `cli.clj` — seventeen
+;; functions, each with a reason, none of them reachable from a second runtime.
+;; This file is those functions with the Clojure taken out: a method, a path
+;; template, where each path parameter comes from, and how flags become a body.
+;; `commands.cljc` resolves an entry from here exactly as it resolves one from
+;; the generated registry, so there is one resolver and two name sources.
+;;
+;; ## What this file is NOT
+;;
+;; It is not a second route table. Every path here is a route `server.clj`
+;; already serves; nothing is invented. `cli-aliases-test` probes each
+;; parameter-free path against a live server when one is listening and fails on
+;; 404 — a transcription error shows up as "no such route", which is exactly
+;; what it is.
+;;
+;; It is not the whole of `cli.clj`. Three commands do host-side work rather
+;; than HTTP — `bots hygiene` (west metadata on this machine), `bots refactor
+;; scan|inspect` (west refactor), and `bots import` for sources other than
+;; itonami (ex-hermes) — and a table cannot carry them. They are listed in `:host-side` so
+;; the front end can refuse them BY NAME instead of reporting "no such
+;; command", which would read as though the operator mistyped.
+;;
+;; ## The body spec
+;;
+;;   {:flag :x}                  take flags[:x]; omit the key when absent
+;;   {:flag :x :required? true}  refuse when absent, naming the flag
+;;   {:parse :long}              parse-long
+;;   {:parse :comma-list}        "a,b" -> ["a" "b"]
+;;   {:parse :boolish}           "true"/"1"/"yes" -> true
+;;   {:default "d"}              used when the flag is absent
+;;   a nested map                a nested body object, same specs inside
+;;
+;; Omission is the default because the server distinguishes absent from empty:
+;; `business bind` treats a present-but-empty key as "clear this face", so
+;; sending every key on every call would silently unbind what the invocation
+;; never mentioned. `:requires-one-of` is that command's own floor.
+
+{:schema "cloud.itonami.app.cli-aliases.v1"
+ :source "src/cloud/itonami/app/cli.clj"
+
+ :host-side
+ [{:command ["bots" "hygiene"]
+   :why "reads west metadata on this machine; there is no route to call"}
+  {:command ["bots" "refactor" "scan"]
+   :why "west refactor scan is host-side"}
+  {:command ["bots" "refactor" "inspect"]
+   :why "west refactor inspect is host-side"}]
+
+ :commands
+ [;; ---- auth -------------------------------------------------------------
+  {:command ["auth" "login"]
+   :method :post
+   :template "/api/agent-session"
+   :body {:enrollment-key {:enrollment-key true}
+          :label {:flag :label :default "cli"}
+          :user-id {:flag :user-id}
+          :organization-id {:flag :organization}
+          :ttl-days {:flag :ttl-days :parse :long}}
+   :stores-token? true
+   :note "Mints an agent session and writes it to the Keychain item auth reads."}
+
+  {:command ["auth" "status"]
+   :method :get
+   :template "/api/agent-session"}
+
+  {:command ["auth" "revoke"]
+   :method :post
+   :template "/api/agent-session/{id}/revoke"
+   :params [{:name "id" :flag :id :required? true
+             :hint "auth status で確認できます"}]}
+
+  ;; ---- tenant -----------------------------------------------------------
+  {:command ["tenant" "list"] :method :get :template "/v1/tenants"}
+  {:command ["tenant" "connections"] :method :get :template "/v1/tenant-connections"}
+
+  {:command ["tenant" "connect"]
+   :method :post
+   :template "/v1/tenant-connections"
+   :body {:tenant_id {:flag :tenant}
+          :agent_id {:flag :agent-id}
+          :capabilities {:flag :cap :parse :comma-list}
+          :ttl_seconds {:flag :ttl-seconds :parse :long}
+          :budget {:max_operations {:flag :max-operations :parse :long}
+                   :max_storage_bytes {:flag :max-storage-bytes :parse :long}}
+          :idempotency_key {:flag :idempotency-key}}}
+
+  {:command ["tenant" "status"]
+   :method :get
+   :template "/v1/tenant-connections/{connection}"
+   :params [{:name "connection" :flag :connection :required? true}]}
+
+  {:command ["tenant" "renew"]
+   :method :post
+   :template "/v1/tenant-connections/{connection}/renew"
+   :params [{:name "connection" :flag :connection :required? true}]
+   :body {:ttl_seconds {:flag :ttl-seconds :parse :long}}}
+
+  {:command ["tenant" "revoke"]
+   :method :post
+   :template "/v1/tenant-connections/{connection}/revoke"
+   :params [{:name "connection" :flag :connection :required? true}]}
+
+  {:command ["tenant" "context"]
+   :method :post
+   :template "/v1/tenant-connections/{connection}/context"
+   :params [{:name "connection" :flag :connection :required? true}]
+   :body {:capability {:flag :capability}}}
+
+  {:command ["tenant" "repository-read"]
+   :method :get
+   :template "/v1/tenant-connections/{connection}/repository"
+   :params [{:name "connection" :flag :connection :required? true}]}
+
+  {:command ["tenant" "repository-write"]
+   :method :post
+   :template "/v1/tenant-connections/{connection}/repository"
+   :params [{:name "connection" :flag :connection :required? true}]
+   :body {:state_edn {:flag :file :required? true :parse :file-contents}
+          :expected_cid {:flag :expected-cid}}}
+
+  {:command ["tenant" "repository-publish"]
+   :method :post
+   :template "/v1/tenant-connections/{connection}/repository/publish"
+   :params [{:name "connection" :flag :connection :required? true}]}
+
+  ;; ---- business ---------------------------------------------------------
+  {:command ["business" "list"] :method :get :template "/api/business"}
+
+  {:command ["business" "create"]
+   :method :post
+   :template "/api/business"
+   :body {:slug {:flag :slug} :name {:flag :name} :note {:flag :note}}}
+
+  {:command ["business" "bind"]
+   :method :post
+   :template "/api/business/{id}/bind"
+   :params [{:name "id" :flag :id :required? true}]
+   :body {:repos {:flag :repos :parse :comma-list}
+          :adoptions {:flag :adoptions :parse :comma-list}
+          :canvas {:flag :canvas}
+          :model {:flag :model}
+          :leverage {:flag :leverage}
+          :lei {:flag :lei}}
+   :requires-one-of [:repos :adoptions :canvas :model :leverage :lei]
+   :note "An absent key is not an empty one: bind! clears a face it is sent empty."}
+
+  ;; ---- bots -------------------------------------------------------------
+  {:command ["bots" "list"] :method :get :template "/api/agent-bots"}
+  {:command ["bots" "workforce"] :method :get :template "/api/agent-bots/workforce"}
+
+  {:command ["bots" "provision"]
+   :method :post
+   :template "/api/agent-bots/workforce/provision"
+   :timeout-seconds 120
+   :note "Reconciles installed Bots to what loop-yakuwari declares."}
+
+  {:command ["bots" "messages"]
+   :method :get
+   :template "/api/agent-bots/{id}/messages"
+   :params [{:name "id" :flag :id :required? true}]}
+
+  {:command ["bots" "model"]
+   :method :post
+   :template "/api/agent-bots/{id}/model"
+   :params [{:name "id" :flag :id :required? true}]
+   :body {:provider-id {:flag :provider :required? true}
+          :model {:flag :model :required? true}}}
+
+  {:command ["bots" "task"]
+   :method :post
+   :template "/api/agent-bots/{id}/messages"
+   :params [{:name "id" :flag :id :required? true}]
+   :body {:text {:flag :text :required? true}}
+   :timeout-seconds 660}
+
+  {:command ["bots" "handoff"]
+   :method :post
+   :template "/api/agent-bots/{from}/handoff"
+   :params [{:name "from" :flag :from :required? true}]
+   :body {:to {:flag :to :required? true}
+          :task {:flag :task :required? true}
+          :depth {:flag :depth :parse :long}}
+   :timeout-seconds 660}
+
+  {:command ["bots" "decide"]
+   :method :post
+   :template "/api/agent-bots/{id}/cards/{card}/decide"
+   :params [{:name "id" :flag :id :required? true}
+            {:name "card" :flag :card :required? true}]
+   :body {:decision {:flag :decision :required? true}}
+   :timeout-seconds 660}
+
+  {:command ["bots" "cancel"]
+   :method :post
+   :template "/api/agent-bots/{id}/messages/{run}/cancel"
+   :params [{:name "id" :flag :id :required? true}
+            {:name "run" :flag :run :required? true}]}
+
+  ;; ---- itonami (ex-hermes) -----------------------------------------------------------
+  {:command ["itonami" "profile" "list"] :method :get :template "/api/profiles"}
+
+  {:command ["itonami" "session" "list"]
+   :method :get
+   :template "/p/{profile}/api/sessions"
+   :params [{:name "profile" :flag :profile :default "default"}]}
+
+  {:command ["itonami" "session" "messages"]
+   :method :get
+   :template "/p/{profile}/api/sessions/{session}/messages"
+   :params [{:name "profile" :flag :profile :default "default"}
+            {:name "session" :flag :session :required? true}]}
+
+  {:command ["itonami" "run"]
+   :method :post
+   :template "/p/{profile}/v1/runs"
+   :params [{:name "profile" :flag :profile :default "default"}]
+   :body {:input {:flag :input :required? true}
+          :instructions {:flag :instructions}
+          :goal {:flag :goal :parse :boolish}}}
+
+  {:command ["itonami" "run-status"]
+   :method :get
+   :template "/v1/runs/{run}"
+   :params [{:name "run" :flag :run :required? true}]}
+
+  {:command ["itonami" "steer"]
+   :method :post
+   :template "/v1/runs/{run}/steer"
+   :params [{:name "run" :flag :run :required? true}]
+   :body {:input {:flag :input :required? true}}}
+
+  {:command ["itonami" "stop"]
+   :method :post
+   :template "/v1/runs/{run}/stop"
+   :params [{:name "run" :flag :run :required? true}]}
+
+  {:command ["itonami" "approve"]
+   :method :post
+   :template "/v1/runs/{run}/approval"
+   :params [{:name "run" :flag :run :required? true}]
+   :body {:choice {:flag :choice :default "once"}}}]}

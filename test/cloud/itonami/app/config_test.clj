@@ -110,8 +110,8 @@
 
 (deftest the-resident-app-directory-resolves-the-resident-store
   (testing "`~/.cloud-itonami/app` and `~/.cloud-itonami/data` are one install.
-            bin/itonami said so by exporting the variable; a bare `clojure -M:cli`
-            in the same directory used to fall back to a relative `data` and make
+            bin/itonami said so by exporting the variable; a bare leftover JVM
+            CLI in the same directory used to fall back to a relative `data` and make
             a third store holding an enrollment key no server had written"
     (let [home (scratch-home)]
       (with-property nil
@@ -214,14 +214,25 @@
            (get-in agent [:browser :allowed-domains])))))
 
 (deftest murakumo-runpod-route-has-a-cold-start-safe-client-bound
-  (let [provider (some #(when (= "murakumo" (:id %)) %)
-                       (:providers (config/load-config)))]
-    (is (= 16384 (:max-output-tokens provider)))
+  (let [config (config/load-config)
+        provider (some #(when (= "murakumo" (:id %)) %)
+                       (:providers config))]
+    (is (= 400 (:max-output-tokens provider)))
+    (is (= 400 (get-in config [:bots :workforce :max-output-tokens]))
+        "the resident sibling ships the same 400; 16384 is not the install default")
     (is (= "murakumo-main" (:default-model provider)))
     (is (= ["murakumo-main" "murakumo-edge"
+            "awai-network/basho"
             "qwen3.8-27b-throughput-5090"
-            "qwen3.8-27b-fastmtp-aggressive"]
+            "qwen3.8-27b-fastmtp-aggressive"
+            "z-ai/glm-5.3-flash"
+            "qwen/qwen3.8-flash"]
            (:models provider)))
+    ;; ADR-0092: Basho is served by the gateway and may echo the vendor id.
+    (is (= #{"awai-network/basho" "zai-org/GLM-5.3"}
+           (get-in provider [:accepted-response-models "awai-network/basho"])))
+    (is (= "https://murakumo.cloud/api/v1/videos"
+           (get-in provider [:media :videos-url])))
     (is (= {"qwen3.8-27b-throughput-5090" 420}
            (:model-request-timeout-seconds provider)))
     (is (= {:url "https://api.murakumo.cloud/ready?model=qwen3.8-27b-throughput-5090"
@@ -230,8 +241,12 @@
                              "qwen3.8-27b-throughput-5090"])))
     (is (zero? (:max-transient-retries provider)))
     (is (true? (:assert-response-model? provider)))
-    (is (= {"qwen3.8-27b-throughput-5090" "murakumo-main"
-            "qwen3.8-27b-fastmtp-aggressive" "murakumo-main"}
+    (is (= {"murakumo-main" "z-ai/glm-5.3-flash"
+            "awai-network/basho" "z-ai/glm-5.3-flash"
+            "qwen3.8-27b-throughput-5090" "murakumo-main"
+            "qwen3.8-27b-fastmtp-aggressive" "murakumo-main"
+            "z-ai/glm-5.3-flash" "qwen/qwen3.8-flash"
+            "qwen/qwen3.8-flash" "murakumo-main"}
            (:model-fallbacks provider)))
     (is (= #{"murakumo-edge"} (:no-fallback-models provider))
         "the resident edge route stays literal even if an old overlay names a fallback")

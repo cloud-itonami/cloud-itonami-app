@@ -91,6 +91,20 @@
     (is (empty? (bot/admitted-tools plain catalog #{"com.google.gmail"}))
         "an autonomous job policy is not a connector or tool grant")))
 
+(deftest workforce-skill-is-bounded-evidence-not-authority
+  (let [skill {:id "itonami-bot-readiness"
+               :sha256 (apply str (repeat 64 "a"))
+               :instructions "Verify the actual resident run."}
+        plain (a-bot {:bot/skills [skill]})]
+    (is (= [skill] (:bot/skills plain)))
+    (is (empty? (bot/admitted-tools plain catalog #{"com.google.gmail"})))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #"invalid workforce Skill package"
+         (a-bot {:bot/skills [(assoc skill :sha256 "not-a-digest")]})))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #"duplicate workforce Skill package"
+         (a-bot {:bot/skills [skill skill]})))))
+
 (deftest bot-keeps-sidebar-presentation
   (let [b (a-bot {:bot/section "営業" :bot/unread? true :bot/hidden? true})]
     (is (= "営業" (:bot/section b)))
@@ -124,6 +138,21 @@
                           (a-bot {:bot/avatar {:color "chartreuse"}}))))
   (testing "an absent avatar is still the default — that IS a choice nobody made"
     (is (= bot/default-avatar (:bot/avatar (a-bot {}))))))
+
+(deftest a-derived-face-is-deterministic-and-spans-the-palette
+  (testing "the same id always draws the same face"
+    (is (= (bot/face "stable-id") (bot/face "stable-id"))))
+  (testing "fields are drawn from the declared palettes"
+    (let [f (bot/face "stable-id")]
+      (is (contains? (set bot/avatar-colors) (:avatar/color f)))
+      (is (contains? (set bot/avatar-glyphs) (:avatar/glyph f)))
+      (is (<= 0 (:variant f) 6))))
+  (testing "distinct ids are not all forced onto the same face — the exact bug
+            `bot/avatar`'s docstring records above: every Bot came back blue
+            however it was drawn"
+    (let [faces (map #(bot/face (str "bot-" %)) (range 20))]
+      (is (< 1 (count (distinct (map :avatar/color faces)))))
+      (is (< 1 (count (distinct (map :avatar/glyph faces))))))))
 
 (deftest sidebar-placement-is-persisted-as-presentation-state
   (let [placed (a-bot {:bot/priority? true :bot/pinned? true})]

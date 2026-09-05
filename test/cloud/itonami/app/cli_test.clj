@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.cli-test
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.data.json :as json]
+            [clojure.string :as str]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.app-client :as client]
             [cloud.itonami.app.bot-tools :as bot-tools]
@@ -80,6 +81,28 @@
                :model "qwen3.8-27b-throughput-5090"}]
              @seen)))))
 
+(deftest itonami-cli-keeps-profile-and-run-wire-shapes
+  (let [seen (atom [])]
+    (with-redefs [client/request!
+                  (fn
+                    ([_ method path]
+                     (swap! seen conj [method path])
+                     {:object "list"})
+                    ([_ method path body]
+                     (swap! seen conj [method path body])
+                     {:run_id "run-1" :status "started"}))]
+      (is (= "list" (:object (cli/run {} ["itonami" "profile" "list"]))))
+      (is (= "list" (:object (cli/run {} ["itonami" "session" "list"
+                                           "--profile" "bot/one"]))))
+      (is (= "started"
+             (:status (cli/run {} ["itonami" "run" "--profile" "bot/one"
+                                   "--input" "inspect" "--goal" "true"]))))
+      (is (= [[:get "/api/profiles"]
+              [:get "/p/bot%2Fone/api/sessions"]
+              [:post "/p/bot%2Fone/v1/runs"
+               {:input "inspect" :goal true}]]
+             @seen)))))
+
 (deftest west-refactor-inspection-does-not-start-the-server
   (is (false? (cli/needs-server? ["bots" "refactor" "scan" "--root" "/tmp/ws"])))
   (is (false? (cli/needs-server? ["bots" "refactor" "inspect" "--root" "/tmp/ws"
@@ -151,6 +174,67 @@
       (is (= {:businesses 8 :bots 70 :enabled 70}
              (cli/run {} ["bots" "workforce"])))
       (is (= [:get "/api/agent-bots/workforce"] @seen)))))
+
+(deftest hermes-import-cli-round-trips-the-api-manifest-unchanged
+  (let [calls (atom [])
+        preview {:schema "cloud.itonami.app.hermes-bot-migration.v2"
+                 :migration-id "hermes-cli-test" :status "preview"
+                 :profiles [{:id "default"}]}]
+    (with-redefs [client/request-with-timeout!
+                  (fn [_ method path seconds body]
+                    (swap! calls conj [method path seconds body])
+                    (if (str/ends-with? path "/preview")
+                      preview
+                      (assoc (:manifest body) :status "staged")))]
+      (is (= "staged"
+             (:status (cli/run {} ["bots" "import" "hermes"
+                                   "--business" "org-1" "--stage" "true"]))))
+      (is (= "/api/agent-bots/imports/hermes/preview"
+             (second (first @calls))))
+      (is (= "/api/agent-bots/imports/hermes/stage"
+             (second (second @calls))))
+      (is (= preview (get-in (second @calls) [3 :manifest]))
+          "the CLI posts exactly the API preview, not a second local shape"))))
+
+(deftest hermes-import-cli-can-stage-and-provision-through-the-same-api
+  (let [calls (atom [])
+        preview {:schema "cloud.itonami.app.hermes-bot-migration.v2"
+                 :migration-id "hermes-cli-provision" :status "preview"}]
+    (with-redefs [client/request-with-timeout!
+                  (fn [_ method path seconds body]
+                    (swap! calls conj [method path seconds body])
+                    (cond
+                      (str/ends-with? path "/preview") preview
+                      (str/ends-with? path "/stage") (assoc preview :status "staged")
+                      (str/ends-with? path "/provision")
+                      (assoc preview :status "provisioned"
+                             :compatibility {:execution-model {:percent 90}})))]
+      (let [result (cli/run {} ["bots" "import" "hermes"
+                                "--provision" "true"])]
+        (is (= "provisioned" (:status result)))
+        (is (= 90 (get-in result [:compatibility :execution-model :percent])))
+        (is (= ["/api/agent-bots/imports/hermes/preview"
+                "/api/agent-bots/imports/hermes/stage"
+                "/api/agent-bots/imports/hermes-cli-provision/provision"]
+               (mapv second @calls)))))))
+
+(deftest orgs-cli-lists-the-tenants-the-session-belongs-to
+  (let [seen (atom nil)]
+    (with-redefs [client/request!
+                  (fn [_ method path body]
+                    (reset! seen [method path body])
+                    {:organizations
+                     [{:id "org-1" :organization-id "gftdcojp" :name "gftdcojp"
+                       :kind "organization" :role "owner" :active? true
+                       :bot-count 12}
+                      {:id "org-2" :organization-id "jk-luxury" :name "jk-luxury"
+                       :kind "organization" :role "admin" :active? false
+                       :bot-count 3}]
+                     :active-organization-id "org-1"})]
+      (is (= "org-1"
+             (:active-organization-id
+              (cli/run {} ["orgs" "list"]))))
+      (is (= [:get "/api/agent-bots/orgs" {}] @seen)))))
 
 (deftest a-failure-reaches-the-operator-under-the-name-it-was-recorded-with
   ;; Both directions, and the literal is pinned: this assertion exists to fail

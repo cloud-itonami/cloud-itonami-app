@@ -4,6 +4,8 @@
 
 Accepted for the local transport; extended by ADR-0015 with authenticated
 Streamable HTTP. The stdio decision remains in force and was not replaced.
+2026-09-02: `deps.edn` aliases `:mcp` and `:server` are gone. Stdio is
+`bin/itonami-mcp`, not `clojure -M:mcp`.
 
 ## Context
 
