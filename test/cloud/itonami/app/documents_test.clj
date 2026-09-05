@@ -2505,6 +2505,23 @@
 
 ;; ── folders ─────────────────────────────────────────────────────────────────
 
+(deftest first-party-artifact-folder-paths-are-idempotent
+  (with-state
+    (fn [state _]
+      (let [first-path (documents/ensure-folder-path!
+                        alice ["Chat" "project-a" "thread-a"])
+            again (documents/ensure-folder-path!
+                   alice ["Chat" "project-a" "thread-a"])
+            folder-items (->> (get-in @state [:drive :workspaces alice
+                                              :drive.workspace/items])
+                              vals
+                              (filter #(= :folder (:drive/kind %))))]
+        (is (= (:id first-path) (:id again)))
+        (is (= ["Chat" "project-a" "thread-a"] (:path again)))
+        ;; root + one folder for every segment; a second projection creates
+        ;; no duplicate Chat tree.
+        (is (= 4 (count folder-items)))))))
+
 (deftest a-document-can-be-made-inside-a-folder
   (with-state
     (fn [state object-store]

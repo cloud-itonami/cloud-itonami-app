@@ -305,6 +305,30 @@
    :local? true
    :reviewed? true
    :enabled? false}
+  {:id "codex-cli"
+   :name "Codex CLI"
+   :kind :cli
+   :runner :codex
+   :model "codex:default"
+   :delegated? true
+   :local? false
+   :enabled? true}
+  {:id "claude-cli"
+   :name "Claude Code"
+   :kind :cli
+   :runner :claude
+   :model "claude:sonnet"
+   :delegated? true
+   :local? false
+   :enabled? true}
+  {:id "claude-zai"
+   :name "Claude ZAI"
+   :kind :cli
+   :runner :claude-zai
+   :model "claude-zai:default"
+   :delegated? true
+   :local? false
+   :enabled? true}
   {:id "openai"
    :name "OpenAI"
    :kind :openai-compatible

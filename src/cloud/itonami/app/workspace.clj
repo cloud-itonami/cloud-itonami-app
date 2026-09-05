@@ -2,6 +2,7 @@
   "Read-only adapters for the existing Kotoba and Cloud Itonami workspace systems."
   (:require [calendar.model :as calendar]
             [cloud.itonami.app.identity :as local-identity]
+            [cloud.itonami.app.store :as store]
             [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -172,6 +173,33 @@
   (let [text (message-text content)]
     (subs text 0 (min 220 (count text)))))
 
+(defn- synced-entry [message]
+  (let [received (inbound/from-parts
+                  {:provider (:provider message)
+                   :provider-message-id (:provider-message-id message)
+                   :from (:from-email message)
+                   :to [(or (:to message) "local@cloud-itonami.invalid")]
+                   :subject (:subject message)
+                   :text (or (not-empty (:body message))
+                             (:snippet message) "本文なし")
+                   :headers {}
+                   :received-at (:received-at message)})]
+    (assoc
+     (mailbox/message-entry
+      (:id message) (or (:thread-id message) (:id message))
+      (:mail.inbound/message received)
+      {:received-at (:received-at message)
+       :size-bytes (:size-bytes message)
+       :labels (conj (set (:labels message)) :inbox)
+       :read? (boolean (:read? message))})
+     :available? true
+     :sender {:display (or (:from message) (:from-email message) "送信者不明")
+              :email (:from-email message)}
+     :snippet (:snippet message)
+     :provider (some-> (:provider message) name)
+     :connection-id (:connection-id message)
+     :account-email (:account-email message))))
+
 (defn inbox-mailbox
   "The archive's 受信トレイ as a `mail.mailbox`.
 
@@ -184,7 +212,8 @@
   Read-only, and the same for everyone: these are files on disk. What one
   person has read, starred or filed is not in here — that is per principal
   and lives in `cloud.itonami.app.mailbox`, laid over the top."
-  []
+  ([] (inbox-mailbox nil))
+  ([organization-id]
   (let [directory (io/file (archive-root) "mail/受信トレイ")
         newest (if (.isDirectory directory)
                  (->> (.listFiles directory)
@@ -202,7 +231,7 @@
         ;; archive nobody has fetched should say so rather than look empty.
         {present true sealed false} (group-by content-present? newest)
         files (take 40 (concat present sealed))
-        entries
+        archive-entries
         (mapv
            (fn [file]
              (let [available? (content-present? file)
@@ -238,15 +267,25 @@
                 :sender sender
                 :snippet snippet)))
            files)
+        synced (->> (vals (get-in (store/snapshot) [:mail-sync :messages]))
+                    (filter #(or (nil? organization-id)
+                                 (nil? (:organization-id %))
+                                 (= organization-id (:organization-id %))))
+                    (sort-by :received-at #(compare %2 %1))
+                    (mapv synced-entry))
+        entries (into archive-entries synced)
         box (reduce mailbox/deliver
                     (mailbox/mailbox "local-inbox"
                                      "local@cloud-itonami.invalid")
                     entries)]
     (assoc box
-           :mailbox/source "m365-archive / mail / 受信トレイ"
-           :mailbox/file-count (if (.isDirectory directory)
-                                 (count (filter #(.isFile %) (.listFiles directory)))
-                                 0))))
+           :mailbox/source (if (seq synced)
+                             "Connected mail accounts + m365-archive"
+                             "m365-archive / mail / 受信トレイ")
+           :mailbox/file-count (+ (count synced)
+                                  (if (.isDirectory directory)
+                                    (count (filter #(.isFile %) (.listFiles directory)))
+                                    0))))))
 
 (defn entry-view
   "One message as this app hands it out.
@@ -273,6 +312,9 @@
      :account-id (get entry :account-id)
      :message-id (get entry :message-id)
      :available? (get entry :available?)
+     :provider (get entry :provider)
+     :connection-id (get entry :connection-id)
+     :account-email (get entry :account-email)
      :read? (boolean (:mailbox.message/read? entry))
      :labels (vec (sort (map name (:mailbox.message/labels entry))))}))
 

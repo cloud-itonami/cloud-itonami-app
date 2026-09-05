@@ -421,6 +421,30 @@ reindex/re-encryption and must receive its own measured recovery model.
   Kagi-seal and configured-transport hydrate capacity from the real workspace.
   It does not relabel a local annex cache hit as cold-device RTO or sustained
   remote-sync evidence.
+
+## Chat and project realization
+
+The desktop Chat surface applies this decision at four separate coordinates:
+
+1. the conversation key is a SHA-256-derived coordinate over active
+   organization, authenticated user, project and conversation;
+2. each organization/project gets an ordinary local Git repository under the
+   application data directory, while conversation plaintext is excluded from
+   that repository;
+3. each organization/user/project gets an editable EDN projection outside the
+   DataLad dataset, with conversations keyed inside that projection; and
+4. the shared DataLad dataset contains only Kagi-sealed blocks. When a DataLad
+   remote and Kotobase token are configured, completion publishes through the
+   signed-head CAS pipeline. Otherwise the UI says `local-only` and does not
+   imply that remote synchronization occurred.
+
+West remains the source-repository catalog boundary. A new local project is
+Git-initialized immediately, but is not declared West-managed until it has an
+explicit remote and manifest entry; inventing a remote would make a local-only
+repository appear recoverable when it is not. Project metadata records that
+state so a later registration flow can complete it without moving conversation
+plaintext into either Git or West.
+
 ## Repository adoption record
 
 This record distinguishes an accepted default from completed runtime adoption.

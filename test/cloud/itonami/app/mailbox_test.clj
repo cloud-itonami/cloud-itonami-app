@@ -62,6 +62,39 @@
     (is (every? :read? (:items seen)))
     (is (= 0 (:unread seen)))))
 
+(deftest synchronized-provider-mail-is-projected-into-the-inbox
+  (swap! store/state assoc-in [:mail-sync :messages "google-work:m-1"]
+         {:id "google-work:m-1" :provider :google
+          :provider-message-id "m-1" :thread-id "thread-1"
+          :connection-id "google-work" :organization-id "org-a"
+          :account-email "work@example.com" :subject "同期されたメール"
+          :from "Client" :from-email "client@example.com" :to "work@example.com"
+          :received-at "2026-08-04T01:00:00Z" :snippet "Inbox に表示されます"
+          :body "同期先と表示元が同じです。" :labels #{:inbox}
+          :read? false :size-bytes 42})
+  (let [seen (app-mailbox/view alice "org-a" {})
+        synced (some #(when (= "google-work:m-1" (:id %)) %) (:items seen))]
+    (is synced "mail-sync storage is part of the Inbox projection")
+    (is (= "work@example.com" (:account-email synced)))
+    (is (= [{:id "google-work" :provider "google" :email "work@example.com"}]
+           (:accounts seen)))
+    (is (= ["google-work:m-1"]
+           (ids (app-mailbox/view alice "org-a" {:connection-id "google-work"})))))
+  (is (nil? (some #(when (= "google-work:m-1" (:id %)) %)
+                  (:items (app-mailbox/view alice "org-b" {}))))))
+
+(deftest mail-can-be-linked-to-organizations-projects-and-people
+  (let [result (app-mailbox/set-context!
+                a alice "org-a"
+                {:organization-ids ["org-a" "org-b"]
+                 :project-ids ["project-launch"]
+                 :people [{:name "Example Person" :email "SENDER@example.com"}]})
+        context (get-in (app-mailbox/set-read! a true alice "org-a")
+                        [:message :context])]
+    (is (= ["org-a" "org-b"] (get-in result [:context :organization-ids])))
+    (is (= ["project-launch"] (:project-ids context)))
+    (is (= "sender@example.com" (get-in context [:people 0 :email])))))
+
 (deftest a-mark-is-one-persons-and-does-not-touch-the-archive
   (app-mailbox/set-read! a false alice)
   (is (= 1 (:unread (app-mailbox/view alice))))
