@@ -1099,6 +1099,44 @@
        (store/transact! assoc-in (workspace-path actor) made)
        {:schema schema :ok? true :item (folder-view made (ws/item made id) actor)}))))
 
+(defn ensure-folder-path!
+  "Ensure a named folder path exists in ACTOR's local Drive.
+
+  Used by first-party artifact projections such as Chat and Projects. It is
+  deliberately idempotent: opening a project repeatedly must not create a row
+  of identically named folders. The returned id is a normal Drive folder id,
+  so the existing breadcrumb, ACL and trash behaviour apply unchanged."
+  [actor segments]
+  (when (str/blank? (str actor))
+    (throw (ex-info "作成者を特定できません。" {:type :identity/unauthenticated})))
+  (let [segments (mapv #(or (not-empty (str/trim (str %))) "名称未設定") segments)]
+    (locking write-lock
+      (let [initial (workspace-for (store/snapshot) actor)
+            root (:drive.workspace/root-id initial)
+            {:keys [workspace folder-id path]}
+            (reduce
+             (fn [{:keys [workspace folder-id path]} title]
+               (let [children (ws/children workspace folder-id actor)
+                     existing (some #(when (= title (:drive/title %)) %) children)]
+                 (cond
+                   (and existing (= :folder (:drive/kind existing)))
+                   {:workspace workspace :folder-id (:drive/id existing)
+                    :path (conj path title)}
+
+                   existing
+                   (throw (ex-info "同じ名前のファイルがあるためフォルダを作成できません。"
+                                   {:type :drive/not-a-folder :title title}))
+
+                   :else
+                   (let [id (store/new-id "fld")
+                         next-workspace (ws/create-folder workspace id folder-id title actor)]
+                     {:workspace next-workspace :folder-id id
+                      :path (conj path title)}))))
+             {:workspace initial :folder-id root :path []}
+             segments)]
+        (store/transact! assoc-in (workspace-path actor) workspace)
+        {:schema schema :ok? true :id folder-id :path path}))))
+
 (defn move!
   "Put a document or folder inside another folder.
 

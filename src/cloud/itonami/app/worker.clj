@@ -12,6 +12,7 @@
   event per run instead. Runs therefore do not survive a restart."
   (:require [clojure.string :as str]
             [cloud.itonami.app.executor :as executor]
+            [cloud.itonami.app.git-session :as git-session]
             [cloud.itonami.app.service :as service]
             [cloud.itonami.app.store :as store])
   (:import [java.time Instant]
@@ -100,7 +101,13 @@
                                      :at (now)
                                      :run-id (:id run)
                                      :title (:title run)
-                                     :status (:status run)})))))))
+                                     :status (:status run)
+                                     :agent (:agent-id run)
+                                     :provider (:provider run)
+                                     :model (:model run)
+                                     :usage (:usage run)
+                                     :context (:context run)
+                                     :git (:git run)})))))))
 
 (defn- finish! [config id status extra]
   ;; Before the status becomes terminal, not after. `await-idle!` returns as
@@ -128,6 +135,8 @@
    :agent (:agent-id run)
    :model (:model run)
    :provider (:provider run)
+   :context (:context run)
+   :git (:git run)
    :status (name (:status run))
    :output (:output run)
    :truncated? (boolean (:truncated? run))
@@ -136,6 +145,11 @@
    :created-at (:created-at run)
    :started-at (:started-at run)
    :finished-at (:finished-at run)})
+
+(defn run-by-id
+  "Return the public lifecycle state for one background run."
+  [id]
+  (some-> (find-run id) public-run))
 
 (defn- run-job! [config id]
   (let [^Semaphore permit (:semaphore (admission config))
@@ -156,23 +170,56 @@
           (update-run! id #(assoc % :status :running :started-at (now)))
           (try
             (let [run (find-run id)
-                  response (service/run-chat-stream!
-                            config
-                            {:messages [{:role "user" :content (:prompt run)}]
-                             :model (:model run)
-                             :session-id session-id
-                             :agent-id (:agent-id run)}
-                            (fn [delta]
-                              (when (contains? @cancelled id)
-                                (throw (ex-info "worker run cancelled"
-                                                {:type :worker/cancelled})))
-                              (append-output! id delta)))
+                  write? (= :workspace-write (:access run))
+                  _ (when (and write? (empty? (:repositories run)))
+                      (throw (ex-info "書き込み対象のローカル repository がありません。"
+                                      {:type :worker/repository-required})))
+                  targets (if write?
+                            (mapv #(git-session/prepare! (:session-scope run) %)
+                                  (:repositories run))
+                            [nil])
+                  commits (atom [])
+                  responses
+                  (vec
+                   (for [target targets]
+                     (do
+                       (when target
+                         (append-output! id
+                                         (str "\n[" (:repository-name target)
+                                              " · " (:branch target) "]\n")))
+                       (let [request {:messages [{:role "user" :content (:prompt run)}]
+                                      :model (:model run)
+                                      :provider-id (:requested-provider run)
+                                      :session-id session-id
+                                      :session-scope (:session-scope run)
+                                      :agent-id (:agent-id run)
+                                      :cwd (:worktree target)
+                                      :access (:access run)}
+                             response ((if write?
+                                         service/run-agent-stream!
+                                         service/run-chat-stream!)
+                                       config request
+                                       (fn [delta]
+                                         (when (contains? @cancelled id)
+                                           (throw (ex-info "worker run cancelled"
+                                                           {:type :worker/cancelled})))
+                                         (append-output! id delta)))]
+                         (when target
+                           (swap! commits conj
+                                  (-> (git-session/commit!
+                                       target (:commit-message run))
+                                      (dissoc :repository))))
+                         response))))
+                  response (last responses)
+                  usages (seq (keep :usage responses))
+                  usage (when usages (apply merge-with + usages))
                   streamed (:output (find-run id))
                   content (get-in response [:message :content])]
               (finish! config id :done
                        (cond-> {:provider (:provider response)
                                 :model (:model response)
-                                :usage (:usage response)}
+                                :usage usage
+                                :git @commits}
                          (str/blank? streamed)
                          (assoc :output (clamp content max-output-characters)))))
             (catch Exception error
@@ -190,7 +237,8 @@
 
 (defn enqueue!
   "Register a background run and return its public view."
-  [config {:keys [title prompt model agent]}]
+  [config {:keys [title prompt model agent provider session-scope context access
+                  repositories commit-message]}]
   (when (str/blank? prompt)
     (throw (ex-info "worker には実行する指示が必要です。"
                     {:type :worker/invalid-request})))
@@ -202,6 +250,14 @@
              :prompt prompt
              :agent-id (or (not-empty (str/trim (str (or agent "")))) "local")
              :model (not-empty (str/trim (str (or model ""))))
+             :requested-provider (not-empty (str/trim (str (or provider ""))))
+             :session-scope session-scope
+             :context context
+             :access (if (= "workspace-write" (some-> access name))
+                       :workspace-write :read-only)
+             :repositories (vec repositories)
+             :commit-message (or (not-empty (str/trim (str commit-message)))
+                                 (str "Cloud Itonami: " (derive-title prompt)))
              :status :queued
              :output ""
              :truncated? false
