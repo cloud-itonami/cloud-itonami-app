@@ -96,6 +96,27 @@
   (合計 25MB)。~/Library は TCC 遮断で全域 du 不能のため -2.4Gi 増分の
   帰属は未確定 — 定期 du snapshot または TCC 許可を Tier 2 提起
   (evidence/2026-09-06-falsify-19.md)。
+  **falsify-20 (2026-09-06) で帰属確定 (REFUTED)**: 再飽和 4 度目を観測
+  (avail 846M / 100% 実測、反復中も 846M→563M と減少継続)。
+  falsify-19 の「TCC 遮断で ~/Library 全域 du 不能」前提は反証
+  (du -sh 実測成功: Caches 4.2G / Application Support 50G、いずれも
+  静的アプリデータ)。真の構造的増加源は
+  **cloud-itonami-dns-resolver/.git/annex = 71G**
+  (git annex info 実測: local annex keys 5928 / 75.17 GB、working tree
+  33.59 GB に対し約 40G が未参照世代として滞留)。緩和候補は
+  `git annex dropunused` 等 (データロス判断を伴うため Tier 2)。
+  現 avail < 1GB でフルスイート実行は不可能
+  (evidence/2026-09-06-falsify-20.md)。
+  **falsify-21 (2026-09-06) で数値確定**: `git annex unused
+  --used-refspec +refs/heads/main` 実測 (rc=0) — **unused key 3065 個 /
+  合計 39.03 GiB** (key サイズ集計 total_bytes=41912565004)。
+  falsify-20 の「約 40G」推定と整合。ただし全 branch 走査では
+  unused 0 — 39.03 GiB は main-refspec 上界であり、他 branch
+  (resident/dns-resolver 等) が参照する分は drop 不可。
+  範囲修正: dropunused 実施には branch 別参照精査が前提
+  (evidence/2026-09-06-falsify-21.md)。着地は Tier 2。
+  本反復での df 再実測: avail 962Mi / 100%、annex info は
+  keys 5951 / 75.51 GB に微増 (世代増加継続)。
 
 ## === NEXT ===
 
