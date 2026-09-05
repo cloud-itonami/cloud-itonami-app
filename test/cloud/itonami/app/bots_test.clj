@@ -1525,6 +1525,33 @@
             (is (= "private repository cannot be read" (:result turn)))
             (is (= ["grant repository access"] (:evidence turn)))))))))
 
+(deftest goal-test-concurrency-bounds-are-internally-consistent
+  ;; falsify-12 (2026-09-05): the durable-goal flake was not a hang -- the
+  ;; three timing bounds in this file (the test-side `entered` wait, the
+  ;; worker-side `release` deref, and the post-release poll loop) are designed
+  ;; asynchronously, and admission load is throttled by the smallest one. Any
+  ;; future edit that raises a worker-side bound above a test-side wait (or
+  ;; vice versa without headroom) reintroduces the race. This test reads the
+  ;; bounds out of the source so the relationship cannot silently regress.
+  (let [source (slurp (io/file "test" "cloud" "itonami" "app" "bots_test.clj"))
+        ;; every test-side admission wait on the `entered` promise
+        entered-waits (mapv #(Long/parseLong (second %))
+                            (re-seq #"deref entered (\d+) false" source))
+        ;; every worker-side bound that holds the model turn open
+        release-bounds (mapv #(Long/parseLong (second %))
+                             (re-seq #"deref release (\d+) nil" source))]
+    (is (seq entered-waits) "entered waits must stay greppable -- they are the
+                             admission-load bound under measurement")
+    (is (seq release-bounds) "release bounds must stay greppable -- they are
+                              the worker-side hold the entered wait must
+                              outlive")
+    (doseq [entered entered-waits
+            release release-bounds]
+      (is (> entered release)
+          (str "each test-side entered wait (" entered "ms) must exceed each
+                worker-side release deref bound (" release "ms) -- falsify-12:
+                the smallest of the three bounds throttles admission load")))))
+
 (deftest durable-goal-detaches-plans-runs-read-actions-in-parallel-and-verifies
   (with-store
     (fn []
@@ -1565,7 +1592,13 @@
           (let [submitted (bots/submit-goal! nil alice (:bot/id b)
                                              "Inspect the repository" run-id)]
             (is (= run-id (:id submitted)))
-            (is (= true (deref entered 2000 false)))
+            ;; falsify-12: the three bounds -- this entered wait, the
+            ;; worker-side release deref (3000ms below), and the post-release
+            ;; poll loop -- are designed asynchronously, and admission load
+            ;; is throttled by the smallest one. The entered wait now
+            ;; exceeds the release bound so admission-load headroom lives
+            ;; here, not in a race the poll loop has to paper over.
+            (is (= true (deref entered 5000 false)))
             (is (= "running" (:state (bots/latest-turn alice (:bot/id b))))
                 "the API-facing submit returned while the worker was still running")
             (deliver release true)
@@ -1916,7 +1949,8 @@
                         {:content "too late" :tool-calls []})]
           (let [work (future (bots/send-stream! nil alice (:bot/id b) "止めて"
                                                 run-id (fn [_])))]
-            (is (= true (deref entered 2000 false)))
+            ;; falsify-12 consistency: uniform 5000ms admission headroom
+            (is (= true (deref entered 5000 false)))
             (is (= {:cancelled true :run-id run-id}
                    (bots/cancel! alice (:bot/id b) run-id)))
             (let [messages (deref work 3000 ::timeout)]
@@ -1946,7 +1980,10 @@
           (let [work (future
                        (bots/send-stream! nil alice bot-id "最初の依頼"
                                           run-id (constantly nil)))]
-            (is (= true (deref entered 2000 false)))
+            ;; falsify-12 consistency: the worker below derefs release
+            ;; with a 3000ms bound; the entered wait must exceed it or
+            ;; admission load can exhaust the smaller bound first.
+            (is (= true (deref entered 5000 false)))
             (let [queued (bots/queue-followup! alice bot-id run-id "追加条件を優先して")]
               (is (= "queued" (:state queued)))
               (is (= 1 (:queued queued))))
