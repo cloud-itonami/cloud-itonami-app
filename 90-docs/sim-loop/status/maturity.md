@@ -2,7 +2,7 @@
 
 現在段階: L1 (稼働はするが、反証可能性のある品質主張が軸ごとに未整備)
 
-測定日: 2026-09-05 (falsify-12; 初回ベースライン 2026-09-03)
+測定日: 2026-09-05 (falsify-15; 初回ベースライン 2026-09-03)
 測定者: itonami-maint
 
 ## 7 軸スコア (0-5)
@@ -53,6 +53,15 @@
   entered で律速される。timeout 引き上げのみでは poll と release の整合が
   未検証のまま残るため、修理は 3 点セットの整合確認で行うこと
   (evidence/2026-09-05-falsify-12.md)。hang/deadlock 構造なし — survived。
+  **falsify-15 (2026-09-05) で修理実施 (Tier 1)**: 本体 checkout が
+  porcelain 空であることを再確認の上、test 側 entered 待ち 3 箇所を
+  2000→5000ms に統一し、invariant entered > release を機械検証する
+  新 deftest を追加 (gate 自体が開発中に残存 2000ms を検出した)。
+  負荷環境下で bots-test 全体 2292 tests / 13880 assertions /
+  1 failure 0 errors (唯一の failure は既知 OPEN 赤-4)。flake サイトは
+  負荷下で緑。PR #280 (agent/fix-open-red-5-three-bound, 9e5b24a) として
+  提出 - 着地 (merge) は kanban/human 判断待ち。着地 + 追加 1 回の
+  負荷下完走で CLOSED に遷移 (evidence/2026-09-05-falsify-15.md)。
 
 ## 既知リスク
 
@@ -88,6 +97,8 @@
    完全検証 (evidence/2026-09-04-falsify-11.md)。着地時の追加条件は
    plist 再生成 + launchctl bootout/bootstrap と、kagi get の所要
    (~4 分/実行) を見込んだ手動発火確認。
-8. 実行環境が取れた反復で bots_test.clj:1566 を高負荷再現条件下で
-   再実行し、falsify-12 測定 3 の競合窓 (entered+poll vs release 3000ms)
-   の実際の発火を確認する。
+8. ~~高負荷再現条件下での競合窓の発火確認~~ → falsify-15 で修理
+   (entered 5000ms 統一 + 機械検証 gate) が先に着地済み、負荷下完走で
+   flake サイト緑。残る確認は PR #280 着地後の追加 1 回の負荷下完走。
+9. ~~OPEN 赤-5 の修理 (NEXT-9)~~ → falsify-15 で Tier 1 として実施、
+   PR #280 提出済み。着地は kanban/human 判断待ち。
