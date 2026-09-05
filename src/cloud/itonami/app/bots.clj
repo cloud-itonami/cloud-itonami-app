@@ -3823,6 +3823,51 @@
                      :pending-followups (count (queued-followups (:turn/id turn))))
         (:turn/goal? turn) (assoc :job (public-goal-job (goal-job (:turn/id turn))))))))
 
+(defn resources
+  "Every durable thing this tenant's Bots LEFT BEHIND, one flat list.
+
+  `Drive` answers where MY documents live: it is one person's file cabinet,
+  scoped to the files they created plus the archived mailbox attachments.
+  `Resources` answers a different question — what have the BOTS produced? —
+  so it reads the action receipts (`:action/finished` events carry
+  `:tool/artifacts` written by `workspace_write_file` and `git_commit`) of
+  every run this owner's Bots have recorded, plus the commits those receipts
+  name. Bot-identity is the scope, not file location: a Bot that wrote into
+  a shared repository shows up here even though nothing in Drive points at
+  it, and a file the person uploaded themselves does not.
+
+  Receipt-sourced only, like `artifact-cards`: a path that appears here was
+  written by a tool that ran, never asserted by a model's summary. Bounded
+  by the same receipt ledgers that feed the turn cards (200 events per run).
+
+  Newest first — the resource you are looking for is most likely the one a
+  Bot just finished writing."
+  [session]
+  (let [partition (snapshot)
+        mine (->> (vals (:bots partition))
+                  (filter #(and (= (:user-id session) (:bot/owner %))
+                                (= (:organization-id session) (:bot/organization %))))
+                  (map :bot/id)
+                  set)]
+    (->> (vals (:goal-jobs partition))
+         (filter #(contains? mine (:job/bot %)))
+         (mapcat (fn [job]
+                   (->> (:job/events job)
+                        (filter #(= :action/finished (:event/kind %)))
+                        (mapcat (fn [event]
+                                  (map (fn [a]
+                                         {:bot-id (:job/bot job)
+                                          :kind (some-> (:artifact/kind a) name)
+                                          :path (or (:artifact/path a)
+                                                    (first (:artifact/paths a)))
+                                          :bytes (:artifact/bytes a)
+                                          :revision (:artifact/revision a)
+                                          :message (:artifact/message a)
+                                          :paths (vec (:artifact/paths a))
+                                          :at (:event/at event)})
+                                       (get-in event [:event/data :artifacts])))))))
+         (sort-by :at #(compare %2 %1))
+         (vec))))
 (defn turn
   "One durable Bot turn by run id, through the same ownership gate as latest-turn.
 
