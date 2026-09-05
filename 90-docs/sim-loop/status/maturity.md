@@ -2,7 +2,7 @@
 
 現在段階: L1 (稼働はするが、反証可能性のある品質主張が軸ごとに未整備)
 
-測定日: 2026-09-05 (falsify-15; 初回ベースライン 2026-09-03)
+測定日: 2026-09-05 (falsify-16; 初回ベースライン 2026-09-03)
 測定者: itonami-maint
 
 ## 7 軸スコア (0-5)
@@ -13,7 +13,7 @@
 | 実装 | 3 | src 231 ファイル、全主要面 (bots/webhook/hermes-compat/store) 実装済み。virtual-shell は未活性 |
 | テスト | 3 | test 205 ファイル。フルスイートが異なるリビジョンで 2 回完走: falsify-6 (bde2171) と falsify-7 (2bca892、所要約45分)。falsify-7: Ran 2291 tests / 13862 assertions / **1 failure** 0 errors。bots_test.clj:1566 は再実行で緑 → 決定論的赤ではなく高負荷 flake と確定 (REFUTED)。決定論的赤 0。残る 1 failure は launcher_test.clj:162 (OPEN 赤-4、launcher 解決順序の実バグ — falsify-8 で帰属修正済み)。3 止まりの根拠: flake リトライ機構なし、OPEN 赤-4 未解決。falsify-12 (2026-09-05, 静的解析): 赤-5 flake は時間切れ型のみで hang/deadlock 構造なし — survived。entered(2000ms)/poll(2.5s)/release(3000ms) の 3 bound が非同期に設計され最小の entered で律速することを同定 (evidence/2026-09-05-falsify-12.md) |
 | 反証 | 3 | falsify-1〜12 を evidence/ に記録。falsify-9: 赤-2「KeepAlive 欠如で silent-dead」説を反証 (主因は ops-classpath.sh が upstream の authority.scope 追加に未追従で nbb ロード即死)。falsify-10: spec 軸主張を「解決/path-param 契約 (値スキーマなし)」に範囲修正。falsify-11: 赤-2 案 A「classpath 修正で復旧」説を反証試行 — authority→sha2.core→datom.source の決定論的依存連鎖が段階的に死ぬことを実測、案 A の 3 src 追加が必須十分と確認し expiry-alert.cljs rc=0 (OK 行) まで完全復旧を実測 → 精緻化付きで SURVIVED。検証の终点は :LOAD-OK でなく rc=0、plist 再 bootstrap が必須条件。falsify-12: テスト軸「赤-5 flake は時間切れ型のみで hang 構造なし」説を反証試行 → survived (hang/deadlock 構造なし、falsify-7 の帰属は修正不要)。entered/poll/release の 3 bound 非同期設計を競合窓として同定し、OPEN 赤-5 修理案に範囲修正 |
-  falsify-14 (2026-09-05): リスク-2 dirty 前提を REFUTED (本体 main clean 実測、clean HEAD で 2291 tests / 13893 assertions / 1 failure = OPEN 赤-4 のみを再実測) |
+  falsify-14 (2026-09-05): リスク-2 dirty 前提を REFUTED (本体 main clean 実測、clean HEAD で 2291 tests / 13893 assertions / 1 failure = OPEN 赤-4 のみを再実測)。falsify-16 (2026-09-05): 「着地後の負荷下完走で flake サイトが赤になる」説を反証試行 → survived (merged main 1905580 で 2292 tests / 13929 assertions / 0 failures, EXIT=0 実測、OPEN 赤-5 CLOSED) |
 | 再現性 | 3 | launchd で server/host/tick は再現稼働。releases/ 全 77 ツリーが対応 git commit と byte 完全一致 (falsify-3 実測)。ただし不変性は運用規約のみで OS 強制なし |
 | governor 統合 | 3 | tamaki tick は 1430 repo を 900s 間隔でスキャン継続。ただし **1559 連続 worktree-failed** (2026-08-14〜、毎 tick) — falsify-6 で原因特定済み (tick の rm -rf が git-annex read-only 残骸を取りこぼし → worktree add が永久 already exists)。修理は tamaki リポ側 (chmod -R u+wx 追加、Tier 2 で提起)。着地 0 landed は継続 |
 | 運用 | 3 | falsify-6 実測: GET /health -> 200 (PID 2666)、ui-host 稼働。expiry-alert は not running/exit 1 — falsify-9 で主因確定: ops-classpath.sh が upstream (org-chainagnostic-cacao 83f3169, 2026-08-15) の authority.scope 追加に未追従で nbb ロード即死。鍵は vault に存在 (kagi ls 実測) ので案 A 修正で復旧見込み。KeepAlive 無しは従属リスク |
@@ -63,6 +63,14 @@
   負荷下で緑。PR #280 (agent/fix-open-red-5-three-bound, 9e5b24a) として
   提出 - 着地 (merge) は kanban/human 判断待ち。着地 + 追加 1 回の
   負荷下完走で CLOSED に遷移 (evidence/2026-09-05-falsify-15.md)。
+  **falsify-16 (2026-09-05) で CLOSED**: PR #280 は 2026-09-05T06:52:58Z
+  に merge 済み (mergeCommit 1905580、gh 実測)。merged main の detached
+  worktree (/private/tmp/mt-merged-main、本体 checkout 未 touch) で
+  負荷環境下 (load avg 11-27、resident JVM 5 走行) のフルスイートを完走:
+  Ran 2292 tests / 13929 assertions / **0 failures, 0 errors** (EXIT=0)。
+  flake サイト緑を再確認。なお本 run では OPEN 赤-4 も赤にならなかったが、
+  これは worktree が shadow レイアウトを持たないためで赤-4 の反証では
+  ない (evidence/2026-09-05-falsify-16.md)。
 
 ## 既知リスク
 
@@ -119,5 +127,11 @@
    の実際の発火を確認する。
 9. ~~OPEN 赤-5 の修理 (3 bound 整合) を Tier 1 として着地試行~~ →
    falsify-15 で実施: branch → PR #280 (9e5b24a)、負荷下フル緑確認済み。
-   残るは PR #280 の merge (kanban/human) と、着地後の追加 1 回の
-   負荷下完走で OPEN 赤-5 を CLOSED へ。
+   ~~残るは PR #280 の merge (kanban/human) と、着地後の追加 1 回の
+   負荷下完走で OPEN 赤-5 を CLOSED へ~~ → falsify-16 で完了 (CLOSED)。
+10. (falsify-16 新規) テスト実行の前提条件としてディスク空き容量の
+   確認を反復手順に追加: falsify-16 でディスク満杯 (avail 2.2Gi) が
+   スイートを 2 回異常終了させた (store journal append 不整合として
+   表面化)。target/test-data の git-annex read-only 残骸は
+   chmod -R u+wx 後に削除可能 (tamaki tick の worktree-failed と
+   同一 fail モード)。Tier 2 report として runbook 追記を提案。
