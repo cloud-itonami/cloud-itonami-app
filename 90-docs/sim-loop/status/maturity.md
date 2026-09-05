@@ -90,6 +90,12 @@
   onedrive アーカイブの外部退避 (+133Gi) — アーカイブデータへの接触は
   本 bot の管轄外のため operator 判断 (Tier 2)。同日中に avail が
   1.9Gi → 5.2Gi へ回復したが、その増分の帰属は未確定。
+  **falsify-19 (2026-09-06) で範囲修正**: 再飽和 3 度目を観測
+  (avail 2.8Gi / 100% 実測)。「増分は onedrive の継続増加」説は REFUTED
+  (onedrive du 実測 133.3 GiB、24h で不変)。排除済み: mt-* worktrees
+  (合計 25MB)。~/Library は TCC 遮断で全域 du 不能のため -2.4Gi 増分の
+  帰属は未確定 — 定期 du snapshot または TCC 許可を Tier 2 提起
+  (evidence/2026-09-06-falsify-19.md)。
 
 ## === NEXT ===
 
