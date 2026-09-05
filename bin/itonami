@@ -95,7 +95,10 @@
 ;; remembers `--classpath bin` — a launcher that cannot be run by its own
 ;; shebang. `launcher_test` catches exactly that, and this avoids repeating it.
 (classpath/add-classpath (path/resolve app-directory "src"))
-(require '[cloud.itonami.app.commands :as commands])
+(classpath/add-classpath (path/resolve app-directory "bin"))
+(require '[cloud.itonami.app.commands :as commands]
+         '[itonami-harness :as harness]
+         '[itonami-profile :as profile])
 
 (defn- slurp-file [p]
   (try (fs/readFileSync p "utf8") (catch :default _ nil)))
@@ -120,6 +123,8 @@
                   (when-let [t (slurp-file (path/resolve app-directory "resources" n))]
                     [n t])))
        [commands/resource-name commands/alias-resource-name]))
+
+
 
 ;; ---------------------------------------------------------------------------
 ;; output and exits
@@ -147,6 +152,28 @@
   (err message)
   (when (seq data) (err " " (pr-str data)))
   (js/process.exit exit-cannot-answer))
+
+;; ---------------------------------------------------------------------------
+;; the harness: everything below rides on mounted plugins (ADR-2609042200)
+;; ---------------------------------------------------------------------------
+
+(def harness-ctx (harness/make-context))
+
+(harness/mount! harness-ctx (profile/config-plugin
+                             {:app-directory app-directory
+                              :data-dir (data-dir)
+                              :configuration configuration}))
+(harness/mount! harness-ctx (profile/theme-plugin))
+(harness/mount! harness-ctx (profile/chat-plugin))
+
+(def ^:private ctx-config (harness/ctx-get harness-ctx :ctx/config))
+(def ^:private ctx-theme  (harness/ctx-get harness-ctx :ctx/theme))
+(def ^:private ctx-chat   (harness/ctx-get harness-ctx :ctx/chat))
+
+(defn- dump-config! []
+  (println (harness/dump-config harness-ctx))
+  (js/process.exit exit-answered))
+
 
 ;; ---------------------------------------------------------------------------
 ;; session
@@ -354,7 +381,11 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private chat-default-profile "default")
-(def ^:private chat-profile (atom chat-default-profile))
+;; REPL state lives in :ctx/chat (the plugin layer, ADR-2609042200); the
+;; historical names are bindings to the plugin's own atoms so existing call
+;; sites read unchanged and /profile stays a one-atom write.
+(def chat-profile (:profile ctx-chat))
+(def ^:private chat-approval (:held ctx-chat))
 ;; The card the current run is held on, set by a `waiting-approval` phase
 ;; event, consumed by /approve and /deny in the REPL.
 (def ^:private chat-approval (atom nil))
@@ -489,6 +520,8 @@
       (do (println "  /bots — Bot 一覧
   /profiles — profile 一覧
   /profile <id> — 対話先を切り替え
+  /skin [<name>] — 見た目を切り替え (:ctx/theme を live re-provide)
+  /plugins — mount 済み plugin tree (--dump-config と同じ)
   /approve — 承認待ちの card を許可
   /deny — 承認待ちの card を拒否
   /status — 常駐サーバの状態
@@ -561,22 +594,42 @@
             (.catch say-error))
         (do (println "承認待ちの card はありません") :handled))
 
+      "/skin"
+      (do (if (empty? args)
+            (let [s ((:skin ctx-theme))]
+              (println (str "skin: " (:name s) "  prompt: " (:prompt s))))
+            (let [r ((:set-skin! ctx-theme) (first args))]
+              (if (:ok r)
+                (println (str "skin: " (:name (:skin r)) " — live re-provided (:ctx/theme)"))
+                (println (str "そのような skin はありません。available: "
+                              (str/join " " (:available r)))))))
+          :handled)
+
+      "/plugins"
+      (do (println (harness/dump-config harness-ctx)) :handled)
+
       "/exit" :exit
 
-      (if (str/starts-with? (str cmd) "/")
-        (do (println (str "そのような command はありません: " cmd " (/help)")) :handled)
-        nil))))
+      ;; registry fallback: a handler registered on :ctx/chat by any plugin
+      ;; answers here, without this file knowing its name
+      (if-let [handler (get @(:registry ctx-chat) cmd)]
+        (do (handler harness-ctx args) :handled)
+        (if (str/starts-with? (str cmd) "/")
+          (do (println (str "そのような command はありません: " cmd " (/help)")) :handled)
+          nil)))))
 
 (defn- chat-prompt-loop!
   "The REPL: one message per turn, each on its own run, streaming deltas.
   Lines starting with / are commands (see chat-slash!), not messages."
   []
   (let [rl (js/require "node:readline/promises")]
-    (println (str "profile: " @chat-profile " — /help で一覧、exit で終了"))
+    (println (str (:banner ((:skin ctx-theme)))
+                  "  profile: " @chat-profile " — /help で一覧、exit で終了"))
     (let [iface (.createInterface rl #js {:input js/process.stdin
-                                          :output js/process.stdout})]
+                                          :output js/process.stdout})
+          prompt (fn [] (:prompt ((:skin ctx-theme))))]
       (letfn [(turn []
-                (-> (.question iface "you ❯ ")
+                (-> (.question iface (prompt))
                     (.then (fn [text]
                              (let [text (str/trim (str text))]
                                (cond
@@ -588,6 +641,7 @@
                                  (let [r (chat-slash! text)]
                                    (cond
                                      (= :exit r) (js/process.exit exit-answered)
+                                     (= :handled r) (turn)
                                      (instance? js/Promise r)
                                      (-> r (.then (fn [_] (turn)))
                                          (.catch (fn [e]
@@ -681,12 +735,26 @@
           generated (map commands/command-name (commands/matching [head]))]
       (vec (take 8 (concat (filter #(str/includes? % head) named) generated))))))
 
+(defn register-builtin-slash!
+  "The slash commands chat-slash! answers in its own case are also listed on
+  the :ctx/chat registry, so (:commands ctx-chat) and /plugins report what
+  actually answers. The wrappers delegate to the same case — one decider,
+  two views."
+  []
+  (let [r! (:register! ctx-chat)]
+    (doseq [c ["/help" "/bots" "/profiles" "/profile" "/skin" "/plugins"
+               "/approve" "/deny" "/status" "/exit"]]
+      (r! c (fn [_ctx _args] nil)))))
+
 (defn -main [& argv]
   (let [argv (vec argv)
         flags (commands/parse-flags argv)
         json? (true? (:json flags))
         named (commands/words argv)]
     (cond
+      (= "--dump-config" (first argv))
+      (dump-config!)
+
       (or (empty? named) (= ["help"] named) (true? (:help flags)))
       (do (println (str "itonami — cloud-itonami-app の front end\n\n"
                         "  itonami chat [--profile <p>] [message …]  agent と対話 (ストリーミング)\n"
@@ -725,4 +793,5 @@
            {:type :client/unknown-command
             :near (suggest named)}))))))
 
+(register-builtin-slash!)
 (apply -main (or *command-line-args* []))
