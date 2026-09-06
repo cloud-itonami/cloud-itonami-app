@@ -1,0 +1,100 @@
+[{:db/id -1
+  :adr/id "adr-2609062400-the-hermes-slash-commands-land-on-the-harness-main-has"
+  :adr/title "The hermes slash commands land on the harness main actually has"
+  :adr/status "accepted"
+  :adr/date "2026-09-06"
+  :adr/related "adr-2609042200 adr-2609062240-argless-itonami-opens-a-start-screen-not-a-help-text"
+  :adr/body "## The fork this closes
+
+`~/.local/bin/itonami` resolves through `~/.cloud-itonami/current`, and on
+2026-09-06 that pointed at `releases/dfddb86b…-clean` -- a build of
+`agent/harness-plugin-architecture`, a branch 11 commits ahead of `main` and
+41 behind it. Three pointers, three answers: the CLI ran the branch, the
+resident server ran `releases/e97b6ed…` (the merge-base, up 2 days 11 hours),
+and `main` had moved past both.
+
+The branch carried two things. One worth having: 18 slash commands the REPL on
+`main` did not have. One not: a second implementation of the plugin harness
+`main` had already landed at 93d9972 (ADR-2609042200), in files (`itonami_chat.cljs`,
+`itonami_theme.cljs`) `main` does not have.
+
+Pointing the release at `main` would have handed the operator a start screen
+and taken 18 commands away. Merging the branch would have landed two harnesses
+and decided, in passing, a question nobody asked. So: the commands are ported
+onto the harness `main` mounts, and the second harness is not.
+
+## The routes were checked, not assumed
+
+Every command below names a route that was found in
+`src/cloud/itonami/app/server.clj` before it was written.
+
+The generated command table (`resources/cloud-itonami-app.commands.edn`, 198
+routes) was the wrong place to look and said so by answering `0` for routes
+that plainly exist. `/v1/runs/…/steer`, `/v1/runs/…/stop`, `/mcp`, `/health`
+and the `/p/<profile>/…` hermes-compat prefix are `createContext` handlers the
+generator does not walk. \"Absent from commands.edn\" is not evidence of
+absence; the server source is.
+
+## Added
+
+`/sessions` `/history` `/context` -- past sessions, recent messages, context
+sources. `/steer` `/stop` -- a run in flight. `/whoami` `/model` `/version`
+`/approvals` -- the operator, the routing, the build, the approval policies.
+`/handoff` `/tools` `/skills` `/botinfo` -- Bots and what they can reach.
+`/retry` `/prompt` -- resubmission, the second through `$EDITOR`. `/verbose`
+`/timestamps` -- display. `/hermes` -- what is in `~/.hermes` to import from.
+
+Ten to twenty-eight. `/plugins` keeps `main`'s meaning (the mounted plugin
+tree); the branch's `/plugins` (the hermes home) is `/hermes`, because those
+are two different questions and one name cannot answer both.
+
+## One decider
+
+`chat-slash!` was a `case` that dispatched, PLUS a registry of no-op wrappers
+that only listed. Its own docstring called this \"one decider, two views\" --
+but a view that can be edited without touching the thing it views is a second
+decider that fails quietly, and it had already failed: `/help` printed a
+literal block that did not mention `/help`.
+
+A registry entry now carries `{:name :args-hint :description :handler}`, and
+`/help` and `itonami help` are generated from it. Registering is the only way
+to be listed; being listed is only possible by registering. The test walks the
+generated help and asserts every line names something the registry can
+dispatch -- and, in the other direction, that a command removed from the
+registry leaves the help.
+
+## A defect the port surfaced
+
+`/bots` read `:data` from `/api/agent-bots`, which answers under `:bots`. On
+this machine, against a live resident holding more than twenty Bots, it
+printed nothing: HTTP 200, a working server, an empty screen. That is
+CLAUDE.md's sixth question in miniature -- a lookup that could not find its
+data returning what a lookup that found none returns. It now reads both shapes
+and says so when the list is genuinely empty.
+
+## `/verbose` had to do something
+
+The branch set a flag nothing read. A switch that reports `on` and changes
+nothing is worse than no switch, so `/verbose` prints the run stream's
+non-delta events (`run.started`, `run.phase model`, `run.completed`) as they
+arrive. Measured against the live resident: off, one line of answer; on, the
+phases and then the answer. `/timestamps` prefixes the prompt.
+
+## `:resend`
+
+`/retry` and `/prompt` do not send anything themselves -- they return
+`:resend`, and the REPL resubmits `last-input` through the same path a typed
+line takes. One send, three ways to reach it. The input is recorded BEFORE the
+run starts, so the turn most worth retrying, the one that failed, can be.
+
+## What this does not claim
+
+The branch's remaining differences (its harness, its skin engine, its EDN skin
+files) are not merged and not evaluated here. The branch is not deleted: it is
+the provenance of the running release until that release is replaced.
+
+`itonami chat` under a pipe still loses every line after the first, because
+`readline.question` registers a one-shot listener and a pipe delivers the whole
+buffer at once. That is older than this change and untouched by it; a terminal
+is unaffected, and it is why each command here was measured in its own run.
+"}]

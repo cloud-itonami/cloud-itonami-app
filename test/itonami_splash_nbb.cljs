@@ -100,6 +100,29 @@
     (is (str/starts-with? (second (last rows)) "+3 more:"))
     (is (str/includes? (second (last rows)) "esign"))))
 
+(deftest a-command-name-is-never-cut-in-half
+  ;; The column used to receive six names per line, fixed, and then truncate
+  ;; the line to fit -- which cut names mid-word (`/bots…`, `/hist…`). A
+  ;; truncated command name is not a name you can type.
+  (let [words ["/approvals" "/approve" "/botinfo" "/bots" "/context" "/deny"
+               "/exit" "/handoff" "/help" "/history" "/timestamps"]
+        lines (splash/wrap-words words 34)]
+    (is (every? #(<= (splash/display-width %) 34) lines))
+    (is (= words (str/split (str/join " " lines) #" "))
+        "a name was cut, dropped or reordered")
+    (is (not-any? #(str/includes? % "…") lines))))
+
+(deftest a-word-wider-than-the-column-is-cut-rather-than-overflowing
+  ;; The one case where cutting is right: nothing would ever fit, and letting
+  ;; it through would push the frame's right border off.
+  (let [lines (splash/wrap-words ["/a-very-long-command-name"] 8)]
+    (is (= 1 (count lines)))
+    (is (>= 8 (splash/display-width (first lines))))
+    (is (str/ends-with? (first lines) "…"))))
+
+(deftest wrapping-nothing-produces-nothing
+  (is (= [] (splash/wrap-words [] 40))))
+
 (deftest a-group-with-no-tail-words-still-says-how-big-it-is
   (is (= [["contracts" "1 command"]]
          (splash/summarise [{:command ["contracts"]}] 3))))
@@ -115,7 +138,7 @@
    :session "keychain"
    :groups [["workspace" "drive, mail, +2 more"] [nil "+20 more: mail · esign"]]
    :named [["auth" "login, status"]]
-   :slash ["/help /bots /exit"]
+   :slash ["/help" "/bots" "/exit"]
    :counts ["209 commands" "/help for commands"]})
 
 (deftest the-screen-fits-the-terminal

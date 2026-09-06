@@ -42,6 +42,7 @@
 
 (ns itonami
   (:require ["node:child_process" :as cp]
+            ["node:os" :as os]
             ["node:fs" :as fs]
             ["node:path" :as path]
             [clojure.edn :as edn]
@@ -438,13 +439,17 @@
 (defn- request!
   "One request. Resolves to {:status :body}; rejects only when nothing answered,
   which is a different failure from a refusal and is reported as one."
-  [{:keys [method path body timeout-seconds]} token]
+  [{:keys [method path body timeout-seconds headers]} token]
   (let [controller (js/AbortController.)
         timer (js/setTimeout #(.abort controller)
                              (* 1000 (or timeout-seconds 30)))
         init #js {:method (str/upper-case (name method))
                   :headers (clj->js (cond-> {"content-type" "application/json"}
-                                      token (assoc "authorization" (str "Bearer " token))))
+                                      token (assoc "authorization" (str "Bearer " token))
+                                      ;; `/mcp` answers SSE unless the request
+                                      ;; says it will take JSON, so a caller
+                                      ;; has to be able to say so.
+                                      (seq headers) (merge headers)))
                   :signal (.-signal controller)}]
     (when (= :post method)
       (aset init "body" (js/JSON.stringify (clj->js (or body {})))))
@@ -620,6 +625,15 @@
        (letfn [(finish [] (.abort controller) (resolve @out))
                (on-event [ev]
                  (let [kind (:event ev)]
+                   ;; /verbose: everything the stream says that is not the
+                   ;; answer itself. Without this the toggle would set a flag
+                   ;; nothing reads -- a switch that reports "on" and changes
+                   ;; nothing is worse than no switch.
+                   (when (and @(:verbose ctx-chat) (not= "assistant.delta" kind))
+                     (chat-emit (str "\n" ((:stamp ctx-chat)) "┊ " kind
+                                     (when-let [p (:phase ev)] (str " " p))
+                                     (when-let [t (:tool ev)] (str " " t))
+                                     "\n")))
                    (cond
                      (= "assistant.delta" kind)
                      ;; The server's delta shape is not contractual: runs have
@@ -717,119 +731,399 @@
                          (reject (ex-info (str "event stream に到達できません: " (base-url))
                                           {:type :client/unreachable :cause (.-message e)})))))))))))
 
+(defn- request-or-refuse!
+  "One authenticated request whose answer is printed by `on-ok`, and whose
+  refusal is printed as the server's own status. Returns the promise, which is
+  what the REPL awaits before prompting again."
+  ([req on-ok] (request-or-refuse! req on-ok nil))
+  ([req on-ok on-error]
+   (-> (request! req (require-token!))
+       (.then (fn [{:keys [status body]}]
+                (if (<= 200 status 299)
+                  (on-ok body)
+                  (if on-error
+                    (on-error status body)
+                    (println (str "HTTP " status
+                                  (when-let [m (get-in body [:error :message])]
+                                    (str " — " m))))))))
+       (.catch (fn [e] (println (str "error: " (ex-message e))))))))
+
+(defn- pr-edn [v] (binding [*print-length* 12] (pr-str v)))
+
+(defn- register-slash!
+  "Register one command on the :ctx/chat registry. There is no second table:
+  `/help` is generated from this one, so a command cannot dispatch without
+  being listed or be listed without dispatching."
+  [cmd args-hint description handler]
+  ((:register! ctx-chat) cmd args-hint description handler))
+
 (defn- chat-slash!
-  "A REPL command. Returns :exit to end the session, :handled when the
-  command already handled the line (its answer may still be streaming in —
-  a promise, which the caller should await before prompting again), or nil
-  when the line is not a command."
+  "A REPL line beginning with `/`. Returns :exit to end the session, :handled
+  when the command answered synchronously, :resend to re-submit the last input
+  as a message, a promise the caller should await, or nil when the line is not
+  a command at all."
   [line]
   (let [words (str/split (str/trim line) #"\s+")
         cmd (first words)
-        args (vec (rest words))
-        say-error (fn [e] (println (str "error: " (ex-message e))))]
-    (case cmd
-      "/help"
-      (do (println "  /help — この一覧
-  /bots — Bot 一覧
-  /profiles — profile 一覧
-  /profile <id> — 対話先を切り替え
-  /skin [<name>] — 見た目を切り替え (:ctx/theme を live re-provide)
-  /plugins — mount 済み plugin tree (--dump-config と同じ)
-  /approve — 承認待ちの card を許可
-  /deny — 承認待ちの card を拒否
-  /status — 常駐サーバの状態
-  /exit — 終了")
-          :handled)
+        args (vec (rest words))]
+    (if-let [entry (get @(:registry ctx-chat) cmd)]
+      (try ((:handler entry) args harness-ctx)
+           (catch :default e
+             (println (str "error: " (ex-message e)))
+             :handled))
+      (if (str/starts-with? (str cmd) "/")
+        (do (println (str "そのような command はありません: " cmd " (/help)")) :handled)
+        nil))))
 
-      "/bots"
-      (-> (request! {:method :get :path "/api/agent-bots"} (require-token!))
-          (.then (fn [{:keys [status body]}]
-                   (if (<= 200 status 299)
-                     (doseq [b (take 20 (:data body))]
-                       (println (str "  " (or (:id b) (:bot_id b))
-                                     "  " (or (:name b) "?")
-                                     "  " (or (:status b) "?"))))
-                     (println (str "HTTP " status)))))
-          (.catch say-error))
 
-      "/profiles"
-      (-> (request! {:method :get :path "/api/profiles"} (require-token!))
-          (.then (fn [{:keys [status body]}]
-                   (if (<= 200 status 299)
-                     (doseq [p (take 30 (:data body))]
-                       (println (str "  " (:id p) "  " (:name p) "  " (:status p))))
-                     (println (str "HTTP " status)))))
-          (.catch say-error))
+;; ---------------------------------------------------------------------------
+;; the slash commands (ADR-2609062400)
+;;
+;; Ported from `agent/harness-plugin-architecture`, which built the hermes
+;; parity surface on a second harness implementation this repository did not
+;; land. The commands are the part worth having; they are rewritten here
+;; against the harness `main` actually mounts, so the fleet keeps one.
+;;
+;; Every route below was checked against `src/cloud/itonami/app/server.clj`
+;; before it was written down. Several of them (`/v1/runs/…/steer`, `/stop`,
+;; `/p/<profile>/api/sessions`) are hermes-compat contexts that the generated
+;; command table does not carry, so "not in commands.edn" was not evidence of
+;; absence -- the server source was.
+;; ---------------------------------------------------------------------------
 
-      "/profile"
-      (do (if (empty? args)
-            (println (str "profile: " @chat-profile))
-            (do (reset! chat-profile (first args))
-                (println (str "profile: " @chat-profile))))
-          :handled)
+(register-slash!
+ "/help" "" "この一覧"
+ (fn [_ _] (println ((:help-text ctx-chat))) :handled))
 
-      "/status"
-      (-> (request! {:method :get :path "/health" :timeout-seconds 5} nil)
-          (.then (fn [{:keys [status body]}]
-                   (println (str "server: " (if (<= 200 status 299) "answering" "down")
-                                 "  store: " (:store body)))))
-          (.catch (fn [_] (println "server: down"))))
+(register-slash!
+ "/exit" "" "終了"
+ (fn [_ _] :exit))
 
-      "/approve"
-      (if-let [{:keys [card run-id]} @chat-approval]
-        (-> (request! {:method :post
-                       :path (str "/v1/runs/" run-id "/approval")
-                       :body {:choice "approve"}}
-                      (require-token!))
-            (.then (fn [{:keys [status body]}]
-                     (if (<= 200 status 299)
-                       (do (println "approved — 実行が続きます")
-                           ;; The continuation's tail and terminal event
-                           ;; arrive on the run's still-open SSE stream.
-                           (reset! chat-approval nil))
-                       (println (str "decide failed: HTTP " status
-                                     " " (str (get-in body [:error :message])))))))
-            (.catch say-error))
-        (do (println "承認待ちの card はありません") :handled))
+(register-slash!
+ "/status" "" "常駐サーバの状態"
+ (fn [_ _]
+   (-> (request! {:method :get :path "/health" :timeout-seconds 5} nil)
+       (.then (fn [{:keys [status body]}]
+                (println (str "server: " (if (<= 200 status 299) "answering" "down")
+                              "  store: " (:store body)))))
+       (.catch (fn [_] (println "server: down"))))))
 
-      "/deny"
-      (if-let [{:keys [card run-id]} @chat-approval]
-        (-> (request! {:method :post
-                       :path (str "/v1/runs/" run-id "/approval")
-                       :body {:choice "deny"}}
-                      (require-token!))
-            (.then (fn [{:keys [status body]}]
-                     (if (<= 200 status 299)
-                       (do (println "denied")
-                           (reset! chat-approval nil))
-                       (println (str "decide failed: HTTP " status
-                                     " " (str (get-in body [:error :message])))))))
-            (.catch say-error))
-        (do (println "承認待ちの card はありません") :handled))
+(register-slash!
+ "/plugins" "" "mount 済み plugin tree (--dump-config と同じ)"
+ (fn [_ _] (println (harness/dump-config harness-ctx)) :handled))
 
-      "/skin"
-      (do (if (empty? args)
-            (let [s ((:skin ctx-theme))]
-              (println (str "skin: " (:name s) "  prompt: " (:prompt s))))
-            (let [r ((:set-skin! ctx-theme) (first args))]
-              (if (:ok r)
-                (println (str "skin: " (:name (:skin r)) " — live re-provided (:ctx/theme)"))
-                (println (str "そのような skin はありません。available: "
-                              (str/join " " (:available r)))))))
-          :handled)
+(register-slash!
+ "/bots" "" "Bot 一覧"
+ (fn [_ _]
+   (request-or-refuse!
+    {:method :get :path "/api/agent-bots"}
+    (fn [body]
+      ;; `/api/agent-bots` answers under `:bots`. This read `:data`, found
+      ;; nothing, and printed nothing -- a 200 with a working server and an
+      ;; empty screen, which is the shape CLAUDE.md calls a check that could
+      ;; not run returning the value of one that ran and passed. Measured
+      ;; 2026-09-06 against the live resident: 20+ Bots, zero lines.
+      (let [bots (or (:bots body) (:data body))]
+        (if (empty? bots)
+          (println "Bot はありません")
+          (doseq [b (take 20 bots)]
+            (println (str "  " (or (:id b) (:bot_id b))
+                          "  " (or (:name b) "?")
+                          "  " (or (:status b) (when (some? (:enabled? b))
+                                                 (if (:enabled? b) "enabled" "disabled"))
+                                    "?"))))))))))
 
-      "/plugins"
-      (do (println (harness/dump-config harness-ctx)) :handled)
+(register-slash!
+ "/botinfo" "[bot-id]" "Bot の tool / browser 構成"
+ (fn [args _]
+   (request-or-refuse!
+    {:method :get :path "/api/agent-bots" :timeout-seconds 15}
+    (fn [body]
+      (let [bots (or (:bots body) (:data body))
+            want (or (first args) @chat-profile)
+            matches (filter #(or (= want (:id %)) (= want (:name %))) bots)]
+        (doseq [b (or (seq matches) (take 5 bots))]
+          (println (str (or (:name b) (:id b)) " (" (:id b) ")"))
+          (println (str "  browser: " (:browser? b)
+                        "  omakase: " (:omakase? b)
+                        "  enabled: " (:enabled? b)))
+          (doseq [[label ks n] [["tools" (:tools b) 8]
+                                ["admitted" (:admitted-tools b) 6]]]
+            (println (str "  " label " (" (count ks) "): "
+                          (str/join ", " (take n ks))
+                          (when (> (count ks) n) " …"))))))))))
 
-      "/exit" :exit
+(register-slash!
+ "/skills" "" "対話先 Bot の skill / hermes-import 状態"
+ (fn [_ _]
+   (request-or-refuse!
+    {:method :get :path "/api/agent-bots" :timeout-seconds 15}
+    (fn [body]
+      (let [bots (or (:bots body) (:data body))
+            want @chat-profile
+            b (or (some #(when (or (= want (:id %)) (= want (:name %))) %) bots)
+                  (first bots))]
+        (if-not b
+          (println "Bot がありません")
+          (do (println (str "bot: " (or (:name b) (:id b) "?")))
+              (if-let [imp (:hermes-import b)]
+                (do (println (str "  imported profile: " (:profile-id imp)))
+                    (println (str "  sessions: " (count (:session-ids imp)))))
+                (println "  hermes-import なし"))
+              (let [ts (:tools b)]
+                (println (str "  tools (" (count ts) "): "
+                              (str/join ", " (take 10 ts))))))))))))
 
-      ;; registry fallback: a handler registered on :ctx/chat by any plugin
-      ;; answers here, without this file knowing its name
-      (if-let [handler (get @(:registry ctx-chat) cmd)]
-        (do (handler harness-ctx args) :handled)
-        (if (str/starts-with? (str cmd) "/")
-          (do (println (str "そのような command はありません: " cmd " (/help)")) :handled)
-          nil)))))
+(register-slash!
+ "/profiles" "" "profile 一覧"
+ (fn [_ _]
+   (request-or-refuse!
+    {:method :get :path "/api/profiles"}
+    (fn [body]
+      (doseq [p (take 30 (:data body))]
+        (println (str "  " (:id p) "  " (:name p) "  " (:status p))))))))
+
+(register-slash!
+ "/profile" "[<id>]" "対話先を切り替え"
+ (fn [args _]
+   (when (seq args) (reset! chat-profile (first args)))
+   (println (str "profile: " @chat-profile))
+   :handled))
+
+(register-slash!
+ "/skin" "[<name>]" "見た目を切り替え (:ctx/theme を live re-provide)"
+ (fn [args _]
+   (if (empty? args)
+     (let [s ((:skin ctx-theme))]
+       (println (str "skin: " (:name s) "  prompt: " (:prompt s))))
+     (let [r ((:set-skin! ctx-theme) (first args))]
+       (if (:ok r)
+         (println (str "skin: " (:name (:skin r)) " — live re-provided (:ctx/theme)"))
+         (println (str "そのような skin はありません。available: "
+                       (str/join " " (:available r)))))))
+   :handled))
+
+;; --- the held card -------------------------------------------------------
+
+(defn- decide! [choice done]
+  (if-let [{:keys [run-id]} @chat-approval]
+    (request-or-refuse!
+     {:method :post :path (str "/v1/runs/" run-id "/approval")
+      :body {:choice choice}}
+     (fn [_]
+       ;; The continuation's tail and terminal event arrive on the run's
+       ;; still-open SSE stream, so there is nothing to poll here.
+       (println done)
+       (reset! chat-approval nil))
+     (fn [status body]
+       (println (str "decide failed: HTTP " status " "
+                     (str (get-in body [:error :message]))))))
+    (do (println "承認待ちの card はありません") :handled)))
+
+(register-slash! "/approve" "" "承認待ちの card を許可"
+                 (fn [_ _] (decide! "approve" "approved — 実行が続きます")))
+(register-slash! "/deny" "" "承認待ちの card を拒否"
+                 (fn [_ _] (decide! "deny" "denied")))
+
+;; --- a run in flight -----------------------------------------------------
+
+(register-slash!
+ "/steer" "<text>" "実行中 run への割り込み注入"
+ (fn [args _]
+   (let [text (str/join " " args)
+         run-id (:run-id @chat-approval)]
+     (if (or (str/blank? text) (nil? run-id))
+       (do (println "steer できる実行中 run がありません (/steer <text>)") :handled)
+       (request-or-refuse!
+        {:method :post :path (str "/v1/runs/" run-id "/steer")
+         :body {:input text} :timeout-seconds 15}
+        (fn [_] (println "steered — 次の tool call 後に反映されます")))))))
+
+(register-slash!
+ "/stop" "" "実行中 run の停止"
+ (fn [_ _]
+   (if-let [run-id (:run-id @chat-approval)]
+     (request-or-refuse!
+      {:method :post :path (str "/v1/runs/" run-id "/stop") :timeout-seconds 10}
+      (fn [_] (println "stop 要求を送りました")))
+     (do (println "停止できる実行中 run がありません") :handled))))
+
+;; --- history -------------------------------------------------------------
+
+(register-slash!
+ "/sessions" "" "過去セッション一覧"
+ (fn [_ _]
+   (request-or-refuse!
+    {:method :get :path (str "/p/" @chat-profile "/api/sessions")
+     :timeout-seconds 10}
+    (fn [body]
+      (doseq [sess (take 30 (:data body))]
+        (println (str "  " (:id sess)
+                      "  " (or (:title sess) "?")
+                      "  " (or (:message_count sess) 0) " msgs"
+                      "  " (or (:preview sess) ""))))))))
+
+(register-slash!
+ "/history" "[N]" "直近 N 件のメッセージ (既定 20)"
+ (fn [args _]
+   (let [n (or (some-> args first js/parseInt) 20)
+         n (if (js/Number.isFinite n) (max 1 n) 20)]
+     (request-or-refuse!
+      {:method :get
+       :path (str "/p/" @chat-profile "/api/sessions/" @chat-profile
+                  "/messages?order=latest&limit=" n)
+       :timeout-seconds 10}
+      (fn [body]
+        (doseq [m (reverse (:data body))]
+          (let [c (str (:content m))]
+            (println (str "[" (or (:role m) "?") "] "
+                          (subs c 0 (min 300 (.-length c))))))))))))
+
+(register-slash!
+ "/context" "" "session context sources"
+ (fn [_ _]
+   (request-or-refuse!
+    {:method :get :path "/api/session/context/sources" :timeout-seconds 10}
+    (fn [body] (println (pr-edn body))))))
+
+;; --- the operator, the model, the version --------------------------------
+
+(register-slash!
+ "/whoami" "" "operator の確認"
+ (fn [_ _]
+   (request-or-refuse!
+    {:method :get :path "/api/operator" :timeout-seconds 10}
+    (fn [body]
+      (let [p (:profile body)]
+        (if (and (map? p) (seq p))
+          (do (println (str "operator: "
+                            (or (:name p) (:display-name p)
+                                (pr-str (select-keys p [:id :created-at])))))
+              (doseq [k (take 6 (keys p))]
+                (println (str "  " k ": " (pr-str (get p k))))))
+          (println "operator profile は未設定 (Web UI で設定)"))
+        (when-let [s (:summary body)] (println (str "summary: " (pr-edn s)))))))))
+
+(register-slash!
+ "/model" "[<model>]" "model routing の表示・設定"
+ (fn [args _]
+   (if (empty? args)
+     (request-or-refuse!
+      {:method :get :path "/api/bots/model-routing" :timeout-seconds 10}
+      (fn [body] (println (pr-edn body)))
+      (fn [status _]
+        (println (str "model routing は human session が必要です (HTTP " status ")"))))
+     (request-or-refuse!
+      {:method :post :path "/api/bots/model-routing"
+       :body {:model (first args)} :timeout-seconds 10}
+      (fn [body] (println (str "model routing updated: " (pr-edn body))))))))
+
+(register-slash!
+ "/version" "" "サーバの version / update 状態"
+ (fn [_ _]
+   (request-or-refuse!
+    {:method :get :path "/api/update" :timeout-seconds 10}
+    (fn [body] (println (pr-edn body))))))
+
+(register-slash!
+ "/approvals" "" "work-governance の承認ポリシー"
+ (fn [_ _]
+   (request-or-refuse!
+    {:method :get :path "/api/work-governance" :timeout-seconds 10}
+    (fn [body]
+      (if-let [policies (seq (:approval-policies body))]
+        (doseq [p (take 20 policies)]
+          (println (str "  " (or (:name p) (:id p)) "  " (or (:effect p) ""))))
+        (println (pr-edn body)))))))
+
+(register-slash!
+ "/handoff" "<to> <task>" "別 Bot への引き継ぎ"
+ (fn [args _]
+   (let [to (first args) task (str/join " " (rest args))]
+     (if (or (str/blank? (str to)) (str/blank? task))
+       (do (println "使い方: /handoff <to-bot-id> <task>") :handled)
+       (request-or-refuse!
+        {:method :post :path (str "/api/agent-bots/" to "/handoff")
+         :body {:to to :task task} :timeout-seconds 660}
+        (fn [body] (println (pr-edn body))))))))
+
+(register-slash!
+ "/tools" "[term …]" "MCP tool 一覧 / 検索"
+ (fn [args _]
+   (-> (request! {:method :post :path "/mcp"
+                  :body {:jsonrpc "2.0" :id 1 :method "tools/list" :params {}}
+                  :headers {"accept" "application/json, text/event-stream"}
+                  :timeout-seconds 15}
+                 (require-token!))
+       (.then (fn [{:keys [body]}]
+                (let [tools (get-in body [:result :tools] [])
+                      match? (fn [{:keys [name description]}]
+                               (or (empty? args)
+                                   (some #(str/includes?
+                                           (str/lower-case (str name " " description))
+                                           (str/lower-case %))
+                                         args)))]
+                  (if (empty? tools)
+                    (println (str "MCP tool が取得できません: " (pr-edn body)))
+                    (doseq [{:keys [name description] :as t} tools
+                            :when (match? t)]
+                      (println (str "  " name " — " (or description ""))))))))
+       (.catch (fn [e] (println (str "error: " (ex-message e))))))))
+
+;; --- the REPL's own knobs ------------------------------------------------
+
+(defn- toggle! [a label args]
+  (let [v (case (some-> args first str/lower-case)
+            "on" true "off" false (not @a))]
+    (reset! a v)
+    (println (str label ": " (if v "on" "off")))
+    :handled))
+
+(register-slash! "/verbose" "[on|off]" "tool 進捗の表示切替"
+                 (fn [args _] (toggle! (:verbose ctx-chat) "verbose" args)))
+(register-slash! "/timestamps" "[on|off]" "時刻表示の切替"
+                 (fn [args _] (toggle! (:timestamps ctx-chat) "timestamps" args)))
+
+(register-slash!
+ "/retry" "" "直前の入力を再送"
+ (fn [_ _]
+   (let [prev @(:last-input ctx-chat)]
+     (if (str/blank? (str prev))
+       (do (println "再送できる直前の入力がありません") :handled)
+       :resend))))
+
+(register-slash!
+ "/prompt" "[message …]" "$EDITOR で入力して送信"
+ (fn [args _]
+   (let [editor (or (some-> (aget js/process.env "ITONAMI_PROMPT_EDITOR") str/trim not-empty)
+                    (some-> (aget js/process.env "VISUAL") str/trim not-empty)
+                    (some-> (aget js/process.env "EDITOR") str/trim not-empty)
+                    "vi")
+         tmp (path/join (os/tmpdir) (str "itonami-prompt-" (js/Date.now) ".md"))
+         prefill (str/join " " args)]
+     (fs/writeFileSync tmp (if (str/blank? prefill) "" (str prefill "\n")))
+     (cp/spawnSync editor (clj->js [tmp]) #js {:stdio "inherit"})
+     (let [text (str/trim (str (slurp-file tmp)))]
+       (try (fs/unlinkSync tmp) (catch :default _ nil))
+       (if (str/blank? text)
+         (do (println "空のまま終了しました") :handled)
+         (do (reset! (:last-input ctx-chat) text) :resend))))))
+
+(register-slash!
+ "/hermes" "" "hermes の import 元 (~/.hermes) を見る"
+ (fn [_ _]
+   (let [home (or (some-> (aget js/process.env "HERMES_HOME") str/trim not-empty)
+                  (path/join (os/homedir) ".hermes"))
+         skills (path/join home "skills")]
+     (println (str "hermes home: " home))
+     (println (str "  config.yaml: "
+                   (if (fs/existsSync (path/join home "config.yaml")) "あり" "なし")))
+     (if (fs/existsSync skills)
+       (let [es (fs/readdirSync skills)]
+         (println (str "  skills: " (count es) " エントリ"))
+         (doseq [e (take 10 es)] (println (str "    - " e))))
+       (println "  skills: なし"))
+     :handled)))
 
 
 ;; ---------------------------------------------------------------------------
@@ -858,9 +1152,6 @@
       (not (str/blank? (str (aget js/process.env env-name)))) env-name
       (keychain-get) (str "keychain " keychain-service)
       :else "なし — itonami auth login")))
-
-(defn- slash-lines []
-  (mapv #(str/join " " %) (partition-all 6 ((:commands ctx-chat)))))
 
 (defn- print-splash!
   "The start screen, then the two facts that had to be measured to be said.
@@ -891,7 +1182,7 @@
               :session (session-origin)
               :groups (splash/summarise cmds 5)
               :named (splash/summarise aliases 3)
-              :slash (slash-lines)
+              :slash ((:commands ctx-chat))
               ;; joined by the skin's accent glyph inside the splash, so
               ;; the separator is one the theme owns
               :counts [(str (count cmds) " commands")
@@ -924,12 +1215,12 @@
 
 (defn- chat-repl!
   "The prompt loop: one message per turn, each on its own run, streaming
-  deltas. Lines starting with / are commands (see chat-slash!), not messages."
+  deltas. A line beginning with `/` is a command (see chat-slash!)."
   []
   (let [rl (js/require "node:readline/promises")
         iface (.createInterface rl #js {:input js/process.stdin
                                         :output js/process.stdout})
-        prompt (fn [] (:prompt ((:skin ctx-theme))))
+        prompt (fn [] (str ((:stamp ctx-chat)) (:prompt ((:skin ctx-theme)))))
         ;; Ctrl+D rejects the pending question. That is how a REPL is left,
         ;; and letting the rejection go unhandled -- which is what happened
         ;; here until the argless entry made Ctrl+D the ordinary way out --
@@ -937,57 +1228,65 @@
         ;; last screen, reporting a crash where nothing had gone wrong.
         ask (fn []
               (-> (.question iface (prompt))
-                  (.catch (fn [_] (println) (js/process.exit exit-answered)))))]
-      (letfn [(turn []
-                (-> (ask)
-                    (.then (fn [text]
-                             (let [text (str/trim (str text))]
-                               (cond
-                                 (empty? text) (turn)
-                                 (= "exit" text) (js/process.exit exit-answered)
-                                 (= "quit" text) (js/process.exit exit-answered)
-                                 (= "/exit" text) (js/process.exit exit-answered)
-                                 :else
-                                 (let [r (chat-slash! text)]
-                                   (cond
-                                     (= :exit r) (js/process.exit exit-answered)
-                                     (= :handled r) (turn)
-                                     (instance? js/Promise r)
-                                     (-> r (.then (fn [_] (turn)))
-                                         (.catch (fn [e]
-                                                   (if (= "readline was closed" (ex-message e))
-                                                     (js/process.exit exit-answered)
-                                                     (do (chat-emit (str "error: " (ex-message e) "\n"))
-                                                         (js/process.exit exit-cannot-answer))))))
+                  (.catch (fn [_] (println) (js/process.exit exit-answered)))))
+        closed? (fn [e] (= "readline was closed" (ex-message e)))]
+    (letfn [(die [e]
+              (if (closed? e)
+                (js/process.exit exit-answered)
+                (do (chat-emit (str "error: " (ex-message e) "\n"))
+                    (js/process.exit exit-cannot-answer))))
 
-                                     :else
-                                     (-> (request! {:method :post :path "/v1/runs"
-                                                    :body {:input text :profile @chat-profile}
-                                                    :timeout-seconds 30}
-                                                   (require-token!))
-                                         (.then (fn [{:keys [status body]}]
-                                                  (if (<= 200 status 299)
-                                                    (chat-poll-events! (or (:run_id body) (:run-id body)))
-                                                    (refuse! (str "run を開始できません: HTTP " status)
-                                                             (select-keys body [:error])))))
-                                         (.then (fn [out]
-                                                  (let [usage (:usage out)]
-                                                    (when usage
-                                                      (chat-emit (str "· tokens: "
-                                                                      (or (:prompt_tokens usage) "?") " in / "
-                                                                      (or (:completion_tokens usage) "?") " out")))
-                                                    (println))
-                                                  ;; A failed turn is a refusal, not
-                                                  ;; a prompt for the next one.
-                                                  (if (= "completed" (:status out))
-                                                    (turn)
-                                                    (js/process.exit exit-refused))))
-                                         (.catch (fn [e]
-                                                   (if (= "readline was closed" (ex-message e))
-                                                     (js/process.exit exit-answered)
-                                                     (do (chat-emit (str "error: " (ex-message e) "\n"))
-                                                         (js/process.exit exit-cannot-answer))))))))))))))]
-        (turn))))
+            (send! [text]
+              ;; Remembered before the run starts, so /retry can resend a turn
+              ;; that failed -- which is the turn most worth resending.
+              (reset! (:last-input ctx-chat) text)
+              (-> (request! {:method :post :path "/v1/runs"
+                             :body {:input text :profile @chat-profile}
+                             :timeout-seconds 30}
+                            (require-token!))
+                  (.then (fn [{:keys [status body]}]
+                           (if (<= 200 status 299)
+                             (chat-poll-events! (or (:run_id body) (:run-id body)))
+                             (refuse! (str "run を開始できません: HTTP " status)
+                                      (select-keys body [:error])))))
+                  (.then (fn [out]
+                           (when-let [usage (:usage out)]
+                             (chat-emit (str "· tokens: "
+                                             (or (:prompt_tokens usage) "?") " in / "
+                                             (or (:completion_tokens usage) "?") " out")))
+                           (println)
+                           ;; A failed turn is a refusal, not a prompt for the
+                           ;; next one.
+                           (if (= "completed" (:status out))
+                             (turn)
+                             (js/process.exit exit-refused))))
+                  (.catch die)))
+
+            (act [r text]
+              (cond
+                (= :exit r) (js/process.exit exit-answered)
+                (= :handled r) (turn)
+                ;; /retry and /prompt: the command decided what to send, and
+                ;; left it where the next turn reads it.
+                (= :resend r) (let [prev (str @(:last-input ctx-chat))]
+                                (if (str/blank? prev)
+                                  (turn)
+                                  (do (println (str "↻ " (subs prev 0 (min 120 (count prev)))))
+                                      (send! prev))))
+                (instance? js/Promise r)
+                (-> r (.then (fn [v] (if (keyword? v) (act v text) (turn)))) (.catch die))
+                :else (send! text)))
+
+            (turn []
+              (-> (ask)
+                  (.then (fn [line]
+                           (let [text (str/trim (str line))]
+                             (cond
+                               (empty? text) (turn)
+                               (contains? #{"exit" "quit"} text)
+                               (js/process.exit exit-answered)
+                               :else (act (chat-slash! text) text)))))))]
+      (turn))))
 
 (defn- chat-prompt-loop!
   "Open the REPL: resolve the profile, draw the start screen, then prompt."
@@ -1067,17 +1366,6 @@
           generated (map commands/command-name (commands/matching [head]))]
       (vec (take 8 (concat (filter #(str/includes? % head) named) generated))))))
 
-(defn register-builtin-slash!
-  "The slash commands chat-slash! answers in its own case are also listed on
-  the :ctx/chat registry, so (:commands ctx-chat) and /plugins report what
-  actually answers. The wrappers delegate to the same case — one decider,
-  two views."
-  []
-  (let [r! (:register! ctx-chat)]
-    (doseq [c ["/help" "/bots" "/profiles" "/profile" "/skin" "/plugins"
-               "/approve" "/deny" "/status" "/exit"]]
-      (r! c (fn [_ctx _args] nil)))))
-
 (defn -main [& argv]
   (let [argv (vec argv)
         flags (commands/parse-flags argv)
@@ -1100,7 +1388,7 @@
                         "  itonami status                            server と store の状態\n"
                         "  itonami profile explain                   どの profile が効いているか\n"
                         "  itonami <command> [--flag value …] [--json]\n\n"
-                        "REPL の slash command: " (str/join " " ((:commands ctx-chat))) "\n"
+                        "REPL の slash command:\n" ((:help-text ctx-chat)) "\n\n"
                         "パイプ・非 TTY・--json では REPL を開かず、この help を出します。\n\n"
                         "commands: " (count (commands/all)) " (generated) + "
                         (count (commands/alias-commands)) " (named)\n"
@@ -1140,5 +1428,4 @@
            {:type :client/unknown-command
             :near (suggest named)}))))))
 
-(register-builtin-slash!)
 (apply -main (or *command-line-args* []))

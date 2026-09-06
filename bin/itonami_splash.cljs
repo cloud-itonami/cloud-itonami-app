@@ -246,6 +246,24 @@
                    (paint color? dim-code (truncate (str body) room))))))
         entries)))
 
+(defn wrap-words
+  "`words` packed into lines of at most `n` columns.
+
+  The caller used to hand this in pre-wrapped at a fixed six per line, which
+  the column then cut mid-name (`/bots…`, `/hist…`). A truncated command name
+  is worse than a shorter list: it is not a name you can type. Only the width
+  actually available can decide where the break goes, and that is known here."
+  [words n]
+  (if (empty? words)
+    []
+    (loop [[w & more] words line "" out []]
+      (let [candidate (if (str/blank? line) (str w) (str line " " w))]
+        (cond
+          (nil? w) (if (str/blank? line) out (conj out line))
+          (<= (display-width candidate) n) (recur more candidate out)
+          (str/blank? line) (recur more "" (conj out (truncate (str w) n)))
+          :else (recur (cons w more) "" (conj out line)))))))
+
 (defn two-column
   "`left` and `right` side by side. Short columns are padded, not dropped: an
   unpadded blank on the left would slide the whole right column into it."
@@ -313,7 +331,7 @@
                               :title "Named Commands"} named)
                     [""]
                     [(paint color? accent-code "REPL Commands")]
-                    (map #(paint color? dim-code (truncate % right-w)) slash)))
+                    (map #(paint color? dim-code %) (wrap-words slash right-w))))
         tally (str/join (str " " bullet " ") counts)]
     (str/join
      "\n"
