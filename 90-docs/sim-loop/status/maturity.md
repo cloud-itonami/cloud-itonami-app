@@ -280,3 +280,13 @@ PID 94682 稼働継続、export_and_sync 不在。avail 74Gi / 92% (反復越え
 dropunused は引き続き反復緩和、恒久解消は resident ingest 世代削除 (Tier 2)
 (evidence/2026-09-06-falsify-35.md)。附帯: 7 軸テーブル 16 行目孤立行
 `| 反証候補falsify30PLACEHOLDER` 残存のまま (operator 復旧待ち)。
+
+**falsify-36 (2026-09-06) で chunk drift 停止 + 帰属生存を再確認**: regular unused は
+99 keys / **1,482,952,762 bytes (≈1.38 GiB)** (falsify-35 の 75 から **+24 keys**、増加継続、
+annex local keys 75 → **99** / size 1.11GB → **1.48 GB**)。resident-refspec 正規 unused は **0**
+(帰属「unused ⊆ resident 現在ツリー」が 99-key / 1.38 GiB scale で SURVIVED 継続)。partial chunk は
+**14 → 14** / tmp 178M / 14 ファイルで不変 (falsify-35 の 1 chunk 解決は間欠的 — 本反復では **drift 停止、
+「drift は毎反復継続する単調現象」説 REFUTED**)。増加源 itonami-app-resident.cljs PID 94682
+稼働継続 (export_and_sync 不在)、dev /health 127.0.0.1:1338 -> 200 実測。df avail 73Gi / 92% (反復越え -1GiB)。
+dropunused は引き続き反復緩和、恒久解消は resident ingest 世代削除 (Tier 2) (evidence/2026-09-06-falsify-36.md)。
+附帯: 7 軸テーブル 16 行目孤立行 `| 反証候補falsify30PLACEHOLDER` 残存のまま (operator 復旧待ち)。
