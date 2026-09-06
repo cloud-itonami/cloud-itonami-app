@@ -481,3 +481,26 @@ mid-sentence truncate (maturity.md 456 行目) は falsify-47 報告済みのま
 operator 復旧待ち。本体 checkout は agent/fix-open-red-5-three-bound / porcelain clean (dirty 0)、
 head 9e5b24a。負荷 load avg 60.88/64.71/58.63 (高負荷)。反証軸 score は 3 のまま (falsify-1〜48 記録
 継続、本反復は帰属の同一主張のスケール拡大であり score へ質的変更なし)。
+
+## NEXT (falsify-49 追記、append-only)
+
+**falsify-49 (2026-09-07、運用/滞留帰属 軸) で帰属生存 + 増加継続 (+12 keys / +0.17 GiB) を再確認 (SURVIVED)**: main-refspec regular unused は
+**456 keys / 6,884,601,846 bytes (≈6.41 GiB)** (falsify-48 の 444 keys / 6,699,301,080 bytes から
+**+12 keys / +0.17 GiB**、増加継続、local annex 456 keys / 6.88 GB と一致)。resident-refspec 正規
+unused は **0** (帰属「unused ⊆ resident 現在ツリー」が 456-key / 6.41 GiB スケールで SURVIVED 継続、
+unused−resident=0)。**追加ベクトル再確認**: 全 refs 走査 (refspec なし) の正規 unused も
+**0** — main-refspec で unused 判定された key のうちいかなる ref からも到達不能な孤児は存在しない
+(falsify-46/48 の独立ベクトルを独立再現)。partial chunk は **14 → 14** / temp 186,977,095 bytes
+(≈178MiB) で不変 (falsify-35 の 1 chunk 解決以降連続 13 反復 drift なし、間欠的のまま)。増加源
+itonami-app-resident.cljs PID 94682 稼働継続 (etime 01-08:44:11、falsify-33〜48 と同一 PID、
+export_and_sync 不在)、dev /health 127.0.0.1:1338 -> 200 実測、gateway /health 127.0.0.1:8080 -> 404
+(falsify-48 と同値)。df avail は 136Gi / 85% (falsify-48 記録 140Gi から -4Gi、100% 飽和は解消のまま)。
+増加レートは単反復 **+12 keys** (falsify-48 の 2 反復跨ぎ +50 ≈ +25/反復 より減速、レートは単反復
+~12〜62 の間で振動し単調ではない)。「avail 回復 = 増加源停止」は falsify-37 で反証済みのまま、解放源の
+単一起因帰属は未特定で継続観測。dropunused は引き続き反復緩和、恒久解消は resident ingest 世代削除
+(Tier 2)。avail 136Gi は引続きフルスイート実行可能域 (evidence/2026-09-07-falsify-49.md)。附帯:
+7 軸テーブル 16 行目孤立行 `| 反証候補falsify30PLACEHOLDER` 残存のまま (operator 復旧待ち)。
+前反復 falsify-46 の mid-sentence truncate (maturity.md 456 行目) も append-only で回復せず
+operator 復旧待ち。本体 checkout は agent/fix-open-red-5-three-bound / porcelain clean (dirty 0 実測)、
+head 9e5b24a。負荷 load avg 154.04/159.43/135.05 (極高負荷)。反証軸 score は 3 のまま (falsify-1〜49
+記録継続、本反復は帰属の同一主張のスケール拡大であり score へ質的変更なし)。
