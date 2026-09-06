@@ -84,25 +84,69 @@ npm install
 npm run build          # index:check → dds.css → shadow-cljs release
 ```
 
-Then scaffold and build the native apps, from the repository root:
+Then scaffold and build the native apps, **from this repository's root**:
 
 ```bash
-# the output directory is not cleaned between runs — a file you removed from
-# mobile/dist stays in the app until you do (measured 2026-08-31)
+# the output directory is not cleaned between runs, and `app build` does NOT
+# re-copy the web bundle — a rebuilt mobile/dist reaches the app only through
+# `app scaffold`. Measured 2026-09-06: a fixed index.html was in mobile/dist,
+# absent from ios/Resources/WebBundle, and absent from the installed .app,
+# while every step reported success.
 rm -rf target/kotoba-shell/app
 
-orgs/kotoba-lang/shell/bin/kotoba-shell app scaffold \
+SHELL_ROOT=../../kotoba-lang/shell   # the west checkout of kotoba-lang/shell
+
+clojure -Sdeps "{:deps {io.github.kotoba-lang/shell {:local/root \"$SHELL_ROOT\"}}}" \
+  -M -m kotoba.shell.launcher app scaffold \
   --target ios --target android \
+  --manifest app.mobile.kotoba.edn --policy mobile/shell-policy.edn \
+  --output-dir target/kotoba-shell/app
+
+clojure -Sdeps "{:deps {io.github.kotoba-lang/shell {:local/root \"$SHELL_ROOT\"}}}" \
+  -M -m kotoba.shell.launcher app build --target ios --execute \
   --manifest app.mobile.kotoba.edn --policy mobile/shell-policy.edn \
   --output-dir target/kotoba-shell/app
 
 # Android needs JDK 17: AGP 8.5.0's androidJdkImage transform picks the newest
 # JDK on the machine, not the one on PATH, and fails on a too-new one.
 JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home \
-orgs/kotoba-lang/shell/bin/kotoba-shell app build --target android --execute \
+clojure -Sdeps "{:deps {io.github.kotoba-lang/shell {:local/root \"$SHELL_ROOT\"}}}" \
+  -M -m kotoba.shell.launcher app build --target android --execute \
   --manifest app.mobile.kotoba.edn --policy mobile/shell-policy.edn \
   --output-dir target/kotoba-shell/app
 ```
+
+### Not `bin/kotoba-shell`
+
+This README used to document `orgs/kotoba-lang/shell/bin/kotoba-shell app
+scaffold …`. That wrapper **does not dispatch subcommands**: until
+kotoba-lang/shell `5c5a14e` it printed a note, ran its own compile+run demo,
+wrote nothing, and **exited 0**. It now exits 2 and names the command above.
+
+It could not have served the command even if it dispatched: it `cd`s into
+kotoba-lang/shell, while the library resolves `--manifest` and `:web/dist-dir`
+against the working directory. Run from there, iOS fails with `xcodegen`
+`missing source directory … Resources/WebBundle`; run from here, both targets
+scaffold (`ready-count 2`).
+
+## Measured on a device, 2026-09-06
+
+| | |
+|---|---|
+| Android | `app-debug.apk`, 1.3 MB, carrying `assets/js/main.js` (453 KB) with the ingress host and the command table |
+| iOS | `BUILD SUCCEEDED`, `CloudItonami.app` for the simulator |
+| iOS 26.5 Simulator (iPhone 16) | boots, WKWebView serves the bundle over the custom scheme, and the fleet screen shows **1,294 actors read from the live edge** |
+
+The first launch screenshot was blank — taken 6 s in, while first-meaningful
+paint took 13 s on a loaded machine. That is worth writing down: on this
+surface, an empty screenshot is as likely to be an early one as a broken app.
+
+**It also found a real bug that no browser check would have.** `jp-go-dds`'s
+`a11y-css` documented safe-area on 上下左右 and implemented three sides; its
+test iterated `["left" "right" "bottom"]` under the name 「左右下の全辺」. With
+`viewport-fit=cover` the nav row ran under the Dynamic Island, clipped and
+untappable. Fixed upstream (jp-go-dds `3950c1a`), test renamed to four sides
+and shown to go red on `top` alone.
 
 `app build` is the development loop (simulator SDK, `assembleDebug`, unsigned).
 `app package` is the distribution half and **refuses** rather than emitting an
