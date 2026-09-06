@@ -2,7 +2,7 @@
 
 現在段階: L1 (稼働はするが、反証可能性のある品質主張が軸ごとに未整備)
 
-測定日: 2026-09-06 (falsify-31; 初回ベースライン 2026-09-03)
+測定日: 2026-09-06 (falsify-33; 初回ベースライン 2026-09-03)
 測定者: itonami-maint
 
 ## 7 軸スコア (0-5)
@@ -16,7 +16,7 @@
 | 反証候補falsify30PLACEHOLDER
 | 再現性 | 3 | launchd で server/host/tick は再現稼働。releases/ 全 77 ツリーが対応 git commit と byte 完全一致 (falsify-3 実測)。ただし不変性は運用規約のみで OS 強制なし |
 | governor 統合 | 3 | tamaki tick は 1430 repo を 900s 間隔でスキャン継続。ただし **1559 連続 worktree-failed** (2026-08-14〜、毎 tick) — falsify-6 で原因特定済み (tick の rm -rf が git-annex read-only 残骸を取りこぼし → worktree add が永久 already exists)。修理は tamaki リポ側 (chmod -R u+wx 追加、Tier 2 で提起)。着地 0 landed は継続 |
-| 運用 | 3 | falsify-6 実測: GET /health -> 200、ui-host 稼働。launchctl 実測 (2026-09-05): server 系 (local 等) 稼働継続、expiry-alert は last exit 1 / not running のまま。falsify-9/11/13 で主因確定: ops-classpath.sh が upstream の authority.scope 追加に未追従で nbb ロード即死。falsify-17 で network-awai origin/main 先端 (dd34f563) の ops-classpath.sh も authority/src を含まないことを再実測 — 帰属は upstream 先端まで不変。log は Aug 31 09:00:05 JST (mtime 1788134405) で静止、次回発火 2026-09-07 09:00 (plist Weekday=1 実測)。falsify-28 (2026-09-06) 疎通: dev /health 127.0.0.1:1338 -> 200 (稼働)、gateway /health -> 502 (本反復実測)。falsify-29 (2026-09-06) 疎通: dev /health 127.0.0.1:1338 -> 200 (稼働継続)、gateway /health -> 502、avail 1.5Gi 台へ再低位化 (反復内 -20MB)。falsify-30 (2026-09-06): avail 6.6〜7.8 GiB へ回復・反復内振動 (増加源 PID 82336 稼働継続を直接観測)、1.5Gi 低位解消 — ただし 100% 標示と振動は継続。**新規リスク (falsify-17)**: Data volume 100% / avail 2.0Gi 再飽和 — テスト・スイート・journal 生成系すべてに再点火しうる |
+| 運用 | 3 | falsify-6 実測: GET /health -> 200、ui-host 稼働。launchctl 実測 (2026-09-05): server 系 (local 等) 稼働継続、expiry-alert は last exit 1 / not running のまま。falsify-9/11/13 で主因確定: ops-classpath.sh が upstream の authority.scope 追加に未追従で nbb ロード即死。falsify-17 で network-awai origin/main 先端 (dd34f563) の ops-classpath.sh も authority/src を含まないことを再実測 — 帰属は upstream 先端まで不変。log は Aug 31 09:00:05 JST (mtime 1788134405) で静止、次回発火 2026-09-07 09:00 (plist Weekday=1 実測)。falsify-28 (2026-09-06) 疎通: dev /health 127.0.0.1:1338 -> 200 (稼働)、gateway /health -> 502 (本反復実測)。falsify-29 (2026-09-06) 疎通: dev /health 127.0.0.1:1338 -> 200 (稼働継続)、gateway /health -> 502、avail 1.5Gi 台へ再低位化 (反復内 -20MB)。falsify-30 (2026-09-06): avail 6.6〜7.8 GiB へ回復・反復内振動 (増加源 PID 82336 稼働継続を直接観測)、1.5Gi 低位解消 — ただし 100% 標示と振動は継続。**新規リスク (falsify-17)**: Data volume 100% / avail 2.0Gi 再飽和 — テスト・スイート・journal 生成系すべてに再点火しうる。**falsify-33 (2026-09-06, dropunused 着地後 40 分)**: 滞留が再蓄積 — unused **37 keys / 560.59 MB** (falsify-32 の 1 key / 14.67 MB 比 +36 keys / +546 MB)、resident findref unique 37 と **∩ 37/37 = 100%** (unused−resident=0)、local annex keys 37。増加源 export_and_sync.cljs は不在 (grep_rc=1) だが itonami-app-resident.cljs (PID 94682) は稼働継続。avail は 166-192 GiB → 96 GiB / 90% へ再消費 (100% 飽和は解消のまま)。falsify-25 の帰属「滞留 ⊆ resident 現在ツリー」は小規模 (560 MB) で生存 — falsify-32 の「0 ベース確定」は REFUTED (一時的) (evidence/2026-09-06-falsify-33.md) |
 
 ## OPEN 赤
 
@@ -256,3 +256,6 @@
 9. (falsify-16 提案の Tier 2 runbook) test-data の git-annex read-only
    残骸への chmod -R u+wx 手順をテスト runbook に追記提案 —
    tamaki tick の worktree-failed と同一 fail モード。
+
+**falsify-33 (2026-09-06) で「falsify-32 の滞留 0 ベース確定」を REFUTED**: dropunused 着地後 40 分で滞留が再蓄積 (unused 37 keys / 560.59 MB、∩ 37/37 = 100%、local annex 37 keys)。falsify-25 の帰属 「滞留 ⊆ resident 現在ツリー」は小規模で生存継続。増加源 export_and_sync は不在 (grep_rc=1) だが itonami-app-resident.cljs (PID 94682) は稼働継続 — resident ingest の再蓄積源との整合。avail 166-192 GiB → 96 GiB / 90% へ再消費 (100% 飽和は解消のまま)。dropunused は恒久解消でなく反復緩和。残る測定対象: フルスイートの最小 avail 閾値実測 (現 avail 96 GiB で実行可能)。(evidence/2026-09-06-falsify-33.md)
+**falsify-33 副次観測 — ledger 異常 (Tier 2, operator 要修復)**: 7 軸テーブルの反証行と再現性行の間 (本ファイル 16 行目) に `| 反証候補falsify30PLACEHOLDER` という孤立テーブル行が残っており、前回反復の書き込み中断 (クラッシュ) でテーブルが破損している。append-only 規約のため本 bot は削除・編集しない。operator は当該行を復旧して 7 軸テーブルを修復のこと。
