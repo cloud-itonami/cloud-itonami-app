@@ -385,3 +385,22 @@ df avail は 148Gi / 84% (falsify-41 終了時 150Gi から -2Gi 漸減、100% �
 本体 checkout は agent/fix-open-red-5-three-bound で porcelain clean (status --porcelain 0 行)
 確認、head 9e5b24a。負荷 load 40.82/30.68/27.40。反証軸 score は 3 のまま (falsify-1〜42 記録継続、
 本反復は帰属の同一主張のスケール拡大であり score へ質的変更なし)。
+## NEXT (falsify-43 追記、append-only)
+
+**falsify-43 (2026-09-07) で帰属生存 + 増加継続 (レート減速) を再確認 (SURVIVED)**: main-refspec regular unused は
+**321 keys / 4,810,182,003 bytes (≈4.48 GiB)** (falsify-42 の 296 keys / 4,444,966,515 bytes から
+**+25 keys / +0.34 GiB**、増加継続、local annex 321 keys / 4.81 GB と一致)。resident-refspec 正規
+unused は **0** (帰属「unused ⊆ resident 現在ツリー」が 321-key / 4.48 GiB スケールで SURVIVED 継続、
+unused−resident=0)。partial chunk は **14 → 14** / temp 186.98MB (annex info) で不変 (falsify-35 以降
+連続 8 反復 drift なし、間欠的のまま)。増加源 itonami-app-resident.cljs PID 94682 稼働継続
+(falsify-33〜42 と同一 PID、export_and_sync 不在)、dev /health 127.0.0.1:1338 -> 200 実測。
+df avail は 146Gi / 84% (falsify-42 終了時 148Gi から -2Gi 漸減、100% 飽和は解消のまま)。
+**増加レートの減速 (+25) は新観測** — falsify-42 の加速 (+62) は単反復で終わり、falsify-40 (+25) /
+falsify-41 (+24) 水準に回帰。単反復レートは ~14〜62 の間で振動し単調上昇ではない (128→153→171→185→
+210→234→296→321 の実測累積)。「avail 回復 = 増加源停止」は falsify-37 で反証済みのまま、解放源の
+単一起因帰属は未特定で継続観測。dropunused は引き続き反復緩和、恒久解消は resident ingest
+世代削除 (Tier 2)。avail 146Gi は引続きフルスイート実行可能域 (evidence/2026-09-07-falsify-43.md)。
+附帯: 7 軸テーブル 16 行目孤立行 `| 反証候補falsify30PLACEHOLDER` 残存のまま (operator 復旧待ち)。
+本体 checkout は agent/fix-open-red-5-three-bound で porcelain clean (status --porcelain 0 行)
+確認、head 9e5b24a。負荷 load 38.17/40.11/38.13。反証軸 score は 3 のまま (falsify-1〜43 記録継続、
+本反復は帰属の同一主張のスケール拡大であり score へ質的変更なし)。
