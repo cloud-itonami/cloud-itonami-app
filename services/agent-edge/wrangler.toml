@@ -1,0 +1,15 @@
+name = "cloud-itonami-agent-edge"
+main = "src/index.js"
+compatibility_date = "2026-09-06"
+
+# NOT DEPLOYED. `agent.itonami.cloud` was NXDOMAIN when this landed (measured
+# 2026-09-06) and the app's tunnel origin did not answer, so deploying this
+# would publish a door onto a resident nothing reaches. The route and ORIGIN
+# below are the shape, filled in by whoever turns it on.
+#
+# routes = [
+#   { pattern = "agent.itonami.cloud", custom_domain = true }
+# ]
+#
+# [vars]
+# ORIGIN = "https://<the tunnel hostname for the itonami resident>"
