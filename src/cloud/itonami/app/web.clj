@@ -332,7 +332,7 @@
      written. Elsewhere in this stylesheet each rule declares it — that
      convention is exactly what a person adding a rule can forget. */
   .bots-view, .bots-view *{box-sizing:border-box}
-  .bots-business-entry{padding:.75rem;overflow-wrap:anywhere}
+  .bots-business-entry{padding:.75rem;overflow-wrap:anywhere;flex:0 0 auto}
   .bots-business-entry summary{min-height:44px;cursor:pointer;font-weight:600}
   .bots-business-entry[open]{overflow:auto;max-height:50vh}
   /* Bots is an application pane, not a long document. Its rail and composer
@@ -2174,10 +2174,6 @@
         [:section {:class "view bots-view" :data-view-panel "bots" :hidden true}
          [:div {:class "bots-shell" :id "bots-shell"}
           [:aside {:class "bots-rail"}
-           [:details {:class "bots-business-entry"}
-            [:summary "Business Bots"]
-            [:p (bots-ui/label :ja :lead)]
-            (bots-ui/participation {:locale :ja})]
            [:label {:class "bots-rail__search" :for "bots-filter"}
             [:span {:class "visually-hidden"} "My Botsを検索"]
             [:input {:id "bots-filter" :type "search" :placeholder "Botを検索"
@@ -2185,6 +2181,10 @@
            [:ul {:class "bots-rail__list" :id "bots-list"}]
            [:p {:class "bots-rail__empty" :id "bots-rail-empty"} "まだ Bot がいません"]]
           [:div {:class "bots-main"}
+           [:details {:class "bots-business-entry"}
+            [:summary "Business Bots"]
+            [:p (bots-ui/label :ja :lead)]
+            (bots-ui/participation {:locale :ja})]
            [:aside {:class "bots-routines-panel" :id "bots-routines-panel" :hidden true
                     :aria-label "このBotの定期ジョブ"}
             [:div {:class "section-heading"}
