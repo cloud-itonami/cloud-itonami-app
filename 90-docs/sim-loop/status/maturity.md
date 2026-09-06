@@ -128,6 +128,18 @@
   (evidence/2026-09-06-falsify-22.md)。
   **falsify-23 (2026-09-06) で「manifest-rev 参照解放で滞留を回収可能」説を REFUTED**: manifest-rev の参照実体を実測 = commit 51d4010c (ingest: resident tick --source tranco, 2026-09-02)、更新主体は west update (reflog 実測、最終更新 2026-09-03)。main ⊂ manifest-rev ⊂ resident/dns-resolver を merge-base --is-ancestor で実測 (main..mr 0 commits / mr..resident 338 commits)。manifest-rev を解放しても 352 commit 分の履歴は resident/dns-resolver から到達可能なまま残り annex 参照は解放されない。滞留の真の参照元は resident branch の ingest 履歴そのもの — 回収には履歴 truncate / 再構築 (履歴改変のデータロス判断) が前提で Tier 2 のまま (evidence/2026-09-06-falsify-23.md)。
   **falsify-24 (2026-09-06) で「滞留増加は停止」説を REFUTED**: NEXT-10 の 2 時点実測 — unused 集合は 3088 keys / 39.30 GiB → **3261 keys / 41.73 GiB** (同日中に +173 keys / +2.43 GiB、key 名埋め込みサイズ集計実測)、annex info は 5951 / 75.51 GB → **6147 / 78.4 GB**。滞留は増加継続と確定 (resident ingest が発生源として稼働継続)。df avail 4578Mi → **356Mi / 100%** に悪化、フルスイート実行不可能のまま。緩和候補: 発生源停止 (resident tick の dns-resolver ingest 方針見直し) を Tier 2 提起 (evidence/2026-09-06-falsify-24.md)。
+  **falsify-25 (2026-09-06) で参照元を直接反証・修正**: unused 3286 keys /
+  42.07 GiB (再実測、falsify-24 比 +25 keys / +0.34 GiB — 増加継続) と
+  resident/dns-resolver 参照キー集合 (findref 6181 keys / 73.35 GiB) の
+  積集合を sort+comm で機械集計 → **重複 3286/3286 = 100%**。滞留は
+  resident branch の *ingest 履歴* ではなく *現在ツリー* (data/ledger/
+  配下) が全件参照。併せて falsify-22 の「detached HEAD (manifest-rev) が
+  滞留を保持」説も反証 — 同一 detached HEAD でも refspec 指定なしの
+  unused は 0 実測 (unused 判定は refspec 選択の関数)。回収条件は
+  「resident ツリーからの旧 ingest 世代削除」が必須 (データ削除判断 →
+  Tier 2)。附帯: df avail 356Mi → **12.1 GiB / 99%** に回復したが
+  増加源は稼働継続 (annex info 6160 keys / 78.58 GB、falsify-24 比
+  +13 keys / +0.18 GB) (evidence/2026-09-06-falsify-25.md)。
 
 ## === NEXT ===
 
