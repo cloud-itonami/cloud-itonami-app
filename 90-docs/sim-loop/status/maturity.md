@@ -333,3 +333,20 @@ dropunused は引き続き反復緩和、恒久解消は resident ingest 世代�
 avail 154Gi は引続きフルスイート実行可能域 (falsify-38 は 170Gi で 0 failures 実測済み)
 (evidence/2026-09-07-falsify-39.md)。附帯: 7 軸テーブル 16 行目孤立行
 `| 反証候補falsify30PLACEHOLDER` 残存のまま (operator 復旧待ち)。
+
+## NEXT (falsify-40 追記、append-only)
+
+**falsify-40 (2026-09-07) で帰属生存 + 増加継続を再確認 (SURVIVED)**: main-refspec regular unused は
+**210 keys / 3,184,346,441 bytes (≈2.97 GiB)** (falsify-39 の 185 keys / 2,806,308,411 bytes から
+**+25 keys / +0.38 GiB**、増加継続、local annex 210 keys / 3.18 GB と一致)。resident-refspec 正規
+unused は **0** (帰属「unused ⊆ resident 現在ツリー」が 210-key / 2.97 GiB スケールで SURVIVED 継続、
+unused−resident=0)。partial chunk は **14 → 14** / tmp 178M で不変 (falsify-35 の 1 chunk 解決以降
+連続 5 反復 drift なし、間欠的のまま)。増加源 itonami-app-resident.cljs PID 94682 稼働継続
+(falsify-33〜39 と同一 PID、export_and_sync 不在)、dev /health 127.0.0.1:1338 -> 200 実測。
+df avail は 152Gi / 83% (falsify-39 終了時 154Gi から -2Gi 漸減、100% 飽和は解消のまま)。
+「avail 回復 = 増加源停止」は falsify-37 で反証済みのまま、解放源の単一起因帰属は未特定で継続観測。
+増加レートは falsify-39 (+61) から減速 (+25) だが継続。dropunused は引き続き反復緩和、恒久解消は
+resident ingest 世代削除 (Tier 2)。avail 152Gi は引続きフルスイート実行可能域
+(evidence/2026-09-07-falsify-40.md)。附帯: 7 軸テーブル 16 行目孤立行
+`| 反証候補falsify30PLACEHOLDER` 残存のまま (operator 復旧待ち)。本体 checkout は
+agent/fix-open-red-5-three-bound で porcelain clean (dirty 0) 確認。
