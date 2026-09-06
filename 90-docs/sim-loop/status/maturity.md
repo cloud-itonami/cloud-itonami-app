@@ -200,6 +200,16 @@
   解放源、annex/lake 変化を上回る) は未特定のまま Tier 2 継続。100% 飽和の
   解消事実は確定、次反復で disk-avail 50 Gi でのフルスイート実行 (falsify-17
   の最小 avail 閾値実測) が現実的 (evidence/2026-09-06-falsify-31.md)。
+**falsify-32 (2026-09-06) で滞留の全崩壊 + Tier 2 dropunused 着地を直接観測
+  (REFUTED)**: df avail は 50 Gi → **166〜192 GiB / 80%** へ最大回復、git annex
+  info は local annex keys **6313 → 1**、size **80.82 GB → 14.67 MB**、unused
+  keys も 3427 keys / 43.99 GiB → **14.67 MB (実質 0)** へ崩壊。増加源
+  export_and_sync は ps から消失 (grep_rc=1)。findref が反復内で 449→322→222→1
+  と実時間で崩壊し git-annex branch に update commit 連打が記録されていることから、
+  **falsify-25/26/28/29/30/31 が提起してきた Tier 2 回収条件 (resident ツリーからの
+  旧 ingest 世代削除 / dropunused) が operator によって着地**したことを直接観測。
+  滞留の継続増加という帰属議論の前提は崩壊し、滞留観測は 0 ベースに戻る
+  (evidence/2026-09-06-falsify-32.md)。
 
 
 ## === NEXT ===
@@ -240,6 +250,9 @@
     反復内で振動し、単一起因は未特定。残る測定対象: avail 反発の単一起因
     (定期 du snapshot / 別空間解放の帰属、falsify-19 継続) と発生源停止後の
     滞留増加ゼロ確認。
+**falsify-32 (2026-09-06) で滞留の全崩壊を完了 (REFUTED)**: dropunused が
+    operator 着地し unused = 実質 0 (14.67 MB)、local annex 1 key、avail
+    166-192 GiB。「滞留増加ゼロ確認」は 0 ベースへの帰着で充足。
 9. (falsify-16 提案の Tier 2 runbook) test-data の git-annex read-only
    残骸への chmod -R u+wx 手順をテスト runbook に追記提案 —
    tamaki tick の worktree-failed と同一 fail モード。
