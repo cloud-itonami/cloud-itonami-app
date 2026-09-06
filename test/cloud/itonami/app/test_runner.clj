@@ -104,6 +104,7 @@
             [cloud.itonami.app.project-repository-test]
             [cloud.itonami.app.project-remote-test]
             [cloud.itonami.app.project-transfer-test]
+            [cloud.itonami.app.repo-profile-test]
             [cloud.itonami.app.repos-test]
             [cloud.itonami.app.repository-storage-test]
             [cloud.itonami.app.repository-qualification-test]
@@ -279,6 +280,7 @@
     cloud.itonami.app.freebusy-test
     cloud.itonami.app.metrics-test
     cloud.itonami.app.portfolio-test
+    cloud.itonami.app.repo-profile-test
     cloud.itonami.app.policy-kotoba-parity-test
     cloud.itonami.app.native-canary-test
     cloud.itonami.app.health-kotoba-parity-test
