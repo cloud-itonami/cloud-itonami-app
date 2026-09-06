@@ -116,3 +116,31 @@
     (is (= terminal/max-entries (count full)))
     (is (= "5" (:text (first full))) "the oldest are dropped, not the newest")
     (is (= (str (dec (+ terminal/max-entries 5))) (:text (last full))))))
+
+;; ---------------------------------------------------------------------------
+;; the two gates must not drift apart
+;; ---------------------------------------------------------------------------
+
+(def ^:private ingress-source "../services/agent-edge/src/index.js")
+
+(defn- ingress-writes
+  "The write templates the ingress Worker carries, read out of its own table.
+
+  Parsed from the source rather than duplicated here: a second copy of the list
+  is a third gate that can drift from both of the first two."
+  []
+  (->> (re-seq (re-pattern "\\[\"POST\", \"([^\"]+)\"\\]")
+               (slurp ingress-source))
+       (map second)
+       set))
+
+(deftest the-client-and-the-ingress-offer-the-same-writes
+  ;; Two enforcement points, one rule. They are deliberately separate -- the
+  ;; ingress is the authority and answers 404, the client says the true
+  ;; sentence about WHY -- but they must not disagree about which writes exist,
+  ;; or a command the phone offers is one the door refuses and the operator is
+  ;; told "no such command" about something that is real.
+  (is (.exists (io/file ingress-source))
+      "the ingress Worker is not where this test looks; drift cannot be checked")
+  (is (= terminal/offered-writes (ingress-writes))
+      "the client's offered writes and the ingress table have drifted apart"))
