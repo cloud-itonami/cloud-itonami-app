@@ -42,8 +42,22 @@
 
 (def schema "cloud.itonami.app.repo-profile.v1")
 
+(def dir-name
+  "Where a repository keeps profiles when it has more than one.
+
+  One file per profile: `.itonami/profiles/<anything>.edn`. A vector inside one
+  file would have been fewer paths to discover and worse in the way that
+  matters — two people editing their own profiles would edit the same file and
+  conflict on each other's lines, which is the thing per-person configuration
+  exists to avoid."
+  ".itonami/profiles")
+
 (def file-name
-  "The file, relative to the repository root.
+  "The single-profile file, relative to the repository root.
+
+  Still supported, and read as one entry in the same set as anything under
+  `dir-name`. A repository with one profile should not have to make a
+  directory, and one that grows a second should not have to move the first.
 
   `.itonami/` is shared with the application: `bot-workspace/provision!`
   writes `.itonami/workspace.edn` into a managed workspace. The names are
@@ -53,8 +67,20 @@
   ".itonami/profile.edn")
 
 (def describes
-  "Keys that cross to the destination as written."
-  #{:profile/schema :profile/id
+  "Keys that cross to the destination as written.
+
+  `:profile/for` is a LABEL, not an assertion. A repository saying
+  `:profile/for \"jun\"` does not tell this machine who is running it — it says
+  \"if you are the one who calls yourself jun, this is the profile meant for
+  you\". The matching is done against an identity the DESTINATION configured
+  (`:profile/as` in its own config, or ITONAMI_PROFILE_AS), never against
+  anything the repository supplies. A repository that could name the operator
+  could pick which profile a person gets, which is selection by whoever can
+  push.
+
+  `:profile/default?` marks the one to use when nobody matches. More than one
+  is a refusal, not a coin toss."
+  #{:profile/schema :profile/id :profile/for :profile/default?
     :bot/name :bot/brief :bot/avatar :bot/context-refs
     :bot/tools-requested})
 
@@ -220,3 +246,84 @@
                :profile/id (:profile/id m)
                :describes (select-keys m describes)
                :prefers (select-keys m prefers)}))))))
+
+;; ---------------------------------------------------------------------------
+;; more than one profile in a repository
+;; ---------------------------------------------------------------------------
+
+(defn admit-all
+  "Admit a sequence of `[source text]` pairs.
+
+  Returns `{:accepted [...] :refused [...]}`. One bad file does NOT discard the
+  good ones: a repository where two people keep their own profiles would
+  otherwise have one person's typo silence the other's. The refusals are
+  carried, not dropped, so `profile explain` can name them."
+  [pairs]
+  (reduce (fn [acc [source text]]
+            (let [r (assoc (admit text) :source source)]
+              (if (:accepted? r)
+                (update acc :accepted conj r)
+                (update acc :refused conj r))))
+          {:accepted [] :refused []}
+          pairs))
+
+(defn select
+  "Choose one of `accepted` for this operator, or refuse.
+
+  `opts` is `{:requested <profile id> :as <local identity>}`. Precedence:
+
+    1. `:requested` — an exact `:profile/id`, which is the operator naming one
+    2. `:as` matching a profile's `:profile/for`
+    3. the single `:profile/default? true`
+    4. the single profile, when the repository has exactly one
+
+  Ambiguity REFUSES. Two profiles marked default, or two claiming the same
+  `:profile/for`, or several with no way to choose between them — each is a
+  question this cannot answer, and answering it by sort order would give the
+  operator a bot chosen by filename. `pick-default-bot` records what silent
+  selection costs: two Bots answered to `default`, every turn ran against the
+  disabled one, and nothing said so."
+  [accepted {:keys [requested as]}]
+  (let [by-id (fn [id] (filterv #(= id (:profile/id %)) accepted))]
+    (cond
+      (empty? accepted)
+      (refusal :repo-profile/none-accepted "この repository に読める profile がありません。")
+
+      (seq requested)
+      (let [m (by-id requested)]
+        (cond
+          (= 1 (count m)) (first m)
+          (empty? m) (refusal :repo-profile/requested-not-found
+                              (str requested " はこの repository にありません: "
+                                   (str/join " " (sort (map :profile/id accepted))))
+                              {:available (mapv :profile/id accepted)})
+          :else (refusal :repo-profile/duplicate-id
+                         (str requested " が複数のファイルにあります: "
+                              (str/join " " (sort (map :source m))))
+                         {:sources (mapv :source m)})))
+
+      (seq as)
+      (let [m (filterv #(= as (get-in % [:describes :profile/for])) accepted)]
+        (cond
+          (= 1 (count m)) (first m)
+          (seq m) (refusal :repo-profile/duplicate-for
+                           (str "`" as "` 向けの profile が複数あります: "
+                                (str/join " " (sort (map :source m))))
+                           {:sources (mapv :source m)})
+          ;; nobody claims this operator; fall through to the default
+          :else (recur accepted {})))
+
+      :else
+      (let [d (filterv #(true? (get-in % [:describes :profile/default?])) accepted)]
+        (cond
+          (= 1 (count d)) (first d)
+          (seq d) (refusal :repo-profile/duplicate-default
+                           (str ":profile/default? true が複数あります: "
+                                (str/join " " (sort (map :source d))))
+                           {:sources (mapv :source d)})
+          (= 1 (count accepted)) (first accepted)
+          :else (refusal :repo-profile/ambiguous
+                         (str "profile が " (count accepted) " 本あり、どれを使うか決まりません。"
+                              "--profile <id> で指名するか、1 本に :profile/default? true を付けてください: "
+                              (str/join " " (sort (map :profile/id accepted))))
+                         {:available (mapv :profile/id accepted)}))))))
