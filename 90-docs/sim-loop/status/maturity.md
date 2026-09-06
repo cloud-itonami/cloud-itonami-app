@@ -117,6 +117,15 @@
   (evidence/2026-09-06-falsify-21.md)。着地は Tier 2。
   本反復での df 再実測: avail 962Mi / 100%、annex info は
   keys 5951 / 75.51 GB に微増 (世代増加継続)。
+  **falsify-22 (2026-09-06) で「上界 39.03 GiB は drop 可能」説を REFUTED**:
+  branch 別 `git annex unused --used-refspec` 実測 — main/HEAD/
+  manifest-rev はいずれも同一集合 3088 keys / 42,199,579,172 bytes
+  (39.30 GiB、falsify-21 比 微増)、resident/dns-resolver は 0、
+  全 branch 走査 (`+refs/heads/*`) も 0。滞留世代は detached HEAD
+  (51d4010c, manifest-rev 由来) 系の参照に保持され、dropunused 単独では
+  回収不能。回収には manifest-rev 参照解放が前提 (データロス判断 →
+  Tier 2 継続)。附帯: df avail 4557→4578 MiB (100% 表示継続)
+  (evidence/2026-09-06-falsify-22.md)。
 
 ## === NEXT ===
 
@@ -139,6 +148,9 @@
 8. ~~ディスク再飽和の増加源を同定~~ → falsify-18 で同定完了
    (m365-archive/onedrive 133G)。残る測定対象: 増分 (re-saturation) の
    帰属と、テスト実行が安全な最小 avail 閾値の実測。
+10. falsify-22 の残測定: manifest-rev の参照実体 (指す commit と更新主体)
+    の特定 — 3088 unused keys を保持する最小参照の筈。特定できれば
+    Tier 2 の参照解放案が具体的になる。
 9. (falsify-16 提案の Tier 2 runbook) test-data の git-annex read-only
    残骸への chmod -R u+wx 手順をテスト runbook に追記提案 —
    tamaki tick の worktree-failed と同一 fail モード。
