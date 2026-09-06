@@ -443,3 +443,15 @@ falsify-37 で反証済みのまま、解放源 (falsify-30/37 の大回復) の
 本体 checkout は agent/fix-open-red-5-three-bound で porcelain clean (status --porcelain 0 行)
 確認、head 9e5b24a。負荷 load 50.52/55.64/48.37。反証軸 score は 3 のまま (falsify-1〜45 記録継続、
 本反復は帰属の同一主張のスケール拡大であり score へ質的変更なし)。
+
+## NEXT (falsify-46 追記、append-only)
+
+**falsify-46 (2026-09-07) で帰属生存 + 増加継続 (レートは +24/+25 帯 4 反復連続安定) を再確認 (SURVIVED)**: main-refspec regular unused は
+**394 keys / 5,941,365,414 bytes (≈5.53 GiB)** (falsify-45 の 370 keys / 5,557,668,058 bytes から
+**+24 keys / +0.36 GiB**、増加継続、local annex 394 keys / 5.94 GB と一致)。resident-refspec 正規
+unused は **0** (帰属「unused ⊆ resident 現在ツリー」が 394-key / 5.53 GiB スケールで SURVIVED 継続、
+unused−resident=0)。**追加ベクトル**: 全 refs 走査 (`git annex unused` refspec なし) の正規 unused も
+**0** — main-refspec で unused 判定された key のうちいかなる ref からも到達不能な孤児は存在しないことを
+独立検証。partial chunk は **14 → 14** / temp 186.98MB で不変 (falsify-35 以降連続 11 反復 drift なし、
+間欠的のまま)。増加源 itonami-app-resident.cljs PID 94682 稼働継続 (falsify-33〜45 と同一 PID、
+export_and_sync 不在)、dev /health 127.0.0.1:1338 -> 200 実測。df avail は 141Gi / 85
