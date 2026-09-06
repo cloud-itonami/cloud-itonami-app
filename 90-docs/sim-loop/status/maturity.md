@@ -259,3 +259,13 @@
 
 **falsify-33 (2026-09-06) で「falsify-32 の滞留 0 ベース確定」を REFUTED**: dropunused 着地後 40 分で滞留が再蓄積 (unused 37 keys / 560.59 MB、∩ 37/37 = 100%、local annex 37 keys)。falsify-25 の帰属 「滞留 ⊆ resident 現在ツリー」は小規模で生存継続。増加源 export_and_sync は不在 (grep_rc=1) だが itonami-app-resident.cljs (PID 94682) は稼働継続 — resident ingest の再蓄積源との整合。avail 166-192 GiB → 96 GiB / 90% へ再消費 (100% 飽和は解消のまま)。dropunused は恒久解消でなく反復緩和。残る測定対象: フルスイートの最小 avail 閾値実測 (現 avail 96 GiB で実行可能)。(evidence/2026-09-06-falsify-33.md)
 **falsify-33 副次観測 — ledger 異常 (Tier 2, operator 要修復)**: 7 軸テーブルの反証行と再現性行の間 (本ファイル 16 行目) に `| 反証候補falsify30PLACEHOLDER` という孤立テーブル行が残っており、前回反復の書き込み中断 (クラッシュ) でテーブルが破損している。append-only 規約のため本 bot は削除・編集しない。operator は当該行を復旧して 7 軸テーブルを修復のこと。
+**falsify-34 (2026-09-06) で「dropunused 後再蓄積の滞留は resident 現在ツリーを外れる」説を REFUTED**: 再蓄積を再実測 — main-refspec unused は **62 keys / 560.59 MB** (falsify-33 の 37 keys 比 +25 keys)。帰属判定: `--used-refspec=+refs/heads/resident/dns-resolver` で **unused 正規 key = 0** (falsify-25 の帰属「滞留 ⊆ resident 現在ツリー」が再蓄積 scale でも生存継続、main のみで unused 化する 62 key は全て resident data/ledger/ 参照)。増加源 itonami-app-resident.cljs (PID 94682) は falsify-33 から連続稼働、export_and_sync 不在 (grep_rc=1)。dropunused は恒久解消でなく「回収しても再度 re-accumulate する反復緩和」と確定。avail は反復内 82→81 GiB / 91% (消費継続)。残る観測: partially transferred chunk (15 個) は仕掛かり transfer で次回正規 unused 化候補。恒久解消は resident ingest の世代削除/方針見直し (データ削除判断 → Tier 2 operator) (evidence/2026-09-06-falsify-34.md)。附帯: 7 軸テーブル 16 行目の孤立行 `| 反証候補falsify30PLACEHOLDER` は残存のまま (append-only で本 bot は編集せず、operator 復旧待ち — falsify-33 Tier 2 report 済み)。
+
+## NEXT (falsify-34 追記、append-only)
+
+- falsify-34 で帰属生存を再確認 (REFUTED、falsify-25 が再蓄積 scale でも生存)。
+  - 残る測定対象: partially transferred 15 chunk の next-iteration 正規 unused 化
+    追跡 (transfer drift の確認)。
+  - 恒久解消の Tier 2 提言は不変 (resident ingest 世代削除)。
+  - disk-avail: avail 81-82 GiB / 91% でフルスイート実行可能域 (falsify-31 の
+    最小 avail 閾値実測が現実的) — 実行は次反復以降の選択肢。
