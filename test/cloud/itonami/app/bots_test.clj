@@ -4956,3 +4956,60 @@
       (with-redefs [cloud.itonami.app.bots/goal-job
                     (fn [_] {:job/events (events [{:tool "workspace_read"}])})]
         (is (nil? (collect "run-2")))))))
+
+(deftest a-bot-over-its-budget-is-checkpointed-before-anything-is-leased
+  ;; ADR-2609062600 stage 1. The gate must run BEFORE the lease: a budget
+  ;; consulted after the turn has started is a receipt, not a bound. So the
+  ;; assertion is not only "it stopped" but "the run never reached :leased" --
+  ;; a check that fired after the provider call would leave the same
+  ;; `checkpointed` state and have cost the tokens it exists to prevent.
+  (let [b (make-bot alice {:name "over-budget" :budget-tokens 100})
+        bot-id (:bot/id b)
+        run-id "budget-gate-1"
+        queued (agent-run/agent-run {:id run-id :goal "bounded tick"} 1)
+        run! (ns-resolve 'cloud.itonami.app.bots 'run-goal-job!)]
+    ;; The Bot value carries the ceiling; create! does not know the key, so it
+    ;; is written straight onto the stored Bot the way an operator's update
+    ;; would leave it.
+    (store/transact!
+     (fn [state]
+       (-> state
+           (assoc-in [:bots :bots bot-id :bot/budget-tokens] 100)
+           (assoc-in [:bots :goal-jobs run-id]
+                     {:job/id run-id :job/bot bot-id :job/session alice
+                      :job/objective "bounded tick" :job/run queued
+                      :job/resident-workforce? true :job/plan [] :job/events []})
+           (assoc-in [:bots :turn-history bot-id]
+                     [{:turn/id "t1" :turn/bot bot-id
+                       :turn/usage {:total_tokens 60}}
+                      {:turn/id "t2" :turn/bot bot-id
+                       :turn/usage {:total_tokens 60}}]))))
+    (is (false? (run! {} run-id)) "the run was not refused")
+    (let [job (get-in @store/state [:bots :goal-jobs run-id])
+          status (get-in job [:job/run :agent.run/status])]
+      ;; `:failed` and not `:checkpointed`: from `:queued` the machine allows
+      ;; only `:leased` and `:cancelled`, and `:cancelled` is documented as
+      ;; "a human said no". `:failed` is the retryable terminal, so the Bot
+      ;; recovers on its own as the window rolls.
+      (is (= :failed status))
+      (is (= "bot/budget-exhausted"
+             (get-in job [:job/run :agent.run/error-type]))
+          "the reason literal is not pinned; another cause would read the same")
+      (is (nil? (get-in job [:job/run :agent.run/started-at]))
+          "a run refused before the provider must not look like one that ran"))))
+
+(deftest a-bot-with-no-budget-is-not-stopped-by-the-gate
+  ;; The other direction. 237 live Bots carry no ceiling, and a gate that
+  ;; treated absence as zero would stop every one of them on nobody's decision.
+  ;; This asserts the gate lets them through -- it does NOT run the turn, which
+  ;; would need a provider; it asserts the run leaves :queued behind, which the
+  ;; refusal path never does.
+  (let [b (make-bot alice {:name "no-budget"})
+        bot-id (:bot/id b)
+        admit (ns-resolve 'cloud.itonami.app.bot-bounds 'admit-spend)]
+    (is (:allowed? (admit (get-in @store/state [:bots :bots bot-id])
+                          [{:turn/usage {:total_tokens 999999999}}])))
+    (is (= :bounds/unbounded
+           (:reason (admit (get-in @store/state [:bots :bots bot-id])
+                           [{:turn/usage {:total_tokens 999999999}}])))
+        "allowed-because-unbounded must not read as allowed-because-within")))

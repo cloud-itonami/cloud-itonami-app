@@ -62,6 +62,7 @@
             [cloud.itonami.app.bot-dispatcher :as bot-dispatcher]
             [cloud.itonami.app.bot-identity :as bot-identity]
             [cloud.itonami.app.bot-workspace :as bot-workspace]
+            [cloud.itonami.app.bot-bounds :as bounds]
             [cloud.itonami.app.bot-cache :as bot-cache]
             [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.app.bot-slo :as bot-slo]
@@ -5898,7 +5899,8 @@
 
 (defn- goal-job-configuration
   [configuration {:job/keys [max-tool-calls max-tool-output-chars
-                             resident-workforce?]}]
+                             resident-workforce?]
+                  :as job}]
   (cond-> configuration
                         max-tool-calls
                         (assoc-in [:bots :goal :max-tool-calls]
@@ -5908,10 +5910,16 @@
                                   max-tool-output-chars)
                         resident-workforce?
                         (-> (assoc-in [:bots :goal :max-output-tokens]
-                                      (long (or (get-in configuration
-                                                        [:bots :workforce
-                                                         :max-output-tokens])
-                                                default-resident-max-output-tokens)))
+                                      ;; The Bot's own ceiling, which can only
+                                      ;; NARROW this one (ADR-2609062600). A Bot
+                                      ;; raising its own cap is the thing a cap
+                                      ;; is for.
+                                      (bounds/output-cap
+                                       (bot-by-id (:job/bot job))
+                                       (long (or (get-in configuration
+                                                         [:bots :workforce
+                                                          :max-output-tokens])
+                                                 default-resident-max-output-tokens))))
                             (assoc-in [:bots :goal :max-input-tokens]
                                       (long (or (get-in configuration
                                                         [:bots :workforce
@@ -5988,8 +5996,45 @@
 
 (defn- run-goal-job! [configuration run-id]
   (let [{:job/keys [bot session objective attempt] :as job} (goal-job run-id)
-        configuration (goal-job-configuration configuration job)]
-    (try
+        configuration (goal-job-configuration configuration job)
+        ;; The spend ceiling, checked BEFORE the lease. A budget consulted
+        ;; after the turn has started is a receipt, not a bound
+        ;; (ADR-2609062600).
+        ;;
+        ;; Measured 2026-09-06 across the resident's own 3,117 recorded turns:
+        ;; p50 43,299 tokens, p90 250,926, and one turn of 29,231,364 with
+        ;; nothing in the system that could have stopped it. Re-derive with
+        ;; `nbb scripts/measure-bot-usage.cljs` rather than quoting these.
+        spend (bounds/admit-spend (bot-by-id bot)
+                                  (get-in (snapshot) [:turn-history bot]))]
+    (if-not (:allowed? spend)
+      ;; `:failed`, and the state machine is why.
+      ;;
+      ;; `:checkpointed` is what this means and it is unreachable: from
+      ;; `:queued` the only legal moves are `:leased` and `:cancelled`
+      ;; (`agent.run/transitions`), and the machine is right -- a run that has
+      ;; not started has nothing to checkpoint. `:cancelled` is worse than
+      ;; wrong: that table's own docstring says `:rejected` and `:cancelled`
+      ;; are "deliberately dead ends -- A HUMAN SAID NO", so putting a system
+      ;; ceiling there would launder a bound as a person's refusal.
+      ;;
+      ;; `:failed` is the one retryable terminal (`:failed -> :queued`), so the
+      ;; Bot recovers by itself as older turns leave the window, and
+      ;; `:agent.run/error-type` carries WHICH failure this is -- the
+      ;; distinction a reader needs to tell a ceiling from a provider outage.
+      ;; The lease is taken and no provider is called, which is the part that
+      ;; costs.
+      (do (transition-goal-run! run-id :leased {:agent.run/lease "local-bots-goal"})
+          (transition-goal-run! run-id :failed
+                                {:agent.run/error-type "bot/budget-exhausted"
+                                 :agent.run/error-message (:message spend)
+                                 :agent.run/finished-at (now-ms)})
+          (append-goal-event! run-id :run/failed
+                              (assoc (select-keys spend [:reason :spent :budget
+                                                         :window :turns :unreported])
+                                     :error-type "bot/budget-exhausted"))
+          false)
+      (try
       (transition-goal-run! run-id :leased {:agent.run/lease "local-bots-goal"})
       (transition-goal-run! run-id :running {})
       (append-goal-event! run-id :run/started {:attempt (inc (long (or attempt 0)))})
@@ -6097,7 +6142,7 @@
         ;; A resident recovery queue is durable rather than submitted wholesale
         ;; to the executor. Finishing any job frees the slot for exactly the
         ;; next persisted resident job.
-        (drain-goal-queue! configuration)))))
+        (drain-goal-queue! configuration))))))
 
 (defn- finish-goal-run-from-visible! [run-id state]
   (let [status (goal-run-status
