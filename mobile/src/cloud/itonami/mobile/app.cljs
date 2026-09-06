@@ -27,12 +27,19 @@
 ;; The ingress the COMMAND surface talks to, which is not the edge.
 ;;
 ;; The edge (`api-base`) serves the fleet directory and nothing else; the
-;; commands go to the itonami resident through its own ingress. Empty by
-;; default and on purpose: `agent.itonami.cloud` was NXDOMAIN when this landed
-;; (measured 2026-09-06), and compiling in a hostname that does not resolve
-;; would make an unreachable ingress look like a configured one. An empty base
-;; is a state the screen can describe; a wrong base is one it cannot.
-(goog-define agent-base "")
+;; commands go to the itonami resident through its own ingress.
+;;
+;; This was empty until the ingress existed. `agent.itonami.cloud` was NXDOMAIN
+;; when the pane landed, and compiling in a hostname that does not resolve
+;; would have made an unreachable ingress look like a configured one. It exists
+;; now (Worker `cloud-itonami-agent-edge` over the named tunnel
+;; `itonami-agent`), and it was measured through, from outside, with a minted
+;; session: `/api/agent-bots` 200 with a token, 401 without, 404 for anything
+;; the table does not carry.
+;;
+;; A base being set is still NOT the same as this device being paired. Without
+;; a token the screen says so and sends nothing.
+(goog-define agent-base "https://agent.itonami.cloud")
 
 ;; The two tables, read from the classpath AT COMPILE TIME.
 ;;

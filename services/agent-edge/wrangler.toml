@@ -2,14 +2,25 @@ name = "cloud-itonami-agent-edge"
 main = "src/index.js"
 compatibility_date = "2026-09-06"
 
-# NOT DEPLOYED. `agent.itonami.cloud` was NXDOMAIN when this landed (measured
-# 2026-09-06) and the app's tunnel origin did not answer, so deploying this
-# would publish a door onto a resident nothing reaches. The route and ORIGIN
-# below are the shape, filled in by whoever turns it on.
+routes = [
+  { pattern = "agent.itonami.cloud", custom_domain = true }
+]
+
+[vars]
+# The named tunnel to the itonami resident (`cloudflared` config
+# `~/.cloudflared/config-itonami-agent.yml`, tunnel `itonami-agent`).
 #
-# routes = [
-#   { pattern = "agent.itonami.cloud", custom_domain = true }
-# ]
+# ONE label under etzhayyim.com, and that is not cosmetic. Cloudflare universal
+# SSL covers `*.etzhayyim.com` and NOT deeper: the first attempt at this used
+# `agent-origin.itonami.cloud.etzhayyim.com`, which has no certificate, so the
+# edge aborts the handshake and curl reports exit 35 even with `-k` (measured
+# 2026-09-06). `services/mcp-edge` points at `mcp.itonami.cloud.etzhayyim.com`,
+# four labels, and has the same defect — its ORIGIN is unreachable by TLS,
+# which is a separate fact from its tunnel being down.
 #
-# [vars]
-# ORIGIN = "https://<the tunnel hostname for the itonami resident>"
+# The tunnel carries the SAME path table this Worker does (cloudflared ingress
+# rules), so addressing this hostname directly reaches no more than the Worker
+# does. Measured 2026-09-06: /api/state, /, an approval path, a prefix trick
+# and an extra segment all answer 404 at the tunnel. What the tunnel cannot do
+# is distinguish METHOD — that stays this Worker's alone.
+ORIGIN = "https://itonami-agent.etzhayyim.com"
