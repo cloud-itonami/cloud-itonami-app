@@ -455,3 +455,6 @@ unused−resident=0)。**追加ベクトル**: 全 refs 走査 (`git annex unuse
 独立検証。partial chunk は **14 → 14** / temp 186.98MB で不変 (falsify-35 以降連続 11 反復 drift なし、
 間欠的のまま)。増加源 itonami-app-resident.cljs PID 94682 稼働継続 (falsify-33〜45 と同一 PID、
 export_and_sync 不在)、dev /health 127.0.0.1:1338 -> 200 実測。df avail は 141Gi / 85
+## NEXT (falsify-47 追記、append-only)
+
+**falsify-47 (2026-09-07、spec/契約 軸) で falsify-10 の placeholder→path-param 整合をコマンド単位で機械検証 (SURVIVED)**: 資源 `resources/cloud-itonami-app.commands.edn` (main checkout head 9e5b24a / porcelain clean) を Python 解析し、`:command [` マーカーで段落分割して各コマンドの `:template` placeholder 集合と `:params` `:name` 集合を**コマンドごとに**突合。実測: `:command` 208 / `:template` 208 / `:in "path"` 128 / placeholder 128。placeholder を持つコマンド 113 のうち、全 128 placeholder が同一コマンドの params に `:name` 宣言あり (**欠落 0**)、全て `:in "path"` (**非 path 0**)、params 宣言が template に現れない orphan **0**。aggregate 一致 (128=128) ではなく当該段落内一致で確認した点が falsify-10 からの精緻化。spec/契約 軸 score は 3 のまま (falsify-10 にコマンド単位突合を追記、値スキーマ検証未整備は不変)。附帯: 前反復 falsify-46 本体は記録中に中断して文末が mid-sentence で truncate された (本ファイル 456 行目 `df avail は 141Gi / 85` で途切れ、falsify-33/34 の 16 行目孤立行と同種の追記中断)。append-only のため本 bot は回復せず operator 復旧待ち。7 軸テーブル 16 行目孤立行 `| 反証候補falsify30PLACEHOLDER` も残存のまま。本体 checkout は agent/fix-open-red-5-three-bound / porcelain clean (dirty 0)、head 9e5b24a (evidence/2026-09-07-falsify-47.md)。
