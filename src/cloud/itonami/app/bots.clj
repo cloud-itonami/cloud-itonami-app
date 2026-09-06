@@ -4613,7 +4613,11 @@
       (throw (ex-info "Bot の実行を中止しました。" {:type :bot/cancelled})))
     (cond
       (>= (- (:turn-count run 0) (:slice-turn-start run 0))
-          (if (:goal? run) max-goal-turns max-turns))
+          ;; The Bot's own turn ceiling, narrowing this one
+          ;; (ADR-2609062600 stage 2). These were global constants with no
+          ;; config and no per-Bot value, so the noisiest Bot set the loop
+          ;; bound for every Bot.
+          (bounds/turn-cap b (if (:goal? run) max-goal-turns max-turns)))
       (if (and (:goal? run)
                (< (long (or (:job/attempt (goal-job (:id run))) 0))
                   max-goal-continuations))
@@ -4633,10 +4637,12 @@
         (say (:bot/id b) text nil)))
 
       (>= (- (:tool-count run 0) (:slice-tool-start run 0))
-          (if (:goal? run)
-            (long (or (get-in configuration [:bots :goal :max-tool-calls])
-                      max-goal-tool-calls))
-            max-tool-calls))
+          (bounds/tool-call-cap
+           b
+           (if (:goal? run)
+             (long (or (get-in configuration [:bots :goal :max-tool-calls])
+                       max-goal-tool-calls))
+             max-tool-calls)))
       (if (and (:goal? run)
                (< (long (or (:job/attempt (goal-job (:id run))) 0))
                   max-goal-continuations))

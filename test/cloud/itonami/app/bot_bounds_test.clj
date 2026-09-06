@@ -101,11 +101,25 @@
     (testing "an unreadable URL is refused with its own reason"
       (is (= :bounds/unparsable-url (:reason (bounds/admit-host b "not a url")))))))
 
-(deftest the-row-is-four-keys-and-tools-is-not-one-of-them
+(deftest every-ceiling-narrows-and-none-raises
+  ;; One arithmetic for every ceiling, so a key added later cannot arrive with
+  ;; different rules. Turn and tool-call bounds were global constants until
+  ;; 2026-09-06 — `bots/max-turns` 8 and `max-goal-turns` 24 with no config and
+  ;; no per-Bot value — so the noisiest Bot set the loop bound for every Bot.
+  (doseq [[f k] [[bounds/output-cap :bot/max-output-tokens]
+                 [bounds/turn-cap :bot/max-turns]
+                 [bounds/tool-call-cap :bot/max-tool-calls]]]
+    (is (= 4 (f {k 4} 8)) (str k " did not narrow"))
+    (is (= 8 (f {k 99} 8)) (str k " let a Bot raise its own ceiling"))
+    (is (= 8 (f {} 8)) (str k " changed the deployment value when unset"))
+    (is (= 4 (f {k 4} nil)) (str k " with no deployment value"))))
+
+(deftest the-row-is-six-keys-and-tools-is-not-one-of-them
   ;; `:bot/tools` already exists and is already enforced. Restating it here
   ;; would make two places answer "which tools" and they would agree until they
   ;; did not.
   (is (= #{:bot/budget-tokens :bot/budget-window-turns
-           :bot/max-output-tokens :bot/allowed-hosts}
+           :bot/max-output-tokens :bot/max-turns :bot/max-tool-calls
+           :bot/allowed-hosts}
          bounds/keys*))
   (is (not (contains? bounds/keys* :bot/tools))))
