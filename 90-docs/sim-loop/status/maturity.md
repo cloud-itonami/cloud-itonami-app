@@ -290,3 +290,16 @@ annex local keys 75 → **99** / size 1.11GB → **1.48 GB**)。resident-refspec
 稼働継続 (export_and_sync 不在)、dev /health 127.0.0.1:1338 -> 200 実測。df avail 73Gi / 92% (反復越え -1GiB)。
 dropunused は引き続き反復緩和、恒久解消は resident ingest 世代削除 (Tier 2) (evidence/2026-09-06-falsify-36.md)。
 附帯: 7 軸テーブル 16 行目孤立行 `| 反証候補falsify30PLACEHOLDER` 残存のまま (operator 復旧待ち)。
+
+**falsify-37 (2026-09-06) で帰属生存 + avail の大回復を観測**: main-refspec regular unused は
+**124 keys / 1,861,002,689 bytes (≈1.73 GiB)** (falsify-36 の 99 keys から **+25 keys**、増加継続)。
+resident-refspec 正規 unused は **0** (帰属「unused ⊆ resident 現在ツリー」が 124-key / 1.73 GiB
+scale で SURVIVED 継続)。partial chunk は **14 → 14** / tmp 178M で不変 (連続 2 反復 drift なし、
+間欠的のまま)。増加源 itonami-app-resident.cljs PID 94682 稼働継続 (etime 1日、export_and_sync
+不在)、dev /health 200。**df avail は 73Gi → 171Gi / 81% へ +98Gi 大回復** (dropunused 直後の
+falsify-32 と同等域へ復帰)。増加源が同一 PID で稼働継続のままの回復であり、「avail 回復 = 増加源
+停止」説は falsify-30 に続き再反証 (REFUTED)。回復容量の単一起因帰属は未特定 (local annex は +25
+増、partial 不変) → 継続観測対象。dropunused は引き続き反復緩和、恒久解消は resident ingest 世代
+削除 (Tier 2)。avail 171Gi はフルスイート実行可能域 (falsify-31 の最小 avail 閾値実測が次の実行
+候補) (evidence/2026-09-06-falsify-37.md)。附帯: 7 軸テーブル 16 行目孤立行
+`| 反証候補falsify30PLACEHOLDER` 残存のまま (operator 復旧待ち)。
