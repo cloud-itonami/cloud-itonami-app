@@ -199,7 +199,15 @@
                             "itonami — cloud-itonami-app の front end"))
         "the control: the default banner is gone when a skin replaced it")
     ;; the accent glyph is the separator the counts line is joined with
-    (is (str/includes? (screen "kawaii") "209 commands ♡ /help for commands"))))
+    (is (str/includes? (screen "kawaii") "209 commands ♡ /help for commands"))
+    ;; and the skin's palette reaches the wordmark, not only its words
+    (let [tinted (fn [skin]
+                   ((:render (harness/ctx-get (ctx-with-skin skin) :ctx/splash))
+                    (assoc facts :color? true)))]
+      (is (str/includes? (tinted nil) (splash/sgr "38;5;120")) "green, the default")
+      (is (str/includes? (tinted "gold") (splash/sgr "38;5;220")))
+      (is (not (str/includes? (tinted "gold") (splash/sgr "38;5;120")))
+          "the control: the default ramp is gone when a skin replaced it"))))
 
 (deftest unmount-removes-the-screen
   (let [ctx (ctx-with-skin nil)]

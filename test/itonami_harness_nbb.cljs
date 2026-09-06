@@ -108,7 +108,9 @@
       (is (= "default" (:name ((:skin theme)))))
       (is (:ok ((:set-skin! theme) "kawaii")))
       ;; the same service value, no remount: the reader sees the new skin
-      (is (= "you ♡ " (:prompt ((:skin theme)))))
+      (is (= "♡ " (:prompt ((:skin theme)))))
+      ;; a skin carries its own palette, and inherits what it does not set
+      (is (= "38;5;218" (:accent-code ((:skin theme)))))
       (is (not (:ok ((:set-skin! theme) "nope")))))))
 
 (deftest help-is-generated-from-the-registry-not-a-second-list

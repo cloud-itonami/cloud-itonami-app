@@ -43,23 +43,49 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private default-theme
+  ;; Green (owner instruction, 2026-09-06). A skin carries its own colours as
+  ;; SGR parameter strings rather than as an ANSI escape: the EDN reader nbb
+  ;; ships rejects a raw ESC byte and `\uXXXX`, so a drop-in skin file could
+  ;; not spell one. `itonami-text/sgr` puts the escape on at the last moment.
   {:name "default"
-   :prompt "you ❯ "
+   :prompt "❯ "
+   :continuation "  "
    :accent "·"
+   :accent-code "38;5;114"
+   :label-code "38;5;108"
+   :dim-code "2"
+   :ramp ["38;5;120" "38;5;114" "38;5;78" "38;5;71" "38;5;65"]
    :banner "itonami — cloud-itonami-app の front end"})
 
 (def ^:private skins
-  ;; hermes parity keys: :prompt :accent :banner. A skin file may live in
-  ;; <data-dir>/skins/<name>.edn; the shipped ones are here.
+  ;; hermes parity keys: :prompt :accent :banner, plus the colours above.
+  ;; A skin file may live at <data-dir>/skins/<name>.edn; the shipped ones
+  ;; are here, and a partial file inherits every key it does not set.
   (let [kawaii {:name "kawaii"
-                :prompt "you ♡ "
+                :prompt "♡ "
                 :accent "♡"
+                :accent-code "38;5;218"
+                :label-code "38;5;225"
+                :ramp ["38;5;225" "38;5;218" "38;5;212" "38;5;175" "38;5;138"]
                 :banner "itonami ♡ ようこそ"}
         grok {:name "grok"
-              :prompt "you ▮ "
+              :prompt "▮ "
               :accent "▮"
-              :banner "itonami — one workspace"}]
-    {"default" default-theme "kawaii" kawaii "grok" grok}))
+              :accent-code "38;5;252"
+              :label-code "38;5;245"
+              :ramp ["38;5;255" "38;5;252" "38;5;248" "38;5;244" "38;5;240"]
+              :banner "itonami — one workspace"}
+        gold {:name "gold"
+              ;; What this wore before the green instruction. Kept as a skin
+              ;; rather than deleted: it is one `/skin gold` away, and a
+              ;; palette nobody can get back is a palette nobody can compare.
+              :accent-code "38;5;214"
+              :label-code "38;5;180"
+              :ramp ["38;5;220" "38;5;214" "38;5;208" "38;5;172" "38;5;136"]}]
+    {"default" default-theme
+     "kawaii" (merge default-theme kawaii)
+     "grok" (merge default-theme grok)
+     "gold" (merge default-theme gold)}))
 
 (defn theme-plugin
   "Provides :ctx/theme. Deps: :ctx/config (for the skin search path).
