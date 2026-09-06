@@ -97,6 +97,7 @@
 (classpath/add-classpath (path/resolve app-directory "src"))
 (classpath/add-classpath (path/resolve app-directory "bin"))
 (require '[cloud.itonami.app.commands :as commands]
+         '[cloud.itonami.app.repo-profile :as repo-profile]
          '[itonami-harness :as harness]
          '[itonami-profile :as profile])
 
@@ -381,6 +382,58 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private chat-default-profile "default")
+
+;; ---------------------------------------------------------------------------
+;; the profile a repository carries (ADR-2609061200)
+;; ---------------------------------------------------------------------------
+
+(defn- repo-root
+  "The nearest ancestor of `dir` holding `.git`, or nil.
+
+  Upward from the working directory and no further -- the same shape `.git`
+  discovery has. There is deliberately no scan: this workspace manages 4,000+
+  repositories, and a command that walks them is a command nobody can stop
+  (CLAUDE.md says the same about an argument-less `west update`)."
+  [dir]
+  (loop [d (path/resolve dir) n 0]
+    (cond
+      (> n 40) nil
+      (fs/existsSync (path/join d ".git")) d
+      :else (let [up (path/dirname d)] (when (not= up d) (recur up (inc n)))))))
+
+(def ^:private repo-profile-state
+  "`nil` when no repository profile applies, otherwise the admission result
+  with `:path` added. Computed once: the working directory does not move under
+  a running command, and re-reading would let two reads of one file disagree."
+  (delay
+    (when-let [root (repo-root (js/process.cwd))]
+      (let [file (path/join root repo-profile/file-name)]
+        (when (fs/existsSync file)
+          (assoc (repo-profile/admit (slurp-file file)) :path file))))))
+
+(defn- repo-profile!
+  "The accepted repository profile, or nil. REFUSES rather than falling back.
+
+  A repository that names a profile this cannot admit must not quietly become
+  `default`. `pick-default-bot`'s docstring records what that costs: two Bots
+  answered to `default`, `itonami chat` ran every turn against the disabled
+  one, and the screen said nothing. Exit 2 and not 1 -- nothing was asked of
+  the server, so this is not a refusal it issued."
+  []
+  (when-let [r @repo-profile-state]
+    (if (:accepted? r)
+      r
+      (cannot-answer! (str (:path r) ": " (:message r))
+                      {:reason (:reason r)}))))
+
+(defn- profile-source
+  "Where the active profile came from, for the banner. An operator who cannot
+  see this cannot tell a repository profile that applied from one that did not."
+  []
+  (cond
+    (not-empty (aget js/process.env "ITONAMI_PROFILE")) "ITONAMI_PROFILE"
+    (some-> @repo-profile-state :accepted?) (:path @repo-profile-state)
+    :else "default"))
 ;; REPL state lives in :ctx/chat (the plugin layer, ADR-2609042200); the
 ;; historical names are bindings to the plugin's own atoms so existing call
 ;; sites read unchanged and /profile stays a one-atom write.
@@ -622,9 +675,17 @@
   "The REPL: one message per turn, each on its own run, streaming deltas.
   Lines starting with / are commands (see chat-slash!), not messages."
   []
+  ;; The REPL resolves its starting profile the same way the one-shot entry
+  ;; does. Without this the banner would print `default` while `itonami chat
+  ;; "..."` in the same directory used the repository's -- one command, two
+  ;; answers, and the banner would be the one that lied.
+  (when-let [id (or (some-> (aget js/process.env "ITONAMI_PROFILE") str/trim not-empty)
+                    (:profile/id (repo-profile!)))]
+    (reset! chat-profile id))
   (let [rl (js/require "node:readline/promises")]
     (println (str (:banner ((:skin ctx-theme)))
-                  "  profile: " @chat-profile " — /help で一覧、exit で終了"))
+                  "  profile: " @chat-profile " (" (profile-source) ")"
+                  " — /help で一覧、exit で終了"))
     (let [iface (.createInterface rl #js {:input js/process.stdin
                                           :output js/process.stdout})
           prompt (fn [] (:prompt ((:skin ctx-theme))))]
@@ -684,6 +745,8 @@
   command line runs one turn and exits; without one, the REPL starts."
   [argv json?]
   (let [profile (or (some-> (:profile (commands/parse-flags argv)) str/trim not-empty)
+                    (some-> (aget js/process.env "ITONAMI_PROFILE") str/trim not-empty)
+                    (:profile/id (repo-profile!))
                     chat-default-profile)
         words (commands/words (drop 1 (drop-while #(not= "chat" %) argv)))
         text (str/join " " words)]
