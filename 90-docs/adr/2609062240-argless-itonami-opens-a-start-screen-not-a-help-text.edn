@@ -1,0 +1,129 @@
+[{:db/id -1
+  :adr/id "adr-2609062240-argless-itonami-opens-a-start-screen-not-a-help-text"
+  :adr/title "Argless `itonami` opens a start screen and a REPL, not a help text"
+  :adr/status "accepted"
+  :adr/date "2026-09-06"
+  :adr/related "adr-2609042200"
+  :adr/body "## What was wrong
+
+`itonami` with no arguments printed eight lines of help and exited 0. Every
+other agent CLI on this machine -- `claude`, `hermes-agent` -- opens its REPL
+there, and names on that first screen what it can actually do.
+
+The help text had already begun promising the REPL. The line
+`itonami                        chat REPL を開く` shipped in the resident
+release while `-main` still matched `(empty? named)` to the help branch and
+exited. The screen and the code disagreed, and the screen was the one that
+lied.
+
+Measured 2026-09-06: `itonami` in a terminal printed help; `itonami chat`
+printed a single banner line and a prompt. The REPL existed. Nothing pointed
+at it, and the one thing that claimed to did not.
+
+## Decision
+
+1. Argless `itonami` on a TTY opens the REPL, by way of the same `chat!`
+   entry `itonami chat` uses. There is no second path into the loop.
+2. Argless under a pipe, a non-TTY, or with `--json` still prints help and
+   exits 0. A REPL with nobody at it would hang a script that used to get
+   help, and the help now says this in its own text rather than leaving a
+   caller to discover it.
+3. `help` and `--help` keep printing help on a TTY.
+4. The REPL opens on a start screen: a wordmark, a framed panel naming the
+   command inventory (largest first-word groups of the 209 generated commands,
+   the named aliases, the slash commands), the resolved profile and where it
+   came from, the working directory, where the session token was found, and
+   the counts.
+5. The screen is a harness plugin (`:ctx/splash`, ADR-2609042200), so
+   `--dump-config` and `/plugins` name it like every other layer.
+
+## What the screen is allowed to say
+
+Every line is read from something this process already looked up, plus one
+measured `/health`. `/health` is awaited rather than printed late, because a
+warning that arrives after the prompt lands in the middle of the operator's
+first line.
+
+The server line has three states, not two: answering (with the store id it
+reported), refused, and -- when the request could not be made at all -- said
+as such. CLAUDE.md's sixth question is the reason: a check that could not run
+must not return the value of a check that ran and passed. The session line
+names *which* source answered (environment variable or Keychain item), because
+a stale export and a fresh login produce an identical working CLI right up to
+the moment the exported one expires.
+
+The tail of every truncated list is named (`+20 more: business · projects ·
+…`), not dropped. A screen that lists five of twenty-five groups and says
+nothing about the other twenty is telling the operator those twenty do not
+exist.
+
+## Width
+
+`display-width` counts East Asian Wide and Fullwidth as two columns and
+everything else -- box drawing and block elements included, which UAX#11 calls
+Ambiguous -- as one, which is what a Latin-locale terminal does. Warnings print
+below the frame, where a glyph whose width a terminal disagrees about cannot
+push a border off.
+
+Two checks, and neither covers the other:
+
+- `width-counts-columns-not-code-units` pins the ruler against literal column
+  counts. Control (measured): making `wide?` answer false for everything fails
+  it.
+- `every-frame-row-is-the-same-width` pins the frame arithmetic against the
+  ruler. Control (measured): an off-by-one in the title fill fails it -- and
+  that off-by-one was really there when the test was first run.
+
+The frame check does NOT catch a wrong ruler: it pads and asserts with the
+same function, so the ruler grades itself. That is written down in the test
+file, next to the assertion, so a later reader does not mistake it for
+coverage it does not have.
+
+## The theme injection is load-bearing
+
+`itonami-profile` records what a declared-but-unread `:inject` cost the last
+time: `:skin` in configuration selected nothing while `/skin` worked, and every
+assertion in reach only checked that mounting had succeeded. So the splash
+layer reads its injected theme at render time -- the skin's banner is the
+tagline under the wordmark, the skin's accent glyph is the separator the counts
+line is joined with -- and the test asserts it through the rendered screen in
+both directions: the kawaii banner present, the default banner gone.
+
+## A fix that came with it
+
+Ctrl+D rejects the pending `readline.question`. Nothing caught that rejection,
+so leaving the REPL the ordinary way printed an AbortError and an nbb stack
+trace over the operator's last screen -- a crash report for a keystroke that
+means \"I am done\". It was survivable while the REPL was something you had to
+ask for by name; making it the argless entry makes Ctrl+D the common exit. It
+now exits 0 in silence.
+
+## Rejected: merging the hermes-parity branch instead
+
+`~/.cloud-itonami/app` sits on `agent/harness-plugin-architecture`, 11 commits
+ahead of `main` and 41 behind, and the running release
+(`releases/dfddb86b…-clean`) was built from it. That branch carries a second
+implementation of the same plugin harness `main` landed at 93d9972, plus a
+larger set of hermes-parity slash commands, in files (`itonami_chat.cljs`,
+`itonami_theme.cljs`) that `main` does not have. Merging it would land two
+harnesses and decide, in passing, a question nobody asked here.
+
+So this change is written against `origin/main` and takes nothing from that
+branch. Its slash commands remain worth landing on their own terms; that is a
+separate decision, and it is still open. Note that the running release is
+therefore NOT what `main` builds: an operator reading `itonami --help` from the
+resident install is reading the branch's text, not this one, until the release
+is rebuilt.
+
+## Consequences
+
+- A script calling bare `itonami` and reading stdout keeps working: the pipe
+  case is unchanged.
+- A person calling bare `itonami` gets the REPL, and pays one `/health`
+  request (a few milliseconds against a live resident, and a refused connect
+  when there is none) before the prompt.
+- `bin/itonami_splash.cljs` is a new sibling of the launcher. The single-file
+  resident copy is unaffected: `--print-data-dir` still answers before any
+  sibling is required, which is the property `launcher_test` measures, and it
+  was re-measured by hand here.
+"}]

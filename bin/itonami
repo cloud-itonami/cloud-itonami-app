@@ -99,7 +99,8 @@
 (require '[cloud.itonami.app.commands :as commands]
          '[cloud.itonami.app.repo-profile :as repo-profile]
          '[itonami-harness :as harness]
-         '[itonami-profile :as profile])
+         '[itonami-profile :as profile]
+         '[itonami-splash :as splash])
 
 (defn- slurp-file [p]
   (try (fs/readFileSync p "utf8") (catch :default _ nil)))
@@ -360,10 +361,25 @@
                                                     (repo-cli-config))}))
 (harness/mount! harness-ctx (profile/theme-plugin))
 (harness/mount! harness-ctx (profile/chat-plugin))
+;; The start screen is a layer like the others, so `--dump-config` and
+;; `/plugins` name it. It injects the theme rather than importing one, so the
+;; skin a repository selected through `:cli/config` reaches the screen -- not
+;; only the prompt. (It is drawn once, at start, so a later `/skin` changes
+;; the next launch, not this one.)
+(harness/mount! harness-ctx (splash/splash-plugin))
 
 (def ^:private ctx-config (harness/ctx-get harness-ctx :ctx/config))
 (def ^:private ctx-theme  (harness/ctx-get harness-ctx :ctx/theme))
 (def ^:private ctx-chat   (harness/ctx-get harness-ctx :ctx/chat))
+(def ^:private ctx-splash (harness/ctx-get harness-ctx :ctx/splash))
+
+(def app-version
+  "The shipped version, read from the resource that carries it. `unknown` is
+  said out loud rather than guessed: a start screen naming a version it did
+  not read would be the one line on it that nothing backs."
+  (or (:version (read-edn (path/resolve app-directory "resources"
+                                        "cloud-itonami-version.edn")))
+      "unknown"))
 
 (defn- dump-config! []
   (println (harness/dump-config harness-ctx))
@@ -713,7 +729,8 @@
         say-error (fn [e] (println (str "error: " (ex-message e))))]
     (case cmd
       "/help"
-      (do (println "  /bots — Bot 一覧
+      (do (println "  /help — この一覧
+  /bots — Bot 一覧
   /profiles — profile 一覧
   /profile <id> — 対話先を切り替え
   /skin [<name>] — 見た目を切り替え (:ctx/theme を live re-provide)
@@ -814,26 +831,115 @@
           (do (println (str "そのような command はありません: " cmd " (/help)")) :handled)
           nil)))))
 
-(defn- chat-prompt-loop!
-  "The REPL: one message per turn, each on its own run, streaming deltas.
-  Lines starting with / are commands (see chat-slash!), not messages."
+
+;; ---------------------------------------------------------------------------
+;; the start screen (ADR-2609062240)
+;; ---------------------------------------------------------------------------
+
+(defn- tty? []
+  (boolean (.-isTTY js/process.stdout)))
+
+(defn- colour? []
+  (and (tty?)
+       (str/blank? (str (aget js/process.env "NO_COLOR")))
+       (not= "dumb" (aget js/process.env "TERM"))))
+
+(defn- session-origin
+  "Where the session token came from, or that there is none.
+
+  `auth login` writes the Keychain and the environment variable overrides it.
+  An operator who cannot see which one answered cannot tell a stale export
+  from a fresh login -- the two produce an identical working CLI right up to
+  the moment the exported one expires."
   []
-  ;; The REPL resolves its starting profile the same way the one-shot entry
-  ;; does. Without this the banner would print `default` while `itonami chat
-  ;; "..."` in the same directory used the repository's -- one command, two
-  ;; answers, and the banner would be the one that lied.
-  (when-let [id (or (some-> (aget js/process.env "ITONAMI_PROFILE") str/trim not-empty)
-                    (:profile/id (repo-profile!)))]
-    (reset! chat-profile id))
-  (let [rl (js/require "node:readline/promises")]
-    (println (str (:banner ((:skin ctx-theme)))
-                  "  profile: " @chat-profile " (" (profile-source) ")"
-                  " — /help で一覧、exit で終了"))
-    (let [iface (.createInterface rl #js {:input js/process.stdin
-                                          :output js/process.stdout})
-          prompt (fn [] (:prompt ((:skin ctx-theme))))]
+  (let [env-name (or (get-in configuration [:mcp :session-token-env])
+                     "CLOUD_ITONAMI_MCP_SESSION")]
+    (cond
+      (not (str/blank? (str (aget js/process.env env-name)))) env-name
+      (keychain-get) (str "keychain " keychain-service)
+      :else "なし — itonami auth login")))
+
+(defn- slash-lines []
+  (mapv #(str/join " " %) (partition-all 6 ((:commands ctx-chat)))))
+
+(defn- print-splash!
+  "The start screen, then the two facts that had to be measured to be said.
+
+  The frame is drawn from tables this process already read; `/health` is one
+  request with a short timeout. It is awaited rather than printed late,
+  because a warning that arrives after the prompt lands in the middle of the
+  operator's first line. Resolves once the screen is written."
+  []
+  (-> (health)
+      (.then
+       (fn [h]
+         (let [colour (colour?)
+               cmds (commands/all)
+               aliases (commands/alias-commands)
+               slash ((:commands ctx-chat))
+               warn (fn [text] (println (splash/paint colour "38;5;203" text)))]
+           (println
+            ((:render ctx-splash)
+             {:color? colour
+              :columns (or (.-columns js/process.stdout) 88)
+              :version app-version
+              :base-url (base-url)
+              :profile @chat-profile
+              :profile-source (profile-source)
+              :cwd (js/process.cwd)
+              :home home-directory
+              :session (session-origin)
+              :groups (splash/summarise cmds 5)
+              :named (splash/summarise aliases 3)
+              :slash (slash-lines)
+              ;; joined by the skin's accent glyph inside the splash, so
+              ;; the separator is one the theme owns
+              :counts [(str (count cmds) " commands")
+                       (str (count aliases) " named")
+                       (str (count slash) " slash")
+                       "/help for commands"]}))
+           ;; Below the frame: a glyph whose width a terminal disagrees about
+           ;; cannot push a border off down here, and these two lines are the
+           ;; ones an operator acts on.
+           (if (:answering? h)
+             (println (splash/paint colour splash/dim-code
+                                    (str "· server: answering · store: "
+                                         (or (get-in h [:health :store]) "?"))))
+             (warn (str "! server が応答しません: " (base-url)
+                        " — 常駐: launchctl kickstart -k gui/$(id -u)/dev.cloud-itonami.app")))
+           (when-not (session-token)
+             (warn "! agent session がありません — itonami auth login"))
+           (println)
+           (println (splash/paint colour splash/accent-code
+                                  "Itonami へようこそ。メッセージを入力するか /help を打ってください。"))
+           (println (splash/paint colour splash/dim-code
+                                  (str "Tip: 対話先の Bot はリポジトリの .itonami/profile.edn が選びます"
+                                       " (itonami profile explain)")))
+           (println))))
+      (.catch (fn [e]
+                ;; The screen is decoration; failing to draw it must not cost
+                ;; the operator their REPL. Say what happened and continue.
+                (err (str "itonami: start screen を描けませんでした: " (ex-message e)))))))
+
+
+(defn- chat-repl!
+  "The prompt loop: one message per turn, each on its own run, streaming
+  deltas. Lines starting with / are commands (see chat-slash!), not messages."
+  []
+  (let [rl (js/require "node:readline/promises")
+        iface (.createInterface rl #js {:input js/process.stdin
+                                        :output js/process.stdout})
+        prompt (fn [] (:prompt ((:skin ctx-theme))))
+        ;; Ctrl+D rejects the pending question. That is how a REPL is left,
+        ;; and letting the rejection go unhandled -- which is what happened
+        ;; here until the argless entry made Ctrl+D the ordinary way out --
+        ;; printed an AbortError and an nbb stack trace over the operator's
+        ;; last screen, reporting a crash where nothing had gone wrong.
+        ask (fn []
+              (-> (.question iface (prompt))
+                  (.catch (fn [_] (println) (js/process.exit exit-answered)))))]
       (letfn [(turn []
-                (-> (.question iface (prompt))
+                (-> (ask)
                     (.then (fn [text]
                              (let [text (str/trim (str text))]
                                (cond
@@ -881,7 +987,27 @@
                                                      (js/process.exit exit-answered)
                                                      (do (chat-emit (str "error: " (ex-message e) "\n"))
                                                          (js/process.exit exit-cannot-answer))))))))))))))]
-        (turn)))))
+        (turn))))
+
+(defn- chat-prompt-loop!
+  "Open the REPL: resolve the profile, draw the start screen, then prompt."
+  []
+  ;; The REPL resolves its starting profile the same way the one-shot entry
+  ;; does. Without this the screen would print `default` while `itonami chat
+  ;; "..."` in the same directory used the repository's -- one command, two
+  ;; answers, and the screen would be the one that lied.
+  (when-let [id (or (some-> (aget js/process.env "ITONAMI_PROFILE") str/trim not-empty)
+                    (:profile/id (repo-profile!)))]
+    (reset! chat-profile id))
+  ;; The start screen is for a terminal. Under a pipe there is nobody to read
+  ;; a frame, the width is a guess, and the colour would be bytes in somebody's
+  ;; log -- so that case keeps the one line it had.
+  (if (tty?)
+    (-> (print-splash!) (.then chat-repl!))
+    (do (println (str (:banner ((:skin ctx-theme)))
+                      "  profile: " @chat-profile " (" (profile-source) ")"
+                      " — /help で一覧、exit で終了"))
+        (chat-repl!))))
 
 (defn- chat!
   "Entry: `itonami chat [--profile <p>] [first message]`. A message on the
@@ -961,16 +1087,30 @@
       (= "--dump-config" (first argv))
       (dump-config!)
 
-      (or (empty? named) (= ["help"] named) (true? (:help flags)))
+      (or (= ["help"] named) (true? (:help flags))
+          ;; Argless on a terminal opens the REPL; argless under a pipe prints
+          ;; this, because a REPL with nobody at it would hang a script that
+          ;; used to get help. `--json` with no command asks for a value this
+          ;; has none of, so it lands here too rather than on a screen.
+          (and (empty? named) (or json? (not (tty?)))))
       (do (println (str "itonami — cloud-itonami-app の front end\n\n"
-                        "  itonami chat [--profile <p>] [message …]  agent と対話 (ストリーミング)\n"
-                        "  itonami commands [term …]\n"
-                        "  itonami status\n"
+                        "  itonami                                   agent と対話 (REPL を開く)\n"
+                        "  itonami chat [--profile <p>] [message …]  同上。message があれば 1 ターンで終了\n"
+                        "  itonami commands [term …]                 使える command を検索\n"
+                        "  itonami status                            server と store の状態\n"
+                        "  itonami profile explain                   どの profile が効いているか\n"
                         "  itonami <command> [--flag value …] [--json]\n\n"
+                        "REPL の slash command: " (str/join " " ((:commands ctx-chat))) "\n"
+                        "パイプ・非 TTY・--json では REPL を開かず、この help を出します。\n\n"
                         "commands: " (count (commands/all)) " (generated) + "
                         (count (commands/alias-commands)) " (named)\n"
                         "exit 0 answered / 1 refused / 2 could not answer"))
           (js/process.exit exit-answered))
+
+      ;; What `claude` and `hermes-agent` do with no arguments, and what the
+      ;; help text above had already begun promising while `-main` still
+      ;; exited here (ADR-2609062240).
+      (empty? named) (chat! argv json?)
 
       (= "commands" (first named)) (commands! (vec (drop 1 named)) json?)
       (= ["status"] named) (status! json?)
