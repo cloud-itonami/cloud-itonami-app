@@ -27,6 +27,7 @@
   hand the URL to the system browser either. Showing an address that cannot be
   opened is honest; a link that silently does nothing is not."
   (:require [clojure.string :as str]
+            [cloud.itonami.mobile.terminal :as terminal]
             [jp-go-dds.core :as dds]))
 
 (defn- code-text
@@ -111,15 +112,14 @@
                                  " 件は表示していません。条件を絞ってください。")]])))
     nil))
 
-(defn screen
-  "The whole app, for a state map.
+(defn fleet-pane
+  "The fleet directory.
 
   `handlers` carries `:on-query`, `:on-search` and `:on-retry`. They are passed
   in rather than closed over so this namespace stays free of the atom — and so
   a JVM test can render every phase without a browser."
   [{:keys [query] :as state} {:keys [on-query on-search on-retry]}]
-  (dds/container
-   (dds/stack
+  (dds/stack
     (dds/heading 1 "営みフリート")
     [:p "cloud-itonami の actor 群を、blueprint が宣言している内容で引きます。"]
     (dds/form-field
@@ -143,4 +143,206 @@
     [:p [:small "この画面は端末の中で動く ClojureScript が描画し、目録は "
          [:code "cloud.itonami.app.fleet-core"]
          " —— JVM サーバと同じ 1 つの実装 —— を実行している edge から読みます"
-         "（ADR-2608081500 / ADR-2608311000）。"]])))
+         "（ADR-2608081500 / ADR-2608311000）。"]]))
+
+;; ---------------------------------------------------------------------------
+;; the terminal
+;; ---------------------------------------------------------------------------
+
+(defn- connection-line
+  "Where this screen sends, and whether it can.
+
+  A terminal that cannot reach anything must say so before someone types into
+  it, not after. `base` is the ingress; `paired?` is whether this device holds
+  a token. They are two separate facts and both are shown: a reachable ingress
+  with no token and an unreachable ingress with one fail in different places,
+  and 「送れません」alone would send the holder to look at the wrong one."
+  [{:keys [base paired? base-draft token-draft]}
+   {:keys [on-base on-token on-pairing]}]
+  (dds/stack
+   [:p [:small "接続先: " (if (str/blank? base) [:em "未設定"] [:code base])]]
+   (if paired?
+     [:p [:small "この端末は対になっています。"]]
+     (dds/stack
+      (dds/notification-banner
+       {:type :warning :heading "この端末はまだ対になっていません"}
+       [:p "デスクトップで認証済みの itonami が発行した ingress と token が要ります。"
+        "どちらかが空の間、コマンドは組み立てられても"
+        [:strong "送られません"] "。"])
+      ;; The two fields are here rather than on a settings screen because this
+      ;; is the only screen that is blocked by them being empty. A setting that
+      ;; lives away from the thing it blocks is a setting nobody finds.
+      (dds/form-field
+       {:label "ingress" :for "pair-base"
+        :support "例: https://agent.itonami.cloud"}
+       (dds/input-text {:id "pair-base" :value (or base-draft "")
+                        :type "url" :inputmode "url"
+                        :autocapitalize "none" :autocorrect "off"
+                        :spellcheck "false"
+                        :on-change on-base}))
+      (dds/form-field
+       {:label "token" :for "pair-token"
+        :support "デスクトップの itonami が発行した、この端末のための token。"}
+       (dds/input-text {:id "pair-token" :value (or token-draft "")
+                        :type "password"
+                        :autocapitalize "none" :autocorrect "off"
+                        :spellcheck "false"
+                        :on-change on-token}))
+      (dds/row
+       (dds/button "保存"
+                   {:attrs {:on-click #(on-pairing base-draft token-draft)}}))
+      [:p [:small "token はこの端末の中にだけ保存されます。"
+           "サーバにも他の端末にも送られません。"]]))))
+
+(defn- entry-heading
+  "The heading for one transcript entry.
+
+  `:refused` covers two different things and they need different words. A
+  missing flag means the request was never built; an unpaired device means it
+  WAS built and deliberately not sent. Rendering both under
+  「組み立てられませんでした」put a heading directly above a sentence that
+  contradicted it — seen in the phone-size screenshot, not in any assertion,
+  which is why the screenshot is taken."
+  [{:keys [kind reason]}]
+  (case kind
+    :refused (if (= :not-paired reason) "送っていません" "組み立てられませんでした")
+    :unavailable "この画面では実行できません"
+    :failed "届きませんでした"
+    nil))
+
+(defn- transcript-entry
+  "One line of the transcript.
+
+  Five kinds, rendered five ways, because they are five different facts:
+
+  | kind | what happened |
+  |---|---|
+  | `:sent` | what was typed |
+  | `:answered` | the server answered |
+  | `:refused` | this client refused to build the request |
+  | `:unavailable` | no such command, or not offered here — nothing was asked |
+  | `:failed` | a request went out and did not come back |
+
+  `:unavailable` and `:failed` must not look alike. One means the server was
+  never asked; the other means it was asked and said nothing. Rendering both as
+  「エラー」is the shape this workspace keeps finding — a check that could not
+  run answering the way a check that ran and found nothing answers."
+  [{:keys [kind text status suggestions] :as e}]
+  (case kind
+    :sent [:p [:code "❯ " text]]
+
+    :answered (dds/stack
+               (when status [:p [:small "HTTP " (str status)]])
+               [:pre text])
+
+    :failed (dds/notification-banner
+             {:type :error :heading (entry-heading e)}
+             [:p text]
+             [:p [:small "これは「サーバが断った」ではありません。"
+                  "応答が返っていません。"]])
+
+    :refused (dds/notification-banner
+              {:type :warning :heading (entry-heading e)}
+              [:p text]
+              [:p [:small "サーバには問い合わせていません。"]])
+
+    :unavailable (dds/notification-banner
+                  {:type :warning :heading (entry-heading e)}
+                  [:p text]
+                  (when (seq suggestions)
+                    [:p [:small "近いもの: "
+                         (str/join " / " suggestions)]])
+                  [:p [:small "サーバには問い合わせていません。"]])
+
+    [:p text]))
+
+(defn terminal-pane
+  "The command line.
+
+  `handlers` carries `:on-line`, `:on-submit`. Same discipline as the fleet
+  pane: no atom in here."
+  [{:keys [line transcript busy?] :as state}
+   {:keys [on-line on-submit] :as handlers}]
+  (dds/stack
+   (dds/heading 1 "itonami")
+   [:p "デスクトップの "
+    [:code "itonami"]
+    " と同じコマンドを、同じ表から引きます。"]
+   (connection-line state handlers)
+   (dds/divider)
+   (if (empty? transcript)
+     [:p [:small "コマンドを入力してください。例: "
+          [:code "bots list"] " / " [:code "commands bot"]]]
+     (into (dds/stack)
+           (map-indexed (fn [i e] ^{:key i} (transcript-entry e)) transcript)))
+   (dds/divider)
+   (dds/form-field
+    {:label "コマンド" :for "cmd"
+     :support (str "この表は " (count terminal/offered-writes)
+                   " 本の書き込みだけを提供します。承認は Passkey が要ります。")}
+    (dds/input-text {:id "cmd" :value (or line "")
+                     :type "text" :inputmode "text"
+                     :enterkeyhint "send"
+                     :autocapitalize "none" :autocorrect "off"
+                     :spellcheck "false"
+                     :on-change on-line
+                     :on-key-down on-submit}))
+   (dds/row
+    (dds/button (if busy? "送信中…" "送信")
+                {:attrs (cond-> {:on-click on-submit}
+                          busy? (assoc :disabled true))}))
+   (dds/divider)
+   [:p [:small "コマンドの解決は "
+        [:code "cloud.itonami.app.commands"]
+        " —— デスクトップ CLI と同じ 1 つの表 —— が行います"
+        "（ADR-2609061500）。"]]))
+
+;; ---------------------------------------------------------------------------
+;; the one document
+;; ---------------------------------------------------------------------------
+
+(def panes
+  "The screens this app has, as data.
+
+  Generated nav rather than a hand-written one: a pane added to this table and
+  forgotten in the nav would be live code nobody can reach, and a nav entry
+  with no pane is a dead button. Both are structurally impossible when one
+  table produces both (ADR-2608080100).
+
+  There is no hash router here and that is deliberate. This bundle runs inside
+  a WKWebView at `kotoba-webbundle://app` with no URL bar, so a fragment
+  addresses nothing anyone can type, copy or share, and the workspace already
+  carries five copies of the same `fragment->view` (measured 2026-09-06). A
+  sixth copy to move between two panes in a chrome-less WebView would be cost
+  with no reader. Moving between panes is a state change, which is what the
+  ADR asks for; addressability is what it offers, and this surface has no
+  address bar to offer it to."
+  [{:pane :fleet :label "フリート"}
+   {:pane :terminal :label "コマンド"}])
+
+(defn screen
+  "The whole app, for a state map.
+
+  One document, one mount, one stylesheet. `:pane` selects which pane renders;
+  the nav is generated from `panes` so the two cannot disagree."
+  [state handlers]
+  ;; The fleet is the default because it is what this app already was. A new
+  ;; pane that is unusable until a device is paired must not be the first thing
+  ;; an existing user sees on upgrade.
+  (let [pane (or (:pane state) :fleet)]
+    (dds/container
+     (dds/stack
+      (into (dds/row)
+            (for [{p :pane label :label} panes]
+              ;; A stable id per pane. The browser verifier has to address
+              ;; these without depending on which button happens to be first
+              ;; in the document -- it used to click `button.dads-button`, and
+              ;; the day a nav appeared above the search button that selector
+              ;; started clicking something else while still finding a button.
+              (dds/button label
+                          {:type (if (= p pane) :solid-fill :outline)
+                           :attrs {:id (str "pane-" (name p))
+                                   :on-click #((:on-pane handlers) p)}})))
+      (case pane
+        :terminal (terminal-pane state handlers)
+        (fleet-pane state handlers))))))

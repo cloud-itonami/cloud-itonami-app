@@ -13,6 +13,8 @@
     1. it mounts and shows actors the API actually returned
     2. searching narrows the list
     3. an unreachable API produces the FAILURE screen and not the empty one
+    4. the command pane refuses in three distinguishable ways, and an unpaired
+       device issues no request at all
 
   (3) is the one worth the harness. It is asserted here rather than only in the
   JVM test because the JVM test can only prove the view CAN say it; only a
@@ -113,7 +115,7 @@
           _ (.pressSequentially (.locator page "#q") "finance" #js {:delay 25})
           typed (.inputValue (.locator page "#q"))
           _ (check! "the query reaches the field" (= "finance" typed) (pr-str typed))
-          _ (.click page "button.dads-button")
+          _ (.click page "button:has-text(\"検索\")")
           ;; Wait for the exact element the assertions are about, not for text
           ;; anywhere on the page. `waitForSelector` returns as soon as SOME
           ;; node matches, and this app re-renders the whole screen on every
@@ -148,7 +150,7 @@
           ;; failure a phone actually has (the request never completes), and it
           ;; is the one whose screen must not be mistakable for "0 matched".
           _ (.route page "**/api/fleet/search**" (fn [^js route] (.abort route)))
-          _ (.click page "button.dads-button")
+          _ (.click page "button:has-text(\"検索\")")
           _ (.waitForSelector page "text=取得できませんでした" #js {:timeout 15000})
           offline-text (.innerText (.locator page "#app"))
           _ (check! "an unreachable API shows the failure screen"
@@ -162,9 +164,52 @@
 
           _ (.screenshot page #js {:path "target/verify-offline.png" :fullPage true})
           _ (.unroute page "**/api/fleet/search**")
-          _ (.click page "button.dads-button")
+          _ (.click page "button:has-text(\"検索\")")
           _ (.waitForSelector page ".dds-ext-card" #js {:timeout 15000})
           _ (.screenshot page #js {:path "target/verify-ready.png"})
+
+          ;; ── 4. the command pane refuses in three distinguishable ways ────
+          ;; The JVM suite already asserts `terminal/plan` returns three
+          ;; different outcomes. What it cannot say is whether the SCREEN shows
+          ;; three different things, and whether the unpaired gate actually
+          ;; stops a request — which is the assertion that matters, because
+          ;; the failure it guards against (a phone quietly issuing a write it
+          ;; was never authorised for) looks like success from inside the app.
+          _ (.click page "#pane-terminal")
+          _ (.waitForSelector page "#cmd" #js {:timeout 15000})
+          term-text (.innerText (.locator page "#app"))
+          _ (check! "the command pane says the device is not paired"
+                    (str/includes? term-text "対になっていません") "no pairing banner")
+
+          ;; Every request this page makes, recorded. Nothing below may add to
+          ;; it: an unpaired device that issues one anyway is the whole bug.
+          issued (atom [])
+          _ (.on page "request" (fn [^js r] (swap! issued conj (.url r))))
+
+          _ (.pressSequentially (.locator page "#cmd") "definitely-not-a-command"
+                                #js {:delay 10})
+          _ (.click page "button:has-text(\"送信\")")
+          _ (.waitForSelector page "text=この画面では実行できません" #js {:timeout 15000})
+          unknown-text (.innerText (.locator page "#app"))
+          _ (check! "an unknown command says the server was not asked"
+                    (str/includes? unknown-text "サーバには問い合わせていません")
+                    "no disambiguating line")
+
+          _ (.pressSequentially (.locator page "#cmd") "bots list" #js {:delay 10})
+          _ (.click page "button:has-text(\"送信\")")
+          _ (.waitForSelector page "text=送っていません" #js {:timeout 15000})
+          unpaired-text (.innerText (.locator page "#app"))
+          _ (check! "a valid command on an unpaired device is built and NOT sent"
+                    (str/includes? unpaired-text "送っていません")
+                    "no unpaired refusal")
+          _ (check! "and no request left the page"
+                    (empty? @issued) (pr-str @issued))
+          _ (check! "and the two refusals are different sentences"
+                    (not= (str/includes? unknown-text "送っていません")
+                          (str/includes? unpaired-text "送っていません"))
+                    "the unknown-command and unpaired refusals read the same")
+          _ (.screenshot page #js {:path "target/verify-terminal.png" :fullPage true})
+
           _ (.close browser)]
     (if (pos? @failures)
       (do (println "\nFAILED:" @failures) (js/process.exit 1))
