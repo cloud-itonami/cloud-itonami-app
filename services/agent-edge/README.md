@@ -3,23 +3,60 @@
 `agent.itonami.cloud` is the command ingress for paired devices — and nothing
 else. ADR-2609061500.
 
-## Not deployed
+## Deployed
 
-`wrangler.toml` carries no route and no `ORIGIN`, on purpose. Measured
-2026-09-06:
+`agent.itonami.cloud` → Worker `cloud-itonami-agent-edge` → named tunnel
+`itonami-agent` → the resident on `127.0.0.1:1338`. The tunnel is a launchd
+resident (`~/Library/LaunchAgents/cloud.itonami.agent-tunnel.plist`,
+`KeepAlive`), config `~/.cloudflared/config-itonami-agent.yml`.
 
-| fact | value |
+### The origin has ONE label, and that is not cosmetic
+
+Cloudflare universal SSL covers `*.etzhayyim.com` and **not deeper**. The first
+attempt routed `agent-origin.itonami.cloud.etzhayyim.com` — four labels, no
+certificate — and the edge aborted the handshake: `curl` exit 35, even with
+`-k`, which cannot help because the handshake never completes. The origin is
+`itonami-agent.etzhayyim.com`.
+
+**`services/mcp-edge` has the same defect.** Its `ORIGIN` is
+`mcp.itonami.cloud.etzhayyim.com`, also four labels, also without a
+certificate. That Worker's origin is unreachable by TLS today, which is a
+separate fact from its tunnel being down, and it was not known before this.
+
+### The bypass question is closed
+
+`services/agent-edge` used to record an unmeasured question: is the tunnel
+hostname independently reachable, and if so is this table bypassed? It is
+reachable — and it is not a bypass, because **the tunnel carries the same path
+table** (cloudflared ingress rules). Measured 2026-09-06 against
+`itonami-agent.etzhayyim.com` directly:
+
+| path | at the tunnel |
 |---|---|
-| `agent.itonami.cloud` | **NXDOMAIN** (`dig` status), while `profiles/itonami.edn` declares it as `:residency :ingress` |
-| the app's tunnel origin | did not answer (`000`) |
+| `/health` | 200 |
+| `/api/agent-bots`, `/api/profiles`, `/api/agent-session` | 401 (no session) |
+| `/`, `/api/state`, `/api/identity` | **404** |
+| an approval path, `/api/agent-botsanything`, `…/messages/extra`, `//messages` | **404** |
 
-Deploying a door onto a resident nothing reaches would publish an endpoint that
-answers 502, and creating the DNS record is what makes the door real. Whoever
-turns this on fills in the route and the tunnel hostname, having first answered
-the question this Worker cannot: **is the tunnel hostname itself reachable?**
-If it is, the table below is bypassed by addressing the origin directly, and the
-bound this Worker provides is not a bound. That was not measured here — the
-tunnel was down — and "not measured" is not "safe".
+What the tunnel layer cannot do is distinguish **method** — cloudflared matches
+on path only. `POST /api/agent-bots` reaches the resident through the tunnel and
+is refused 404 by this Worker. The resident answers 401 without a session on
+every `/api/*` route this carries (measured the same day), so the method
+distinction is defence in depth and not the floor.
+
+### Measured through, from outside
+
+With a minted agent session (`label phone-…`, 7-day TTL), through
+`https://agent.itonami.cloud`:
+
+| | |
+|---|---|
+| `GET /api/agent-bots` with the token | **200**, 231 bots |
+| `GET /api/profiles` with the token | **200**, 231 profiles |
+| the same, without the token | **401** |
+| `/api/state` and an approval path, **with** the token | **404** |
+
+That last row is the one worth keeping: a valid token does not widen the table.
 
 ## What comes through
 
