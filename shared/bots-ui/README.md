@@ -14,8 +14,9 @@ other locales fall back to English.
 The shared component presents Business Bot activity and three participation
 options: USDC lending, data sales and Human Computing. Desktop and mobile
 currently embed the participation component; the website also projects its
-existing public activity feeds into the shared Bot list. This is not yet a
-shared private chat/thread implementation or cross-device account system.
+existing public activity feeds into the shared Bot list. `cloud.itonami.my-bots-ui` now supplies a private Bot list, thread and approval
+view for the website. Desktop/mobile private threads and cross-device account
+transport still need to adopt it.
 
 No transaction option is enabled by default. A host may supply a capability
 with `:available? true` and a same-origin `:href` only once the corresponding
@@ -27,8 +28,8 @@ not establish user identity, ownership, a deposit receipt or an order.
 - Replace the mobile fleet-first entry with authenticated My Bots after the
   human-session API is available to the mobile host. The existing device-pairing
   command token is an agent credential, not a human login.
-- Share the desktop thread/list renderer, approvals and chat state through this
-  package; this patch only shares the Business Bot participation view.
+- Adopt `cloud.itonami.my-bots-ui` in desktop/mobile private Bot hosts, preserving
+  their authenticated human session and existing tool approvals.
 - Connect the existing Human Computing eligibility/accept/submit/review domain
   to per-Bot pages. Preserve qualifications and existing authorization gates.
 - Bind data offers to a Bot, buyer, license, price and delivery/settlement state.
