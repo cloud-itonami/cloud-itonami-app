@@ -24,7 +24,52 @@ Worker that ADR-2608081500 moved the server surface onto.
 
 ## What is on it today
 
-The fleet directory: search the ~1,200 cloud-itonami actors, see what each
+Two panes, one document, one bundle, one mount (ADR-2608080100). The nav is
+generated from `view/panes`, so a pane with no button and a button with no pane
+are both structurally impossible. There is no hash router: this bundle runs in
+a WKWebView with no URL bar, so a fragment addresses nothing anyone can type or
+share, and the workspace already carries five copies of the same
+`fragment->view` (measured 2026-09-06). Moving between panes is a state change,
+which is what the ADR asks for; addressability is what it offers, and this
+surface has nowhere to offer it.
+
+### コマンド — the itonami CLI, on a phone
+
+The same commands the desktop `itonami` runs, resolved by the same namespace.
+`cloud.itonami.app.commands` owns the tables, the longest-prefix match, the
+path templating and the query/body split; this bundle requires it and hands it
+the two EDN tables at compile time (`shadow.resource/inline`), exactly as
+`bin/itonami` hands them in at runtime. There is no second resolver, for the
+reason `bin/itonami` gives in its own header: two answers that agree until the
+day they do not, with no test that would notice (ADR-2609061500).
+
+What this pane can do is bounded in two places and on purpose:
+
+- **it offers reads, plus the three write templates that ARE the conversation**
+  (`terminal/offered-methods` / `offered-writes`). `bots decide`, `bots
+  provision` and every approval resolve fine and are declined here, because
+  approving a write needs a Passkey present and a device paired by token has
+  not presented one (ADR-0083). The ingress refuses them too; the client
+  refuses first so the screen can say *this surface declined* rather than
+  showing a 404 that reads as *no such command*.
+- **an unpaired device sends nothing.** The ingress and the token are entered
+  on this pane and stored only on the device. Until both are set, a valid
+  command is built, shown, and not issued — asserted in a real browser by
+  recording every request the page makes and requiring the list to be empty.
+
+The three refusals are three sentences, never one: a command that does not
+exist, a command this surface withholds, and a request that went out and did
+not come back are different facts about the world.
+
+**The ingress does not exist yet.** `agent-base` compiles in as empty because
+`agent.itonami.cloud` was NXDOMAIN when this landed (measured 2026-09-06); a
+hostname that does not resolve, compiled in, would make an unreachable ingress
+look like a configured one. Device pairing and the ingress Worker are steps 2
+and 3 of ADR-2609061500 and are not in this commit.
+
+### フリート — the actor directory
+
+ search the ~1,200 cloud-itonami actors, see what each
 declares, see which have an address. That is slice 1 of ADR-2608081500 and it
 is **all the edge serves** — chat, mail, drive, calendar, Passkey and every
 write surface are still JVM-only, so they are not on the phone. They arrive

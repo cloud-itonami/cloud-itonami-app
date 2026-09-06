@@ -11,7 +11,20 @@
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.mobile.view :as view]))
 
-(def ^:private handlers {:on-query identity :on-search identity :on-retry identity})
+(def ^:private handlers
+  {:on-query identity :on-search identity :on-retry identity
+   :on-pane identity :on-line identity :on-submit identity
+   :on-base identity :on-token identity :on-pairing (constantly nil)})
+
+(defn- screen
+  "The FLEET pane, which is what this file is about.
+
+  `view/screen` dispatches on `:pane` and defaults to the terminal, so these
+  states name theirs. Without this every assertion below would pass or fail on
+  a screen it was not written for -- and the ones about an empty fleet would
+  pass trivially, because a terminal has no fleet to be empty."
+  [state h]
+  (view/screen (assoc state :pane :fleet) h))
 
 (defn- nodes
   "Every hiccup vector in a tree, depth first."
@@ -41,10 +54,10 @@
   ;; that could not happen answering the way a read that happened and found
   ;; nothing answers. On a phone the two are one screen apart and the person
   ;; holding it cannot tell them apart unless the screen says so.
-  (let [failed (view/screen {:phase :error :query "銀行"
+  (let [failed (screen {:phase :error :query "銀行"
                              :error {:kind :network :message "目録に届きませんでした（Load failed）。"}}
                             handlers)
-        empty' (view/screen {:phase :ready :query "銀行" :actors [] :matched 0 :total 1215}
+        empty' (screen {:phase :ready :query "銀行" :actors [] :matched 0 :total 1215}
                             handlers)]
     (is (str/includes? (text failed) "取得できませんでした"))
     (is (str/includes? (text failed) "これは「該当が 0 件」ではありません"))
@@ -60,7 +73,7 @@
                   :matched 1215 :total 1215 :shown 2}
                  {:phase :ready :query "x" :actors [] :matched 0 :total 1215}
                  {:phase :error :query "" :error {:kind :http :message "目録が 500 を返しました。"}}]]
-    (let [tree (view/screen state handlers)]
+    (let [tree (screen state handlers)]
       (is (vector? tree) (str "phase " (:phase state)))
       (is (seq (text tree))))))
 
@@ -70,10 +83,10 @@
   ;; false: 1,294 unfiltered results on screen, `finance` half-typed, and a
   ;; summary reading `1294 件が一致しました（全 1294 件中）。条件: finance` —
   ;; before any search had been issued. Measured in the browser, 2026-08-31.
-  (let [typing (view/screen {:phase :ready :query "finance" :applied-query ""
+  (let [typing (screen {:phase :ready :query "finance" :applied-query ""
                              :actors sample-actors :matched 1294 :total 1294 :shown 2}
                             handlers)
-        applied (view/screen {:phase :ready :query "finance" :applied-query "finance"
+        applied (screen {:phase :ready :query "finance" :applied-query "finance"
                               :actors sample-actors :matched 34 :total 1294 :shown 2}
                              handlers)]
     (is (str/includes? (text typing) "全 1294 件を表示しています"))
@@ -82,14 +95,14 @@
     (is (str/includes? (text applied) "34 件が一致しました（全 1294 件中）。条件: finance"))))
 
 (deftest a-page-that-shows-fewer-than-it-matched-says-so
-  (let [tree (view/screen {:phase :ready :query "" :applied-query ""
+  (let [tree (screen {:phase :ready :query "" :applied-query ""
                            :actors sample-actors
                            :matched 1215 :total 1215 :shown 2}
                           handlers)]
     (is (str/includes? (text tree) "残り 1213 件は表示していません"))))
 
 (deftest an-undeployed-actor-says-undeployed
-  (let [tree (view/screen {:phase :ready :query "" :actors sample-actors
+  (let [tree (screen {:phase :ready :query "" :actors sample-actors
                            :matched 2 :total 2 :shown 2}
                           handlers)]
     (is (str/includes? (text tree) "未デプロイ"))
@@ -100,7 +113,7 @@
   ;; browser chrome to come back with and the in-app bridge implements no
   ;; browser/open-url, so a link to an actor would be a one-way trip out of the
   ;; app or a tap that does nothing (ADR-2608072000).
-  (let [tree (view/screen {:phase :ready :query "" :actors sample-actors
+  (let [tree (screen {:phase :ready :query "" :actors sample-actors
                            :matched 2 :total 2 :shown 2}
                           handlers)
         links (filter #(= :a (first %)) (nodes tree))]
@@ -115,7 +128,7 @@
                            {:phase :ready :query "" :actors sample-actors
                             :matched 2 :total 2 :shown 2}
                            {:phase :error :query "" :error {:message "x"}}]]
-                (view/screen state handlers))
+                (screen state handlers))
         all (mapcat nodes trees)
         styled (filter #(contains? (attrs-of %) :style) all)
         classes (mapcat #(str/split (str (:class (attrs-of %))) #"\s+") all)
@@ -125,3 +138,59 @@
                         classes)]
     (is (empty? styled) (str "inline styles: " (pr-str styled)))
     (is (empty? foreign) (str "classes outside DADS: " (pr-str (distinct foreign))))))
+
+;; ---------------------------------------------------------------------------
+;; the command pane
+;; ---------------------------------------------------------------------------
+
+(defn- terminal
+  [state h] (view/screen (assoc state :pane :terminal) h))
+
+(deftest the-command-pane-renders
+  ;; A floor, and it is not a formality. The first version of this pane threw
+  ;; `Invalid arity: 0` on render — `(count (terminal/offered-writes))` calls a
+  ;; SET with no arguments — and nothing on the JVM side would have said so,
+  ;; because nothing rendered this pane. It was found by a headless browser,
+  ;; which is the expensive way to learn that a function was called wrong.
+  (let [tree (terminal {:transcript [] :line ""} handlers)]
+    (is (seq (text tree)))
+    (is (str/includes? (text tree) "itonami"))))
+
+(deftest an-unpaired-device-is-told-before-it-types
+  (let [unpaired (text (terminal {:transcript [] :line "" :paired? false} handlers))
+        paired (text (terminal {:transcript [] :line "" :paired? true
+                                :base "https://example.invalid"} handlers))]
+    (is (str/includes? unpaired "対になっていません"))
+    (is (not (str/includes? paired "対になっていません")))))
+
+(deftest the-three-refusals-do-not-read-alike
+  ;; `terminal-test` asserts `plan` returns three outcomes. This asserts the
+  ;; SCREEN says three things. Both are needed: a view that folded them into
+  ;; one banner would leave that suite green.
+  (let [render (fn [kind extra]
+                 (text (terminal {:transcript [(merge {:kind kind :text "x"} extra)]}
+                                 handlers)))
+        unavailable (render :unavailable {})
+        refused (render :refused {})
+        failed (render :failed {})]
+    (is (str/includes? unavailable "サーバには問い合わせていません"))
+    (is (str/includes? refused "サーバには問い合わせていません"))
+    (is (str/includes? failed "応答が返っていません")
+        "a request that went out and did not come back is not a client refusal")
+    (is (not (str/includes? failed "サーバには問い合わせていません")))))
+
+(deftest a-built-but-unsent-command-does-not-say-it-was-not-built
+  ;; Found in a phone-size screenshot, not in an assertion: the heading read
+  ;; 「組み立てられませんでした」 directly above 「組み立てられましたが……送って
+  ;; いません」. Both are :refused; they are not the same refusal.
+  (let [unpaired (text (terminal {:transcript [{:kind :refused :reason :not-paired
+                                                :text "`bots list` は組み立てられましたが送っていません。"}]}
+                                 handlers))
+        no-flag (text (terminal {:transcript [{:kind :refused
+                                               :reason :commands/missing-argument
+                                               :text "--id が必要です"}]}
+                                handlers))]
+    (is (str/includes? unpaired "送っていません"))
+    (is (not (str/includes? unpaired "組み立てられませんでした"))
+        "the heading contradicts the body")
+    (is (str/includes? no-flag "組み立てられませんでした"))))
