@@ -303,3 +303,17 @@ falsify-32 と同等域へ復帰)。増加源が同一 PID で稼働継続のま
 削除 (Tier 2)。avail 171Gi はフルスイート実行可能域 (falsify-31 の最小 avail 閾値実測が次の実行
 候補) (evidence/2026-09-06-falsify-37.md)。附帯: 7 軸テーブル 16 行目孤立行
 `| 反証候補falsify30PLACEHOLDER` 残存のまま (operator 復旧待ち)。
+**falsify-38 (2026-09-06) で最小 avail 閾値の上界を確定 + 現行 main (cc7a17d) の緑を再確認
+(SURVIVED)**: フル JVM スイートを現行 main (cc7a17d、harness-plugins コミット含有) の
+detached worktree (/private/tmp/mt-msloop38、本体 checkout 未 touch、porcelain clean) で
+実行。avail **170Gi / 81%** (開始・終了とも 170Gi、ディスク飽和兆候なし)、負荷条件
+開始 load 24.37/29.52/34.04 → 終了 27.28/26.83/30.24 (falsify-16 同等の高負荷環境)。
+結果: **Ran 2291 tests / 13895 assertions / 0 failures, 0 errors** (実測、
+/tmp/f38-full2.log)。→ (a) avail 170Gi はフルスイート実行可能域と確定 (falsify-17 の
+avail 2.2Gi journal-mismatch fail モードはこの avail 帯では発火しない)、(b) 現行 main
+に回帰なし (harness-plugins コミットの緑再確認、決定論的赤 0 不変)。最小閾値の下界は
+未確定 (170Gi は上界; falsify-16 は avail 16Gi で完走済み → 閾値は 16Gi〜170Gi の間に
+ある)。テスト軸 score は 3 のまま (根拠に cc7a17d での 0 failures を追記、
+flake リトライ機構なし / OPEN 赤-4 未解決は変わらず)
+(evidence/2026-09-06-falsify-38.md)。附帯: 7 軸テーブル 16 行目孤立行
+`| 反証候補falsify30PLACEHOLDER` 残存のまま (operator 復旧待ち)。
