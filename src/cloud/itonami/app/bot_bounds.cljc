@@ -40,7 +40,8 @@
 (def keys*
   "The row's keys, as they appear on a Bot."
   #{:bot/budget-tokens :bot/budget-window-turns
-    :bot/max-output-tokens :bot/allowed-hosts})
+    :bot/max-output-tokens :bot/max-turns :bot/max-tool-calls
+    :bot/allowed-hosts})
 
 (def default-window-turns
   "How many recent turns a budget is measured over when the Bot does not say.
@@ -99,17 +100,40 @@
                            (str "（うち " unreported
                                 " turn は usage を報告しておらず 0 として数えています）")))})))))
 
-(defn output-cap
-  "The output ceiling for this Bot, or nil to leave the deployment's own.
+(defn cap
+  "The Bot's own ceiling for `k`, narrowing `deployment-cap` and never raising it.
 
-  Per-bot only NARROWS. A Bot asking for more than the deployment allows would
-  be a Bot raising its own ceiling, which is the thing a ceiling is for."
-  [b deployment-cap]
-  (let [b* (:bot/max-output-tokens b)]
+  A Bot asking for more than the deployment allows would be a Bot raising its
+  own ceiling, which is the thing a ceiling is for. One function for every
+  ceiling, so a key added later cannot arrive with different arithmetic."
+  [b k deployment-cap]
+  (let [b* (get b k)]
     (cond
       (nil? b*) deployment-cap
       (nil? deployment-cap) (long b*)
       :else (min (long b*) (long deployment-cap)))))
+
+(defn output-cap
+  "The output-token ceiling for this Bot."
+  [b deployment-cap]
+  (cap b :bot/max-output-tokens deployment-cap))
+
+(defn turn-cap
+  "How many model turns one slice may take.
+
+  Global constants until 2026-09-06 (`bots/max-turns` 8, `max-goal-turns` 24)
+  with no config and no per-Bot value — the same shape `max-output-tokens` had.
+  A loop bound that every Bot shares is a bound the noisy one sets for everyone."
+  [b deployment-cap]
+  (cap b :bot/max-turns deployment-cap))
+
+(defn tool-call-cap
+  "How many tool calls one slice may make.
+
+  The deployment could already narrow this (`[:bots :goal :max-tool-calls]`);
+  the Bot could not."
+  [b deployment-cap]
+  (cap b :bot/max-tool-calls deployment-cap))
 
 (defn- host-of [url]
   (some-> (re-find #"^[a-zA-Z][a-zA-Z0-9+.-]*://([^/?#]+)" (str url))
