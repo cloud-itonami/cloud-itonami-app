@@ -39,6 +39,7 @@
             [cloud.itonami.app.bot-import-test]
             [cloud.itonami.app.bot-test]
             [cloud.itonami.app.bot-slo-test]
+            [cloud.itonami.app.bot-bounds-test]
             [cloud.itonami.app.bot-cache-test]
             [cloud.itonami.app.bot-authority-test]
             [cloud.itonami.app.bot-dispatcher-test]
@@ -280,6 +281,7 @@
     cloud.itonami.app.freebusy-test
     cloud.itonami.app.metrics-test
     cloud.itonami.app.portfolio-test
+    cloud.itonami.app.bot-bounds-test
     cloud.itonami.app.repo-profile-test
     cloud.itonami.app.policy-kotoba-parity-test
     cloud.itonami.app.native-canary-test
