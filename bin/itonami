@@ -172,30 +172,71 @@
       (fs/existsSync (path/join d ".git")) d
       :else (let [up (path/dirname d)] (when (not= up d) (recur up (inc n)))))))
 
-(def ^:private repo-profile-state
-  "`nil` when no repository profile applies, otherwise the admission result
-  with `:path` added. Computed once: the working directory does not move under
-  a running command, and re-reading would let two reads of one file disagree."
+(def ^:private repo-profiles-state
+  "Every profile this repository offers, admitted. Computed once.
+
+  Both shapes are read into ONE set: `.itonami/profile.edn` for a repository
+  with a single profile, and `.itonami/profiles/*.edn` for one where several
+  people keep their own. A repository that grows a second profile should not
+  have to move the first."
   (delay
     (when-let [root (repo-root (js/process.cwd))]
-      (let [file (path/join root repo-profile/file-name)]
-        (when (fs/existsSync file)
-          (assoc (repo-profile/admit (slurp-file file)) :path file))))))
+      (let [single (path/join root repo-profile/file-name)
+            dir (path/join root repo-profile/dir-name)
+            files (cond-> []
+                    (fs/existsSync single) (conj single)
+                    (fs/existsSync dir)
+                    (into (->> (js->clj (fs/readdirSync dir))
+                               (filter #(str/ends-with? % ".edn"))
+                               sort
+                               (map #(path/join dir %)))))]
+        (when (seq files)
+          (assoc (repo-profile/admit-all
+                  (map (fn [f] [(path/relative root f) (slurp-file f)]) files))
+                 :root root))))))
+
+(defn- local-identity
+  "Who this machine says it is, for matching a profile's `:profile/for`.
+
+  From the environment or this install's own configuration — NEVER from the
+  repository. A repository that could name the operator could choose which
+  profile that operator gets, which is selection by whoever can push."
+  []
+  (or (some-> (aget js/process.env "ITONAMI_PROFILE_AS") str/trim not-empty)
+      (some-> (get-in configuration [:profile :as]) str str/trim not-empty)))
+
+(defn- repo-selection
+  "The chosen profile, a refusal, or nil when the repository offers none."
+  []
+  (when-let [st @repo-profiles-state]
+    (repo-profile/select (:accepted st)
+                         {:requested (some-> (:profile (commands/parse-flags
+                                                        (vec (or *command-line-args* []))))
+                                             str/trim not-empty)
+                          :as (local-identity)})))
 
 (defn- repo-profile!
-  "The accepted repository profile, or nil. REFUSES rather than falling back.
+  "The chosen repository profile, or nil. REFUSES rather than falling back.
 
-  A repository that names a profile this cannot admit must not quietly become
+  A repository whose profiles this cannot resolve must not quietly become
   `default`. `pick-default-bot`'s docstring records what that costs: two Bots
   answered to `default`, `itonami chat` ran every turn against the disabled
   one, and the screen said nothing. Exit 2 and not 1 -- nothing was asked of
-  the server, so this is not a refusal it issued."
+  the server, so this is not a refusal it issued.
+
+  Files that failed admission refuse here too, even when another file would
+  have resolved: a repository carrying a profile nobody can read is a fact its
+  author needs, and silently using the sibling hides it."
   []
-  (when-let [r @repo-profile-state]
-    (if (:accepted? r)
-      r
-      (cannot-answer! (str (:path r) ": " (:message r))
-                      {:reason (:reason r)}))))
+  (when-let [st @repo-profiles-state]
+    (when-let [bad (first (:refused st))]
+      (cannot-answer! (str (:source bad) ": " (:message bad))
+                      {:reason (:reason bad)}))
+    (let [sel (repo-selection)]
+      (if (:accepted? sel)
+        sel
+        (cannot-answer! (str (:root st) ": " (:message sel))
+                        {:reason (:reason sel)})))))
 
 (defn- repo-cli-config
   "The `:cli/config` an ACCEPTED repository profile supplies, or `{}`.
@@ -210,7 +251,7 @@
   commands that actually use it. Nothing is lost: `chat` still exits 2, and the
   refusal now reaches a screen instead of pre-empting it."
   []
-  (or (some-> @repo-profile-state
+  (or (some-> (repo-selection)
               (as-> r (when (:accepted? r) r))
               :prefers :cli/config)
       {}))
@@ -221,7 +262,7 @@
   []
   (cond
     (not-empty (aget js/process.env "ITONAMI_PROFILE")) "ITONAMI_PROFILE"
-    (some-> @repo-profile-state :accepted?) (:path @repo-profile-state)
+    (some-> (repo-selection) :accepted?) (:source (repo-selection))
     :else "default"))
 
 (defn- profile-explain!
@@ -235,32 +276,58 @@
   This does NOT refuse. `repo-profile!` exits 2 on an unadmissible profile, and
   the one command whose job is to say why must be able to run in that state."
   [json?]
-  (let [st @repo-profile-state
+  (let [st @repo-profiles-state
+        sel (repo-selection)
         out {:schema "cloud.itonami.app.cli.profile.v1"
              :active (or (some-> (aget js/process.env "ITONAMI_PROFILE") str/trim not-empty)
-                         (when (:accepted? st) (:profile/id st))
+                         (when (:accepted? sel) (:profile/id sel))
                          ;; the literal: `chat-default-profile` is defined with
                          ;; the chat surface, far below this
                          "default")
              :source (profile-source)
-             :precedence ["--profile" "ITONAMI_PROFILE" repo-profile/file-name "default"]
+             :precedence ["--profile" "ITONAMI_PROFILE"
+                          (str repo-profile/dir-name "/*.edn")
+                          repo-profile/file-name "default"]
+             :as (local-identity)
+             ;; EVERY profile the repository offers, not only the chosen one.
+             ;; An operator who can see one cannot tell "this repository has a
+             ;; profile for me" from "this repository has four and I got the
+             ;; default".
+             :offered (vec (for [a (:accepted st)]
+                             {:source (:source a)
+                              :id (:profile/id a)
+                              :for (get-in a [:describes :profile/for])
+                              :default? (boolean (get-in a [:describes :profile/default?]))
+                              :chosen? (= (:source a) (:source sel))}))
+             :unreadable (vec (for [r (:refused st)]
+                                {:source (:source r)
+                                 :reason (str (:reason r))
+                                 :message (:message r)}))
              :repo (cond
                      (nil? st) {:state "absent"}
-                     (:accepted? st) {:state "accepted"
-                                      :path (:path st)
-                                      :id (:profile/id st)
-                                      :describes (vec (sort (map str (keys (:describes st)))))
-                                      :prefers (vec (sort (map str (keys (:prefers st)))))}
+                     (:accepted? sel) {:state "accepted"
+                                       :path (:source sel)
+                                       :id (:profile/id sel)
+                                       :describes (vec (sort (map str (keys (:describes sel)))))
+                                       :prefers (vec (sort (map str (keys (:prefers sel)))))}
                      :else {:state "refused"
-                            :path (:path st)
-                            :reason (str (:reason st))
-                            :refused-keys (vec (map str (:refused-keys st)))
-                            :message (:message st)})}]
+                            :path (:root st)
+                            :reason (str (:reason sel))
+                            :refused-keys (vec (map str (:refused-keys sel)))
+                            :message (:message sel)})}]
     (if json?
       (emit! out true)
       (let [r (:repo out)]
         (println (str "profile: " (:active out) " (" (:source out) ")"))
         (println (str "precedence: " (str/join " > " (:precedence out))))
+        (println (str "as: " (or (:as out) "(未設定 — ITONAMI_PROFILE_AS か config の :profile/:as)")))
+        (doseq [o (:offered out)]
+          (println (str "  " (if (:chosen? o) "*" " ") " " (:id o)
+                        "\t" (:source o)
+                        (when (:for o) (str "\tfor=" (:for o)))
+                        (when (:default? o) "\tdefault"))))
+        (doseq [u (:unreadable out)]
+          (println (str "  ! " (:source u) "\t" (:reason u))))
         (case (:state r)
           "absent" (println (str "repo: なし (" repo-profile/file-name " が見つかりません)"))
           "accepted" (do (println (str "repo: " (:path r)))

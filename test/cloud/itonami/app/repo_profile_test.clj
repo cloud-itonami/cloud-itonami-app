@@ -164,3 +164,78 @@
   (doseq [k [:server :mcp :auth :providers :routing :residency]]
     (is (not (contains? rp/cli-config-keys k))
         (str k " would let a repository configure the client's own plumbing"))))
+
+;; ---------------------------------------------------------------------------
+;; several people, one repository
+;; ---------------------------------------------------------------------------
+
+(defn- profiles [& ms]
+  (:accepted (rp/admit-all (map-indexed (fn [i m] [(str "p" i ".edn") (pr-str m)]) ms))))
+
+(def ^:private jun {:profile/schema rp/schema :profile/id "amu/jun" :profile/for "jun"})
+(def ^:private rio {:profile/schema rp/schema :profile/id "amu/rio" :profile/for "rio"})
+(def ^:private shared {:profile/schema rp/schema :profile/id "amu/shared" :profile/default? true})
+
+(deftest one-bad-file-does-not-discard-the-good-ones
+  ;; Two people keeping their own profiles: one person's typo must not silence
+  ;; the other's profile.
+  (let [{:keys [accepted refused]}
+        (rp/admit-all [["jun.edn" (pr-str jun)]
+                       ["broken.edn" "{:profile/id"]
+                       ["rio.edn" (pr-str rio)]])]
+    (is (= 2 (count accepted)))
+    (is (= 1 (count refused)))
+    (is (= :repo-profile/unreadable (:reason (first refused))))
+    (is (= "broken.edn" (:source (first refused)))
+        "a refusal that does not say which file is not actionable")))
+
+(deftest the-operator-picks-by-name
+  (let [ps (profiles jun rio shared)]
+    (is (= "amu/rio" (:profile/id (rp/select ps {:requested "amu/rio"}))))))
+
+(deftest a-name-that-is-not-there-lists-what-is
+  (let [r (rp/select (profiles jun rio) {:requested "amu/nobody"})]
+    (is (= :repo-profile/requested-not-found (:reason r)))
+    (is (= #{"amu/jun" "amu/rio"} (set (:available r))))))
+
+(deftest the-local-identity-selects-and-the-repository-does-not-assert-it
+  ;; `:profile/for` is a label the DESTINATION matches against its own
+  ;; configured identity. The repository never says who is running the CLI.
+  (let [ps (profiles jun rio shared)]
+    (is (= "amu/jun" (:profile/id (rp/select ps {:as "jun"}))))
+    (is (= "amu/rio" (:profile/id (rp/select ps {:as "rio"}))))
+    (testing "an operator nobody claims falls through to the default"
+      (is (= "amu/shared" (:profile/id (rp/select ps {:as "someone-else"})))))))
+
+(deftest an-explicit-name-beats-the-identity
+  (let [ps (profiles jun rio)]
+    (is (= "amu/rio" (:profile/id (rp/select ps {:as "jun" :requested "amu/rio"}))))))
+
+(deftest ambiguity-refuses-and-never-guesses
+  ;; Answering by sort order would hand the operator a bot chosen by filename.
+  (testing "several profiles, no default, no identity"
+    (let [r (rp/select (profiles jun rio) {})]
+      (is (= :repo-profile/ambiguous (:reason r)))
+      (is (= #{"amu/jun" "amu/rio"} (set (:available r))))))
+  (testing "two defaults"
+    (let [r (rp/select (profiles shared (assoc shared :profile/id "amu/other")) {})]
+      (is (= :repo-profile/duplicate-default (:reason r)))
+      (is (= 2 (count (:sources r))))))
+  (testing "two profiles claiming the same person"
+    (let [r (rp/select (profiles jun (assoc jun :profile/id "amu/jun2")) {:as "jun"})]
+      (is (= :repo-profile/duplicate-for (:reason r)))))
+  (testing "the same id in two files"
+    (let [r (rp/select (profiles jun jun) {:requested "amu/jun"})]
+      (is (= :repo-profile/duplicate-id (:reason r))))))
+
+(deftest one-profile-needs-no-ceremony
+  ;; A repository with a single profile should not have to mark it default.
+  (is (= "amu/jun" (:profile/id (rp/select (profiles jun) {})))))
+
+(deftest no-readable-profile-is-its-own-reason
+  (is (= :repo-profile/none-accepted (:reason (rp/select [] {})))))
+
+(deftest profile-for-and-default-are-descriptions-not-grants
+  (is (contains? rp/describes :profile/for))
+  (is (contains? rp/describes :profile/default?))
+  (is (:accepted? (rp/admit (with {:profile/for "jun" :profile/default? true})))))
