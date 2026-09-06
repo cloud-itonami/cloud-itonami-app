@@ -8,6 +8,7 @@
 
 (ns itonami-harness-nbb
   (:require ["node:path" :as path]
+            [clojure.string :as str]
             [clojure.test :as t :refer [deftest is run-tests]]
             [nbb.classpath :as classpath]
             [nbb.core :refer [*file*]]))
@@ -109,6 +110,57 @@
       ;; the same service value, no remount: the reader sees the new skin
       (is (= "you ♡ " (:prompt ((:skin theme)))))
       (is (not (:ok ((:set-skin! theme) "nope")))))))
+
+(deftest help-is-generated-from-the-registry-not-a-second-list
+  ;; This replaced a `case` in `bin/itonami` that dispatched, plus a registry
+  ;; of no-op wrappers that only listed. Two views, and the listing was the
+  ;; one that could go stale -- it had: `/help` printed a literal block that
+  ;; did not mention `/help`. Registering is now the only way to be listed.
+  (let [ctx (harness/make-context)]
+    (harness/mount! ctx (profile/config-plugin {:app-directory "/a" :data-dir "/d" :configuration {}}))
+    (harness/mount! ctx (profile/theme-plugin))
+    (harness/mount! ctx (profile/chat-plugin))
+    (let [chat (harness/ctx-get ctx :ctx/chat)
+          r! (:register! chat)]
+      (r! "/zeta" "" "last by name" (fn [_ _] :handled))
+      (r! "/alpha" "<x>" "first by name" (fn [_ _] :handled))
+      (let [help ((:help-text chat))]
+        (is (str/includes? help "/alpha <x> — first by name"))
+        (is (str/includes? help "/zeta — last by name"))
+        ;; sorted, so the list an operator reads has a stable order
+        (is (< (.indexOf help "/alpha") (.indexOf help "/zeta")))
+        ;; and nothing appears in help that cannot be dispatched
+        (doseq [line (remove str/blank? (str/split-lines help))]
+          (let [named (first (str/split (str/trim line) #"\s+"))]
+            (is (contains? @(:registry chat) named)
+                (str "help lists " named ", which nothing dispatches")))))
+      ;; the control: a command removed from the registry leaves help
+      ((r! "/gone" "" "temporary" (fn [_ _] :handled)))
+      (is (not (str/includes? ((:help-text chat)) "/gone"))))))
+
+(deftest a-command-registered-without-a-description-is-still-listed
+  ;; The 2-arity call site is older than the description field. Dropping such
+  ;; a command from help would hide something that dispatches.
+  (let [ctx (harness/make-context)]
+    (harness/mount! ctx (profile/config-plugin {:app-directory "/a" :data-dir "/d" :configuration {}}))
+    (harness/mount! ctx (profile/theme-plugin))
+    (harness/mount! ctx (profile/chat-plugin))
+    (let [chat (harness/ctx-get ctx :ctx/chat)]
+      ((:register! chat) "/bare" (fn [_ _] :handled))
+      (is (str/includes? ((:help-text chat)) "/bare"))
+      (is (= ["/bare"] ((:commands chat)))))))
+
+(deftest the-repl-knobs-are-real-state
+  (let [ctx (harness/make-context)]
+    (harness/mount! ctx (profile/config-plugin {:app-directory "/a" :data-dir "/d" :configuration {}}))
+    (harness/mount! ctx (profile/theme-plugin))
+    (harness/mount! ctx (profile/chat-plugin))
+    (let [chat (harness/ctx-get ctx :ctx/chat)]
+      (is (= "" ((:stamp chat))) "no stamp until /timestamps turns it on")
+      (reset! (:timestamps chat) true)
+      (is (re-matches #"\[\d\d:\d\d:\d\d\] " ((:stamp chat))))
+      (is (false? @(:verbose chat)))
+      (is (nil? @(:last-input chat))))))
 
 (deftest dump-config-names-tree
   (let [ctx (harness/make-context)]

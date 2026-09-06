@@ -119,23 +119,74 @@
 ;; ---------------------------------------------------------------------------
 
 (defn chat-plugin
-  "Provides :ctx/chat. Deps: :ctx/config and :ctx/theme. Holds the registry
-  of slash commands (a map from command name to handler) and the REPL-facing
-  state (current profile, the card a held run waits on). Handlers receive
-  [ctx words] and return :exit, :handled, a promise, or nil (not a command)."
+  "Provides :ctx/chat. Deps: :ctx/config and :ctx/theme.
+
+  The registry is the ONE decider for slash commands: an entry carries its own
+  name, argument hint, description and handler, and `/help` is GENERATED from
+  it. The shape is hermes's `COMMAND_REGISTRY` (hermes_cli/commands.py).
+
+  This replaced a `case` in `bin/itonami` that dispatched, plus a registry of
+  no-op wrappers that only listed -- two views of one thing, and the listing
+  was the one that could quietly go stale. It had: `/help` printed a literal
+  block that did not mention `/help`.
+
+  Handlers receive [args ctx] and return:
+    :exit      the REPL ends
+    :handled   the REPL re-prompts
+    :resend    the REPL re-submits `last-input` as a message (/retry, /prompt)
+    a Promise  the REPL awaits it, then re-prompts
+    nil        not a command; the line goes to the agent
+
+  The REPL also keeps its display preferences here (`/verbose`,
+  `/timestamps`) and the last line the operator sent (`/retry`)."
   []
   {:name :itonami.chat
    :inject [:ctx/config :ctx/theme]
    :provides :ctx/chat
-   :description "slash registry, REPL state (profile, held card)"
+   :description "slash registry (name, args, description, handler), REPL state"
    :apply (fn [_]
             (let [registry (atom {})
                   profile (atom "default")
-                  held (atom nil)]
+                  held (atom nil)
+                  verbose (atom false)
+                  timestamps (atom false)
+                  last-input (atom nil)]
               {:registry registry
                :profile profile
                :held held
-               :register! (fn [cmd handler]
-                            (swap! registry assoc cmd handler)
-                            (fn [] (swap! registry dissoc cmd)))
-               :commands (fn [] (vec (sort (keys @registry))))}))})
+               :verbose verbose
+               :timestamps timestamps
+               :last-input last-input
+               :register!
+               (fn register!
+                 ;; The 2-arity is what the older call sites used. Keeping it
+                 ;; means a command registered without a description shows up
+                 ;; in `/help` with an empty one rather than not at all --
+                 ;; visible, which is the point.
+                 ([cmd handler] (register! cmd "" "" handler))
+                 ([cmd args-hint description handler]
+                  (swap! registry assoc cmd
+                         {:name cmd :args-hint args-hint
+                          :description description :handler handler})
+                  (fn [] (swap! registry dissoc cmd))))
+               :commands (fn [] (vec (sort (keys @registry))))
+               :entries (fn [] (vec (vals (into (sorted-map) @registry))))
+               :help-text
+               (fn []
+                 (str/join
+                  "\n"
+                  (map (fn [{:keys [name args-hint description]}]
+                         (str "  " name
+                              (when-not (str/blank? (str args-hint))
+                                (str " " args-hint))
+                              (when-not (str/blank? (str description))
+                                (str " — " description))))
+                       (vals (into (sorted-map) @registry)))))
+               :stamp
+               (fn []
+                 (if @timestamps
+                   (let [d (js/Date.)
+                         two #(.padStart (str %) 2 "0")]
+                     (str "[" (two (.getHours d)) ":" (two (.getMinutes d))
+                          ":" (two (.getSeconds d)) "] "))
+                   ""))}))})
