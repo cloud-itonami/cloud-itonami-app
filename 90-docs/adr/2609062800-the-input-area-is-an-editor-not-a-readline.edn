@@ -1,0 +1,135 @@
+[{:db/id -1
+  :adr/id "adr-2609062800-the-input-area-is-an-editor-not-a-readline"
+  :adr/title "The input area is an editor, not a readline"
+  :adr/status "accepted"
+  :adr/date "2026-09-06"
+  :adr/related "adr-2609062240-argless-itonami-opens-a-start-screen-not-a-help-text adr-2609062400-the-hermes-slash-commands-land-on-the-harness-main-has adr-2609042200"
+  :adr/body "## What was asked
+
+Owner instruction, 2026-09-06, against a screenshot of another agent CLI:
+reproduce the input area -- a rule above the prompt, a rule below it, and a
+status bar under that -- make itonami's theme colour green, and make the input
+behave like an editor, so that Up in a multi-line buffer moves to the line
+above the way it does in claude cli.
+
+## Why readline had to go
+
+`node:readline/promises` gives one line and owns the row it is on. It cannot
+draw a rule above and below itself, and it cannot put a bar under the cursor.
+Those two are cosmetic and could have been worked around.
+
+The third could not: readline binds Up to history unconditionally. In a buffer
+holding more than one line, Up has to mean the line above first, and the
+previous thing I sent only when there is no line above. That is one keystroke
+readline will not give up, so the input area is now an editor of this
+repository's own: `bin/itonami_editor.cljs`.
+
+## The split, and why the keys are testable
+
+`itonami-editor` is pure. `handle` takes a state and a decoded key and returns
+a state; `render` takes a state and a geometry and returns the exact rows plus
+where the caret goes. Raw mode, byte reading and cursor motion live in
+`bin/itonami` and hold no rules.
+
+That is what lets the key semantics be checked without a TTY -- and the key
+semantics are the whole point. The suite runs three controls, each measured:
+making Up reach for history unconditionally (what readline does) fails
+`up-means-the-line-above-before-it-means-history`; letting the status bar grow
+past the terminal fails the overflow check in seven places; not decoding a
+bracketed paste fails the paste check.
+
+## What the pure half decides
+
+- **Up** is the line above; only at the top does it reach for history. `:stash`
+  holds the draft, so Down past the newest entry gives it back -- browsing must
+  not consume what was being written.
+- **A trailing backslash and Enter** is a newline. Terminals disagree about
+  Shift+Enter and several send a bare Return for it, so a newline reachable
+  only through a modifier is unreachable on some of them. Alt/Option+Enter
+  works too, anywhere in the line.
+- **A bracketed paste is text**, newlines included. Without it a pasted newline
+  is the same byte as Return, so pasting three lines SENT the first and dropped
+  the other two -- measured here before `ESC[?2004h` was switched on.
+- **An escape sequence this does not know is dropped, not typed.** A terminal's
+  unsolicited device-attributes reply is `ESC[?1;2c`, and until the CSI pattern
+  admitted the private `?` it went into the buffer as `[?1;2c`.
+- **Ctrl+C clears the draft; only an already-empty buffer signals.** An
+  interrupt that ends the session on the first press is an exit with a
+  different name. **Ctrl+D** is EOF only on an empty buffer, and a forward
+  delete otherwise.
+- The caret is placed in **columns**, not characters, so a line of Japanese
+  puts it where the glyphs actually end.
+
+## The status bar says only what is knowable without asking
+
+Profile, how many slash commands, and the keys that work. Nothing on it is a
+claim about the server: that would need a request, and a bar that lies once a
+second is worse than a bar that says less.
+
+Two states change it: a held card names the tool and the two commands that
+answer it, and a run in flight replaces the hints with `esc で中断` -- which is
+printed only while ESC really is wired to a stop.
+
+When the terminal is too narrow, whole segments are dropped from the right.
+Truncating cut a hint mid-word and left `↑…`, half an instruction; and a bar
+wider than the terminal wraps onto the row the caret is about to be moved to,
+which tears the frame on the next redraw.
+
+## esc, and what it is allowed to print
+
+ESC during a run posts to `/v1/runs/<id>/stop`. What is printed is what the
+server answered -- 中断しました on a 2xx, 中断できません: HTTP n otherwise,
+中断を送れません when nothing answered. The first draft printed 中断を要求しました
+before the request resolved, which is true of a POST that 404s, and an operator
+who reads it stops watching a run that is still going. That is CLAUDE.md's
+sixth question in the smallest possible space.
+
+An interrupt the operator asked for returns to the prompt; only a turn that
+failed on its own exits 1. Measured with a control: after ESC, `/status` is
+accepted and answered, which it could not be if the process had exited.
+
+## Green
+
+The palette moved into the skin, so a skin now carries `:accent-code`,
+`:label-code`, `:dim-code` and a five-step `:ramp` for the wordmark alongside
+its prompt and banner. `default` is green; `kawaii` and `grok` carry their own;
+`gold` is what this wore before the instruction, kept as a skin rather than
+deleted, because a palette nobody can get back is a palette nobody can compare.
+
+This also made the theme injection load-bearing in a second place: the splash
+plugin reads the active skin at render time, so `/skin gold` changes the
+wordmark and not merely the prompt. The test asserts it in both directions.
+
+## itonami_text
+
+`display-width` and its neighbours moved out of `itonami_splash` into
+`itonami_text`, which the editor and the splash now share. Two implementations
+would have been two opinions about where a border goes, and the second would
+have been written by whoever noticed the first was somewhere else. The splash
+suite passed unchanged across the move, which is the evidence that it was a
+move and not a rewrite.
+
+## What was measured, and how
+
+A TUI cannot be checked by piping bytes at it: readline is gone, the program is
+in raw mode, and the output is cursor motion rather than lines. So the checks
+run on a real pty of a known size (`pty.fork` + `TIOCSWINSZ`), with a small
+terminal emulator to compose what a screen would show.
+
+Confirmed that way, on a live resident: the frame draws and redraws without
+tearing at 99 columns; two logical lines display as two rows; Up moves between
+them; Ctrl+E and an insert land on the first line; a submitted turn echoes with
+its prompt, streams, and returns the frame; ESC stops a counting run and the
+stream reports it ending; Japanese input measures correctly on both rows.
+
+One reading was misread on the way: a drive script ending in Ctrl+D showed the
+two lines joined, which looked like a wrapping bug and was the documented
+forward-delete doing exactly what it should. The raw byte stream settled it.
+
+## What this does not change
+
+`itonami chat \"message\"` still runs one turn and exits. Under a pipe there is
+no frame, no colour and no raw mode -- readline still answers there, because
+that is the shape it is good at -- and the terminal-restoring escapes are now
+guarded, having leaked `[?2004l[?25h` into this file's own pipe test.
+"}]
