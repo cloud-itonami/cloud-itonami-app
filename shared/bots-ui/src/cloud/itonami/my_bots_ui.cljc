@@ -11,22 +11,25 @@
         :empty "No Bots yet. Create your first Bot." :choose "Choose a Bot to continue."
         :signin "Sign in with Web3 or a passkey to open My Bots." :login "Sign in"
         :send "Send" :message "Message" :approve "Approve" :decline "Decline"
+        :unavailable "Bots cannot run right now. Your saved Bots and conversations remain available."
         :review "Review this Bot's request" :back "All Bots" :refresh "Refresh"
         :loading "Loading Bots…" :start "Start a conversation." :ready "Ready" :waiting-approval "Needs your review" :needs-review "Needs confirmation" :unknown "Status unavailable" :uncertain "The previous request needs confirmation before this Bot can continue."}
    :ja {:new "Botを追加" :name "Botの名前" :create "Botを作成" :search "Botsを検索"
         :empty "まだBotがありません。最初のBotを作成しましょう。" :choose "Botを選んでください。"
         :signin "Web3またはパスキーでログインして、My Botsを開きます。" :login "ログイン"
         :send "送信" :message "メッセージ" :approve "承認する" :decline "見送る"
+        :unavailable "現在Botを実行できません。保存済みのBotと会話は確認できます。"
         :review "Botからの依頼を確認" :back "Bots一覧" :refresh "更新"
         :loading "Botsを読み込み中…" :start "Botに仕事を依頼する。" :ready "待機中" :waiting-approval "確認待ち" :needs-review "処理の確認が必要" :unknown "状態を取得できません" :uncertain "前の処理の結果を確認するまで、このBotは待機します。"}})
 
-(defn screen [{:keys [locale principal bots bot busy? error phase query name text signin-href]} handlers]
+(defn screen [{:keys [locale principal bots bot busy? error phase query name text signin-href runner-ready?]} handlers]
   (let [t #(get-in strings [(if (= locale :ja) :ja :en) %])
         click (fn [key & args] (when-let [f (get handlers key)] (fn [_] (apply f args))))
         visible (filter #(str/includes? (str/lower-case (:name %)) (str/lower-case (or query ""))) bots)]
     [:main {:class "my-bots" :data-selected (boolean bot)}
      [:h1 "My Bots"]
      (when error [:p {:role "alert"} error])
+     (when (and principal (false? runner-ready?)) [:p {:role "status"} (t :unavailable)])
      (cond
        (= phase :loading) [:p {:role "status"} (t :loading)]
        (nil? principal) [:div [:p (t :signin)] [:a {:href (or signin-href "/#web-connect")} (t :login)]]
@@ -67,12 +70,12 @@
                [:p (:name (:pendingApproval bot))]
                [:pre {:style {:white-space "pre-wrap"}} (pr-str (:arguments (:pendingApproval bot)))]
                [:div {:class "my-bots__actions"}
-                [:button {:type "button" :disabled busy? :on-click (click :approve true)} (t :approve)]
-                [:button {:type "button" :disabled busy? :on-click (click :approve false)} (t :decline)]]]
+                [:button {:type "button" :disabled (or busy? (false? runner-ready?)) :on-click (click :approve true)} (t :approve)]
+                [:button {:type "button" :disabled (or busy? (false? runner-ready?)) :on-click (click :approve false)} (t :decline)]]]
               :else
               [:form {:class "my-bots__composer" :on-submit (:send handlers)}
                [:label {:for "my-bot-message"} (t :message)]
                [:textarea {:id "my-bot-message" :rows 3 :value (or text "") :max-length 4096
                            :required true :on-change (:text handlers)}]
-               [:button {:type "submit" :disabled busy?} (t :send)]])]
+               [:button {:type "submit" :disabled (or busy? (false? runner-ready?))} (t :send)]])]
            [:p (t :choose)])]])]))
