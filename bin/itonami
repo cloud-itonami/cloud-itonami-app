@@ -155,6 +155,127 @@
   (js/process.exit exit-cannot-answer))
 
 ;; ---------------------------------------------------------------------------
+;; the profile a repository carries (ADR-2609061200)
+;; ---------------------------------------------------------------------------
+
+(defn- repo-root
+  "The nearest ancestor of `dir` holding `.git`, or nil.
+
+  Upward from the working directory and no further -- the same shape `.git`
+  discovery has. There is deliberately no scan: this workspace manages 4,000+
+  repositories, and a command that walks them is a command nobody can stop
+  (CLAUDE.md says the same about an argument-less `west update`)."
+  [dir]
+  (loop [d (path/resolve dir) n 0]
+    (cond
+      (> n 40) nil
+      (fs/existsSync (path/join d ".git")) d
+      :else (let [up (path/dirname d)] (when (not= up d) (recur up (inc n)))))))
+
+(def ^:private repo-profile-state
+  "`nil` when no repository profile applies, otherwise the admission result
+  with `:path` added. Computed once: the working directory does not move under
+  a running command, and re-reading would let two reads of one file disagree."
+  (delay
+    (when-let [root (repo-root (js/process.cwd))]
+      (let [file (path/join root repo-profile/file-name)]
+        (when (fs/existsSync file)
+          (assoc (repo-profile/admit (slurp-file file)) :path file))))))
+
+(defn- repo-profile!
+  "The accepted repository profile, or nil. REFUSES rather than falling back.
+
+  A repository that names a profile this cannot admit must not quietly become
+  `default`. `pick-default-bot`'s docstring records what that costs: two Bots
+  answered to `default`, `itonami chat` ran every turn against the disabled
+  one, and the screen said nothing. Exit 2 and not 1 -- nothing was asked of
+  the server, so this is not a refusal it issued."
+  []
+  (when-let [r @repo-profile-state]
+    (if (:accepted? r)
+      r
+      (cannot-answer! (str (:path r) ": " (:message r))
+                      {:reason (:reason r)}))))
+
+(defn- repo-cli-config
+  "The `:cli/config` an ACCEPTED repository profile supplies, or `{}`.
+
+  Deliberately does NOT refuse, where `repo-profile!` does. This runs at mount
+  time, before any command has been chosen, and refusing here made
+  `profile explain` -- the one command whose job is to say WHY a profile was
+  refused -- exit 2 before it could say anything. Measured 2026-09-06, and the
+  docstring that this replaces claimed the opposite of what the code did.
+
+  A refused profile therefore supplies no configuration and is refused by the
+  commands that actually use it. Nothing is lost: `chat` still exits 2, and the
+  refusal now reaches a screen instead of pre-empting it."
+  []
+  (or (some-> @repo-profile-state
+              (as-> r (when (:accepted? r) r))
+              :prefers :cli/config)
+      {}))
+
+(defn- profile-source
+  "Where the active profile came from, for the banner. An operator who cannot
+  see this cannot tell a repository profile that applied from one that did not."
+  []
+  (cond
+    (not-empty (aget js/process.env "ITONAMI_PROFILE")) "ITONAMI_PROFILE"
+    (some-> @repo-profile-state :accepted?) (:path @repo-profile-state)
+    :else "default"))
+
+(defn- profile-explain!
+  "Which profile is active, where it came from, and what was refused.
+
+  An operator cannot otherwise tell a repository profile that applied from one
+  that was never there -- the two produce the same working CLI, and only one of
+  them is what the person editing `.itonami/profile.edn` believes. `absent` and
+  `refused` are printed as different words for the same reason.
+
+  This does NOT refuse. `repo-profile!` exits 2 on an unadmissible profile, and
+  the one command whose job is to say why must be able to run in that state."
+  [json?]
+  (let [st @repo-profile-state
+        out {:schema "cloud.itonami.app.cli.profile.v1"
+             :active (or (some-> (aget js/process.env "ITONAMI_PROFILE") str/trim not-empty)
+                         (when (:accepted? st) (:profile/id st))
+                         ;; the literal: `chat-default-profile` is defined with
+                         ;; the chat surface, far below this
+                         "default")
+             :source (profile-source)
+             :precedence ["--profile" "ITONAMI_PROFILE" repo-profile/file-name "default"]
+             :repo (cond
+                     (nil? st) {:state "absent"}
+                     (:accepted? st) {:state "accepted"
+                                      :path (:path st)
+                                      :id (:profile/id st)
+                                      :describes (vec (sort (map str (keys (:describes st)))))
+                                      :prefers (vec (sort (map str (keys (:prefers st)))))}
+                     :else {:state "refused"
+                            :path (:path st)
+                            :reason (str (:reason st))
+                            :refused-keys (vec (map str (:refused-keys st)))
+                            :message (:message st)})}]
+    (if json?
+      (emit! out true)
+      (let [r (:repo out)]
+        (println (str "profile: " (:active out) " (" (:source out) ")"))
+        (println (str "precedence: " (str/join " > " (:precedence out))))
+        (case (:state r)
+          "absent" (println (str "repo: なし (" repo-profile/file-name " が見つかりません)"))
+          "accepted" (do (println (str "repo: " (:path r)))
+                         (println (str "  id: " (:id r)))
+                         (println (str "  describes: " (str/join " " (:describes r))))
+                         (println (str "  prefers:   " (str/join " " (:prefers r)))))
+          "refused" (do (println (str "repo: " (:path r) " — 拒否"))
+                        (println (str "  reason: " (:reason r)))
+                        (when (seq (:refused-keys r))
+                          (println (str "  keys:   " (str/join " " (:refused-keys r)))))
+                        (println (str "  " (:message r)))))))
+    (js/process.exit exit-answered)))
+
+
+;; ---------------------------------------------------------------------------
 ;; the harness: everything below rides on mounted plugins (ADR-2609042200)
 ;; ---------------------------------------------------------------------------
 
@@ -163,7 +284,13 @@
 (harness/mount! harness-ctx (profile/config-plugin
                              {:app-directory app-directory
                               :data-dir (data-dir)
-                              :configuration configuration}))
+                              ;; A repository's `:cli/config`, at its own
+                              ;; precedence: below the flag and the
+                              ;; environment, above the shipped default. Only
+                              ;; `repo-profile/cli-config-keys` survive
+                              ;; admission, so this cannot reach `:server`.
+                              :configuration (merge configuration
+                                                    (repo-cli-config))}))
 (harness/mount! harness-ctx (profile/theme-plugin))
 (harness/mount! harness-ctx (profile/chat-plugin))
 
@@ -383,57 +510,6 @@
 
 (def ^:private chat-default-profile "default")
 
-;; ---------------------------------------------------------------------------
-;; the profile a repository carries (ADR-2609061200)
-;; ---------------------------------------------------------------------------
-
-(defn- repo-root
-  "The nearest ancestor of `dir` holding `.git`, or nil.
-
-  Upward from the working directory and no further -- the same shape `.git`
-  discovery has. There is deliberately no scan: this workspace manages 4,000+
-  repositories, and a command that walks them is a command nobody can stop
-  (CLAUDE.md says the same about an argument-less `west update`)."
-  [dir]
-  (loop [d (path/resolve dir) n 0]
-    (cond
-      (> n 40) nil
-      (fs/existsSync (path/join d ".git")) d
-      :else (let [up (path/dirname d)] (when (not= up d) (recur up (inc n)))))))
-
-(def ^:private repo-profile-state
-  "`nil` when no repository profile applies, otherwise the admission result
-  with `:path` added. Computed once: the working directory does not move under
-  a running command, and re-reading would let two reads of one file disagree."
-  (delay
-    (when-let [root (repo-root (js/process.cwd))]
-      (let [file (path/join root repo-profile/file-name)]
-        (when (fs/existsSync file)
-          (assoc (repo-profile/admit (slurp-file file)) :path file))))))
-
-(defn- repo-profile!
-  "The accepted repository profile, or nil. REFUSES rather than falling back.
-
-  A repository that names a profile this cannot admit must not quietly become
-  `default`. `pick-default-bot`'s docstring records what that costs: two Bots
-  answered to `default`, `itonami chat` ran every turn against the disabled
-  one, and the screen said nothing. Exit 2 and not 1 -- nothing was asked of
-  the server, so this is not a refusal it issued."
-  []
-  (when-let [r @repo-profile-state]
-    (if (:accepted? r)
-      r
-      (cannot-answer! (str (:path r) ": " (:message r))
-                      {:reason (:reason r)}))))
-
-(defn- profile-source
-  "Where the active profile came from, for the banner. An operator who cannot
-  see this cannot tell a repository profile that applied from one that did not."
-  []
-  (cond
-    (not-empty (aget js/process.env "ITONAMI_PROFILE")) "ITONAMI_PROFILE"
-    (some-> @repo-profile-state :accepted?) (:path @repo-profile-state)
-    :else "default"))
 ;; REPL state lives in :ctx/chat (the plugin layer, ADR-2609042200); the
 ;; historical names are bindings to the plugin's own atoms so existing call
 ;; sites read unchanged and /profile stays a one-atom write.
@@ -832,6 +908,7 @@
       (= "commands" (first named)) (commands! (vec (drop 1 named)) json?)
       (= ["status"] named) (status! json?)
       (= "chat" (first named)) (chat! argv json?)
+      (= ["profile" "explain"] named) (profile-explain! json?)
 
       (contains? #{["up"] ["down"]} named)
       (cannot-answer!

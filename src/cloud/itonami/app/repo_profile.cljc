@@ -58,9 +58,25 @@
     :bot/name :bot/brief :bot/avatar :bot/context-refs
     :bot/tools-requested})
 
+(def cli-config-keys
+  "The `:cli/config` keys a repository may set, and the only ones.
+
+  `:skin` alone today, because `itonami.theme` is the only layer that reads
+  configuration a repository could reasonably name. The whole map is not
+  passed through: `:cli/config` reaching the config plugin unfiltered would let
+  a repository set `:server`, and the ingress the CLI talks to is not a
+  repository's to choose."
+  #{:skin})
+
 (def prefers
-  "Keys that cross but only take effect if the destination admits them."
-  #{:bot/model-preference :cli/layers :cli/config})
+  "Keys that cross but only take effect if the destination admits them.
+
+  `:cli/layers` is NOT here. It was, for one commit, and it drove nothing —
+  the shipped profile mounts its three layers unconditionally and there is no
+  selection for a name to select. A key that is admitted and inert reads as a
+  capability, so it is out of the vocabulary until layer selection exists.
+  Adding it back is a diff, which is the point."
+  #{:bot/model-preference :cli/config})
 
 (def ^:private max-name 60)
 (def ^:private max-brief 2000)
@@ -163,7 +179,17 @@
     (refusal :repo-profile/brief-too-long
              (str ":bot/brief が長すぎます（上限 " max-brief "）。"))
 
-    :else nil))
+    (and (contains? m :cli/config) (not (map? (:cli/config m))))
+    (refusal :repo-profile/cli-config-not-a-map ":cli/config は map である必要があります。")
+
+    :else
+    (let [extra (vec (sort (remove cli-config-keys (keys (:cli/config m)))))]
+      (when (seq extra)
+        (refusal :repo-profile/cli-config-key-refused
+                 (str ":cli/config にこの surface が読まない key があります: "
+                      (str/join " " (map pr-str extra))
+                      "。読むのは " (str/join " " (map pr-str (sort cli-config-keys))) " だけです。")
+                 {:refused-keys extra})))))
 
 (defn admit
   "Decide what `text` means.

@@ -132,3 +132,35 @@
              :bot/coding? :bot/virtual-shell? :bot/goal? :bot/priority?]]
     (is (not (contains? rp/describes k)) (str k " is described as harmless"))
     (is (not (contains? rp/prefers k)) (str k " is described as a preference"))))
+
+;; ---------------------------------------------------------------------------
+;; :cli/config, and the key that is no longer in the vocabulary
+;; ---------------------------------------------------------------------------
+
+(deftest cli-config-is-admitted-only-for-keys-this-surface-reads
+  (is (:accepted? (rp/admit (with {:cli/config {:skin "grok"}}))))
+  (let [r (rp/admit (with {:cli/config {:skin "grok" :server {:port 1}}}))]
+    (is (= :repo-profile/cli-config-key-refused (:reason r))
+        "a repository must not be able to name the ingress the CLI talks to")
+    (is (= [:server] (:refused-keys r)))))
+
+(deftest cli-config-must-be-a-map
+  (is (= :repo-profile/cli-config-not-a-map
+         (:reason (rp/admit (with {:cli/config "grok"}))))))
+
+(deftest cli-layers-is-not-in-the-vocabulary
+  ;; It was, for one commit, and it drove nothing: the shipped profile mounts
+  ;; its three layers unconditionally and there is no selection for a name to
+  ;; select. A key that is admitted and inert reads as a capability.
+  (is (not (contains? rp/prefers :cli/layers)))
+  (is (not (contains? rp/describes :cli/layers)))
+  (is (= :repo-profile/key-refused
+         (:reason (rp/admit (with {:cli/layers ["itonami.theme"]}))))))
+
+(deftest the-cli-config-allowlist-is-not-everything
+  ;; A floor on the allowlist itself, the same shape as the grant floor above:
+  ;; this suite would keep passing if `:server` were added to it.
+  (is (contains? rp/cli-config-keys :skin))
+  (doseq [k [:server :mcp :auth :providers :routing :residency]]
+    (is (not (contains? rp/cli-config-keys k))
+        (str k " would let a repository configure the client's own plumbing"))))
