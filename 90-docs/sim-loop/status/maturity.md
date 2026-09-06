@@ -458,3 +458,26 @@ export_and_sync 不在)、dev /health 127.0.0.1:1338 -> 200 実測。df avail �
 ## NEXT (falsify-47 追記、append-only)
 
 **falsify-47 (2026-09-07、spec/契約 軸) で falsify-10 の placeholder→path-param 整合をコマンド単位で機械検証 (SURVIVED)**: 資源 `resources/cloud-itonami-app.commands.edn` (main checkout head 9e5b24a / porcelain clean) を Python 解析し、`:command [` マーカーで段落分割して各コマンドの `:template` placeholder 集合と `:params` `:name` 集合を**コマンドごとに**突合。実測: `:command` 208 / `:template` 208 / `:in "path"` 128 / placeholder 128。placeholder を持つコマンド 113 のうち、全 128 placeholder が同一コマンドの params に `:name` 宣言あり (**欠落 0**)、全て `:in "path"` (**非 path 0**)、params 宣言が template に現れない orphan **0**。aggregate 一致 (128=128) ではなく当該段落内一致で確認した点が falsify-10 からの精緻化。spec/契約 軸 score は 3 のまま (falsify-10 にコマンド単位突合を追記、値スキーマ検証未整備は不変)。附帯: 前反復 falsify-46 本体は記録中に中断して文末が mid-sentence で truncate された (本ファイル 456 行目 `df avail は 141Gi / 85` で途切れ、falsify-33/34 の 16 行目孤立行と同種の追記中断)。append-only のため本 bot は回復せず operator 復旧待ち。7 軸テーブル 16 行目孤立行 `| 反証候補falsify30PLACEHOLDER` も残存のまま。本体 checkout は agent/fix-open-red-5-three-bound / porcelain clean (dirty 0)、head 9e5b24a (evidence/2026-09-07-falsify-47.md)。
+## NEXT (falsify-48 追記、append-only)
+
+**falsify-48 (2026-09-07、運用/滞留帰属 軸) で帰属生存 + 増加継続 (+50 keys / 2 反復跨ぎ ≈ +25/反復) を再確認 (SURVIVED)**: main-refspec regular unused は
+**444 keys / 6,699,301,080 bytes (≈6.24 GiB)** (falsify-46 の 394 keys / 5,941,365,414 bytes から
+**+50 keys**、増加継続、local annex 444 keys / 6.7 GB と一致)。resident-refspec 正規
+unused は **0** (帰属「unused ⊆ resident 現在ツリー」が 444-key / 6.24 GiB スケールで SURVIVED 継続、
+unused−resident=0)。**追加ベクトル再確認**: 全 refs 走査 (refspec なし) の正規 unused も
+**0** — main-refspec で unused 判定された key のうちいかなる ref からも到達不能な孤児は存在しない
+(falsify-46 の独立ベクトルを独立再現)。partial chunk は **14 → 14** / temp 186.98MB で不変
+(falsify-35 の 1 chunk 解決以降連続 12 反復 drift なし、間欠的のまま)。増加源 itonami-app-resident.cljs
+PID 94682 稼働継続 (falsify-33〜46 と同一 PID、export_and_sync 不在)、dev /health 127.0.0.1:1338 -> 200 実測、
+gateway /health 127.0.0.1:8080 -> 404 (本反復実測。前反復記録 502 との経緯は継続観測対象)。
+df avail は 140Gi / 85% (falsify-46 記録 141Gi から -1Gi、100% 飽和は解消のまま)。増加レートは
++50 keys / 2 反復跨ぎ (falsify-47 は spec 軸で retention 未測定) ≈ 反復あたり +25 で、falsify-40/41/43/44/45
+の +24/+25 帯と整合 (falsify-42 の +62 加速への回帰なし、漸減継続)。「avail 回復 = 増加源停止」は
+falsify-37 で反証済みのまま、解放源の単一起因帰属は未特定で継続観測。dropunused は引き続き反復緩和、恒久解消は
+resident ingest 世代削除 (Tier 2)。avail 140Gi は引続きフルスイート実行可能域。
+(evidence/2026-09-07-falsify-48.md)。附帯: 7 軸テーブル 16 行目孤立行
+`| 反証候補falsify30PLACEHOLDER` 残存のまま (operator 復旧待ち)。前反復 falsify-46 本体の
+mid-sentence truncate (maturity.md 456 行目) は falsify-47 報告済みのまま append-only で回復せず
+operator 復旧待ち。本体 checkout は agent/fix-open-red-5-three-bound / porcelain clean (dirty 0)、
+head 9e5b24a。負荷 load avg 60.88/64.71/58.63 (高負荷)。反証軸 score は 3 のまま (falsify-1〜48 記録
+継続、本反復は帰属の同一主張のスケール拡大であり score へ質的変更なし)。
