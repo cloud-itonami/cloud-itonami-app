@@ -269,3 +269,14 @@
   - 恒久解消の Tier 2 提言は不変 (resident ingest 世代削除)。
   - disk-avail: avail 81-82 GiB / 91% でフルスイート実行可能域 (falsify-31 の
     最小 avail 閾値実測が現実的) — 実行は次反復以降の選択肢。
+
+**falsify-35 (2026-09-06) で transfer drift 確認 + 帰属生存を再確認**: local annex
+keys 62 → **75** / 1.11 GB (falsify-34 比 +13 keys)。main-refspec 正規 unused は
+62 → **75**、resident-refspec 正規 unused は **0** (帰属「unused ⊆ resident 現在
+ツリー」が 75-key scale で生存継続)。falsify-34 が次回 candidates とした
+partially-transferred chunk は 15 → **14** / 187MB→178M (1 chunk が正規 key へ解決
+= **drift 静止説 REFUTED**、drift は低速だが実在)。増加源 itonami-app-resident.cljs
+PID 94682 稼働継続、export_and_sync 不在。avail 74Gi / 92% (反復越え -7GiB)。
+dropunused は引き続き反復緩和、恒久解消は resident ingest 世代削除 (Tier 2)
+(evidence/2026-09-06-falsify-35.md)。附帯: 7 軸テーブル 16 行目孤立行
+`| 反証候補falsify30PLACEHOLDER` 残存のまま (operator 復旧待ち)。
