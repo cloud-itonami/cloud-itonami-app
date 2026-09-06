@@ -8,7 +8,7 @@
 
 (ns itonami-harness-nbb
   (:require ["node:path" :as path]
-            [clojure.test :refer [deftest is run-tests]]
+            [clojure.test :as t :refer [deftest is run-tests]]
             [nbb.classpath :as classpath]
             [nbb.core :refer [*file*]]))
 
@@ -117,9 +117,48 @@
       (is (= [:itonami.config] (mapv :name (:plugins d))))
       (is (= [:ctx/config] (:services d))))))
 
+(deftest a-layer-actually-reads-what-it-injects
+  ;; `mount!` passes `(select-keys services inject)`, so `:apply` receives
+  ;; `{:ctx/config <service>}` and NOT the service. `theme-plugin` destructured
+  ;; `{:keys [config data-dir]}` off that argument and read nil for both, so
+  ;; `:skin` in configuration selected nothing while `/skin` worked -- a
+  ;; DECLARED dependency the layer could not read, and nothing here noticed
+  ;; because every assertion above only checked that mounting succeeded.
+  (let [ctx (harness/make-context)]
+    (harness/mount! ctx (profile/config-plugin {:app-directory "/a" :data-dir "/d"
+                                                :configuration {:skin "grok"}}))
+    (harness/mount! ctx (profile/theme-plugin))
+    (is (= "grok" (:name ((:skin (harness/ctx-get ctx :ctx/theme)))))
+        "the theme layer did not see its injected configuration")))
+
+(deftest a-skin-name-that-resolves-to-nothing-is-not-silence
+  ;; Falling back to the default is correct; doing it without saying so is not.
+  (let [ctx (harness/make-context)]
+    (harness/mount! ctx (profile/config-plugin {:app-directory "/a" :data-dir "/d"
+                                                :configuration {:skin "definitely-not-a-skin"}}))
+    (harness/mount! ctx (profile/theme-plugin))
+    (is (= "default" (:name ((:skin (harness/ctx-get ctx :ctx/theme))))))))
+
+;; The exit code comes from the :end-run-tests REPORT, not from the value of
+;; `run-tests`.
+;;
+;; Under nbb, `run-tests` returns a value whose `:fail` and `:error` are nil,
+;; so `(zero? (+ (:error r) (:fail r)))` was true for every run and this suite
+;; exited 0 with failures on screen. Measured 2026-09-06 by breaking one plugin
+;; on purpose: the FAIL printed and `$?` was 0. A suite that cannot fail the
+;; build is a suite nobody has to keep green.
+;;
+;; `get-current-env`'s counters are reset by the time `run-tests` returns
+;; (measured: `{:test 0 :pass 0 :fail 0 :error 0}` after a failing run), so the
+;; summary has to be taken where it is still true: the report itself.
+(defmethod t/report [::t/default :end-run-tests] [m]
+  (println (str "\nRan " (:test m) " tests containing "
+                (+ (:pass m) (:fail m) (:error m)) " assertions."))
+  (println (str (:fail m) " failures, " (:error m) " errors."))
+  (js/process.exit (if (zero? (+ (:fail m) (:error m))) 0 1)))
+
 (defn -main [& _]
-  (let [r (run-tests)]
-    (js/process.exit (if (zero? (+ (:error r) (:fail r))) 0 1))))
+  (run-tests))
 
 (when-not (aget js/process.env "HARNESS_TEST_NO_AUTOPLAY")
   (apply -main (or *command-line-args* [])))

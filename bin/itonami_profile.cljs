@@ -71,7 +71,14 @@
    :inject [:ctx/config]
    :provides :ctx/theme
    :description "skin engine (hermes parity keys: prompt accent banner)"
-   :apply (fn [{:keys [config data-dir]}]
+   ;; `mount!` passes `(select-keys services inject)`, so the argument is
+   ;; `{:ctx/config <service>}` -- NOT the service itself. Destructuring
+   ;; `{:keys [config data-dir]}` off it read nil for both, which is why
+   ;; `:skin` in configuration never selected anything while `/skin` did:
+   ;; a DECLARED dependency this layer could not actually read (measured
+   ;; 2026-09-06, through a repository profile's `:cli/config`).
+   :apply (fn [deps]
+            (let [{:keys [config data-dir]} (:ctx/config deps)]
             (let [custom (fn [name]
                            (when-let [t (try (some-> (fs/readFileSync
                                                       (path/resolve data-dir
@@ -80,14 +87,32 @@
                                                      edn/read-string)
                                              (catch :default _ nil))]
                              (merge default-theme t)))
-                  state (atom (or (custom (:skin config)) default-theme))]
+                  requested (:skin config)
+                  ;; SHIPPED first, then a file. `config`'s `:skin` used to
+                  ;; consult `custom` alone, so `{:skin "grok"}` in
+                  ;; configuration resolved to nothing and fell back to the
+                  ;; default -- while `/skin grok` worked. Two ways to name a
+                  ;; skin, one of them silently inert (measured 2026-09-06,
+                  ;; through a repository profile's `:cli/config`).
+                  resolved (when requested
+                             (or (get skins requested) (custom requested)))
+                  _ (when (and requested (nil? resolved))
+                      ;; A name that resolved to nothing must not look like no
+                      ;; name at all. There is no screen at mount time, so this
+                      ;; is stderr -- but it is said.
+                      (binding [*print-fn* *print-err-fn*]
+                        (println (str "itonami: skin \"" requested
+                                      "\" がありません。既定で続行します。"
+                                      " 使えるもの: "
+                                      (str/join " " (sort (keys skins)))))))
+                  state (atom (or resolved default-theme))]
               {:state state
                :skin (fn [] @state)
                :set-skin! (fn [name]
                             (let [t (or (get skins name) (custom name))]
                               (if t
                                 (do (reset! state t) {:ok true :skin t})
-                                {:ok false :available (vec (sort (keys skins)))})))}))})
+                                {:ok false :available (vec (sort (keys skins)))})))})))})
 
 ;; ---------------------------------------------------------------------------
 ;; layer 3: chat — the slash registry and REPL state
