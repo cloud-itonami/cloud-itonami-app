@@ -2,6 +2,7 @@
   "DADS-backed WebKit workspace hosted by kotoba-lang/shell."
   (:require [clojure.java.io :as io]
             [cloud.itonami.app.appearance :as appearance]
+            [cloud.itonami.bots-ui :as bots-ui]
             [hanmen.svg :as hanmen-svg]
             [jp-go-dds.core :as dds]
             [jp-go-dds.page :as page]))
@@ -331,6 +332,9 @@
      written. Elsewhere in this stylesheet each rule declares it — that
      convention is exactly what a person adding a rule can forget. */
   .bots-view, .bots-view *{box-sizing:border-box}
+  .bots-business-entry{padding:.75rem;overflow-wrap:anywhere}
+  .bots-business-entry summary{min-height:44px;cursor:pointer;font-weight:600}
+  .bots-business-entry[open]{overflow:auto;max-height:50vh}
   /* Bots is an application pane, not a long document. Its rail and composer
      stay in the viewport while only the thread scrolls. */
   .bots-view{max-width:none;padding:0;height:calc(100dvh - 5rem);overflow:hidden}
@@ -2170,8 +2174,12 @@
         [:section {:class "view bots-view" :data-view-panel "bots" :hidden true}
          [:div {:class "bots-shell" :id "bots-shell"}
           [:aside {:class "bots-rail"}
+           [:details {:class "bots-business-entry"}
+            [:summary "Business Bots"]
+            [:p (bots-ui/label :ja :lead)]
+            (bots-ui/participation {:locale :ja})]
            [:label {:class "bots-rail__search" :for "bots-filter"}
-            [:span {:class "visually-hidden"} "Botを検索"]
+            [:span {:class "visually-hidden"} "My Botsを検索"]
             [:input {:id "bots-filter" :type "search" :placeholder "Botを検索"
                      :autocomplete "off"}]]
            [:ul {:class "bots-rail__list" :id "bots-list"}]

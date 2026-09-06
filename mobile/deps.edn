@@ -20,7 +20,7 @@
    ;;
    ;; tools.deps deprecates paths outside the project. Kept deliberately, as
    ;; app-edge keeps it. Revisit if it is removed rather than deprecated.
-   :extra-paths ["../src" "../resources"]
+   :extra-paths ["../src" "../resources" "../shared/bots-ui/src"]
    :extra-deps
    {thheller/shadow-cljs {:mvn/version "2.28.20"}
     ;; reagent 1.2.0, the version kami-genko already builds against. The views
@@ -37,8 +37,9 @@
   ;; `../src` and `../resources` for the same two things the :cljs alias needs
   ;; them for. The JVM suite asserts what `terminal/plan` returns, and a plan
   ;; that cannot read the command tables would assert nothing.
-  {:extra-paths ["test" "../src" "../resources"]
+  {:extra-paths ["test" "../src" "../resources" "../shared/bots-ui/src"]
    :extra-deps
    {io.github.kotoba-lang/jp-go-digital-design-system
     {:local/root "../../../kotoba-lang/jp-go-digital-design-system"}}
    :main-opts ["-m" "cloud.itonami.mobile.test-main"]}}}
+

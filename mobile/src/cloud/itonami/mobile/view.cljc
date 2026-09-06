@@ -28,6 +28,7 @@
   opened is honest; a link that silently does nothing is not."
   (:require [clojure.string :as str]
             [cloud.itonami.mobile.terminal :as terminal]
+            [cloud.itonami.bots-ui :as bots-ui]
             [jp-go-dds.core :as dds]))
 
 (defn- code-text
@@ -318,6 +319,7 @@
   ADR asks for; addressability is what it offers, and this surface has no
   address bar to offer it to."
   [{:pane :fleet :label "フリート"}
+   {:pane :business :label "Business Bots"}
    {:pane :terminal :label "コマンド"}])
 
 (defn screen
@@ -345,4 +347,8 @@
                                    :on-click #((:on-pane handlers) p)}})))
       (case pane
         :terminal (terminal-pane state handlers)
+        :business (dds/stack
+                   (dds/heading 1 "Business Bots")
+                   [:p (bots-ui/label :ja :lead)]
+                   (bots-ui/participation {:locale :ja}))
         (fleet-pane state handlers))))))

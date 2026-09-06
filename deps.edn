@@ -1,4 +1,4 @@
-{:paths ["src" "resources"]
+{:paths ["src" "resources" "shared/bots-ui/src"]
  :deps
  {org.clojure/clojure {:mvn/version "1.12.5"}
   ;; 回遊 — the shared visit-telemetry vocabulary. Used here for the LOCAL
