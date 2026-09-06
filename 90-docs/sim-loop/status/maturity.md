@@ -2,7 +2,7 @@
 
 現在段階: L1 (稼働はするが、反証可能性のある品質主張が軸ごとに未整備)
 
-測定日: 2026-09-06 (falsify-30; 初回ベースライン 2026-09-03)
+測定日: 2026-09-06 (falsify-31; 初回ベースライン 2026-09-03)
 測定者: itonami-maint
 
 ## 7 軸スコア (0-5)
@@ -12,7 +12,7 @@
 | spec/契約 | 3 | ADR 24 本 (+ ADR-2607254000 の Tier 境界)、commands.edn に 208 コマンドの解決/path-param 契約 (flags は hint で値スキーマなし — falsify-10 実測: プレースホルダ 128 すべてに `:in "path"` 宣言、欠落 0、408=208+70+130 整合)。route 再スキャン vs レジストリの機械検証テスト実在 (commands_test 16 deftest)。値スキーマ (型/必須性) の機械検証は未整備 |
 | 実装 | 3 | src 231 ファイル、全主要面 (bots/webhook/hermes-compat/store) 実装済み。virtual-shell は未活性 |
 | テスト | 3 | test 205 ファイル。フルスイートが異なるリビジョンで完走: falsify-6 (bde2171)、falsify-7 (2bca892、約45分)、falsify-14 (clean HEAD、1 failure = 赤-4 のみ)、falsify-15 (負荷下 2292 tests / 13880 assertions / 1 failure = 赤-4 のみ)、**falsify-16 (merged main 1905580、負荷下 2292 tests / 13929 assertions / 0 failures EXIT=0)**。決定論的赤 0、flake 修理 (赤-5、PR #280) 着地済み。3 止まりの根拠: flake リトライ機構なし、OPEN 赤-4 未解決、テスト実行がディスク飽和に脆弱 (falsify-16/17) |
-| 反証 | 3 | falsify-1〜26 を evidence/ に記録。falsify-9: 赤-2「KeepAlive 欠如で silent-dead」説を反証 (主因は ops-classpath.sh が upstream の authority.scope 追加に未追従で nbb ロード即死)。falsify-10: spec 軸主張を「解決/path-param 契約 (値スキーマなし)」に範囲修正。falsify-11: 赤-2 案 A「classpath 修正で復旧」説を反証試行 — 決定論的依存連鎖を段階実測、案 A の 3 src 追加が必須十分と確認し expiry-alert.cljs rc=0 まで完全復旧を実測 → 精緻化付きで SURVIVED。検証の终点は rc=0、plist 再 bootstrap が必須条件。falsify-12: テスト軸「赤-5 flake は時間切れ型のみ」説 → survived、3 bound 非同期設計を競合窓として同定。falsify-14 (2026-09-05): リスク-2 dirty 前提を REFUTED (本体 main clean 実測)。falsify-16 (2026-09-05): 「着地後の負荷下完走で flake サイトが赤になる」説 → survived (merged main 1905580 で 0 failures 実測、OPEN 赤-5 CLOSED)。falsify-17 (2026-09-05): 「falsify-16 の cache 整理でディスク満杯は解消 (一回性)」説を REFUTED — 同日中に /System/Volumes/Data が 100% / avail 1.9Gi に再飽和を実測、ディスク飽和は再発性の構造リスクと確定 (evidence/2026-09-05-falsify-17.md)。falsify-18 (2026-09-06): falsify-17 の「増加源は du 到達範囲外の可能性」説を反証 — du 実測で支配項を m365-archive/onedrive 133G に帰属確定 (survived→帰属確定)、expiry-alert not running / runs=0 を再実測 (evidence/2026-09-06-falsify-18.md) 。falsify-23 (2026-09-06): 「滞留世代は manifest-rev 参照解放で回収可能」説を REFUTED — manifest-rev=51d4010c (west update 管理) は resident/dns-resolver の祖先で解放しても annex 参照は残る、真の参照元は resident branch の ingest 履歴 (evidence/2026-09-06-falsify-23.md)。falsify-25 (2026-09-06): 滞留の参照元を resident 現在ツリー (data/ledger/) へ帰属修正 (unused ⊆ resident 現在ツリー 100%、detached HEAD 説反証)。falsify-26 (2026-09-06): 増加後も帰属が生存することを再確認 (SURVIVED)。falsify-28 (2026-09-06): 増加継続下 (unused 3372 / 43.27 GiB) でも帰属生存を再確認、滞留全件が resident 現在ツリー参照 (∩ 100%)。falsify-29 (2026-09-06): 増加継続下 (unused 3385 / 43.44 GiB、falsify-28 比 +13 keys / +0.17 GiB) でも帰属生存を再確認、滞留全件が resident 現在ツリー参照 (∩ 100%、unused−resident=0)。falsify-30 (2026-09-06): 増加継続下 (unused 3398 / 43.61 GiB、+13 keys / +0.17 GiB) でも帰属生存を再確認 (∩ 100%、unused−resident=0)。併せて「avail 反発は増加源の停止/減速を反映」説を REFUTED — 増加源 (export_and_sync.cljs PID 82336) が稼働中のまま avail が 1.5Gi→6.6〜7.8Gi へ回復したことを直接観測 (evidence/2026-09-06-falsify-30.md) |
+| 反証 | 3 | falsify-1〜26 を evidence/ に記録。falsify-9: 赤-2「KeepAlive 欠如で silent-dead」説を反証 (主因は ops-classpath.sh が upstream の authority.scope 追加に未追従で nbb ロード即死)。falsify-10: spec 軸主張を「解決/path-param 契約 (値スキーマなし)」に範囲修正。falsify-11: 赤-2 案 A「classpath 修正で復旧」説を反証試行 — 決定論的依存連鎖を段階実測、案 A の 3 src 追加が必須十分と確認し expiry-alert.cljs rc=0 まで完全復旧を実測 → 精緻化付きで SURVIVED。検証の终点は rc=0、plist 再 bootstrap が必須条件。falsify-12: テスト軸「赤-5 flake は時間切れ型のみ」説 → survived、3 bound 非同期設計を競合窓として同定。falsify-14 (2026-09-05): リスク-2 dirty 前提を REFUTED (本体 main clean 実測)。falsify-16 (2026-09-05): 「着地後の負荷下完走で flake サイトが赤になる」説 → survived (merged main 1905580 で 0 failures 実測、OPEN 赤-5 CLOSED)。falsify-17 (2026-09-05): 「falsify-16 の cache 整理でディスク満杯は解消 (一回性)」説を REFUTED — 同日中に /System/Volumes/Data が 100% / avail 1.9Gi に再飽和を実測、ディスク飽和は再発性の構造リスクと確定 (evidence/2026-09-05-falsify-17.md)。falsify-18 (2026-09-06): falsify-17 の「増加源は du 到達範囲外の可能性」説を反証 — du 実測で支配項を m365-archive/onedrive 133G に帰属確定 (survived→帰属確定)、expiry-alert not running / runs=0 を再実測 (evidence/2026-09-06-falsify-18.md) 。falsify-23 (2026-09-06): 「滞留世代は manifest-rev 参照解放で回収可能」説を REFUTED — manifest-rev=51d4010c (west update 管理) は resident/dns-resolver の祖先で解放しても annex 参照は残る、真の参照元は resident branch の ingest 履歴 (evidence/2026-09-06-falsify-23.md)。falsify-25 (2026-09-06): 滞留の参照元を resident 現在ツリー (data/ledger/) へ帰属修正 (unused ⊆ resident 現在ツリー 100%、detached HEAD 説反証)。falsify-26 (2026-09-06): 増加後も帰属が生存することを再確認 (SURVIVED)。falsify-28 (2026-09-06): 増加継続下 (unused 3372 / 43.27 GiB) でも帰属生存を再確認、滞留全件が resident 現在ツリー参照 (∩ 100%)。falsify-29 (2026-09-06): 増加継続下 (unused 3385 / 43.44 GiB、falsify-28 比 +13 keys / +0.17 GiB) でも帰属生存を再確認、滞留全件が resident 現在ツリー参照 (∩ 100%、unused−resident=0)。falsify-30 (2026-09-06): 増加継続下 (unused 3398 / 43.61 GiB、+13 keys / +0.17 GiB) でも帰属生存を再確認 (∩ 100%、unused−resident=0)。併せて「avail 反発は増加源の停止/減速を反映」説を REFUTED — 増加源 (export_and_sync.cljs PID 82336) が稼働中のまま avail が 1.5Gi→6.6〜7.8Gi へ回復したことを直接観測 (evidence/2026-09-06-falsify-30.md)。falsify-31 (2026-09-06): 増加継続下でも帰属生存を再確認 (unused 3427 / 43.99 GiB、∩ 100%、unused−resident=0)。併せて avail が 50 Gi / 95% へ大回復し増加源 (PID 82336) が ps で自然停止したことを直接観測 (「停止→回復」は充分条件でなく単一帰属は未特定 — falsify-30 の反証が有効) |
 | 反証候補falsify30PLACEHOLDER
 | 再現性 | 3 | launchd で server/host/tick は再現稼働。releases/ 全 77 ツリーが対応 git commit と byte 完全一致 (falsify-3 実測)。ただし不変性は運用規約のみで OS 強制なし |
 | governor 統合 | 3 | tamaki tick は 1430 repo を 900s 間隔でスキャン継続。ただし **1559 連続 worktree-failed** (2026-08-14〜、毎 tick) — falsify-6 で原因特定済み (tick の rm -rf が git-annex read-only 残骸を取りこぼし → worktree add が永久 already exists)。修理は tamaki リポ側 (chmod -R u+wx 追加、Tier 2 で提起)。着地 0 landed は継続 |
@@ -189,6 +189,18 @@
   REFUTED。反発は増加源の停止に起因せず別空間の解放が示唆されるが
   単一起因は未特定 (反復内で avail 7.1→7.8→6.6 GiB と振動)。100% 標示
   継続、リスク-5 継続 (evidence/2026-09-06-falsify-30.md)。
+  **falsify-31 (2026-09-06) で帰属生存 + avail 大回復観測**: unused 3427 keys
+  / 43.99 GiB (falsify-30 比 +29 keys / +0.38 GiB、増加継続下で ∩ 100%
+  unused−resident=0)。df は **avail 50 Gi / 95%** へ大回復 (falsify-30 の
+  6.6〜7.8 GiB から **約 +43 GiB**、シリーズ開始以来の 100% 飽和は解消) —
+  annex 側も available local disk 54.16 GB を実測。増加源 export_and_sync.cljs
+  (falsify-30 PID 82336) は **ps で該当なし (grep_rc=1)** と自然停止を直接観測。
+  増加源停止と avail 大回復の時期は一致するが、falsify-30 の「稼働中のまま
+  回復」の反証が有効なため「停止→回復」は充分条件でなく単一帰属 (~43 GiB の
+  解放源、annex/lake 変化を上回る) は未特定のまま Tier 2 継続。100% 飽和の
+  解消事実は確定、次反復で disk-avail 50 Gi でのフルスイート実行 (falsify-17
+  の最小 avail 閾値実測) が現実的 (evidence/2026-09-06-falsify-31.md)。
+
 
 ## === NEXT ===
 
