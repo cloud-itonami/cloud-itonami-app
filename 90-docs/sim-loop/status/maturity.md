@@ -11,7 +11,7 @@
 |---|---|---|
 | spec/契約 | 3 | ADR 24 本 (+ ADR-2607254000 の Tier 境界)、commands.edn に 208 コマンドの解決/path-param 契約 (flags は hint で値スキーマなし — falsify-10 実測: プレースホルダ 128 すべてに `:in "path"` 宣言、欠落 0、408=208+70+130 整合)。route 再スキャン vs レジストリの機械検証テスト実在 (commands_test 16 deftest)。値スキーマ (型/必須性) の機械検証は生成 registry の flags では未整備のまま (falsify-56: 123/123 plain string、値スキーマ flag 0) だが、別名レジストリ cli-aliases.edn は `:flag`/`:required?`/`:parse`/`:default` の値スキーマを持ち cli_aliases_test の `body-specs-use-known-vocabulary` 等で機械検証済み (falsify-56 で「未整備」の全面主張を REFUTED、resolver は alias 優先 — commands.cljc:334-349) |
 | 実装 | 3 | src 240 ファイル (head 679572b、falsify-62 実測)、全主要面 (bots/webhook/hermes-compat/store) 実装済み。virtual-shell は per-bot opt-in (デフォルト off) の完全実装の能力で、ライブディスパッチ (bots.clj:2511,3012) / write ゲート (bots.clj:2671) / describe / テスト 5 deftest 揃い、west-refactor 移行の必須前提 (cli.clj:670 `virtual-shell-ready?`) に利用 — falsify-57 で「未活性」の blanket 記述は REFUTED。本ホストは docker ABSENT のため実行時 available? は false (コード活性・実行層は本ホスト不可) |
-| テスト | 3 | test 243 ファイル (head 679572b、falsify-62 実測)。フルスイートが異なるリビジョンで完走: falsify-6 (bde2171)、falsify-7 (2bca892、約45分)、falsify-14 (clean HEAD、1 failure = 赤-4 のみ)、falsify-15 (負荷下 2292 tests / 13880 assertions / 1 failure = 赤-4 のみ)、**falsify-16 (merged main 1905580、負荷下 2292 tests / 13929 assertions / 0 failures EXIT=0)**。決定論的赤 0、flake 修理 (赤-5、PR #280) 着地済み。3 止まりの根拠: flake リトライ機構なし、OPEN 赤-4 未解決、テスト実行がディスク飽和に脆弱 (falsify-16/17)。**falsify-62 で新規決定論的赤を実測**: 現 anchor head 5e3aac9 で bundle_test ×2 FAIL / graph_test 1 ERROR (published-lock が bundle 内容変化後未再発行)、falsify-38 (cc7a17d) の 0 failures からの新規出現で「決定論的赤 0」は現在形として不成立 — 詳細は falsify-62 追記 |
+| テスト | 3 | test 243 ファイル (head 679572b、falsify-62 実測)。フルスイートが異なるリビジョンで完走: falsify-6 (bde2171)、falsify-7 (2bca892、約45分)、falsify-14 (clean HEAD、1 failure = 赤-4 のみ)、falsify-15 (負荷下 2292 tests / 13880 assertions / 1 failure = 赤-4 のみ)、**falsify-16 (merged main 1905580、負荷下 2292 tests / 13929 assertions / 0 failures EXIT=0)**。決定論的赤 0、flake 修理 (赤-5、PR #280) 着地済み。3 止まりの根拠: flake リトライ機構なし、OPEN 赤-4 未解決、テスト実行がディスク飽和に脆弱 (falsify-16/17)。**falsify-62 で新規決定論的赤を実測**: 現 anchor head 5e3aac9 で bundle_test ×2 FAIL / graph_test 1 ERROR (published-lock が bundle 内容変化後未再発行)、falsify-38 (cc7a17d) の 0 failures からの新規出現で「決定論的赤 0」は現在形として不成立 — 詳細は falsify-62 追記。**falsify-63 (現 tip 679572b) でスイートがコンパイル不能 (より深刻)**: 679572b java.net.http→kotoba transport migration が identity.clj の ns 形式を破損 ((:import opener 削除 + 5 裸 java ベクタ) — plain require が `Syntax error macroexpanding ns ... identity.clj:1:1` (EXIT 1) で死に、identity を transitively に pull する全テストが load 段階で停止 → 現 tip では assertion を 1 つも実行できない (falsify-62 の 2f+1e 計測は migration 前 5e3aac9 で到達不能)。修理 = identity.clj ns の (:import 復元 (Tier 2 kanban/human) |
 | 反証 | 3 | falsify-1〜26 を evidence/ に記録。falsify-9: 赤-2「KeepAlive 欠如で silent-dead」説を反証 (主因は ops-classpath.sh が upstream の authority.scope 追加に未追従で nbb ロード即死)。falsify-10: spec 軸主張を「解決/path-param 契約 (値スキーマなし)」に範囲修正。falsify-11: 赤-2 案 A「classpath 修正で復旧」説を反証試行 — 決定論的依存連鎖を段階実測、案 A の 3 src 追加が必須十分と確認し expiry-alert.cljs rc=0 まで完全復旧を実測 → 精緻化付きで SURVIVED。検証の终点は rc=0、plist 再 bootstrap が必須条件。falsify-12: テスト軸「赤-5 flake は時間切れ型のみ」説 → survived、3 bound 非同期設計を競合窓として同定。falsify-14 (2026-09-05): リスク-2 dirty 前提を REFUTED (本体 main clean 実測)。falsify-16 (2026-09-05): 「着地後の負荷下完走で flake サイトが赤になる」説 → survived (merged main 1905580 で 0 failures 実測、OPEN 赤-5 CLOSED)。falsify-17 (2026-09-05): 「falsify-16 の cache 整理でディスク満杯は解消 (一回性)」説を REFUTED — 同日中に /System/Volumes/Data が 100% / avail 1.9Gi に再飽和を実測、ディスク飽和は再発性の構造リスクと確定 (evidence/2026-09-05-falsify-17.md)。falsify-18 (2026-09-06): falsify-17 の「増加源は du 到達範囲外の可能性」説を反証 — du 実測で支配項を m365-archive/onedrive 133G に帰属確定 (survived→帰属確定)、expiry-alert not running / runs=0 を再実測 (evidence/2026-09-06-falsify-18.md) 。falsify-23 (2026-09-06): 「滞留世代は manifest-rev 参照解放で回収可能」説を REFUTED — manifest-rev=51d4010c (west update 管理) は resident/dns-resolver の祖先で解放しても annex 参照は残る、真の参照元は resident branch の ingest 履歴 (evidence/2026-09-06-falsify-23.md)。falsify-25 (2026-09-06): 滞留の参照元を resident 現在ツリー (data/ledger/) へ帰属修正 (unused ⊆ resident 現在ツリー 100%、detached HEAD 説反証)。falsify-26 (2026-09-06): 増加後も帰属が生存することを再確認 (SURVIVED)。falsify-28 (2026-09-06): 増加継続下 (unused 3372 / 43.27 GiB) でも帰属生存を再確認、滞留全件が resident 現在ツリー参照 (∩ 100%)。falsify-29 (2026-09-06): 増加継続下 (unused 3385 / 43.44 GiB、falsify-28 比 +13 keys / +0.17 GiB) でも帰属生存を再確認、滞留全件が resident 現在ツリー参照 (∩ 100%、unused−resident=0)。falsify-30 (2026-09-06): 増加継続下 (unused 3398 / 43.61 GiB、+13 keys / +0.17 GiB) でも帰属生存を再確認 (∩ 100%、unused−resident=0)。併せて「avail 反発は増加源の停止/減速を反映」説を REFUTED — 増加源 (export_and_sync.cljs PID 82336) が稼働中のまま avail が 1.5Gi→6.6〜7.8Gi へ回復したことを直接観測 (evidence/2026-09-06-falsify-30.md)。falsify-31 (2026-09-06): 増加継続下でも帰属生存を再確認 (unused 3427 / 43.99 GiB、∩ 100%、unused−resident=0)。併せて avail が 50 Gi / 95% へ大回復し増加源 (PID 82336) が ps で自然停止したことを直接観測 (「停止→回復」は充分条件でなく単一帰属は未特定 — falsify-30 の反証が有効) |
 | 反証候補falsify30PLACEHOLDER
 | 再現性 | 3 | launchd で server/host/tick は再現稼働。releases/ 全 77 ツリーが対応 git commit と byte 完全一致 (falsify-3 実測、2026-09-03) — 測定対象消滅 (falsify-50 REFUTED、~/.cloud-itonami/releases 不存在・運行は source classpath/配布は GitHub Releases ed25519 署名 manifest 検証・version 0.5.7)。ただし不変性は運用規約のみで OS 強制なし |
@@ -620,3 +620,37 @@ fail モードの実例) が残り `git worktree remove` が Permission denied �
 porcelain clean (dirty 0)、本 bot は touch せず wt-msloop のみで完結。7-軸表 16 行目
 孤立行 `| 反証候補falsify30PLACEHOLDER` と falsify-46 mid-sentence cut は残存のまま
 (operator 復旧待ち、append-only)。(evidence/2026-09-07-falsify-62.md)
+
+
+## NEXT (falsify-63 追記、append-only)
+
+**falsify-63 (2026-09-08、テスト/実装 軸) で「current HEAD (tip) はビルド可能でスイートを
+実行・計測できる」を REFUTED — 現 tip 679572b は identity.clj の ns 形式破損で全テストが
+コンパイル段階で停止**: 本体から独立した detached worktree `/private/tmp/mt-msloop63`
+(head 679572b、本体 checkout 未 touch) で `clojure -M:test -e "(println :env-ok)"` /
+`-e "(require 'cloud.itonami.app.bundle)...)"` / plain `clojure -e "(require
+'cloud.itonami.app.identity)...)"` を実行 → 全て **`Syntax error macroexpanding
+clojure.core/ns at (cloud/itonami/app/identity.clj:1:1)` / `java.nio.charset - failed:
+#{:refer-clojure ...}` で EXIT_RC=1** (:test 設定に依存せず、ソースファイル自体の問題)。
+根因: 679572b java.net.http→kotoba transport migration (35 files) が identity.clj の
+ns から `(:import` opener と最初の 2 行 (`[java.net URI URLEncoder]` /
+`[java.net.http ...]`) を削除する際、残り 5 本の `[java.* ...]` import ベクタ
+(java.nio.charset / java.security / java.time / java.util / java.util.concurrent) を
+**裸 (ns 直下の clause として) に取り残した** (`git show 5e3aac9` では正しい
+`(:import ...)` 形式、`git show 679572b` では裸ベクタ 5 本で `:ns-clauses` spec fail)。
+migration 対象 36 ファイルの機械走査で **identity.clj のみ** が `NO-IMPORT bare=5
+MALFORMED` (他 35 ファイルは `:import` 形式維持)。影響: identity を直接 require する
+src 24 ファイル + test-runner が transitively に pull し、**現 tip では assertion が
+1 つも実行できない** — falsify-62 の「2f + 1e」計測 (5e3aac9, migration 前、2342 tests
+完走) は現 tip では到達不能、falsify-61/62 の加加点 green 判定も測定不能。テスト軸・
+実装軸の score は 3 のまま (重大な新規赤の記録であり質的反証。file-count src 240 /
+test 243 (tip 679572b) 自体は正しいが「決定論的赤 0」「suite 実行可」は現 tip で不成立)。
+新規 OPEN 赤候補 (Tier 2, severity 高): identity.clj の ns 修復 — 5 ベクタを
+`(:import ...)` で wrap (`[java.nio.charset StandardCharsets]` の直前に `(:import` 復元、
+`[java.net ...]` 2 行は migration 目的に沿って生かさない)。着地は本体 checkout 編集 +
+テスト緑確認が必要で kanban/human 判断 (Tier 2)。修理後の次測定は falsify-62 の
+bundle/graph 赤 (bundle published-lock 再発行) の解消確認。附帯: 本体 checkout は反復中
+porcelain clean (dirty 0)、本 bot は touch せず wt-msloop のみで完結、実行 worktree は
+削除・worktree list から消滅確認。7-軸表 16 行目孤立行 `| 反証候補falsify30PLACEHOLDER`
+と falsify-46 mid-sentence truncate は残存のまま (operator 復旧待ち、append-only)。
+(evidence/2026-09-08-falsify-63.md)
