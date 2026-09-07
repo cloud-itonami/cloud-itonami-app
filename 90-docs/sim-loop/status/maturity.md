@@ -654,3 +654,32 @@ porcelain clean (dirty 0)、本 bot は touch せず wt-msloop のみで完結�
 削除・worktree list から消滅確認。7-軸表 16 行目孤立行 `| 反証候補falsify30PLACEHOLDER`
 と falsify-46 mid-sentence truncate は残存のまま (operator 復旧待ち、append-only)。
 (evidence/2026-09-08-falsify-63.md)
+
+## NEXT (falsify-64 追記、append-only)
+
+**falsify-64 (2026-09-08、テスト/実装 軸) で「現 tip のビルド不能状態は解決されている
+(identity.clj ns は有効な (:import) を持ちスイートは再コンパイルできる)」を REFUTED —
+falsify-63 の build-broken current tip が現 HEAD で未着地のまま生存**: HEAD =
+origin/HEAD = **679572b** (rev-parse 実測、falsify-63 と同一、`679572b..origin/HEAD` = 0
+commits で修理 commit 不存在)。`git show HEAD:src/cloud/itonami/app/identity.clj` で
+`(:import` opener **0** / 裸 `[java.*` ベクタ **5** (30-34 行、`:require [...oauth])` 直後に
+wrap されず残存) — falsify-63 の malformation と git object レベルで完全一致。本体から独立
+した detached worktree `/private/tmp/mt-msloop64` (head 679572b、本体 checkout 未 touch) で
+`clojure -M:test -e "(require 'cloud.itonami.app.identity)...")` → **`Syntax error
+macroexpanding clojure.core/ns at (cloud/itonami/app/identity.clj:1:1)` /
+`java.nio.charset - failed: #{:import}` EXIT_RC=1** (falsify-63 と同一エラーを完全再現)。
+副次: origin/jvm-host-transport (00622eb) も裸ベクタ 5 (migration 流に破損)、
+origin/agent/fix-open-red-5-three-bound (9e5b24a, migration 前) は `(:import` 付き正当 6 本。
+テスト軸・実装軸の score は 3 のまま (重大な新規赤の継続 = 質的反証、修理未着地で
+「決定論的赤 0」「suite 実行可」は現 tip で依然不成立。file-count src 240 / test 243
+(tip 679572b, falsify-62) は HEAD 前進なしで不変)。新規 OPEN 赤候補 (Tier 2, severity 高、
+falsify-63 のまま) : identity.clj ns の 5 ベクタを `(:import ...)` で wrap する修理
+(`[java.nio.charset StandardCharsets]` の直前に `(:import` 復元、`[java.net ...]` 2 行は
+migration 目的に沿って生かさない)。着地は本体 checkout 編集 + テスト緑確認で
+kanban/human 判断 (Tier 2)、本 bot は本体を touch しない。修理後の次測定は falsify-62 の
+bundle/graph 赤 (bundle published-lock 再発行) の解消確認。附帯: 本体 checkout は反復中
+porcelain clean (dirty 0)、本 bot は touch せず wt-msloop のみで完結。実行 worktree
+/tmp/mt-msloop64 は削除・worktree list から消滅確認 (falsify-62 の annex read-only 残骸は
+本 head では発生せず remove --force で即時削除)。7-軸表 16 行目孤立行
+`| 反証候補falsify30PLACEHOLDER` と falsify-46 mid-sentence truncate は残存のまま
+(operator 復旧待ち、append-only)。(evidence/2026-09-08-falsify-64.md)
