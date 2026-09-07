@@ -1,0 +1,40 @@
+;; BOT SLO's recovery-points DECISION CORE — how many stability points a
+;; partition earns from how many stale (never-completed) runs it currently
+;; holds.
+;;
+;; `bot_slo.clj` scores a partition out of stability components, and the
+;; recovery limb is the judgement that reduces to a small map from a stale-run
+;; count to points: the fewer stale jobs, the better the recovery picture.
+;;
+;; ## The ladder, as bot_slo.clj states it
+;;
+;;     0 stale runs    -> 15 points
+;;     1 stale run     -> 11 points
+;;     2 stale runs    ->  8 points
+;;     >= 3            ->  5 points
+;;
+;; There is no partial credit: a count falls in exactly one bucket. The input
+;; is `:i64` (a count), the output is `:f64` — intentionally spelled as the
+;; host's `15.0/11.0/8.0/5.0` so the stability sum downstream stays in f64
+;; space (see the sibling `bot_slo_latency_core` for the measured fact that
+;; :f64 participates in the :wasm32 parity target but the native backends
+;; refuse typed :f64 values — this core is likewise wasm-crossable, not
+;; native-crossable).
+;;
+;; Parity: test/cloud/itonami/app/bot_slo_recovery_kotoba_parity_test.clj
+
+(ns bot-slo-recovery-core
+  (:export [recovery-points]))
+
+(defn recovery-points [stale :i64] :f64
+  ;; Exact buckets, matching the host's `case` (which falls through to the
+  ;; default for any non-listed value — including a negative one). A `case`
+  ;; is equality, not a `<=` ladder, and the parity test holds this exact
+  ;; shape so a comparison mistake cannot hide.
+  (if (= stale 0)
+    15.0
+    (if (= stale 1)
+      11.0
+      (if (= stale 2)
+        8.0
+        5.0))))
