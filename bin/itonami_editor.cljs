@@ -330,7 +330,7 @@
     (loop [i 0 start 0 w 0 out []]
       (if (>= i len)
         (conj out {:start start :end i :text (subs s start i)})
-        (let [cw (if (text/wide? (.codePointAt s i)) 2 1)]
+        (let [cw (text/glyph-columns (.codePointAt s i))]
           (if (> (+ w cw) n)
             (recur i i 0 (conj out {:start start :end i :text (subs s start i)}))
             (recur (inc i) start (+ w cw) out)))))))
@@ -395,6 +395,40 @@
         gap (max 1 (- width (text/display-width left) (text/display-width right)))]
     (str painted (.repeat " " gap) right)))
 
+(defn elapsed
+  "`ms` as a person reads a wait: seconds under a minute, minutes and seconds
+  over one, hours and minutes over an hour."
+  [ms]
+  (let [total (quot (max 0 ms) 1000)
+        h (quot total 3600)
+        m (quot (rem total 3600) 60)
+        sec (rem total 60)]
+    (cond
+      (pos? h) (str h "h " m "m")
+      (pos? m) (str m "m " sec "s")
+      :else (str sec "s"))))
+
+(def spinner-frames ["\u2733" "\u2734" "\u2735" "\u2736" "\u2737" "\u2738" "\u2739"])
+
+(defn progress-line
+  "The one line shown while a run is in flight.
+
+  It says what the RUN reported (its phase), how long it has been going, and
+  what the stream has actually delivered. Every part of it is something that
+  arrived: there is no estimate here, and no percentage, because the server
+  does not send one and inventing it would be the only untrue thing on the
+  screen."
+  [{:keys [phase ms tick tokens colour accent-code dim-code interruptible?]} width]
+  (let [p #(text/paint colour %1 %2)
+        glyph (nth spinner-frames (mod (or tick 0) (count spinner-frames)))
+        label (or (not-empty (str phase)) "working")
+        detail (cond-> [(elapsed (or ms 0))]
+                 (and tokens (pos? tokens)) (conj (str "\u2193 " tokens " tokens"))
+                 interruptible? (conj "esc \u3067\u4e2d\u65ad"))
+        line (str (p accent-code (str glyph " " label "\u2026 "))
+                  (p dim-code (str "(" (str/join " \u00b7 " detail) ")")))]
+    (text/truncate line (max 8 width))))
+
 (defn render
   "The rows to draw and where the caret goes.
 
@@ -411,7 +445,7 @@
         cw (max 8 (- width pw 1))
         rows (visual-rows state cw)
         [vr vc] (caret rows state)
-        rule (text/paint colour dim-code (.repeat "─" width))
+        rule (text/paint colour dim-code (text/rule "─" width))
         body (map-indexed
               (fn [i {:keys [text]}]
                 (str (text/paint colour accent-code (if (zero? i) prompt continuation))

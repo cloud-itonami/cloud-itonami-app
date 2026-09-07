@@ -595,6 +595,90 @@
                                   (ex-data e)))))))
 
 ;; ---------------------------------------------------------------------------
+;; the terminal, and the line that runs under a turn (ADR-2609071000)
+;;
+;; These sit above the agent loop because the loop writes through them: the
+;; progress line owns one terminal row, and everything that writes to the
+;; screen during a run has to take it off first.
+;; ---------------------------------------------------------------------------
+
+(def ^:private esc (js/String.fromCharCode 27))
+
+(defn- out! [s] (js/process.stdout.write (str s)))
+
+(defn- tty? []
+  (boolean (.-isTTY js/process.stdout)))
+
+(defn- colour? []
+  (and (tty?)
+       (str/blank? (str (aget js/process.env "NO_COLOR")))
+       (not= "dumb" (aget js/process.env "TERM"))))
+
+(defn- term-width []
+  ;; One column short of the terminal on purpose: a row that exactly fills the
+  ;; width makes the terminal wrap it on its own, and then every row below the
+  ;; input is one off and the frame tears on the next redraw.
+  (max 24 (dec (or (.-columns js/process.stdout) 80))))
+
+(def ^:private progress
+  "The live line under a run. It owns one terminal row; everything else that
+  writes has to take it off first, or it writes across it."
+  (atom {:on? false :timer nil :tick 0 :phase nil :started 0 :tokens 0}))
+
+(defn- progress-off! []
+  (let [{:keys [on? timer]} @progress]
+    (when timer (js/clearTimeout timer))
+    (when on? (out! (str "\r" esc "[2K")))
+    (swap! progress assoc :on? false :timer nil)))
+
+(defn- progress-paint! []
+  (when (:on? @progress)
+    (let [{:keys [tick phase started tokens]} @progress
+          skin ((:skin ctx-theme))]
+      (out! (str "\r" esc "[2K"
+                 (editor/progress-line
+                  {:phase phase :ms (- (js/Date.now) started) :tick tick
+                   :tokens tokens :interruptible? true :colour (colour?)
+                   :accent-code (or (:accent-code skin) splash/accent-code)
+                   :dim-code (or (:dim-code skin) splash/dim-code)}
+                  (term-width)))))))
+
+(defn- progress-tick! []
+  (when (:on? @progress)
+    (swap! progress update :tick inc)
+    (progress-paint!)
+    (swap! progress assoc :timer (js/setTimeout progress-tick! 120))))
+
+(defn- progress-on! []
+  (when-not (:on? @progress)
+    (reset! progress {:on? true :timer nil :tick 0 :phase nil
+                      :started (js/Date.now) :tokens 0})
+    (progress-tick!)))
+
+(defn- progress-resume!
+  "Put the line back after something else used the row. The clock is NOT
+  restarted: the run has been going the whole time, and a timer that reset
+  every time a tool logged would report a wait that never happened."
+  []
+  (when (and (pos? (:started @progress)) (not (:on? @progress)))
+    (swap! progress assoc :on? true)
+    (progress-tick!)))
+
+(defn- progress-say!
+  "Name the phase the run reported. Only what arrived: the server sends phases,
+  not percentages, and a bar filling on a timer would be the one thing on this
+  screen that nothing measured."
+  [phase]
+  (when (:on? @progress)
+    (swap! progress assoc :phase phase)
+    (progress-paint!)))
+
+(defn- progress-add-tokens! [n]
+  (when (and (:on? @progress) (number? n))
+    (swap! progress update :tokens + n)))
+
+
+;; ---------------------------------------------------------------------------
 ;; chat — the agent loop: /v1/runs + SSE, the hermes-compat surface
 ;; ---------------------------------------------------------------------------
 
@@ -632,31 +716,50 @@
                    ;; nothing reads -- a switch that reports "on" and changes
                    ;; nothing is worse than no switch.
                    (when (and @(:verbose ctx-chat) (not= "assistant.delta" kind))
-                     (chat-emit (str "\n" ((:stamp ctx-chat)) "┊ " kind
+                     (progress-off!)
+                     (chat-emit (str ((:stamp ctx-chat)) "┊ " kind
                                      (when-let [p (:phase ev)] (str " " p))
                                      (when-let [t (:tool ev)] (str " " t))
-                                     "\n")))
+                                     "\n"))
+                     (progress-resume!))
+                   ;; What the run says it is doing, and what it has spent.
+                   ;; Both arrived on the stream; neither is estimated.
+                   (when-let [ph (or (:phase ev)
+                                     (when (str/starts-with? (str kind) "run.")
+                                       (subs (str kind) 4)))]
+                     (progress-say! ph))
+                   (when-let [u (:usage ev)]
+                     (progress-add-tokens! (or (:completion_tokens u)
+                                               (:output_tokens u) 0)))
                    (cond
                      (= "assistant.delta" kind)
+                     ;; From the first delta the answer owns the screen, and
+                     ;; the progress line does not come back: it would
+                     ;; interleave with the text it was waiting for.
+                     ;;
                      ;; The server's delta shape is not contractual: runs have
                      ;; been observed both accumulated (each delta the full
                      ;; text so far) and incremental. Handle both — a delta
                      ;; that extends what was printed prints its tail; one
                      ;; that does not is an increment appended to it.
-                     (let [delta (str (:delta ev))
-                           seen (str @printed)]
-                       (cond
-                         (str/blank? delta) nil
-                         (and (<= (.-length seen) (.-length delta))
-                              (= 0 (.indexOf delta seen)))
-                         (do (reset! printed delta)
-                             (js/process.stdout.write (.slice delta (.-length seen))))
-                         :else
-                         (do (reset! printed (str seen delta))
-                             (js/process.stdout.write delta))))
+                     (do
+                       (progress-off!)
+                       (swap! progress assoc :started 0)
+                       (let [delta (str (:delta ev))
+                             seen (str @printed)]
+                         (cond
+                           (str/blank? delta) nil
+                           (and (<= (.-length seen) (.-length delta))
+                                (= 0 (.indexOf delta seen)))
+                           (do (reset! printed delta)
+                               (js/process.stdout.write (.slice delta (.-length seen))))
+                           :else
+                           (do (reset! printed (str seen delta))
+                               (js/process.stdout.write delta)))))
 
                      (= "run.completed" kind)
-                     (do (swap! out assoc :status "completed"
+                     (do (progress-off!)
+                         (swap! out assoc :status "completed"
                                 :output (or (:output ev) "") :usage (:usage ev))
                          (js/process.stdout.write "\n")
                          (finish))
@@ -668,7 +771,8 @@
                      ;; keeps reading and prints the continuation's tail and
                      ;; terminal event when the decision resumes the run.
                      (= "run.waiting_approval" kind)
-                     (do (reset! chat-approval {:card (:card ev) :tool (:tool ev)
+                     (do (progress-off!)
+                         (reset! chat-approval {:card (:card ev) :tool (:tool ev)
                                                 :run-id run-id})
                          (swap! out assoc :status "waiting-approval"
                                 :approval {:card (:card ev) :tool (:tool ev)
@@ -691,7 +795,8 @@
                              " — /approve で許可、/deny で拒否\n")))
 
                      (contains? #{"run.failed" "run.cancelled" "run.stopped"} kind)
-                     (do (swap! out assoc :status (subs kind 4) :error (:error ev))
+                     (do (progress-off!)
+                         (swap! out assoc :status (subs kind 4) :error (:error ev))
                          (when (:error ev) (chat-emit (str "\nerror: " (:error ev) "\n")))
                          (finish))
 
@@ -1132,14 +1237,6 @@
 ;; the start screen (ADR-2609062240)
 ;; ---------------------------------------------------------------------------
 
-(defn- tty? []
-  (boolean (.-isTTY js/process.stdout)))
-
-(defn- colour? []
-  (and (tty?)
-       (str/blank? (str (aget js/process.env "NO_COLOR")))
-       (not= "dumb" (aget js/process.env "TERM"))))
-
 (defn- session-origin
   "Where the session token came from, or that there is none.
 
@@ -1224,10 +1321,6 @@
 ;; comes out of `editor/render`, so there is one place that knows the geometry.
 ;; ---------------------------------------------------------------------------
 
-(def ^:private esc (js/String.fromCharCode 27))
-
-(defn- out! [s] (js/process.stdout.write (str s)))
-
 (def ^:private input-block
   "How the input area is sitting on the screen right now: how many rows it
   occupies, and how far the cursor is below its first row. Both are needed to
@@ -1235,12 +1328,6 @@
   (atom {:rows 0 :caret-row 0 :drawn? false}))
 
 (def ^:private repl-history (atom []))
-
-(defn- term-width []
-  ;; One column short of the terminal on purpose: a row that exactly fills the
-  ;; width makes the terminal wrap it on its own, and then every row below the
-  ;; input is one off and the frame tears on the next redraw.
-  (max 24 (dec (or (.-columns js/process.stdout) 80))))
 
 (defn- erase-input! []
   (when (:drawn? @input-block)
@@ -1277,10 +1364,34 @@
                                                          :status (status-for false)))
         [caret-row caret-col] caret
         n (count rows)]
-    (out! (str/join "\n" rows))
-    (out! (str "\r"
-               (when (> (dec n) caret-row) (str esc "[" (- (dec n) caret-row) "A"))
-               (when (pos? caret-col) (str esc "[" caret-col "C"))))
+    (out!
+     (str
+      ;; Cursor off for the redraw, so it is not seen walking the frame.
+      esc "[?25l"
+      ;; AUTO-WRAP OFF. This is what makes the row count true.
+      ;;
+      ;; Every row here is built to fit, but "fits" is this program's opinion
+      ;; of how wide a glyph is, and UAX#11 leaves that to the terminal for
+      ;; U+276F, U+25B6, U+00B7 and all of box drawing. When the opinion is one
+      ;; column short the row wraps, the block then occupies more terminal rows
+      ;; than were counted, the next erase moves up too few, and the input area
+      ;; walks down the screen leaving copies of itself.
+      ;;
+      ;; Measured 2026-09-07 by making every row twelve columns too wide: that
+      ;; is exactly what happens, and it is what the operator saw as
+      ;; `カーソルが動かない` and `入力エリアが消えてしまう`. With wrap off the
+      ;; terminal clips instead -- a mismeasured glyph costs a clipped
+      ;; character, not a broken screen. Re-measured with the same twelve
+      ;; columns after: four rows, intact.
+      esc "[?7l"
+      ;; `[2K` per row rather than trusting the `[0J` above to have reached
+      ;; every column of every row the last frame used.
+      (str/join "\r\n" (map #(str esc "[2K" %) rows))
+      esc "[?7h"
+      "\r"
+      (when (> (dec n) caret-row) (str esc "[" (- (dec n) caret-row) "A"))
+      (when (pos? caret-col) (str esc "[" caret-col "C"))
+      esc "[?25h"))
     (reset! input-block {:rows n :caret-row caret-row :drawn? true})))
 
 (defn- echo-submitted!
@@ -1295,6 +1406,38 @@
         cont (or (:continuation skin) (.repeat " " (text/display-width prompt)))]
     (doseq [[i line] (map-indexed vector (str/split-lines text))]
       (println (str (text/paint colour accent (if (zero? i) prompt cont)) line)))))
+
+(defn- measure-ambiguous-columns!
+  "Ask the terminal how wide it draws U+276F, and believe the answer.
+
+  Print the glyph at a known column, ask where the cursor ended up with
+  `ESC[6n`, subtract. A terminal that does not answer within the timeout leaves
+  the default standing, and says so: an unanswered query must not read as an
+  answer of 1 (CLAUDE.md's second question)."
+  []
+  (js/Promise.
+   (fn [resolve _]
+     (if-not (and (.-isTTY js/process.stdin) (.-isTTY js/process.stdout))
+       (resolve {:measured? false :columns @text/ambiguous-columns})
+       (let [done (atom false)
+             timer (atom nil)
+             finish (fn [answer]
+                      (when-not @done
+                        (reset! done true)
+                        (when @timer (js/clearTimeout @timer))
+                        (.removeAllListeners js/process.stdin "data")
+                        (out! (str "\r" esc "[2K"))
+                        (resolve answer)))
+             on-data (fn [chunk]
+                       (when-let [m (re-find #"\[([0-9]+);([0-9]+)R" (str chunk))]
+                         (finish {:measured? true
+                                  :columns (text/set-ambiguous-columns!
+                                            (dec (js/parseInt (nth m 2))))})))]
+         (.on js/process.stdin "data" on-data)
+         (reset! timer (js/setTimeout
+                        #(finish {:measured? false :columns @text/ambiguous-columns})
+                        300))
+         (out! (str "\r" esc "[2K" "\u276f" esc "[6n")))))))
 
 (defn- raw-mode! [on?]
   (when (.-isTTY js/process.stdin)
@@ -1350,7 +1493,9 @@
   a function that takes the watch off again."
   [run-id stopped]
   (let [said (atom false)
-        say (fn [text] (println (str "\n" (text/paint (colour?) splash/dim-code text))))
+        say (fn [text]
+              (progress-off!)
+              (println (text/paint (colour?) splash/dim-code text)))
         on-data
         (fn [chunk]
           (when (and (not @said)
@@ -1418,6 +1563,9 @@
               (reset! (:last-input ctx-chat) t)
               (let [stop-watch (atom nil)
                     stopped (atom false)]
+                ;; Up before the POST, so the wait for the server to accept the
+                ;; run is on the screen too -- that is part of the wait.
+                (when tty? (progress-on!))
                 (-> (request! {:method :post :path "/v1/runs"
                                :body {:input t :profile @chat-profile}
                                :timeout-seconds 30}
@@ -1431,6 +1579,7 @@
                                (refuse! (str "run を開始できません: HTTP " status)
                                         (select-keys body [:error])))))
                     (.then (fn [o]
+                             (progress-off!)
                              (when-let [off @stop-watch] (off))
                              (when-let [usage (:usage o)]
                                (chat-emit (str "· tokens: "
@@ -1446,7 +1595,10 @@
                                ;; A turn that failed on its own is a refusal,
                                ;; not a prompt for the next one.
                                :else (js/process.exit exit-refused))))
-                    (.catch (fn [e] (when-let [off @stop-watch] (off)) (die e))))))
+                    (.catch (fn [e]
+                              (progress-off!)
+                              (when-let [off @stop-watch] (off))
+                              (die e))))))
 
             (act [r t]
               (cond
@@ -1501,7 +1653,21 @@
   ;; a frame, the width is a guess, and the colour would be bytes in somebody's
   ;; log -- so that case keeps the one line it had.
   (if (tty?)
-    (-> (print-splash!) (.then chat-repl!))
+    ;; Ask the terminal how wide it draws an ambiguous glyph BEFORE the first
+    ;; frame: every width on the screen after this depends on the answer, and
+    ;; the probe needs raw mode, which the editor turns on for good anyway.
+    (-> (js/Promise.resolve)
+        (.then (fn [_]
+                 (raw-mode! true)
+                 (.setEncoding js/process.stdin "utf8")
+                 (.resume js/process.stdin)
+                 (measure-ambiguous-columns!)))
+        (.then (fn [m]
+                 (when-not (:measured? m)
+                   (err (str "itonami: 端末が文字幅を答えませんでした。"
+                             "ambiguous 幅 " (:columns m) " で続けます。")))
+                 (print-splash!)))
+        (.then chat-repl!))
     (do (println (str (:banner ((:skin ctx-theme)))
                       "  profile: " @chat-profile " (" (profile-source) ")"
                       " — /help で一覧、exit で終了"))

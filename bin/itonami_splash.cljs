@@ -99,8 +99,8 @@
         ;; "│" + " " + inner + "│", which is inner + 3.
         fill (max 0 (- inner (display-width title) 2))
         top (str (dim "╭─ ") (paint color? accent-code title) " "
-                 (dim (.repeat "─" fill)) (dim "╮"))
-        bottom (str (dim "╰") (dim (.repeat "─" (inc inner))) (dim "╯"))]
+                 (dim (text/rule "─" fill)) (dim "╮"))
+        bottom (str (dim "╰") (dim (text/rule "─" (inc inner))) (dim "╯"))]
     (concat [top]
             (map (fn [l] (str (dim "│") " " (pad-right l inner) (dim "│"))) lines)
             [bottom])))
