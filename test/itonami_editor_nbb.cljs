@@ -589,5 +589,26 @@
     (is (some #(str/includes? % "/40") rows) "the panel did not say how much there is")
     (is (some #(str/includes? % "スクロール") rows))))
 
+
+;; ---------------------------------------------------------------------------
+;; the session cookie
+;; ---------------------------------------------------------------------------
+
+(deftest a-session-arrives-in-a-header-not-a-body
+  ;; The claim endpoint hands the session over as a Set-Cookie and sends a body
+  ;; that carries `:ready?` and nothing secret. A client reading only the body
+  ;; waits for a token that is never coming -- which is what it did, running
+  ;; the poll to its timeout with the person already signed in.
+  (let [h "cloud_itonami_identity=abc123XYZ; Path=/; HttpOnly; SameSite=Strict; Max-Age=1209600"]
+    (is (= "abc123XYZ" (text/cookie-value "cloud_itonami_identity" h))))
+  ;; several cookies in one header, and the wanted one not first
+  (is (= "tok" (text/cookie-value "cloud_itonami_identity"
+                                  "other=1; Path=/, cloud_itonami_identity=tok; HttpOnly")))
+  ;; a name that merely ENDS with the wanted one must not match
+  (is (nil? (text/cookie-value "cloud_itonami_identity"
+                               "x_cloud_itonami_identity=nope; Path=/")))
+  (is (nil? (text/cookie-value "cloud_itonami_identity" "")))
+  (is (nil? (text/cookie-value "cloud_itonami_identity" nil))))
+
 (let [{:keys [fail error]} (run-tests 'itonami-editor-nbb)]
   (js/process.exit (if (pos? (+ (or fail 0) (or error 0))) 1 0)))

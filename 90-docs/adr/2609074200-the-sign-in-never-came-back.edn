@@ -1,0 +1,78 @@
+[{:db/id -1
+  :adr/id "adr-2609074200-the-sign-in-never-came-back"
+  :adr/title "The sign-in never came back: no Origin, and the token was in a header"
+  :adr/status "accepted"
+  :adr/date "2026-09-07"
+  :adr/related "adr-2609073800-the-cli-can-get-a-passkey-session"
+  :adr/body "## The report
+
+「終わったけれど、戻ってきません」-- the sign-in completed in the browser and the
+CLI kept waiting.
+
+## Two bugs, both mine, both in the half I could not finish
+
+The flow I landed yesterday was verified as far as starting it: the URL came
+back, the browser opened, the poll ran. I said at the time that I could not
+complete the ceremony myself and that the completed login was unverified. Both
+faults are on the other side of that line.
+
+**The claim was never admitted.** `/api/auth/itonami/handoff` computes
+`{:origin-trusted? (same-origin? exchange config)}`, and `same-origin?`
+compares the request's `Origin` header against the server's own origin. The CLI
+sent none, so the claim could never be admitted and the endpoint answered
+`{:ready? false}` forever -- which is the same answer it gives a wrong guess,
+an early poll, a replay and an expiry, on purpose. Nothing in the response
+could tell the poller it was asking wrongly.
+
+Measured: no Origin → 403, wrong Origin → 403, `http://localhost:1338` → 200.
+The CLI now computes that value the way the server does (`:public-origin`, else
+host:port) rather than reusing `base-url`, which on this install is a different
+string (`127.0.0.1`) for the same server.
+
+**The token was never in the body.** On success the route sends
+`{:ready? :provider :linked?}` and puts the session in a `Set-Cookie` header --
+the way a browser is given one. The client read `(:token body)`, which does not
+exist. So even with the Origin right, the poll would have seen `:ready? true`
+and stored nothing.
+
+`request!` now returns `:set-cookie`, and `text/cookie-value` parses it. That
+parser is in `itonami-text` rather than the launcher so it can be tested: a
+cookie parser that quietly returns nothing is a sign-in that quietly never
+finishes. The control -- matching a name that merely ENDS with the wanted one
+-- fails the check by name.
+
+## What this says about the first attempt
+
+The flow was landed with its completion untested and a note saying so. The note
+was true and did not help: two bugs sat exactly there, and one of them
+(`:token` in the body) is visible in the route's own source, three lines from
+the `Set-Cookie` it sends instead.
+
+Reading the endpoint I was calling would have caught it. `I cannot run this
+end to end` is a reason to read the other side more carefully, not less.
+
+## WalletConnect is not a sign-in on this server, and cannot be made one here
+
+The ask was for wallet access as an alternative. Measured:
+
+- `POST /api/wallet/connect/start` calls `require-human-session!` before
+  anything else, then `identity/session-principal-id session` and refuses
+  without one.
+- `finish-connection!` checks the SIWE transaction against `(:user-id session)`
+  and `(:organization-id session)`.
+
+So SIWE here proves *this wallet belongs to the already-authenticated user*. It
+is an attachment, not an authentication -- there is no route that takes a
+signature from someone with no session and mints one.
+
+Adding that is a new authentication path into the identity system, and it needs
+answers this cannot invent: whether a wallet may CREATE an account or only sign
+in to one that already linked it; which User an unknown address maps to; what
+happens when an address is linked to two Users; whether a wallet session is
+`:kind :passkey` or something weaker, given `require-human-session!` is the
+money surface. Those are the owner's decisions, and getting them wrong is
+account takeover.
+
+So it is not built here. What is true today: sign in with the Passkey once, and
+the wallet can be attached after that through the routes that already exist.
+"}]
