@@ -7,13 +7,11 @@
   never persisted; only requirements and settlement receipts are retained."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.human-work :as human-work]
             [cloud.itonami.app.store :as store])
-  (:import [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
-           [java.nio.charset StandardCharsets]
-           [java.time Duration Instant]
+  (:import [java.nio.charset StandardCharsets]
+           [java.time Instant]
            [java.util Base64]))
 
 (def schema "cloud.itonami.app.human-work-x402.v1")
@@ -78,20 +76,20 @@
         (case provider
           :facilitator [(:facilitator-url settings) :facilitator-token-env]
           :operator [(:operator-url settings) :operator-token-env])
-        builder (-> (HttpRequest/newBuilder (URI/create (str base path)))
-                    (.timeout (Duration/ofSeconds 30))
-                    (.header "Accept" "application/json"))
-        _ (when-let [bearer (token settings token-field)]
-            (.header builder "Authorization" (str "Bearer " bearer)))
-        _ (when body (.header builder "Content-Type" "application/json"))
-        request (case method
-                  :get (.GET builder)
-                  :post (.POST builder (HttpRequest$BodyPublishers/ofString
-                                        (json/write-str body))))
-        response (.send (HttpClient/newHttpClient) (.build request)
-                        (HttpResponse$BodyHandlers/ofString))
-        status (.statusCode response)
-        parsed (try (json/read-str (.body response) :key-fn keyword)
+        headers (cond-> {"Accept" "application/json"}
+                  (token settings token-field)
+                  (assoc "Authorization" (str "Bearer " (token settings token-field))))
+        headers (if body
+                  (assoc headers "Content-Type" "application/json")
+                  headers)
+        response (http/request
+                  {:url (str base path)
+                   :method (case method :get :get :post :post)
+                   :timeout-seconds 30
+                   :headers headers
+                   :body (when body (json/write-str body))})
+        status (:status response)
+        parsed (try (json/read-str (:body response) :key-fn keyword)
                     (catch Exception _ nil))]
     (when-not (<= 200 status 299)
       (fail! :human-work/payment-provider-failed

@@ -27,6 +27,7 @@
             [cloud.itonami.app.mail-account :as account]
             [cloud.itonami.app.mail-gmail :as gmail]
             [cloud.itonami.app.mail-domain-authority :as mail-authority]
+            [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.mail-imap :as imap]
             [cloud.itonami.app.store :as store]
             [mail.message :as message]
@@ -195,20 +196,16 @@
                :ccRecipients (mapv #(hash-map :emailAddress {:address %})
                                    (emails (:mail/cc envelope)))}
               :saveToSentItems true}
-        request (-> (java.net.http.HttpRequest/newBuilder
-                     (java.net.URI/create
-                      "https://graph.microsoft.com/v1.0/me/sendMail"))
-                    (.header "Authorization" (str "Bearer " token))
-                    (.header "Content-Type" "application/json")
-                    (.POST (java.net.http.HttpRequest$BodyPublishers/ofString
-                            (json/write-str body)))
-                    .build)
-        response (.send (java.net.http.HttpClient/newHttpClient) request
-                        (java.net.http.HttpResponse$BodyHandlers/ofString))]
-    (when-not (<= 200 (.statusCode response) 299)
+        request {:url "https://graph.microsoft.com/v1.0/me/sendMail"
+                 :method :post
+                 :headers {"Authorization" (str "Bearer " token)
+                           "Content-Type" "application/json"}
+                 :body (json/write-str body)}
+        response (http/request request)]
+    (when-not (<= 200 (:status response) 299)
       (throw (ex-info "メールを送信できませんでした。"
                       {:type :mail/send-failed
-                       :status (.statusCode response)})))
+                       :status (:status response)})))
     ;; Graph's sendMail answers 202 with an empty body — it accepts the
     ;; message and does not name it. There is genuinely no provider id to
     ;; report here, and inventing one that looks like Graph's would be worse

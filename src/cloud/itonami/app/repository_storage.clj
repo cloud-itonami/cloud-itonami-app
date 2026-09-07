@@ -12,12 +12,10 @@
             [clojure.walk :as walk]
             [kagi.crypto :as crypto]
             [langchain.edn-persist :as edn-persist]
-            [kotobase.store :as kstore])
+            [kotobase.store :as kstore]
+            [cloud.itonami.app.http-client :as http])
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files StandardCopyOption]
-           [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
            [java.security MessageDigest]
            [java.util Base64 UUID]))
 
@@ -475,29 +473,24 @@
 ;; Kotobase head registry ---------------------------------------------------
 
 (defn- http-json!
-  [^HttpClient client endpoint token method body]
-  (let [request-builder (-> (HttpRequest/newBuilder)
-                            (.uri (URI/create
-                                   (str (str/replace endpoint #"/$" "")
-                                        "/xrpc/ai.gftd.apps.kotobase.encryptedGraph."
-                                        method)))
-                            (.header "content-type" "application/json")
-                            (.header "accept" "application/json"))
-        authorization (when (seq token)
-                        (if (or (str/starts-with? token "CACAO ")
-                                (str/starts-with? token "Bearer "))
-                          token
-                          (str "Bearer " token)))
-        request-builder (if authorization
-                          (.header request-builder "authorization" authorization)
-                          request-builder)
-        request (-> request-builder
-                    (.POST (HttpRequest$BodyPublishers/ofString
-                            (json/write-str body)))
-                    .build)
-        response (.send client request (HttpResponse$BodyHandlers/ofString))
-        status (.statusCode response)
-        response-body (json/read-str (.body response) :key-fn keyword)]
+  [endpoint token method body]
+  (let [headers (cond-> {"content-type" "application/json"
+                         "accept" "application/json"}
+                  (seq token)
+                  (assoc "authorization"
+                         (if (or (str/starts-with? token "CACAO ")
+                                 (str/starts-with? token "Bearer "))
+                           token
+                           (str "Bearer " token))))
+        response (http/request
+                  {:url (str (str/replace endpoint #"/$" "")
+                             "/xrpc/ai.gftd.apps.kotobase.encryptedGraph."
+                             method)
+                   :method :post
+                   :headers headers
+                   :body (json/write-str body)})
+        status (:status response)
+        response-body (json/read-str (:body response) :key-fn keyword)]
     (when-not (<= 200 status 299)
       (throw (ex-info "Kotobase encryptedGraph request failed"
                       {:type :repository-storage/kotobase-request-failed
@@ -508,7 +501,7 @@
   HeadRegistry
   (registry-snapshot [_ owner]
     (try
-      (let [body (http-json! client endpoint token "get" {:graph owner})
+      (let [body (http-json! endpoint token "get" {:graph owner})
             head-edn (get-in body [:manifest :blocks 0 :envelope :head_edn])]
         {:revision (long (or (:epoch body) 0))
          :head (when head-edn (decode-wire-string head-edn))
@@ -537,7 +530,7 @@
                              :actual-head (:head/cid actual-head)})))
           (let [epoch (inc actual-revision)
                 body (http-json!
-                      client endpoint token "put"
+                      endpoint token "put"
                       {:graph owner :epoch epoch
                        :expected_epoch actual-revision
                        :manifest
@@ -556,7 +549,7 @@
                  (string? token) (seq token))
     (throw (ex-info "Kotobase endpoint and bearer token are required"
                     {:type :repository-storage/kotobase-context-required})))
-  (->EncryptedGraphHeadRegistry endpoint token (HttpClient/newHttpClient)))
+  (->EncryptedGraphHeadRegistry endpoint token nil))
 
 (defn head-snapshot
   [store owner]

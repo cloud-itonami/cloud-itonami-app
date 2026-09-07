@@ -53,17 +53,8 @@
   :endpoint-not-configured, which is what it answered while it had no surface at
   all. See ADR-2607300300's remaining gaps."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str])
-  (:import [java.net URI]
-           [java.net.http HttpClient HttpClient$Redirect HttpRequest
-            HttpRequest$BodyPublishers HttpResponse$BodyHandlers]
-           [java.time Duration]))
-
-(defonce ^HttpClient client
-  (-> (HttpClient/newBuilder)
-      (.connectTimeout (Duration/ofSeconds 10))
-      (.followRedirects HttpClient$Redirect/NEVER)
-      (.build)))
+            [clojure.string :as str]
+            [cloud.itonami.app.http-client :as http]))
 
 (defn settings
   "The configured settings for one authority."
@@ -171,17 +162,16 @@
   [endpoint proposal header token]
   (try
     (let [body (proposal-envelope proposal)
-          request (-> (HttpRequest/newBuilder (URI/create (url endpoint "/commit")))
-                      (.timeout (Duration/ofSeconds 20))
-                      (.header "Accept" "application/json")
-                      (.header "Content-Type" "application/json")
-                      (cond-> token (.header header token))
-                      (.POST (HttpRequest$BodyPublishers/ofString
-                              (json/write-str body)))
-                      (.build))
-          response (.send client request (HttpResponse$BodyHandlers/ofString))
-          status (.statusCode response)
-          payload (decode (.body response))]
+          response (http/request
+                    {:url (url endpoint "/commit")
+                     :method :post
+                     :timeout-seconds 20
+                     :headers (cond-> {"Accept" "application/json"
+                                       "Content-Type" "application/json"}
+                                token (assoc header token))
+                     :body (json/write-str body)})
+          status (:status response)
+          payload (decode (:body response))]
       (cond
         (not (<= 200 status 299)) (refusal :transport-failed {:status status})
         (nil? payload) (refusal :transport-failed
@@ -196,16 +186,14 @@
   different authorities and different listeners."
   [endpoint reference header token]
   (try
-    (let [request (-> (HttpRequest/newBuilder
-                       (URI/create (url endpoint (str "/proposals/" reference))))
-                      (.timeout (Duration/ofSeconds 20))
-                      (.header "Accept" "application/json")
-                      (cond-> token (.header header token))
-                      (.GET)
-                      (.build))
-          response (.send client request (HttpResponse$BodyHandlers/ofString))
-          status (.statusCode response)
-          payload (decode (.body response))]
+    (let [response (http/request
+                    {:url (url endpoint (str "/proposals/" reference))
+                     :method :get
+                     :timeout-seconds 20
+                     :headers (cond-> {"Accept" "application/json"}
+                                token (assoc header token))})
+          status (:status response)
+          payload (decode (:body response))]
       (cond
         (not (<= 200 status 299)) (refusal :transport-failed {:status status})
         (nil? payload) (refusal :transport-failed

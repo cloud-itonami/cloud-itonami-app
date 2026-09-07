@@ -49,10 +49,8 @@
   ever printed after a read that succeeded."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str])
-  (:import [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers]
-           [java.time Duration]))
+            [clojure.string :as str]
+            [cloud.itonami.app.http-client :as http]))
 
 (def ^:private default-grok-base "https://itonami.cloud")
 (def ^:private http-timeout-seconds 20)
@@ -156,31 +154,27 @@
 
 ;; ── grok ─────────────────────────────────────────────────────────────────
 
-(defonce ^:private client
-  (delay (-> (HttpClient/newBuilder)
-             (.connectTimeout (Duration/ofSeconds 10))
-             (.build))))
-
 (defn- get-json [url token]
-  (let [builder (-> (HttpRequest/newBuilder (URI/create url))
-                    (.timeout (Duration/ofSeconds http-timeout-seconds))
-                    (.header "Accept" "application/json"))
-        _ (when token (.header builder "Authorization" (str "Bearer " token)))
-        response (try (.send @client (.build (.GET builder))
-                             (HttpResponse$BodyHandlers/ofString))
+  (let [response (try (http/request
+                       {:url url
+                        :method :get
+                        :timeout-seconds http-timeout-seconds
+                        :headers (cond-> {"Accept" "application/json"}
+                                   token (assoc "Authorization"
+                                                (str "Bearer " token)))})
                       (catch Exception e
                         (throw (ex-info (str "Grok Bots に接続できません: "
                                              (ex-message e))
                                         {:type :bot-import/source-unreachable
                                          :source "grok" :url url}))))
-        status (.statusCode response)]
+        status (:status response)]
     (when-not (<= 200 status 299)
       (throw (ex-info (str "Grok Bots が HTTP " status " を返しました: " url)
                       {:type :bot-import/source-refused
                        :source "grok" :status status :url url
-                       :body (subs (.body response)
-                                   0 (min 400 (count (.body response))))})))
-    (json/read-str (.body response) :key-fn keyword)))
+                       :body (subs (:body response)
+                                   0 (min 400 (count (:body response))))})))
+    (json/read-str (:body response) :key-fn keyword)))
 
 (defn require-token
   "The bearer, or a refusal naming what is missing.

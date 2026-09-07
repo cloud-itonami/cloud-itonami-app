@@ -9,10 +9,9 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [cloud.itonami.app.config :as config])
-  (:import [java.net URI]
-           [java.net.http HttpClient HttpClient$Redirect HttpRequest HttpResponse$BodyHandlers]
-           [java.math BigInteger]
+            [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.http-client :as http])
+  (:import [java.math BigInteger]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files Path StandardCopyOption]
            [java.security KeyFactory MessageDigest Signature]
@@ -106,20 +105,15 @@
       :else :unsupported)))
 
 (defn- http-get-bytes [url]
-  (let [request (-> (HttpRequest/newBuilder (URI/create url))
-                    (.header "Accept" "application/vnd.github+json, application/edn")
-                    (.header "User-Agent" "cloud-itonami-app-updater")
-                    (.GET)
-                    (.build))
-        client (-> (HttpClient/newBuilder)
-                   (.followRedirects HttpClient$Redirect/ALWAYS)
-                   (.build))
-        response (.send client request
-                        (HttpResponse$BodyHandlers/ofByteArray))]
-    (when-not (= 200 (.statusCode response))
+  (let [response (http/request
+                  {:url url
+                   :method :get
+                   :headers {"Accept" "application/vnd.github+json, application/edn"
+                             "User-Agent" "cloud-itonami-app-updater"}})]
+    (when-not (= 200 (:status response))
       (throw (ex-info "update transport returned an error"
-                      {:type :update/http :status (.statusCode response)})))
-    (.body response)))
+                      {:type :update/http :status (:status response)})))
+    (.getBytes ^String (:body response) StandardCharsets/UTF_8)))
 
 (def ^:dynamic *http-get-bytes* http-get-bytes)
 
@@ -198,20 +192,17 @@
     (format "%064x" (BigInteger. 1 (.digest digest)))))
 
 (defn- download-to! [url ^Path destination]
-  (let [request (-> (HttpRequest/newBuilder (URI/create url))
-                    (.header "Accept" "application/octet-stream")
-                    (.header "User-Agent" "cloud-itonami-app-updater")
-                    (.GET)
-                    (.build))
-        client (-> (HttpClient/newBuilder)
-                   (.followRedirects HttpClient$Redirect/ALWAYS)
-                   (.build))
-        response (.send client
-                        request
-                        (HttpResponse$BodyHandlers/ofFile destination))]
-    (when-not (= 200 (.statusCode response))
+  (let [response (http/request
+                  {:url url
+                   :method :get
+                   :headers {"Accept" "application/octet-stream"
+                             "User-Agent" "cloud-itonami-app-updater"}})]
+    (when-not (= 200 (:status response))
       (throw (ex-info "update download returned an error"
-                      {:type :update/http :status (.statusCode response)})))
+                      {:type :update/http :status (:status response)})))
+    (Files/write destination
+                 (.getBytes ^String (:body response) StandardCharsets/UTF_8)
+                 (make-array java.nio.file.CopyOption 0))
     destination))
 
 (def ^:dynamic *download-to!* download-to!)

@@ -6,24 +6,18 @@
   resource URL and carry the route's scope. No bearer token is persisted."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.app.store :as store])
   (:import [java.net URI URLEncoder]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
            [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
-           [java.time Duration Instant]
+           [java.time Instant]
            [java.util Base64]))
 
 (def scopes
   ["mcp:tools" "tenant:connect" "repository:read" "repository:write"
    "domain:read" "domain:write"])
-
-(defonce ^:private client
-  (-> (HttpClient/newBuilder)
-      (.connectTimeout (Duration/ofSeconds 5))
-      .build))
 
 (def ^:dynamic *environment* #(System/getenv %))
 (def ^:dynamic *introspect*
@@ -52,28 +46,27 @@
       (let [form (str "token="
                       (URLEncoder/encode token StandardCharsets/UTF_8)
                       "&token_type_hint=access_token")
-            builder (-> (HttpRequest/newBuilder (URI/create endpoint))
-                        (.timeout (Duration/ofSeconds 10))
-                        (.header "Content-Type"
-                                 "application/x-www-form-urlencoded")
-                        (.header "Accept" "application/json"))]
-        (when (and client-id client-secret)
-          (.header builder "Authorization"
-                   (str "Basic "
-                        (.encodeToString
-                         (Base64/getEncoder)
-                         (.getBytes (str client-id ":" client-secret)
-                                    StandardCharsets/UTF_8)))))
-        (let [response (.send client
-                              (.build (.POST builder
-                                             (HttpRequest$BodyPublishers/ofString
-                                              form)))
-                              (HttpResponse$BodyHandlers/ofString))]
-          (when-not (<= 200 (.statusCode response) 299)
-            (throw (ex-info "OAuth introspection failed"
-                            {:type :oauth-resource/introspection-failed
-                             :status (.statusCode response)})))
-          (json/read-str (.body response) :key-fn keyword))))))
+            (let [basic-auth (when (and client-id client-secret)
+                               (str "Basic "
+                                    (.encodeToString
+                                     (Base64/getEncoder)
+                                     (.getBytes (str client-id ":" client-secret)
+                                                StandardCharsets/UTF_8))))
+                  response (http/request
+                            {:url endpoint
+                             :method :post
+                             :timeout-seconds 10
+                             :headers (cond-> {"Content-Type"
+                                               "application/x-www-form-urlencoded"
+                                               "Accept" "application/json"}
+                                        basic-auth
+                                        (assoc "Authorization" basic-auth))
+                             :body form})]
+              (when-not (<= 200 (:status response) 299)
+                (throw (ex-info "OAuth introspection failed"
+                                {:type :oauth-resource/introspection-failed
+                                 :status (:status response)})))
+              (json/read-str (:body response) :key-fn keyword))))))
 
 (defn- resource-origin [configuration service]
   (or (get-in configuration [service :resource-origin])

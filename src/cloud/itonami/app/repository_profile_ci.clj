@@ -5,33 +5,31 @@
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.repository-qualification :as qualification])
-  (:import [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers]
-           [java.nio.charset StandardCharsets]
+  (:import [java.nio.charset StandardCharsets]
            [java.util Base64]))
 
 (def ^:private current-repository "cloud-itonami/cloud-itonami-app")
 (def ^:private max-profile-bytes (* 64 1024))
 
-(defn- github-profile [^HttpClient client token repository]
-  (let [builder (doto
-                 (HttpRequest/newBuilder
-                  (URI/create
-                   (str "https://api.github.com/repos/" repository
-                        "/contents/storage-profile.edn?ref=main")))
-                  (.header "Accept" "application/vnd.github+json")
-                  (.header "X-GitHub-Api-Version" "2022-11-28")
-                  (.header "User-Agent" "cloud-itonami-repository-profile-ci"))
-        _ (when (seq token) (.header builder "Authorization" (str "Bearer " token)))
-        response (.send client (.build builder)
-                        (HttpResponse$BodyHandlers/ofString StandardCharsets/UTF_8))]
-    (when-not (= 200 (.statusCode response))
+(defn- github-profile [_client token repository]
+  (let [headers (cond-> {"Accept" "application/vnd.github+json"
+                         "X-GitHub-Api-Version" "2022-11-28"
+                         "User-Agent" "cloud-itonami-repository-profile-ci"}
+                  (seq token) (assoc "Authorization" (str "Bearer " token)))
+        response (http/request
+                  {:url (str "https://api.github.com/repos/" repository
+                             "/contents/storage-profile.edn?ref=main")
+                   :method :get
+                   :headers headers})
+        status (:status response)]
+    (when-not (= 200 status)
       (throw (ex-info "GitHub repository profile request failed"
                       {:type :repository-storage/profile-fetch-failed
-                       :repository repository :status (.statusCode response)})))
-    (let [{:keys [encoding content]} (json/read-str (.body response)
-                                                     :key-fn keyword)
+                       :repository repository :status status})))
+    (let [{:keys [encoding content]} (json/read-str (:body response)
+                                                    :key-fn keyword)
           _ (when-not (= "base64" encoding)
               (throw (ex-info "GitHub repository profile encoding denied"
                               {:type :repository-storage/profile-encoding})))
@@ -49,7 +47,7 @@
    (let [inventory-file (.getCanonicalFile (io/file inventory-path))
          parent (.getParentFile inventory-file)
          entries (qualification/read-profile-inventory! inventory-file)
-         client (HttpClient/newHttpClient)
+         client nil
          documents
          (mapv
           (fn [{:keys [repository path]}]

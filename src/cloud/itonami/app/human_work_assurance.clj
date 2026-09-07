@@ -7,12 +7,10 @@
   version, and organization. Raw identity documents are never stored here."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.human-work :as human-work]
             [cloud.itonami.app.store :as store])
-  (:import [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
-           [java.time Duration]))
+  (:import [java.net URI]))
 
 (def schema "cloud.itonami.app.human-work-assurance.v1")
 
@@ -42,17 +40,15 @@
         _ (when (and (:token-env provider) (nil? token))
             (fail! :human-work/provider-credential-missing
                    "Assurance provider credential is unavailable"))
-        request (cond-> (-> (HttpRequest/newBuilder uri)
-                            (.timeout (Duration/ofSeconds
-                                       (long (or (:timeout-seconds provider) 20))))
-                            (.header "Accept" "application/json")
-                            (.header "Content-Type" "application/json")
-                            (.POST (HttpRequest$BodyPublishers/ofString
-                                    (json/write-str body))))
-                  token (.header "Authorization" (str "Bearer " token)))
-        response (.send (HttpClient/newHttpClient) (.build request)
-                        (HttpResponse$BodyHandlers/ofString))
-        status (.statusCode response)]
+        request (cond-> {:url (str uri)
+                         :method :post
+                         :timeout-seconds (long (or (:timeout-seconds provider) 20))
+                         :headers {"Accept" "application/json"
+                                   "Content-Type" "application/json"}
+                         :body (json/write-str body)}
+                  token (assoc-in [:headers "Authorization"] (str "Bearer " token)))
+        response (http/request request)
+        status (:status response)]
     (when-not (<= 200 status 299)
       (fail! :human-work/provider-failed
              "Assurance provider refused the online check"

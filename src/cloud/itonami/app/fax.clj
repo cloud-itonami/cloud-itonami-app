@@ -43,18 +43,16 @@
 
   API reference: <https://help.dropbox.com/integrations/send-fax-using-dropbox-fax-api>"
   (:require [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.lawfirm :as app-lawfirm]
             [clojure.data.json :as json]
             [clojure.string :as str]
             [lawfirm.actor :as lf-actor]
             [lawfirm.store :as lf-store]
             [lawfirm.workspace :as lf-workspace])
-  (:import [java.net URI URLEncoder]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
+  (:import [java.net URLEncoder]
            [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
-           [java.time Duration]
            [java.util Base64 UUID]
            [java.util.concurrent TimeUnit]))
 
@@ -146,9 +144,6 @@
 ;; The transport
 ;; ---------------------------------------------------------------------------
 
-(defonce ^:private http-client
-  (delay (-> (HttpClient/newBuilder) (.connectTimeout (Duration/ofSeconds 20)) .build)))
-
 (defn- multipart
   "A multipart/form-data body. Hand-rolled because this is the only multipart
   request in the app and `java.net.http` has no builder for one."
@@ -183,14 +178,17 @@
                          "CoverPageFrom" (:from cover)
                          "CoverPageMessage" (:message cover)}
                         file-bytes filename)
-        request (-> (HttpRequest/newBuilder (URI/create url))
-                    (.header "Authorization" (basic-auth credentials))
-                    (.header "Content-Type" (str "multipart/form-data; boundary=" boundary))
-                    (.timeout (Duration/ofSeconds 60))
-                    (.POST (HttpRequest$BodyPublishers/ofByteArray body))
-                    .build)
-        response (.send @http-client request (HttpResponse$BodyHandlers/ofString))]
-    {:status (.statusCode response) :body (.body response)}))
+        ;; A multipart body is binary; it crosses the shim base64-encoded.
+        response (http/request
+                  {:url url
+                   :method :post
+                   :timeout-seconds 60
+                   :headers {"Authorization" (basic-auth credentials)
+                             "Content-Type"
+                             (str "multipart/form-data; boundary=" boundary)}
+                   :body (.encodeToString (java.util.Base64/getEncoder)
+                                          ^bytes body)})]
+    {:status (:status response) :body (:body response)}))
 
 (def status-codes
   "Dropbox Fax `StatusCode` → the practice's `:result`.

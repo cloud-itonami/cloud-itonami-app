@@ -98,12 +98,9 @@
             [connector.invoke :as invoke]
             [connector.model :as cm]
             [connector.ports :as cports]
-            [connector.registry :as creg])
-  (:import [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
-           [java.security MessageDigest]
-           [java.time Duration]
+            [connector.registry :as creg]
+            [cloud.itonami.app.http-client :as http])
+  (:import [java.security MessageDigest]
            [java.util UUID]
            [java.util.concurrent Executors ExecutorService Future ThreadFactory TimeUnit]))
 
@@ -404,12 +401,6 @@
 
 ;; ── ports ───────────────────────────────────────────────────────────────
 
-(defonce ^:private http-client
-  (delay (-> (HttpClient/newBuilder)
-             (.connectTimeout (Duration/ofSeconds 10))
-             (.followRedirects java.net.http.HttpClient$Redirect/NORMAL)
-             .build)))
-
 (defn- ->query [url query]
   (if (seq query)
     (str url "?" (str/join "&" (for [[k v] query]
@@ -436,26 +427,19 @@
   []
   (cports/http-fn
    (fn [{:connector.http/keys [method url query headers body]}]
-     (let [uri (URI/create (->query url query))
-           publisher (if body
-                       (HttpRequest$BodyPublishers/ofString
-                        (if (string? body) body (json/write-str body)))
-                       (HttpRequest$BodyPublishers/noBody))
-           builder (reduce (fn [b [k v]] (.header b (str k) (str v)))
-                           (-> (HttpRequest/newBuilder uri)
-                               (.timeout (Duration/ofSeconds 30))
-                               (.method (str/upper-case (name (or method :get)))
-                                        publisher))
-                           (cond-> headers
-                             (and body (not (get headers "content-type")))
-                             (assoc "content-type" "application/json")))
-           response (.send @http-client (.build builder)
-                           (HttpResponse$BodyHandlers/ofString))]
-       {:connector.http/status (.statusCode response)
-        :connector.http/body (parse-body (.body response)
-                                         (-> response .headers
-                                             (.firstValue "content-type")
-                                             (.orElse "")))}))))
+     (let [hdrs (cond-> (into {} (map (fn [[k v]] [(str k) (str v)])) headers)
+                  (and body (not (get headers "content-type")))
+                  (assoc "content-type" "application/json"))
+           response (http/request
+                     {:url (->query url query)
+                      :method (keyword (str/lower-case (name (or method :get))))
+                      :timeout-seconds 30
+                      :headers hdrs
+                      :body (when body
+                              (if (string? body) body (json/write-str body)))})]
+       {:connector.http/status (:status response)
+        :connector.http/body (parse-body (:body response)
+                                         (str (get hdrs "content-type" "")))}))))
 
 (defn- connector->provider
   "connector id -> the OAuth client it is authorized under. Derived from the

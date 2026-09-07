@@ -1,17 +1,10 @@
 (ns cloud.itonami.app.relay
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.identity :as identity])
-  (:import [java.net URI URLEncoder]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
-           [java.nio.charset StandardCharsets]
-           [java.time Duration]))
-
-(defonce ^HttpClient client
-  (-> (HttpClient/newBuilder)
-      (.connectTimeout (Duration/ofSeconds 10))
-      (.build)))
+  (:import [java.net URLEncoder]
+           [java.nio.charset StandardCharsets]))
 
 (defn- setting [config key default]
   (or (get-in config [:cloud-relay key]) default))
@@ -38,32 +31,26 @@
       (throw (ex-info
               "Private Relay provider を設定して認証してください。"
               {:type :relay/not-configured})))
-    (let [builder (doto (HttpRequest/newBuilder (URI/create (endpoint config path)))
-                    (.timeout (Duration/ofSeconds 20))
-                    (.header "Accept" "application/json")
-                    (.header "Authorization" (str "Bearer " token)))
-          request (if body
-                    (-> builder
-                        (.header "Content-Type" "application/json")
-                        (.method method
-                                 (HttpRequest$BodyPublishers/ofString
-                                  (json/write-str body)))
-                        (.build))
-                    (-> builder
-                        (.method method (HttpRequest$BodyPublishers/noBody))
-                        (.build)))
-          response (.send client request (HttpResponse$BodyHandlers/ofString))
+    (let [headers (cond-> {"Accept" "application/json"
+                           "Authorization" (str "Bearer " token)}
+                    body (assoc "Content-Type" "application/json"))
+          request {:url (endpoint config path)
+                   :method (if body :post :get)
+                   :timeout-seconds 20
+                   :headers headers
+                   :body (when body (json/write-str body))}
+          response (http/request request)
           payload (try
-                    (json/read-str (.body response) :key-fn keyword)
+                    (json/read-str (:body response) :key-fn keyword)
                     (catch Exception _ {:error "InvalidCloudResponse"}))]
-      (if (<= 200 (.statusCode response) 299)
+      (if (<= 200 (:status response) 299)
         payload
         (throw (ex-info
                 (or (:message payload)
                     (some-> (:error payload) str)
                     "グローバルメール登録に失敗しました。")
                 {:type :relay/request-failed
-                 :status (.statusCode response)
+                 :status (:status response)
                  :response payload}))))))
 
 (defn alias-status! [config account-id]

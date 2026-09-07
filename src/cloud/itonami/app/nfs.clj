@@ -78,6 +78,7 @@
   network-reachable because a port happened to be free is the failure this
   is written to avoid."
   (:require [clojure.string :as str]
+            [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.drive-fs :as drive-fs]
             [kekkai.acl :as acl]
             [kekkai.envelope :as envelope]
@@ -173,21 +174,16 @@
   turns into a refusal. A lookup that cannot answer must not be distinguishable
   from one that answered `nobody`: both mean this connection is not a peer."
   [{:keys [url timeout-ms] :or {timeout-ms 2000}}]
-  (let [client (-> (java.net.http.HttpClient/newBuilder)
-                   (.connectTimeout (java.time.Duration/ofMillis timeout-ms))
-                   (.build))]
-    (fn [source-port]
-      (try
-        (let [req (-> (java.net.http.HttpRequest/newBuilder
-                       (java.net.URI/create (str url "/principal?port=" source-port)))
-                      (.timeout (java.time.Duration/ofMillis timeout-ms))
-                      (.GET)
-                      (.build))
-              res (.send client req (java.net.http.HttpResponse$BodyHandlers/ofString))]
-          (when (= 200 (.statusCode res))
-            (let [peer (get (json/read-str (.body res)) "peer")]
-              (not-empty (str peer)))))
-        (catch Exception _ nil)))))
+  (fn [source-port]
+    (try
+      (let [res (http/request
+                 {:url (str url "/principal?port=" source-port)
+                  :method :get
+                  :timeout-seconds (max 1 (quot timeout-ms 1000))})]
+        (when (= 200 (:status res))
+          (let [peer (get (json/read-str (:body res)) "peer")]
+            (not-empty (str peer)))))
+      (catch Exception _ nil))))
 
 (defn- node-for
   "The kekkai node a peer address belongs to, from the configured netmap.

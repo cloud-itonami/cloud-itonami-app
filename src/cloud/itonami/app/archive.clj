@@ -21,12 +21,9 @@
   Drive — and a second copy of a token-reading HTTP client is not something
   to discover later."
   (:require [clojure.string :as str]
+            [cloud.itonami.app.http-client :as http]
             [kotoba.protocol.cid :as cid])
-  (:import [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
-           [java.security MessageDigest]
-           [java.time Duration]))
+  (:import [java.security MessageDigest]))
 
 (def origin "https://kotobase.net")
 
@@ -68,9 +65,6 @@
       identity-cid
       (cid/cid-bytes->string (into [0x01 0x55 0x12 0x20] digest)))))
 
-(defn- http-client []
-  (-> (HttpClient/newBuilder) (.connectTimeout (Duration/ofSeconds 30)) .build))
-
 (defn put!
   "PUT one raw object. Returns `{:status :body :url}` and never the token."
   [{:keys [cid bytes content-type] :as opts
@@ -82,22 +76,24 @@
       (throw (ex-info "archive: object exceeds the 4 MiB cap"
                       {:cid cid :size (alength ^bytes bytes) :cap max-object-bytes})))
     (let [url (str origin "/ipfs/" cid)
-          req (-> (HttpRequest/newBuilder (URI/create url))
-                  (.timeout (Duration/ofSeconds 60))
-                  (.header "Authorization" (str "Bearer " bearer))
-                  (.header "Content-Type" (str content-type))
-                  (.PUT (HttpRequest$BodyPublishers/ofByteArray bytes))
-                  .build)
-          resp (.send ^HttpClient (http-client) req (HttpResponse$BodyHandlers/ofString))]
-      {:status (.statusCode resp) :body (.body resp) :url url})))
+          resp (http/request
+                {:url url
+                 :method :put
+                 :timeout-seconds 60
+                 :headers {"Authorization" (str "Bearer " bearer)
+                           "Content-Type" (str content-type)}
+                 :body (.encodeToString (java.util.Base64/getEncoder)
+                                        ^bytes bytes)})]
+      {:status (:status resp) :body (:body resp) :url url})))
 
 (defn get-bytes
-  "Unauthenticated GET. Returns `{:status :bytes :url}`."
+  "Unauthenticated GET. Returns `{:status :bytes :url}`. The object is binary,
+  so it crosses the shim base64-encoded and is decoded here."
   [cid]
   (let [url (str origin "/ipfs/" cid)
-        req (-> (HttpRequest/newBuilder (URI/create url))
-                (.timeout (Duration/ofSeconds 30))
-                (.GET)
-                .build)
-        resp (.send ^HttpClient (http-client) req (HttpResponse$BodyHandlers/ofByteArray))]
-    {:status (.statusCode resp) :bytes (.body resp) :url url}))
+        resp (http/request {:url url :method :get :timeout-seconds 30})
+        b64 (:body resp)]
+    {:status (:status resp)
+     :bytes (when (seq (str b64))
+              (.decode (java.util.Base64/getDecoder) ^String b64))
+     :url url}))

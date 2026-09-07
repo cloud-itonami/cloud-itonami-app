@@ -8,14 +8,12 @@
   checkpoint succeeds."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.organism-messenger-transport :as transport])
-  (:import [java.net URI URLEncoder]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
+  (:import [java.net URLEncoder]
            [java.nio.charset StandardCharsets]))
 
 (def schema "cloud.itonami.app.organism-messenger-client.v1")
-(defonce ^:private client (HttpClient/newHttpClient))
 
 (defn- origin []
   (str/replace (or (System/getenv "CLOUD_ITONAMI_ORIGIN")
@@ -29,22 +27,21 @@
 
 (defn- request! [worker-id method path body]
   (let [token (:token (credential! worker-id))
-        builder (-> (HttpRequest/newBuilder (URI/create (str (origin) path)))
-                    (.header "Authorization" (str "Bearer " token))
-                    (.header "Content-Type" "application/json")
-                    (.header "Accept" "application/json"))
-        request (case method
-                  :get (.GET builder)
-                  :post (.POST builder
-                               (HttpRequest$BodyPublishers/ofString
-                                (json/write-str (or body {})))))
-        response (.send client (.build request) (HttpResponse$BodyHandlers/ofString))
-        parsed (try (json/read-str (.body response) :key-fn keyword)
-                    (catch Exception _ {:raw (.body response)}))]
-    (when-not (<= 200 (.statusCode response) 299)
+        headers {"Authorization" (str "Bearer " token)
+                 "Content-Type" "application/json"
+                 "Accept" "application/json"}
+        response (http/request
+                  {:url (str (origin) path)
+                   :method (case method :get :get :post :post)
+                   :headers headers
+                   :body (when (= method :post)
+                           (json/write-str (or body {})))})
+        parsed (try (json/read-str (:body response) :key-fn keyword)
+                    (catch Exception _ {:raw (:body response)}))]
+    (when-not (<= 200 (:status response) 299)
       (throw (ex-info "AO messenger transport request failed"
                       {:type :ao.messenger/http
-                       :status (.statusCode response) :response parsed})))
+                       :status (:status response) :response parsed})))
     parsed))
 
 (defn overview! [worker-id]
