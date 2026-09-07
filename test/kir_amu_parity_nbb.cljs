@@ -30,9 +30,18 @@
       (is (= shipped-kir-sha256 built-kir-sha256)
           (str (name id) ": JVM-free amu KIR differs from the shipped KIR")))))
 
+;; `run-tests` returns nil under nbb, so `{:keys [fail error]}` destructured nil,
+;; `(+ nil nil)` is 0 in ClojureScript, `zero?` was true, and the exit code was
+;; never set — **this suite exited 0 whether or not the parity check failed**.
+;; Measured 2026-09-07 on the sibling suites by breaking an assertion on
+;; purpose: "1 failures, 0 errors" printed, exit 0 returned.
+;;
+;; That matters more here than elsewhere: this is the gate that says the shipped
+;; KIR is what a JVM-free amu builds. A gate that cannot fail is not a gate.
+(defmethod clojure.test/report [:cljs.test/default :end-run-tests] [m]
+  (js/process.exit (if (clojure.test/successful? m) 0 1)))
+
 (defn -main [& _]
-  (let [{:keys [fail error]} (run-tests 'kir-amu-parity-nbb)]
-    (when-not (zero? (+ fail error))
-      (set! (.-exitCode js/process) 1))))
+  (run-tests 'kir-amu-parity-nbb))
 
 (-main)
