@@ -19,6 +19,10 @@ test('app roots and auth reach Pages, while existing actors retain their mount',
   assert.equal(seen[1].url,'https://cloud-itonami.pages.dev/api/auth/session');
   await router.fetch(new Request('https://app.itonami.cloud/kaisya/api/state'),env);
   assert.deepEqual(seen[2],['kaisya','/api/state']);
+  for(const path of ['email','password','enroll-passkey','callback']) {
+    const closed=await router.fetch(new Request('https://app.itonami.cloud/api/auth/'+path,{method:'POST',body:JSON.stringify({email:'fixture@example.invalid',password:'plausible-legacy-secret'})}),env);
+    assert.equal(closed.status,410); assert.equal(closed.headers.has('set-cookie'),false);
+  }
   const redirect=await router.fetch(new Request('https://app.itonami.cloud/ja/bots/app/?plugins=open'),env);
   assert.equal(redirect.status,308); assert.equal(redirect.headers.get('location'),'https://app.itonami.cloud/ja/?plugins=open');
  }finally{globalThis.fetch=before;}

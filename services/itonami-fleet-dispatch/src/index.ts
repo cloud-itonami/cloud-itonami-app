@@ -64,7 +64,12 @@ export default {
     const oldApp = url.pathname.match(/^\/(?:(en|ja|zh|es|fr|hi|ar)\/)?bots\/app(?:\/|\/index.html)?$/);
     if (oldApp) return Response.redirect(url.origin + '/' + (oldApp[1] ? oldApp[1]+'/' : '') + url.search, 308);
     const page = /^\/(?:(en|ja|zh|es|fr|hi|ar)\/)?signin\/?$/.test(url.pathname);
-    const api = /^\/api\/(auth|my-bots|plugins|webauthn)(?:\/|$)/.test(url.pathname);
+    const auth = /^\/api\/auth\/(?:session|logout|web3\/(?:challenge|login))\/?$/.test(url.pathname);
+    const passkey = /^\/api\/webauthn\/(?:challenge|login)\/?$/.test(url.pathname);
+    if (/^\/api\/(?:auth|webauthn)(?:\/|$)/.test(url.pathname) && !auth && !passkey) {
+      return json({error:'Authentication route closed'},410);
+    }
+    const api = auth || passkey || /^\/api\/(my-bots|plugins)(?:\/|$)/.test(url.pathname);
     const asset = /^\/(js|css|fonts)\//.test(url.pathname) || ['/icon.png','/favicon.ico','/apple-touch-icon.png'].includes(url.pathname);
     if (localeRoot || page || api || asset) {
       if (!env.ITONAMI_APP_GATEWAY_KEY) return json({error:'App gateway unavailable'},503);
