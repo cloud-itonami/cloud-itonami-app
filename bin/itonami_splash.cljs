@@ -83,6 +83,24 @@
                (paint color? code (str/join " " (map #(nth % row) cells))))
              ramp))))))
 
+(defn weave-rule
+  "One row of twill, `width` columns wide, in the ramp's last colour.
+
+  The wordmark sits on it, so the name reads as woven into cloth rather than
+  stamped on nothing. It is a rule, not a border: it carries the same shifted
+  float as `mark`'s body, which is what makes the two read as the same fabric.
+
+  The letters themselves stay solid. Filling the glyph strokes with `▀▄` was
+  tried and abandoned — at five rows tall the half-blocks break the strokes and
+  ITONAMI stops being readable. A wordmark's first job is to be read; the mark
+  is where the language goes."
+  [width color? ramp]
+  (let [ramp (or (seq ramp) wordmark-ramp)
+        n (max 0 (long width))]
+    (when (pos? n)
+      (paint color? (last ramp)
+             (apply str (map #(nth "▀▄▄▀" (mod % 4)) (range n)))))))
+
 ;; ---------------------------------------------------------------------------
 ;; the frame
 ;; ---------------------------------------------------------------------------
@@ -110,18 +128,48 @@
 ;; ---------------------------------------------------------------------------
 
 (def mark
-  "A lantern. Block elements and `·` only — every glyph is one column in a
-  Latin-locale terminal, which is what `display-width` assumes."
-  ["    ▁▁▁▁▁"
-   "  ▕███████▏"
-   " ·:::::::::·"
-   "·:::       :::·"
-   "·::    █    ::·"
-   "·::   ███   ::·"
-   "·:::       :::·"
-   " ·:::::::::·"
-   "  ▕███████▏"
-   "    ▔▔▔▔▔"])
+  "Cloth on the loom: warp threads entering, twill in the body, the hem waving
+  out below.
+
+  ## What it is supposed to say
+
+  営み is what people do, and the name's design language is 糸と波 — thread and
+  wave (owner, 2026-09-07). Threads are separate doings; where they cross they
+  hold each other; what they become is cloth, and the cloth is the society the
+  information forms. So the mark is read top to bottom: six warp threads come
+  down loose, enter the selvedge, and below it they are no longer separate.
+
+  The body is 綾織 — twill. Each row's floats shift one cell, so the crossings
+  line up into a diagonal, and that diagonal is the 綾 the word carries. Plain
+  weave (`▀▄▀▄` alternating every row) was the other candidate and reads as a
+  checkerboard; the shift is what makes it read as woven rather than tiled.
+
+  The hem is the 波. It is drawn below the lower selvedge, so the cloth leaves
+  the frame rather than being contained by it.
+
+  ## What it replaced, and why not just retint it
+
+  A lantern. A good shape, and about the wrong thing — a lantern is a light
+  someone hangs, not a fabric people make together. No amount of palette work
+  gets one to say the other.
+
+  ## Width
+
+  Box drawing and block elements only, and **every row is exactly 13 columns**
+  — measured with `text/display-width`, not `count`, because the two disagree
+  on exactly the characters used here. The old mark's rows varied in length and
+  leaned on `centre` to hide it; uniform rows mean a terminal that disagrees
+  about ambiguous width makes the mark wider without making it ragged."
+  [" ╷ ╷ ╷ ╷ ╷ ╷ "
+   " │ │ │ │ │ │ "
+   "╭┴─┴─┴─┴─┴─┴╮"
+   "│▄▄▀▀▄▄▀▀▄▄▀│"
+   "│▀▄▄▀▀▄▄▀▀▄▄│"
+   "│▀▀▄▄▀▀▄▄▀▀▄│"
+   "│▄▀▀▄▄▀▀▄▄▀▀│"
+   "╰┬─┬─┬─┬─┬─┬╯"
+   " ╰─╮ ╭─╮ ╭─╯ "
+   "   ╰─╯ ╰─╯   "])
 
 (defn left-column
   "The mark, then who this session is: profile, where the profile came from,
@@ -236,7 +284,12 @@
         tally (str/join (str " " bullet " ") counts)]
     (str/join
      "\n"
-     (concat (or (wordmark "ITONAMI" color? ramp) [])
+     (concat (let [rows (or (wordmark "ITONAMI" color? ramp) [])]
+               (if-let [rule (and (seq rows)
+                                  (weave-rule (display-width (first rows))
+                                              color? ramp))]
+                 (conj (vec rows) rule)
+                 rows))
              [""]
              (when-not (str/blank? (str tagline))
                [(paint color? dim-code (truncate (str tagline) columns)) ""])

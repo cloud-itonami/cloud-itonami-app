@@ -209,10 +209,45 @@
       (is (not (str/includes? (tinted "gold") (splash/sgr "38;5;120")))
           "the control: the default ramp is gone when a skin replaced it"))))
 
+(deftest the-mark-is-a-rectangle
+  ;; The frame pads by display width, so a mark whose rows disagree about their
+  ;; width does not fail loudly — it leans. The old mark's rows DID vary and
+  ;; relied on `centre` to hide it, which is why nothing caught it. This pins
+  ;; the property, measured with the same function the renderer uses, because
+  ;; `count` and `display-width` disagree on exactly these characters.
+  (let [widths (map splash/display-width splash/mark)]
+    (is (= 1 (count (distinct widths)))
+        (str "every row of the mark must be the same display width, got "
+             (pr-str (distinct widths))))
+    (is (pos? (first widths)))
+    (is (= 10 (count splash/mark)) "and it is ten rows tall")))
+
+(deftest the-weave-rule-matches-the-wordmark
+  ;; The rule is the cloth the name sits on. If it is not exactly as wide as the
+  ;; wordmark it reads as a mistake rather than a selvedge.
+  (let [rows (splash/wordmark "ITONAMI" false)
+        w (splash/display-width (first rows))
+        rule (splash/weave-rule w false nil)]
+    (is (= w (splash/display-width rule)))
+    (is (re-matches #"[▀▄]+" rule) "twill floats only")
+    (is (nil? (splash/weave-rule 0 false nil)) "zero width draws nothing")))
+
 (deftest unmount-removes-the-screen
   (let [ctx (ctx-with-skin nil)]
     (harness/unmount! ctx :itonami.splash)
     (is (nil? (harness/ctx-get ctx :ctx/splash)))))
 
-(let [{:keys [fail error]} (run-tests 'itonami-splash-nbb)]
-  (js/process.exit (if (pos? (+ (or fail 0) (or error 0))) 1 0)))
+;; `run-tests` returns nil under nbb, so the old
+;;   (let [{:keys [fail error]} (run-tests 'ns)] (process.exit (if (pos? …) 1 0)))
+;; destructured nil, added 0 to 0, and **exited 0 whether or not tests failed**.
+;; Measured 2026-09-07 by breaking one assertion on purpose: the runner printed
+;; "1 failures, 0 errors" and still exited 0. A suite that cannot report failure
+;; is the seventh of CLAUDE.md's questions in its purest form — the green means
+;; the process ended, not that the tests passed.
+;;
+;; cljs.test DOES hand the summary to the :end-run-tests report method, so the
+;; exit code is taken there instead.
+(defmethod t/report [::t/default :end-run-tests] [m]
+  (js/process.exit (if (t/successful? m) 0 1)))
+
+(run-tests 'itonami-splash-nbb)

@@ -665,5 +665,15 @@
     (is (some #(str/includes? % "▸ murakumo-main") rows) "the selection is not marked")
     (is (some #(str/includes? % "enter で決定") rows))))
 
-(let [{:keys [fail error]} (run-tests 'itonami-editor-nbb)]
-  (js/process.exit (if (pos? (+ (or fail 0) (or error 0))) 1 0)))
+;; `run-tests` returns nil under nbb, so the old
+;;   (let [{:keys [fail error]} (run-tests 'ns)] (process.exit (if (pos? …) 1 0)))
+;; destructured nil, added 0 to 0, and **exited 0 whether or not tests failed**.
+;; Measured 2026-09-07 by breaking one assertion on purpose: the runner printed
+;; "1 failures, 0 errors" and still exited 0. A suite that cannot report failure
+;; reports that the process ended, not that the tests passed.
+;;
+;; cljs.test DOES hand the summary to the :end-run-tests report method.
+(defmethod t/report [::t/default :end-run-tests] [m]
+  (js/process.exit (if (t/successful? m) 0 1)))
+
+(run-tests 'itonami-editor-nbb)
