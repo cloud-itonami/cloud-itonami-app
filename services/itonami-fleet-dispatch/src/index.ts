@@ -38,6 +38,7 @@
  */
 
 export interface Env {
+  ITONAMI_APP_GATEWAY_KEY?: string;
   FLEET: { get(name: string): { fetch(request: Request): Promise<Response> } };
 }
 
@@ -57,6 +58,32 @@ const ACTOR = /^[a-z0-9][a-z0-9-]{2,80}$/;
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    // The browser workspace owns these reserved paths. All other first
+    // segments still dispatch to their existing actor, including kaisya/yotei.
+    const localeRoot = url.pathname.match(/^\/(en|ja|zh|es|fr|hi|ar)?\/?$/);
+    const oldApp = url.pathname.match(/^\/(?:(en|ja|zh|es|fr|hi|ar)\/)?bots\/app(?:\/|\/index.html)?$/);
+    if (oldApp) return Response.redirect(url.origin + '/' + (oldApp[1] ? oldApp[1]+'/' : '') + url.search, 308);
+    const page = /^\/(?:(en|ja|zh|es|fr|hi|ar)\/)?signin\/?$/.test(url.pathname);
+    const api = /^\/api\/(auth|my-bots|plugins|webauthn)(?:\/|$)/.test(url.pathname);
+    const asset = /^\/(js|css|fonts)\//.test(url.pathname) || ['/icon.png','/favicon.ico','/apple-touch-icon.png'].includes(url.pathname);
+    if (localeRoot || page || api || asset) {
+      if (!env.ITONAMI_APP_GATEWAY_KEY) return json({error:'App gateway unavailable'},503);
+      const upstream = new URL(url);
+      upstream.hostname = 'cloud-itonami.pages.dev';
+      if (localeRoot) upstream.pathname = (localeRoot[1] ? '/'+localeRoot[1] : '') + '/bots/app/';
+      const headers = new Headers(request.headers);
+      // Overwrite caller input; the backend only trusts this server-held key.
+      const stamp=String(Date.now());
+      const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(env.ITONAMI_APP_GATEWAY_KEY),{name:'HMAC',hash:'SHA-256'},false,['sign']);
+      const signature=await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(stamp+'\n'+request.method+'\n'+upstream.pathname+upstream.search));
+      const hex=Array.from(new Uint8Array(signature),b=>b.toString(16).padStart(2,'0')).join('');
+      headers.delete('x-itonami-app-key');
+      headers.set('x-itonami-app-proof',stamp+'.'+hex);
+      return fetch(new Request(upstream, new Request(request,{headers,redirect:'manual'})));
+    }
+    if (/^\/(trust|partners|legal)(?:\/|$)/.test(url.pathname)) {
+      return Response.redirect('https://itonami.cloud'+url.pathname+url.search,302);
+    }
     const [, actor, ...rest] = url.pathname.split("/");
 
     if (!actor) {

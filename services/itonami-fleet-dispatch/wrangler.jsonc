@@ -30,7 +30,8 @@
     { "pattern": "app.itonami.cloud", "custom_domain": true }
   ]
   //
-  // No secrets. This router authenticates nothing — each actor gates its own
+  // ITONAMI_APP_GATEWAY_KEY authenticates only the Pages transport.
+  // This router authenticates no human — each actor gates its own
   // writes, and a second admission rule here would be a weaker copy of every
   // governor's.
 }

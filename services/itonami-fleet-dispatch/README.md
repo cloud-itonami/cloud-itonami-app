@@ -50,3 +50,16 @@ be the failure mode worth fearing.
 Deployed on workers.dev while exactly one real actor is behind it. Binding a
 hostname is a separate decision from proving the path works, and doing both at
 once makes a rollback ambiguous.
+
+## Browser workspace (2026-09-07)
+
+`/` and locale roots now serve the Bot workspace from `cloud-itonami.pages.dev`.
+Reserved auth/my-bots/plugins/webauthn APIs and JS/CSS/font assets use the same
+upstream; all other actor mounts retain their dispatch behavior. Set the secret
+`ITONAMI_APP_GATEWAY_KEY` to the same server-held key on this Worker and the Pages
+project. Each forwarded request carries a 60-second HMAC origin proof; this is
+transport authentication only, never a human login. The browser retains its
+app.itonami.cloud host-only cookie and the backend validates the public origin.
+
+Verify with `npm run typecheck` and `node --test test.mjs` from this directory.
+Deploy the matching cloud-itonami Pages backend before this router.
