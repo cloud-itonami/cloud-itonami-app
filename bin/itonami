@@ -778,8 +778,11 @@
                              " — /approve で許可、/deny で拒否\n")))
 
                      (contains? #{"run.failed" "run.cancelled" "run.stopped"} kind)
+                     ;; The error is carried out on `:error` and reported ONCE
+                     ;; by whoever owns the outcome -- `refused!` in the REPL,
+                     ;; `refuse!` in the one-shot path. Printing it here too
+                     ;; put the same sentence on the screen twice.
                      (do (swap! out assoc :status (subs kind 4) :error (:error ev))
-                         (when (:error ev) (chat-emit (str "\nerror: " (:error ev) "\n")))
                          (finish))
 
                      :else nil)))
@@ -1555,6 +1558,16 @@
   [message]
   (swap! repl assoc :running nil)
   (say! (str (text/paint (colour?) "38;5;203" (str "✗ " message)) "\n"))
+  ;; A refusal an operator can act on says what to do about it. This one is
+  ;; the common one on a workstation whose Bots also carry resident jobs: the
+  ;; run belongs to somebody else, so `/stop` -- which only knows THIS
+  ;; session's run -- is not the answer, and saying so is the useful part.
+  (when (str/includes? (str message) "すでに実行中")
+    (say! (str (text/paint (colour?) splash/dim-code
+                           (str "  この Bot は別の実行に使われています"
+                                "（常駐ジョブか別セッション）。"
+                                "`/bots` で状態を確認、`/profile <id>` で別の Bot に切り替えられます。"))
+               "\n")))
   (when (seq (:queue @repl))
     (say! (str (text/paint (colour?) splash/dim-code
                            (str "待機中の " (count (:queue @repl))
