@@ -510,5 +510,84 @@
     (is (not (str/includes? open "履歴")) "it offered a key the menu had taken")
     (is (str/includes? shut "履歴"))))
 
+
+;; ---------------------------------------------------------------------------
+;; panels
+;; ---------------------------------------------------------------------------
+
+(def ^:private demo-panel
+  {:title "itonami help"
+   :tab 0 :scroll 0
+   :tabs [{:label "General" :lines ["one" "two"]}
+          {:label "Commands" :lines (mapv #(str "/c" %) (range 40))}
+          {:label "CLI" :lines ["usage"]}]})
+
+(defn- panelled [] (assoc (ed/fresh [] cmds) :panel demo-panel))
+
+(defn- press* [s & kinds]
+  (reduce (fn [st k] (ed/handle st {:kind k})) s kinds))
+
+(deftest a-panel-takes-over-the-block
+  ;; There is nothing to type into, so a prompt and a status bar of keys that
+  ;; do nothing would be two lies at once.
+  (let [{:keys [rows caret panel?]} (ed/render (panelled) (assoc geo :width 60 :rows 24))]
+    (is (true? panel?))
+    (is (= [0 0] caret))
+    (is (str/includes? (first rows) "itonami help"))
+    (is (some #(str/includes? % "[General]") rows) "the open tab is not marked")
+    (is (some #(str/includes? % "esc で閉じる") rows))
+    (is (not-any? #(str/includes? % "▶▶") rows) "the status bar is still there")
+    (is (every? #(<= (text/display-width %) 60) rows))))
+
+(deftest typing-into-a-panel-does-nothing
+  ;; A key that edits a buffer nobody can see is a key that loses what it
+  ;; typed the moment the panel closes.
+  (let [s (ed/handle (panelled) {:kind :char :ch "x"})]
+    (is (= [""] (:lines s)))
+    (is (some? (:panel s)))))
+
+(deftest escape-and-enter-close-it
+  (is (nil? (:panel (ed/handle (panelled) {:kind :escape}))))
+  (is (nil? (:panel (ed/handle (panelled) {:kind :enter}))))
+  (is (nil? (:submit (ed/handle (panelled) {:kind :enter}))) "closing it also sent something"))
+
+(deftest ctrl-d-still-leaves
+  ;; Whatever is on the screen, the way out has to keep working.
+  (is (= :eof (:signal (ed/handle (panelled) {:kind :eof})))))
+
+(deftest tabs-cycle-both-ways
+  (let [s (panelled)]
+    (is (= 1 (get-in (ed/handle s {:kind :tab}) [:panel :tab])))
+    (is (= 1 (get-in (ed/handle s {:kind :right}) [:panel :tab])))
+    ;; wrapping, so neither end is a dead key
+    (is (= 2 (get-in (ed/handle s {:kind :left}) [:panel :tab])))
+    (is (= 0 (get-in (press* s :tab :tab :tab) [:panel :tab])))))
+
+(deftest scrolling-stops-at-the-top
+  (let [s (panelled)]
+    (is (= 0 (get-in (ed/handle s {:kind :up}) [:panel :scroll])))
+    (is (= 1 (get-in (ed/handle s {:kind :down}) [:panel :scroll])))))
+
+(deftest a-short-tab-cannot-be-scrolled-off-the-screen
+  ;; The clamp lives in the renderer, so a scroll value past the end still
+  ;; shows the end rather than an empty frame.
+  (let [s (assoc-in (panelled) [:panel :scroll] 999)
+        {:keys [rows]} (ed/render s (assoc geo :width 60 :rows 24))]
+    (is (some #(str/includes? % "one") rows) "scrolling past the end blanked the panel")))
+
+(deftest the-frame-does-not-jump-between-tabs
+  ;; A tab with two lines and a tab with forty must produce the same number of
+  ;; rows, or switching tabs moves everything under it.
+  (let [g (assoc geo :width 60 :rows 24)
+        a (count (:rows (ed/render (panelled) g)))
+        b (count (:rows (ed/render (assoc-in (panelled) [:panel :tab] 1) g)))]
+    (is (= a b))))
+
+(deftest a-long-tab-says-where-it-is
+  (let [{:keys [rows]} (ed/render (assoc-in (panelled) [:panel :tab] 1)
+                                  (assoc geo :width 60 :rows 24))]
+    (is (some #(str/includes? % "/40") rows) "the panel did not say how much there is")
+    (is (some #(str/includes? % "スクロール") rows))))
+
 (let [{:keys [fail error]} (run-tests 'itonami-editor-nbb)]
   (js/process.exit (if (pos? (+ (or fail 0) (or error 0))) 1 0)))
