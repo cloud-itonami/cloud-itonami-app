@@ -319,5 +319,48 @@
     (is (not= (f 0) (f 1)))
     (is (= (f 0) (f (count ed/spinner-frames))) "the frames do not cycle")))
 
+
+;; ---------------------------------------------------------------------------
+;; the block holds what is in flight
+;; ---------------------------------------------------------------------------
+
+(deftest the-progress-line-and-the-streaming-tail-are-rows-of-the-block
+  ;; Both used to be lines of their own, which means being told where the block
+  ;; is -- and disagreeing with it the moment either moves. As rows they are
+  ;; redrawn with everything else and the row count stays true.
+  (let [plain (ed/render (ed "hi") geo)
+        full (ed/render (ed "hi") (assoc geo :header "H" :tail "streamed"))]
+    (is (= 4 (count (:rows plain))))
+    (is (= 6 (count (:rows full))))
+    ;; the tail continues the answer above it; the progress line sits over the
+    ;; frame, not between the answer and its own last line
+    (is (= ["streamed" "H"] (take 2 (:rows full))))
+    (is (= [1 4] (:caret plain)))
+    (is (= [3 4] (:caret full)) "the caret did not move down past the new rows")))
+
+(deftest a-tail-wider-than-the-terminal-becomes-several-rows
+  ;; This is the reason the tail is not left on the terminal: a partial line
+  ;; wider than the screen wraps, and ESC[nC clamps at the last column, so
+  ;; returning to its end is not possible. Counted here instead.
+  (let [long* (apply str (repeat 90 "x"))
+        {:keys [rows caret]} (ed/render (ed "hi") (assoc geo :tail long*))]
+    (is (= 7 (count rows)) "40 wide, 90 columns of tail => 3 rows + the usual 4")
+    (is (every? #(<= (text/display-width %) 40) rows))
+    (is (= [4 4] caret))))
+
+(deftest the-status-bar-says-what-is-waiting
+  (let [busy (ed/status-line {:profile "p" :slash-count 29 :running? true
+                              :colour false} 100)]
+    (is (str/includes? busy "入力は受け付けています")
+        "a run in flight must not read as a keyboard that is gone"))
+  (let [queued (ed/status-line {:profile "p" :slash-count 29 :running? true
+                                :queued 3 :colour false} 100)]
+    (is (str/includes? queued "3 件待機"))
+    (is (str/includes? queued "/queue")))
+  ;; nothing waiting says nothing about a queue
+  (is (not (str/includes? (ed/status-line {:profile "p" :slash-count 29
+                                           :queued 0 :colour false} 100)
+                          "待機"))))
+
 (let [{:keys [fail error]} (run-tests 'itonami-editor-nbb)]
   (js/process.exit (if (pos? (+ (or fail 0) (or error 0))) 1 0)))

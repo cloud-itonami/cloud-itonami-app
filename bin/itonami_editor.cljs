@@ -371,14 +371,19 @@
   Truncating instead cut a hint mid-word and left the operator reading half an
   instruction -- and a bar wider than the terminal wraps onto the row the caret
   is about to be moved to, which tears the frame."
-  [{:keys [profile slash-count held running? colour accent-code dim-code]} width]
+  [{:keys [profile slash-count held running? queued colour accent-code dim-code]} width]
   (let [p #(text/paint colour %1 %2)
         head (p accent-code (str "\u25b6\u25b6 " profile))
-        tail (concat [(str slash-count " slash")]
+        tail (concat (when (and queued (pos? queued))
+                       [(str "\u23f8 " queued " 件待機 (/queue)")])
+                     [(str slash-count " slash")]
                      (cond
                        held [(str "\u26a0 承認待ち: " held)
                              "/approve /deny"]
-                       running? ["esc で中断"]
+                       ;; A run in flight does not take the keyboard: the
+                       ;; editor stays live, /steer and /stop reach the run,
+                       ;; and a plain line joins the queue.
+                       running? ["esc で中断" "入力は受け付けています"]
                        :else ["enter で送信" "\\ + enter で改行" "\u2191 で履歴"]))
         right (p dim-code "/help")
         room (- width (text/display-width right) 1)
@@ -435,7 +440,8 @@
   Returns `{:rows [...] :caret [visual-row column]}`. The caret column is
   measured from the start of the row INCLUDING the prompt, so the terminal
   half has nothing left to compute."
-  [state {:keys [width prompt continuation colour accent-code dim-code status]}]
+  [state {:keys [width prompt continuation colour accent-code dim-code status header
+                 tail]}]
   (let [width (max 24 (or width 80))
         prompt (or prompt "> ")
         pw (text/display-width prompt)
@@ -446,11 +452,28 @@
         rows (visual-rows state cw)
         [vr vc] (caret rows state)
         rule (text/paint colour dim-code (text/rule "─" width))
+        ;; The answer's incomplete last line. It is a ROW OF THE BLOCK, not a
+        ;; partial line the terminal is left holding, because a partial line
+        ;; wider than the terminal wraps and then no amount of cursor
+        ;; arithmetic finds its end again (measured 2026-09-07: a streamed line
+        ;; of sixty numbers resumed at the last column of the wrong row). It
+        ;; graduates to the scrollback the moment its newline arrives.
+        tail-rows (when (seq (str tail))
+                    (map :text (chunk-line (str tail) width)))
         body (map-indexed
               (fn [i {:keys [text]}]
                 (str (text/paint colour accent-code (if (zero? i) prompt continuation))
                      text))
               rows)]
-    {:rows (vec (concat [rule] body [rule] [(or status "")]))
-     ;; +1 for the rule above the first input row
-     :caret [(inc vr) (+ pw vc)]}))
+    ;; `header` is the progress line while a run is going. It is a ROW OF THE
+    ;; BLOCK rather than a line of its own, because a line of its own has to be
+    ;; told where the block is, and the two then disagree the moment either
+    ;; moves. As a row it is redrawn with everything else and cannot collide.
+    ;; The tail first: it continues the answer in the scrollback directly above
+    ;; it, and putting the progress line between them would cut the sentence in
+    ;; half. The progress line then sits immediately over the frame, where it
+    ;; is read as belonging to the turn rather than to the text.
+    {:rows (vec (concat tail-rows (when header [header])
+                        [rule] body [rule] [(or status "")]))
+     ;; +1 for the rule above the first input row, plus whatever is above it
+     :caret [(+ vr 1 (if header 1 0) (count tail-rows)) (+ pw vc)]}))

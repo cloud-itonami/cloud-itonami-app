@@ -620,62 +620,44 @@
   ;; input is one off and the frame tears on the next redraw.
   (max 24 (dec (or (.-columns js/process.stdout) 80))))
 
+(def ^:private input-block
+  "How the input area is sitting on the screen right now: how many rows it
+  occupies, and how far the cursor is below its first row. Both are needed to
+  erase it, and erasing it wrongly is what leaves a torn frame behind."
+  (atom {:rows 0 :caret-row 0 :drawn? false}))
+
+(def ^:private repl-history (atom []))
+
+(def ^:private repl
+  "What the REPL is doing, in one place.
+
+  `:editor` is the live editor state -- held here, not in a closure, because
+  the block has to be redrawable from anywhere: a stream delta, a timer tick, a
+  window resize. `:running` is the turn in flight, `:queue` the lines submitted
+  while it was."
+  (atom {:editor nil :running nil :queue []}))
+
+(def ^:private redraw-timer (atom nil))
+
+(def ^:private pending-line
+  "The answer's incomplete last line.
+
+  The block is pinned under the output, and every streamed delta stops mid-row.
+  Rather than leave that partial line on the terminal and try to find its end
+  again on the next write, it is held here and drawn as a ROW OF THE BLOCK --
+  where the row count is already true. It graduates to the scrollback the
+  moment its newline arrives.
+
+  Returning to it by cursor arithmetic was tried and does not work: a partial
+  line wider than the terminal wraps, and `ESC[nC` clamps at the last column
+  (measured 2026-09-07 -- a streamed line of sixty numbers resumed at the far
+  right of the wrong row)."
+  (atom ""))
+
 (def ^:private progress
   "The live line under a run. It owns one terminal row; everything else that
   writes has to take it off first, or it writes across it."
   (atom {:on? false :timer nil :tick 0 :phase nil :started 0 :tokens 0}))
-
-(defn- progress-off! []
-  (let [{:keys [on? timer]} @progress]
-    (when timer (js/clearTimeout timer))
-    (when on? (out! (str "\r" esc "[2K")))
-    (swap! progress assoc :on? false :timer nil)))
-
-(defn- progress-paint! []
-  (when (:on? @progress)
-    (let [{:keys [tick phase started tokens]} @progress
-          skin ((:skin ctx-theme))]
-      (out! (str "\r" esc "[2K"
-                 (editor/progress-line
-                  {:phase phase :ms (- (js/Date.now) started) :tick tick
-                   :tokens tokens :interruptible? true :colour (colour?)
-                   :accent-code (or (:accent-code skin) splash/accent-code)
-                   :dim-code (or (:dim-code skin) splash/dim-code)}
-                  (term-width)))))))
-
-(defn- progress-tick! []
-  (when (:on? @progress)
-    (swap! progress update :tick inc)
-    (progress-paint!)
-    (swap! progress assoc :timer (js/setTimeout progress-tick! 120))))
-
-(defn- progress-on! []
-  (when-not (:on? @progress)
-    (reset! progress {:on? true :timer nil :tick 0 :phase nil
-                      :started (js/Date.now) :tokens 0})
-    (progress-tick!)))
-
-(defn- progress-resume!
-  "Put the line back after something else used the row. The clock is NOT
-  restarted: the run has been going the whole time, and a timer that reset
-  every time a tool logged would report a wait that never happened."
-  []
-  (when (and (pos? (:started @progress)) (not (:on? @progress)))
-    (swap! progress assoc :on? true)
-    (progress-tick!)))
-
-(defn- progress-say!
-  "Name the phase the run reported. Only what arrived: the server sends phases,
-  not percentages, and a bar filling on a timer would be the one thing on this
-  screen that nothing measured."
-  [phase]
-  (when (:on? @progress)
-    (swap! progress assoc :phase phase)
-    (progress-paint!)))
-
-(defn- progress-add-tokens! [n]
-  (when (and (:on? @progress) (number? n))
-    (swap! progress update :tokens + n)))
 
 
 ;; ---------------------------------------------------------------------------
@@ -688,13 +670,17 @@
 ;; historical names are bindings to the plugin's own atoms so existing call
 ;; sites read unchanged and /profile stays a one-atom write.
 (def chat-profile (:profile ctx-chat))
-(def ^:private chat-approval (:held ctx-chat))
 ;; The card the current run is held on, set by a `waiting-approval` phase
-;; event, consumed by /approve and /deny in the REPL.
-(def ^:private chat-approval (atom nil))
+;; event, consumed by /approve and /deny.
+(def ^:private chat-approval (:held ctx-chat))
 
-(defn- chat-emit [text]
-  (js/process.stdout.write (str text)))
+(declare say! redraw!)
+
+(defn- chat-emit
+  "Text onto the screen. Under the editor this goes above the input block; the
+  one-shot path has no block and writes straight through."
+  [text]
+  (if (:editor @repl) (say! (str text)) (js/process.stdout.write (str text))))
 
 (defn- chat-poll-events!
   "Reads the SSE stream for one run until a terminal event. Deltas print as
@@ -716,21 +702,23 @@
                    ;; nothing reads -- a switch that reports "on" and changes
                    ;; nothing is worse than no switch.
                    (when (and @(:verbose ctx-chat) (not= "assistant.delta" kind))
-                     (progress-off!)
                      (chat-emit (str ((:stamp ctx-chat)) "┊ " kind
                                      (when-let [p (:phase ev)] (str " " p))
                                      (when-let [t (:tool ev)] (str " " t))
-                                     "\n"))
-                     (progress-resume!))
+                                     "\n")))
                    ;; What the run says it is doing, and what it has spent.
-                   ;; Both arrived on the stream; neither is estimated.
-                   (when-let [ph (or (:phase ev)
-                                     (when (str/starts-with? (str kind) "run.")
-                                       (subs (str kind) 4)))]
-                     (progress-say! ph))
-                   (when-let [u (:usage ev)]
-                     (progress-add-tokens! (or (:completion_tokens u)
-                                               (:output_tokens u) 0)))
+                   ;; Both arrived on the stream; neither is estimated. They go
+                   ;; into the REPL's state and the block header reads them --
+                   ;; there is no second place that draws.
+                   (when (:running @repl)
+                     (when-let [ph (or (:phase ev)
+                                       (when (str/starts-with? (str kind) "run.")
+                                         (subs (str kind) 4)))]
+                       (swap! repl assoc-in [:running :phase] ph))
+                     (when-let [u (:usage ev)]
+                       (swap! repl update-in [:running :tokens]
+                              + (or (:completion_tokens u) (:output_tokens u) 0)))
+                     (redraw!))
                    (cond
                      (= "assistant.delta" kind)
                      ;; From the first delta the answer owns the screen, and
@@ -742,26 +730,22 @@
                      ;; text so far) and incremental. Handle both — a delta
                      ;; that extends what was printed prints its tail; one
                      ;; that does not is an increment appended to it.
-                     (do
-                       (progress-off!)
-                       (swap! progress assoc :started 0)
-                       (let [delta (str (:delta ev))
-                             seen (str @printed)]
-                         (cond
-                           (str/blank? delta) nil
-                           (and (<= (.-length seen) (.-length delta))
-                                (= 0 (.indexOf delta seen)))
-                           (do (reset! printed delta)
-                               (js/process.stdout.write (.slice delta (.-length seen))))
-                           :else
-                           (do (reset! printed (str seen delta))
-                               (js/process.stdout.write delta)))))
+                     (let [delta (str (:delta ev))
+                           seen (str @printed)]
+                       (cond
+                         (str/blank? delta) nil
+                         (and (<= (.-length seen) (.-length delta))
+                              (= 0 (.indexOf delta seen)))
+                         (do (reset! printed delta)
+                             (chat-emit (.slice delta (.-length seen))))
+                         :else
+                         (do (reset! printed (str seen delta))
+                             (chat-emit delta))))
 
                      (= "run.completed" kind)
-                     (do (progress-off!)
-                         (swap! out assoc :status "completed"
+                     (do (swap! out assoc :status "completed"
                                 :output (or (:output ev) "") :usage (:usage ev))
-                         (js/process.stdout.write "\n")
+                         (chat-emit "\n")
                          (finish))
 
                      ;; A held write: the run pauses here, the stream stays
@@ -771,8 +755,7 @@
                      ;; keeps reading and prints the continuation's tail and
                      ;; terminal event when the decision resumes the run.
                      (= "run.waiting_approval" kind)
-                     (do (progress-off!)
-                         (reset! chat-approval {:card (:card ev) :tool (:tool ev)
+                     (do (reset! chat-approval {:card (:card ev) :tool (:tool ev)
                                                 :run-id run-id})
                          (swap! out assoc :status "waiting-approval"
                                 :approval {:card (:card ev) :tool (:tool ev)
@@ -795,8 +778,7 @@
                              " — /approve で許可、/deny で拒否\n")))
 
                      (contains? #{"run.failed" "run.cancelled" "run.stopped"} kind)
-                     (do (progress-off!)
-                         (swap! out assoc :status (subs kind 4) :error (:error ev))
+                     (do (swap! out assoc :status (subs kind 4) :error (:error ev))
                          (when (:error ev) (chat-emit (str "\nerror: " (:error ev) "\n")))
                          (finish))
 
@@ -1038,7 +1020,7 @@
  "/steer" "<text>" "実行中 run への割り込み注入"
  (fn [args _]
    (let [text (str/join " " args)
-         run-id (:run-id @chat-approval)]
+         run-id (:run-id (:running @repl))]
      (if (or (str/blank? text) (nil? run-id))
        (do (println "steer できる実行中 run がありません (/steer <text>)") :handled)
        (request-or-refuse!
@@ -1047,9 +1029,23 @@
         (fn [_] (println "steered — 次の tool call 後に反映されます")))))))
 
 (register-slash!
+ "/queue" "[clear]" "送信待ちの行 (run 中に enter した分)"
+ (fn [args _]
+   (let [q (:queue @repl)]
+     (cond
+       (= "clear" (first args))
+       (do (swap! repl assoc :queue [])
+           (println (str "待機列を空にしました (" (count q) " 件破棄)")))
+       (empty? q) (println "待機中の行はありません")
+       :else
+       (doseq [[i t] (map-indexed vector q)]
+         (println (str "  " (inc i) ". " (subs t 0 (min 120 (count t))))))))
+   :handled))
+
+(register-slash!
  "/stop" "" "実行中 run の停止"
  (fn [_ _]
-   (if-let [run-id (:run-id @chat-approval)]
+   (if-let [run-id (:run-id (:running @repl))]
      (request-or-refuse!
       {:method :post :path (str "/v1/runs/" run-id "/stop") :timeout-seconds 10}
       (fn [_] (println "stop 要求を送りました")))
@@ -1321,14 +1317,6 @@
 ;; comes out of `editor/render`, so there is one place that knows the geometry.
 ;; ---------------------------------------------------------------------------
 
-(def ^:private input-block
-  "How the input area is sitting on the screen right now: how many rows it
-  occupies, and how far the cursor is below its first row. Both are needed to
-  erase it, and erasing it wrongly is what leaves a torn frame behind."
-  (atom {:rows 0 :caret-row 0 :drawn? false}))
-
-(def ^:private repl-history (atom []))
-
 (defn- erase-input! []
   (when (:drawn? @input-block)
     (let [{:keys [caret-row]} @input-block]
@@ -1346,22 +1334,37 @@
      :accent-code (or (:accent-code skin) splash/accent-code)
      :dim-code (or (:dim-code skin) splash/dim-code)}))
 
-(defn- status-for [running?]
+(defn- status-for []
   (let [skin ((:skin ctx-theme))]
     (editor/status-line
      {:profile @chat-profile
       :slash-count (count ((:commands ctx-chat)))
       :held (:tool @chat-approval)
-      :running? running?
+      :running? (some? (:running @repl))
+      :queued (count (:queue @repl))
       :colour (colour?)
       :accent-code (or (:accent-code skin) splash/accent-code)
       :dim-code (or (:dim-code skin) splash/dim-code)}
      (term-width))))
 
+(defn- header-for
+  "The progress line, as the block's first row, while a turn is in flight."
+  []
+  (when-let [{:keys [started phase tokens tick]} (:running @repl)]
+    (let [skin ((:skin ctx-theme))]
+      (editor/progress-line
+       {:phase phase :ms (- (js/Date.now) started) :tick (or tick 0)
+        :tokens tokens :interruptible? true :colour (colour?)
+        :accent-code (or (:accent-code skin) splash/accent-code)
+        :dim-code (or (:dim-code skin) splash/dim-code)}
+       (term-width)))))
+
 (defn- draw-input! [state]
   (erase-input!)
   (let [{:keys [rows caret]} (editor/render state (assoc (editor-opts)
-                                                         :status (status-for false)))
+                                                         :status (status-for)
+                                                         :header (header-for)
+                                                         :tail @pending-line))
         [caret-row caret-col] caret
         n (count rows)]
     (out!
@@ -1393,6 +1396,36 @@
       (when (pos? caret-col) (str esc "[" caret-col "C"))
       esc "[?25h"))
     (reset! input-block {:rows n :caret-row caret-row :drawn? true})))
+
+(defn- redraw!
+  "Put the block back. Scheduled rather than immediate: a burst of stream
+  deltas would otherwise redraw the whole frame per delta, and the frame is the
+  expensive part. One tick, one redraw."
+  []
+  (when-not @redraw-timer
+    (reset! redraw-timer
+            (js/setTimeout (fn []
+                             (reset! redraw-timer nil)
+                             (when-let [st (:editor @repl)] (draw-input! st)))
+                           0))))
+
+(defn- say!
+  "Write to the screen while the input block may be on it.
+
+  Erase the block, put the cursor back where the output actually stopped, write,
+  and schedule the block to come back. EVERY write during the REPL goes through
+  here -- including `println` from a slash command, which is why `*print-fn*` is
+  rebound onto it. A write that skips this lands on top of the frame, and the
+  frame is what the next erase is measured from."
+  [text]
+  (let [whole (str @pending-line text)
+        i (str/last-index-of whole "\n")]
+    (erase-input!)
+    ;; Only COMPLETE lines go to the screen. The tail is kept and drawn as a
+    ;; row of the block, so the terminal is never left holding half a row.
+    (when i (out! (subs whole 0 (inc i))))
+    (reset! pending-line (if i (subs whole (inc i)) whole))
+    (redraw!)))
 
 (defn- echo-submitted!
   "What was sent, left in the scrollback where the answer will follow it. The
@@ -1452,192 +1485,292 @@
   (when (.-isTTY js/process.stdout)
     (out! (str esc "[?2004l" esc "[?25h"))))
 
-(defn- read-input!
-  "One line -- or several -- from the terminal. Resolves to {:text …} when the
-  operator sends, or {:signal :eof|:interrupt}."
+(defn- restore-terminal!
+  "Put back what the editor switched on. Guarded, because these are bytes:
+  under a pipe they are not a terminal being reset, they are `[?2004l[?25h`
+  in somebody's log."
   []
-  (js/Promise.
-   (fn [resolve _reject]
-     (let [st (atom (editor/fresh @repl-history))
-           listener (atom nil)
-           on-resize (fn [] (when (:drawn? @input-block) (draw-input! @st)))
-           finish! (fn [answer]
-                     (.removeListener js/process.stdin "data" @listener)
-                     (.removeListener js/process.stdout "resize" on-resize)
-                     (erase-input!)
-                     (resolve answer))
-           on-data (fn [chunk]
-                     (loop [ks (editor/decode (str chunk))]
-                       (if (empty? ks)
-                         (draw-input! @st)
-                         (let [next (editor/handle @st (first ks))]
-                           (reset! st next)
-                           (cond
-                             (:submit next)
-                             (do (reset! repl-history (:history next))
-                                 (finish! {:text (:submit next)}))
-                             (:signal next) (finish! {:signal (:signal next)})
-                             :else (recur (rest ks)))))))]
-       (reset! listener on-data)
-       (.on js/process.stdin "data" on-data)
-       (.on js/process.stdout "resize" on-resize)
-       (draw-input! @st)))))
+  (raw-mode! false)
+  (when (.-isTTY js/process.stdout)
+    (out! (str esc "[?2004l" esc "[?25h"))))
 
-(defn- while-running!
-  "Watch for a bare ESC while `run-id` is in flight and ask the server to stop.
+(defn- flush-tail!
+  "The incomplete last line lives in the block. When the block comes down for
+  good it has to be written out, or the answer loses its last line."
+  []
+  (when (seq @pending-line)
+    (out! (str @pending-line "\n"))
+    (reset! pending-line "")))
 
-  A lone ESC is unambiguous here because no arrow key means anything during a
-  run: the input area is erased, so there is nothing to move a caret through.
-  `stopped` is set when the server accepts the stop, so the caller can tell an
-  interrupt the operator asked for from a turn that failed on its own. Returns
-  a function that takes the watch off again."
-  [run-id stopped]
-  (let [said (atom false)
-        say (fn [text]
-              (progress-off!)
-              (println (text/paint (colour?) splash/dim-code text)))
-        on-data
+(defn- bye! []
+  (erase-input!)
+  (flush-tail!)
+  (restore-terminal!)
+  (println)
+  (js/process.exit exit-answered))
+
+(defn- die! [e]
+  (erase-input!)
+  (flush-tail!)
+  (restore-terminal!)
+  (if (= "readline was closed" (ex-message e))
+    (js/process.exit exit-answered)
+    (do (js/process.stdout.write (str "error: " (ex-message e) "\n"))
+        (js/process.exit exit-cannot-answer))))
+
+
+;; ---------------------------------------------------------------------------
+;; the turn, which no longer owns the keyboard (ADR-2609071400)
+;;
+;; A run used to take the terminal for its whole duration: the block was erased
+;; when the turn started and drawn again when it ended, and the only key that
+;; meant anything in between was ESC. So `/steer` -- a command whose entire
+;; purpose is to reach a run that is ALREADY GOING -- could not be typed while
+;; one was.
+;;
+;; Now the input loop and the turn are separate. The loop runs from the moment
+;; the REPL opens until the process exits; a turn is state it reads. A slash
+;; command runs the moment it is sent, a plain line starts a turn if none is in
+;; flight and joins the queue if one is.
+;; ---------------------------------------------------------------------------
+
+(declare start-run! drain-queue!)
+
+(defn- run-tick!
+  "Advance the progress line while a turn is in flight. It is a row of the
+  block, so this only has to ask for a redraw."
+  []
+  (when (:running @repl)
+    (swap! repl update-in [:running :tick] (fnil inc 0))
+    (redraw!)
+    (js/setTimeout run-tick! 120)))
+
+(defn- refused!
+  "The server said no to a turn. In the REPL that ends the TURN, not the
+  session: the editor is still open, the queue is still there, and an operator
+  who typed one thing the server would not take has not asked to leave.
+
+  The one-shot path (`itonami chat \"…\"`) keeps `exit 1` -- that is where a
+  refusal has to be a status a script can read."
+  [message]
+  (swap! repl assoc :running nil)
+  (say! (str (text/paint (colour?) "38;5;203" (str "✗ " message)) "\n"))
+  (when (seq (:queue @repl))
+    (say! (str (text/paint (colour?) splash/dim-code
+                           (str "待機中の " (count (:queue @repl))
+                                " 件は送っていません (/queue で確認、/queue clear で破棄)"))
+               "\n")))
+  (redraw!))
+
+(defn- finish-run!
+  "One turn ended. Clear it, say what it cost, and start whatever was queued
+  behind it."
+  [o]
+  (let [stopped? (:stopped (:running @repl))]
+    (swap! repl assoc :running nil)
+    (when-let [u (:usage o)]
+      (say! (str (text/paint (colour?) splash/dim-code
+                             (str "· tokens: " (or (:prompt_tokens u) "?")
+                                  " in / " (or (:completion_tokens u) "?") " out"))
+                 "\n")))
+    (redraw!)
+    (if (or (= "completed" (:status o)) stopped?)
+      ;; The operator stopped this run, not this session.
+      (drain-queue!)
+      ;; A turn that failed on its own does not send the queue into a server
+      ;; that just said no; the lines are left where they can be read.
+      (refused! (or (:error o) (str "run は " (name (:status o)) " で終わりました"))))))
+
+(defn- start-run! [t]
+  (reset! (:last-input ctx-chat) t)
+  (echo-submitted! t)
+  (swap! repl assoc :running {:started (js/Date.now) :phase nil :tokens 0
+                              :tick 0 :run-id nil :stopped false})
+  (run-tick!)
+  (-> (request! {:method :post :path "/v1/runs"
+                 :body {:input t :profile @chat-profile}
+                 :timeout-seconds 30}
+                (require-token!))
+      (.then (fn [{:keys [status body]}]
+               (if (<= 200 status 299)
+                 (let [run-id (or (:run_id body) (:run-id body))]
+                   (swap! repl assoc-in [:running :run-id] run-id)
+                   (-> (chat-poll-events! run-id) (.then finish-run!)))
+                 (refused! (str "run を開始できません: HTTP " status
+                                (when-let [m (get-in body [:error :message])]
+                                  (str " — " m)))))))
+      (.catch (fn [e]
+                ;; Nothing answered. That is not a refusal and not the end of
+                ;; the session either -- the resident may come back.
+                (swap! repl assoc :running nil)
+                (say! (str (text/paint (colour?) "38;5;203"
+                                       (str "✗ server に到達できません: " (base-url)))
+                           "\n"))
+                (redraw!)))))
+
+(defn- drain-queue! []
+  (when-let [t (first (:queue @repl))]
+    (swap! repl update :queue subvec 1)
+    (start-run! t)))
+
+(defn- submit-message! [t]
+  (if (:running @repl)
+    ;; Queued rather than sent: two turns at once against one profile is two
+    ;; conversations, and the server would interleave them.
+    (do (swap! repl update :queue conj t)
+        (say! (str (text/paint (colour?) splash/dim-code
+                               (str "⏸ 待機列に追加 (" (count (:queue @repl))
+                                    " 件): " (subs t 0 (min 100 (count t)))))
+                   "\n"))
+        (redraw!))
+    (start-run! t)))
+
+(defn- on-submit!
+  "One line the operator sent. A slash command runs NOW, whatever the turn is
+  doing -- that is the point of `/steer` and `/stop`."
+  [t]
+  (cond
+    (contains? #{"exit" "quit"} t) (bye!)
+    :else
+    (let [r (chat-slash! t)]
+      (cond
+        (= :exit r) (bye!)
+        (= :handled r) (redraw!)
+        (= :resend r) (let [prev (str @(:last-input ctx-chat))]
+                        (if (str/blank? prev) (redraw!) (submit-message! prev)))
+        (instance? js/Promise r)
+        (-> r
+            (.then (fn [v] (if (keyword? v) (on-submit! v) (redraw!))))
+            (.catch (fn [e] (say! (str "error: " (ex-message e) "\n")))))
+        :else (submit-message! t)))))
+
+(defn- interrupt!
+  "ESC while a turn is in flight. What is printed is what the server answered,
+  not that a request was made."
+  []
+  (when-let [{:keys [run-id]} (:running @repl)]
+    (when (and run-id (not (:stopped (:running @repl))))
+      (swap! repl assoc-in [:running :stopped] true)
+      (-> (request! {:method :post :path (str "/v1/runs/" run-id "/stop")
+                     :timeout-seconds 10}
+                    (require-token!))
+          (.then (fn [{:keys [status body]}]
+                   (say! (str (text/paint (colour?) splash/dim-code
+                                          (if (<= 200 status 299)
+                                            "⎋ 中断しました"
+                                            (str "⎋ 中断できません: HTTP " status
+                                                 (when-let [m (get-in body [:error :message])]
+                                                   (str " — " m)))))
+                              "\n"))))
+          (.catch (fn [e]
+                    (swap! repl assoc-in [:running :stopped] false)
+                    (say! (str (text/paint (colour?) splash/dim-code
+                                           (str "⎋ 中断を送れません: " (base-url)
+                                                " — " (ex-message e)))
+                               "\n"))))))))
+
+(defn- input-loop!
+  "The keyboard, from the moment the REPL opens until the process exits.
+
+  One listener for the life of the session. It used to be one listener PER
+  TURN, attached when a line was wanted and removed when it arrived, which is
+  what made the keyboard go dead while a run was going."
+  []
+  (swap! repl assoc :editor (editor/fresh @repl-history))
+  (let [on-data
         (fn [chunk]
-          (when (and (not @said)
-                     (some #(= :escape (:kind %)) (editor/decode (str chunk))))
-            ;; Said once per run: holding the key down must not send a stop
-            ;; per repeat.
-            (reset! said true)
-            ;; What is printed is what the SERVER answered, not that a request
-            ;; was made. "中断を要求しました" is true of a POST that 404s, and
-            ;; an operator who reads it stops watching a run that is still
-            ;; going (CLAUDE.md's sixth question).
-            (-> (request! {:method :post :path (str "/v1/runs/" run-id "/stop")
-                           :timeout-seconds 10}
-                          (require-token!))
-                (.then (fn [{:keys [status body]}]
-                         (if (<= 200 status 299)
-                           (do (reset! stopped true) (say "⎋ 中断しました"))
-                           (say (str "⎋ 中断できません: HTTP " status
-                                     (when-let [m (get-in body [:error :message])]
-                                       (str " — " m)))))))
-                (.catch (fn [e]
-                          (say (str "⎋ 中断を送れません: " (base-url)
-                                    " — " (ex-message e))))))))]
+          (loop [ks (editor/decode (str chunk))]
+            (when (seq ks)
+              (let [k (first ks)]
+                (if (and (= :escape (:kind k)) (:running @repl))
+                  ;; ESC means the run while there is one, and nothing to the
+                  ;; editor either way.
+                  (do (interrupt!) (recur (rest ks)))
+                  (let [next* (editor/handle (:editor @repl) k)]
+                    (swap! repl assoc :editor next*)
+                    (reset! repl-history (:history next*))
+                    (cond
+                      (:submit next*) (do (on-submit! (str/trim (:submit next*)))
+                                          (recur (rest ks)))
+                      (= :eof (:signal next*)) (bye!)
+                      (= :interrupt (:signal next*))
+                      (do (say! (str (text/paint (colour?) splash/dim-code
+                                                 "(exit または Ctrl+D で終了)")
+                                     "\n"))
+                          (recur (rest ks)))
+                      :else (recur (rest ks)))))))))]
     (.on js/process.stdin "data" on-data)
-    (fn [] (.removeListener js/process.stdin "data" on-data))))
+    (.on js/process.stdout "resize" #(when (:editor @repl) (draw-input! (:editor @repl))))
+    (draw-input! (:editor @repl))))
 
-(defn- readline-input!
-  "The same contract as `read-input!`, for a stdin that is not a terminal.
-  There is no frame to draw and no caret to move, so this stays on readline."
-  [iface prompt]
-  (-> (.question iface prompt)
-      (.then (fn [line] {:text (str/trim (str line))}))
-      (.catch (fn [_] {:signal :eof}))))
-
-(defn- chat-repl!
-  "The prompt loop: one message per turn, each on its own run, streaming
-  deltas. A line beginning with `/` is a command (see chat-slash!)."
+(defn- readline-repl!
+  "The same REPL for a stdin that is not a terminal: no frame, no raw mode, no
+  queue -- readline hands over one line at a time and waits, which is the shape
+  it is good at."
   []
-  (let [tty? (and (.-isTTY js/process.stdout) (.-isTTY js/process.stdin))
-        rl (when-not tty? (js/require "node:readline/promises"))
-        iface (when rl (.createInterface rl #js {:input js/process.stdin
-                                                 :output js/process.stdout}))
-        read! (if tty?
-                read-input!
-                #(readline-input! iface (:prompt ((:skin ctx-theme)))))
-        bye (fn [] (restore-terminal!) (println)
-              (js/process.exit exit-answered))
-        die (fn [e]
-              (restore-terminal!)
-              (if (= "readline was closed" (ex-message e))
-                (js/process.exit exit-answered)
-                (do (chat-emit (str "error: " (ex-message e) "\n"))
-                    (js/process.exit exit-cannot-answer))))]
-    (when tty?
+  (let [rl (js/require "node:readline/promises")
+        iface (.createInterface rl #js {:input js/process.stdin
+                                        :output js/process.stdout})]
+    (letfn [(turn []
+              (-> (.question iface (:prompt ((:skin ctx-theme))))
+                  (.then (fn [line]
+                           (let [t (str/trim (str line))]
+                             (cond
+                               (str/blank? t) (turn)
+                               (contains? #{"exit" "quit"} t)
+                               (js/process.exit exit-answered)
+                               :else
+                               (let [r (chat-slash! t)]
+                                 (cond
+                                   (= :exit r) (js/process.exit exit-answered)
+                                   (= :handled r) (turn)
+                                   (instance? js/Promise r)
+                                   (-> r (.then (fn [_] (turn))) (.catch die!))
+                                   :else
+                                   (-> (request! {:method :post :path "/v1/runs"
+                                                  :body {:input t :profile @chat-profile}
+                                                  :timeout-seconds 30}
+                                                 (require-token!))
+                                       (.then (fn [{:keys [status body]}]
+                                                (if (<= 200 status 299)
+                                                  (chat-poll-events!
+                                                   (or (:run_id body) (:run-id body)))
+                                                  (refuse! (str "run を開始できません: HTTP "
+                                                                status)
+                                                           (select-keys body [:error])))))
+                                       (.then (fn [o]
+                                                (when-let [u (:usage o)]
+                                                  (println (str "· tokens: "
+                                                                (or (:prompt_tokens u) "?")
+                                                                " in / "
+                                                                (or (:completion_tokens u) "?")
+                                                                " out")))
+                                                (if (= "completed" (:status o))
+                                                  (turn)
+                                                  (js/process.exit exit-refused))))
+                                       (.catch die!))))))))
+                  (.catch (fn [_] (js/process.exit exit-answered)))))]
+      (turn))))
+
+(defn- chat-repl! []
+  (if (and (.-isTTY js/process.stdout) (.-isTTY js/process.stdin))
+    (do
       (raw-mode! true)
       (.setEncoding js/process.stdin "utf8")
       (.resume js/process.stdin)
-      ;; Bracketed paste. Without it a pasted newline is the same byte as
+      ;; Bracketed paste: without it a pasted newline is the same byte as
       ;; Return, so pasting three lines sends the first and loses the rest.
       (out! (str esc "[?2004h"))
-      ;; A terminal left in raw mode -- or still bracketing -- after this
-      ;; process dies is a terminal the operator has to reset by hand.
-      (.on js/process "exit" (fn [_] (restore-terminal!))))
-    (letfn [(send! [t]
-              (reset! (:last-input ctx-chat) t)
-              (let [stop-watch (atom nil)
-                    stopped (atom false)]
-                ;; Up before the POST, so the wait for the server to accept the
-                ;; run is on the screen too -- that is part of the wait.
-                (when tty? (progress-on!))
-                (-> (request! {:method :post :path "/v1/runs"
-                               :body {:input t :profile @chat-profile}
-                               :timeout-seconds 30}
-                              (require-token!))
-                    (.then (fn [{:keys [status body]}]
-                             (if (<= 200 status 299)
-                               (let [run-id (or (:run_id body) (:run-id body))]
-                                 (when tty?
-                                   (reset! stop-watch (while-running! run-id stopped)))
-                                 (chat-poll-events! run-id))
-                               (refuse! (str "run を開始できません: HTTP " status)
-                                        (select-keys body [:error])))))
-                    (.then (fn [o]
-                             (progress-off!)
-                             (when-let [off @stop-watch] (off))
-                             (when-let [usage (:usage o)]
-                               (chat-emit (str "· tokens: "
-                                               (or (:prompt_tokens usage) "?") " in / "
-                                               (or (:completion_tokens usage) "?") " out")))
-                             (println)
-                             (cond
-                               (= "completed" (:status o)) (turn)
-                               ;; The operator stopped this run, not this
-                               ;; session. Exiting here would make esc a way to
-                               ;; lose the conversation.
-                               @stopped (turn)
-                               ;; A turn that failed on its own is a refusal,
-                               ;; not a prompt for the next one.
-                               :else (js/process.exit exit-refused))))
-                    (.catch (fn [e]
-                              (progress-off!)
-                              (when-let [off @stop-watch] (off))
-                              (die e))))))
-
-            (act [r t]
-              (cond
-                (= :exit r) (bye)
-                (= :handled r) (turn)
-                ;; /retry and /prompt: the command decided what to send and
-                ;; left it where the next turn reads it.
-                (= :resend r) (let [prev (str @(:last-input ctx-chat))]
-                                (if (str/blank? prev)
-                                  (turn)
-                                  (do (echo-submitted! prev) (send! prev))))
-                (instance? js/Promise r)
-                (-> r (.then (fn [v] (if (keyword? v) (act v t) (turn)))) (.catch die))
-                :else (send! t)))
-
-            (turn []
-              (-> (read!)
-                  (.then (fn [{:keys [text signal]}]
-                           (cond
-                             (= :eof signal) (bye)
-                             ;; Ctrl+C on an empty buffer. One press says how
-                             ;; to leave rather than leaving: an interrupt that
-                             ;; kills the session is not an interrupt.
-                             (= :interrupt signal)
-                             (do (println (text/paint (colour?) splash/dim-code
-                                                      "(exit または Ctrl+D で終了)"))
-                                 (turn))
-                             (str/blank? (str text)) (turn)
-                             (contains? #{"exit" "quit"} (str/trim text)) (bye)
-                             :else
-                             (let [t (str/trim text)
-                                   r (chat-slash! t)]
-                               (when (and tty? (not= :handled r) (nil? r))
-                                 (echo-submitted! t))
-                               (when (and tty? (or (= :handled r) (instance? js/Promise r)))
-                                 (echo-submitted! t))
-                               (act r t)))))
-                  (.catch die)))]
-      (turn))))
+      (.on js/process "exit" (fn [_] (restore-terminal!)))
+      ;; Every `println` in a slash command lands above the block from here on.
+      ;; A write that skips `say!` lands on top of the frame, and the frame is
+      ;; what the next erase is measured from.
+      ;; nbb hands `*print-fn*` a line WITHOUT its newline, so the newline is
+      ;; added here -- otherwise every `println` ends mid-row and the block is
+      ;; drawn over it.
+      (set! *print-fn* (fn [line] (say! (str line "\n"))))
+      (input-loop!))
+    (readline-repl!)))
 
 (defn- chat-prompt-loop!
   "Open the REPL: resolve the profile, draw the start screen, then prompt."
