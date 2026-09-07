@@ -1,0 +1,111 @@
+[{:db/id -1
+  :adr/id "adr-2609071800-thirty-three-bots-were-pinned-to-a-model-that-requires-payment"
+  :adr/title "Thirty-three Bots were pinned to a model that now requires payment"
+  :adr/status "accepted"
+  :adr/date "2026-09-07"
+  :adr/related "adr-2609071400-a-run-does-not-own-the-keyboard adr-2608312100-murakumo-main-falls-back-once-to-openrouter-glm"
+  :adr/body "## The report
+
+2026-09-07: 「今の itonami bots profile に人材系ビジネスオペレーションを行う bot
+profile は」と入力したところ `error: この Bot はすでに実行中です。` でセッションが
+終了し、会話が続かない。tool call が安定して動くか調べてほしい。
+
+## What was actually broken, and it was not the CLI
+
+The Bot the `default` profile resolves to carried a per-Bot model override of
+`z-ai/glm-5.3-flash`. Measured against the gateway today, that id answers
+
+    {\"code\": \"external_model_requires_payment\"}
+
+as does its configured fallback `qwen/qwen3.8-flash`. So every turn on that Bot
+failed the same way:
+
+    provider/fallback-failed —
+    z-ai/glm-5.3-flash (provider/empty-response)
+      -> qwen/qwen3.8-flash (provider/model-mismatch)
+
+`tool-count: 0`. Nothing reached a tool, because nothing reached a model.
+
+**33 of 231 Bots** carried the same kind of pin (21 on the GLM id, 12 on the
+Qwen one). The other 198 were already on `murakumo-main`, which is what
+CLAUDE.md's model-alias rule says to use and the only id in the gateway
+registry that answers at all: of the nine listed, `murakumo-main` returns text,
+`murakumo-edge` returns HTTP 200 with empty content, and the rest are
+unreachable or payment-gated.
+
+All 33 were repointed at `murakumo-main` through `itonami bots model`, and the
+result was read back FROM THE SERVER rather than from the loop's own log: 229
+on `murakumo-main`, 0 on a failing id.
+
+## Tool calls work
+
+Measured after the repoint, on the same Bot, twice:
+
+- `workspace_list` on `manifest/`: `tool-count 1`, `turn-count 2`, completed in
+  38s, and the answer named the first three real entries.
+- The reported question, re-run: **8 tool calls executed**, then the turn ended
+  at `turn-budget-exhausted`.
+
+The second is not a tool defect. That Bot's whole tool set is
+`workspace_list workspace_search git_log workspace_read git_status git_diff` --
+six filesystem and git tools -- and the question is about Bot profiles, which
+none of them can read. It searched the workspace until its budget ran out. The
+question is answerable, but not by that Bot: `/bots`, `/profiles` and
+`itonami bots list` answer it directly.
+
+## The answer to the question itself
+
+There is no 人材/HR Bot profile in the fleet: 0 of 231 Bots match 人材 / 採用 /
+人事 / talent / recruit / HR across name, role, section, brief and
+responsibilities. The workforce roles that DO exist are QA (19), Engineer (19),
+Business Owner (19), Product Manager (17), Customer Support (9), Financial
+Chief (9), Marketer (8), Sales (6), Product Designer (6), Kaizen analyst (3),
+and a tail of per-title content Bots.
+
+The workspace does carry `cloud-itonami/talent` and `cloud-itonami/recruit`
+repositories. Neither has a Bot.
+
+## Why the session died, and why it no longer does
+
+The turn failed on the stream, `finish-run!` saw a non-completed status, and
+the build the operator was running called `js/process.exit exit-refused` there.
+The session ended on the server's answer to one message.
+
+That was already changed on 2026-09-07 (ADR-2609071400): in the REPL a refusal
+ends the TURN, and `itonami chat \"…\"` keeps `exit 1`, which is where a status
+has to be readable by a script. Verified here by occupying the Bot from outside
+the CLI and then sending a message: the refusal prints and `/status` is
+answered afterwards, which it could not be if the process had exited.
+
+Two things were wrong with how it printed, and are fixed:
+
+- **It said the same sentence twice** -- once from the stream handler and once
+  from the outcome reporter. The error is carried out on `:error` and reported
+  once, by whoever owns the outcome.
+- **It did not say what to do.** `/stop` is not the answer when the run belongs
+  to somebody else, so the hint names `/bots` and `/profile <id>` instead.
+
+## What is still true and worth knowing
+
+`:model-fallbacks` in the operator config reads
+
+    murakumo-main      -> z-ai/glm-5.3-flash
+    z-ai/glm-5.3-flash -> qwen/qwen3.8-flash
+    qwen/qwen3.8-flash -> murakumo-main
+
+Every hop but the last is payment-gated today, so the \"one explicit GLM
+fallback\" its own comment describes is dead: a transient `murakumo-main`
+hiccup becomes a hard failure with a two-model error message that reads as
+though two things were tried.
+
+It was NOT changed here, because there is nothing live to point it at -- of the
+whole registry only `murakumo-main` answers. Removing the entry would improve
+the diagnosis (one clear cause instead of a misleading chain) without improving
+the success rate. That is an operator decision about their own config, and it
+is recorded rather than made.
+
+The 143 Bots carrying a 15-minute resident job can still collide with an
+interactive turn on the same Bot. `default` is not one of them, so it is not
+what the operator hit -- what they hit was more likely this session's own test
+runs, which is worth saying plainly.
+"}]
