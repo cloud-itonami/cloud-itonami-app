@@ -95,6 +95,7 @@
             [cloud.itonami.app.pure-head-zeroarg-probe-test]
             [cloud.itonami.app.slo-f64-probe-test]
             [cloud.itonami.app.bot-slo-latency-kotoba-parity-test]
+            [cloud.itonami.app.bot-slo-recovery-kotoba-parity-test]
             [cloud.itonami.app.bot-turn-guards-test]
             [cloud.itonami.app.model-routing-http-test]
             [cloud.itonami.app.routines-test]
@@ -320,6 +321,7 @@
     cloud.itonami.app.pure-head-zeroarg-probe-test
     cloud.itonami.app.slo-f64-probe-test
     cloud.itonami.app.bot-slo-latency-kotoba-parity-test
+    cloud.itonami.app.bot-slo-recovery-kotoba-parity-test
     cloud.itonami.app.bot-turn-guards-test
     cloud.itonami.app.model-routing-http-test
     cloud.itonami.app.routines-test
