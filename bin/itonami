@@ -409,6 +409,17 @@
 (def keychain-service "cloud-itonami-app.mcp")
 (def keychain-account "session-token")
 
+(def human-keychain-account
+  "The Passkey session, kept apart from the agent one.
+
+  Two accounts and not one because they are not interchangeable: the agent
+  token is rooted in being able to read a file in the data directory, and the
+  routes that refuse it (`require-human-session!` -- model routing, money,
+  wallet) refuse it for that reason. Overwriting one with the other would make
+  `auth login` quietly revoke a Passkey session, or a Passkey login quietly
+  take the MCP server's token away."
+  "human-session-token")
+
 (defn- sh [cmd args]
   (let [{:keys [status stdout stderr]}
         (js->clj (cp/spawnSync cmd (clj->js args)
@@ -420,26 +431,42 @@
   "One named item, fetched by service and account — never an enumeration.
   A dump-style sweep would expose unrelated credentials' metadata to answer a
   question about exactly one of them."
-  []
-  (let [{:keys [exit stdout]} (sh "security" ["find-generic-password"
-                                              "-s" keychain-service
-                                              "-a" keychain-account "-w"])]
-    (when (zero? exit)
-      (not-empty (str/trim stdout)))))
+  ([] (keychain-get keychain-account))
+  ([account]
+   (let [{:keys [exit stdout]} (sh "security" ["find-generic-password"
+                                               "-s" keychain-service
+                                               "-a" account "-w"])]
+     (when (zero? exit)
+       (not-empty (str/trim stdout))))))
 
-(defn- keychain-put! [token]
-  (let [{:keys [exit stderr]} (sh "security" ["add-generic-password"
-                                              "-U" "-s" keychain-service
-                                              "-a" keychain-account
-                                              "-w" token])]
-    (if (zero? exit) "stored" (str "not-stored: " (str/trim stderr)))))
+(defn- keychain-put!
+  ([token] (keychain-put! keychain-account token))
+  ([account token]
+   (let [{:keys [exit stderr]} (sh "security" ["add-generic-password"
+                                               "-U" "-s" keychain-service
+                                               "-a" account
+                                               "-w" token])]
+     (if (zero? exit) "stored" (str "not-stored: " (str/trim stderr))))))
 
-(defn- session-token []
+(defn- agent-token []
   (or (some-> (aget js/process.env
                     (or (get-in configuration [:mcp :session-token-env])
                         "CLOUD_ITONAMI_MCP_SESSION"))
               str/trim not-empty)
-      (keychain-get)))
+      (keychain-get keychain-account)))
+
+(defn- human-token []
+  (or (some-> (aget js/process.env "CLOUD_ITONAMI_HUMAN_SESSION") str/trim not-empty)
+      (keychain-get human-keychain-account)))
+
+(defn- session-token
+  "The token this CLI presents. The Passkey session when there is one.
+
+  Preferring it is not a preference: an agent session is refused outright by
+  every `require-human-session!` route, and there is nothing an agent token can
+  do that a Passkey session cannot."
+  []
+  (or (human-token) (agent-token)))
 
 (defn- base-url []
   (or (some-> (aget js/process.env "CLOUD_ITONAMI_API_URL") str/trim not-empty
@@ -1824,6 +1851,112 @@
                                                 " — " (ex-message e)))
                                "\n"))))))))
 
+;; ---------------------------------------------------------------------------
+;; passkey sign-in (ADR-2609073800)
+;;
+;; The ceremony happens in a real browser, because that is the only place
+;; WebAuthn happens. This CLI never sees the passkey, never sees a password,
+;; and never types into the form: it asks the server to start a flow, shows the
+;; person the URL, and waits for a claim token to become claimable.
+;;
+;; `/api/auth/itonami/start {:handoff true}` returns that URL and a claim
+;; token. The token is the entire authority, which is why the server keeps it
+;; single-use and short-lived and why every refusal from the claim endpoint is
+;; the same `{:ready? false}` -- a poller that guesses learns nothing from the
+;; shape of the answer.
+;; ---------------------------------------------------------------------------
+
+(defn- passkey-login!
+  "Start a sign-in and wait for the person to finish it in their browser.
+
+  Resolves `{:ok true}` once a Passkey session is stored, or `{:ok false
+  :reason …}`. Never throws: a sign-in that could not happen must not take the
+  REPL with it."
+  []
+  (let [say (fn [text] (say! (str text "\n")))
+        accent #(text/paint (colour?) splash/accent-code %)
+        dim #(text/paint (colour?) splash/dim-code %)]
+    (-> (request! {:method :post :path "/api/auth/itonami/start"
+                   :body {:handoff true} :timeout-seconds 20}
+                  (agent-token))
+        (.then
+         (fn [{:keys [status body]}]
+           (if-not (<= 200 status 299)
+             {:ok false :reason (str "sign-in を開始できません: HTTP " status
+                                     (when-let [m (get-in body [:error :message])]
+                                       (str " — " m)))}
+             (let [url (:url body)
+                   claim (:handoff body)
+                   opened? (true? (:opened-externally? body))]
+               (say "")
+               (say (accent "Passkey でサインインしてください（DID はここで作られます）"))
+               (say (dim (if opened?
+                           "  ブラウザを開きました。開かなければ次の URL を開いてください:"
+                           "  次の URL をブラウザで開いてください:")))
+               (say (str "  " url))
+               (say (dim "  終わるまでここで待ちます（esc で中止）"))
+               (say "")
+               ;; Poll rather than listen: the person may finish in a browser
+               ;; on another machine, and nothing routes back to this process.
+               (letfn [(poll [tries]
+                         (if (zero? tries)
+                           (js/Promise.resolve
+                            {:ok false :reason "時間内にサインインが完了しませんでした"})
+                           (-> (request! {:method :post
+                                          :path "/api/auth/itonami/handoff"
+                                          :body {:handoff claim}
+                                          :timeout-seconds 15}
+                                         nil)
+                               (.then (fn [{:keys [status body]}]
+                                        (if (and (<= 200 status 299) (:ready? body)
+                                                 (not-empty (str (:token body))))
+                                          (do (keychain-put! human-keychain-account
+                                                             (str (:token body)))
+                                              {:ok true :body body})
+                                          (js/Promise.
+                                           (fn [resolve _]
+                                             (js/setTimeout
+                                              #(resolve (poll (dec tries))) 2000))))))
+                               (.catch (fn [e]
+                                         {:ok false
+                                          :reason (str "server に到達できません: "
+                                                       (ex-message e))})))))]
+                 ;; 90 tries at 2s is three minutes -- long enough to find a
+                 ;; phone, short enough that a forgotten window stops polling.
+                 (poll 90))))))
+        (.catch (fn [e] {:ok false :reason (ex-message e)})))))
+
+(defn- announce-login! [{:keys [ok reason body]}]
+  (if ok
+    (say! (str (text/paint (colour?) splash/accent-code
+                           (str "✓ Passkey session を取得しました"
+                                (when-let [u (:user-id body)] (str " (" u ")"))))
+               "\n"))
+    (say! (str (text/paint (colour?) "38;5;203" (str "✗ サインインできません: " reason))
+               "\n"
+               (text/paint (colour?) splash/dim-code
+                           (str "  agent session のまま続けます。"
+                                "model routing・資金面など human session が要る操作は"
+                                " 403 のままです（/login でやり直せます）。"))
+               "\n"))))
+
+(register-slash!
+ "/login" "" "Passkey でサインインして human session を取る"
+ (fn [_ _]
+   (-> (passkey-login!)
+       (.then (fn [r] (announce-login! r) (redraw!))))))
+
+(register-slash!
+ "/whoami-session" "" "いま何の session で話しているか"
+ (fn [_ _]
+   (println (str "session: " (cond (human-token) "passkey (human)"
+                                   (agent-token) "agent"
+                                   :else "なし")))
+   (println (str "  passkey: " (if (human-token) "あり" "なし")
+                 "   agent: " (if (agent-token) "あり" "なし")))
+   (println "  human session が要る面: model routing / 資金・決済 / wallet connect")
+   :handled))
+
 (defn- registry-entries
   "What the slash menu offers: every registered command, name and description."
   []
@@ -1965,6 +2098,19 @@
                    (err (str "itonami: 端末が文字幅を答えませんでした。"
                              "ambiguous 幅 " (:columns m) " で続けます。")))
                  (print-splash!)))
+        ;; Sign in on open (owner instruction 2026-09-07), because the DID is
+        ;; made here and because half the surface refuses an agent session.
+        ;;
+        ;; NOT a hard gate. A browser that will not open, a laptop with no
+        ;; network, a person who wants to read `/help` first -- none of those
+        ;; is a reason to make the CLI unusable, and a required step that can
+        ;; fail for reasons outside the room is a lock-out waiting to happen.
+        ;; It runs, it says what is lost if it does not finish, and `/login`
+        ;; does it again.
+        (.then (fn [_]
+                 (if (human-token)
+                   (js/Promise.resolve nil)
+                   (-> (passkey-login!) (.then announce-login!)))))
         (.then chat-repl!))
     (do (println (str (:banner ((:skin ctx-theme)))
                       "  profile: " @chat-profile " (" (profile-source) ")"
