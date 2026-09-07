@@ -4613,11 +4613,20 @@
       (throw (ex-info "Bot の実行を中止しました。" {:type :bot/cancelled})))
     (cond
       (>= (- (:turn-count run 0) (:slice-turn-start run 0))
-          ;; The Bot's own turn ceiling, narrowing this one
-          ;; (ADR-2609062600 stage 2). These were global constants with no
-          ;; config and no per-Bot value, so the noisiest Bot set the loop
-          ;; bound for every Bot.
-          (bounds/turn-cap b (if (:goal? run) max-goal-turns max-turns)))
+          ;; The Bot's own turn ceiling, narrowing the deployment's
+          ;; (ADR-2609062600 stage 2). `bounds/cap` only ever NARROWS, so a
+          ;; per-Bot value cannot raise this -- which meant the interactive
+          ;; ceiling was the constant 8 and there was no way to raise it at
+          ;; all. Goal mode already read its tool-call ceiling from
+          ;; configuration; the interactive ceilings now read from the same
+          ;; place, and the constants stay as the default (ADR-2609072200).
+          (bounds/turn-cap
+           b
+           (if (:goal? run)
+             (long (or (get-in configuration [:bots :goal :max-turns])
+                       max-goal-turns))
+             (long (or (get-in configuration [:bots :max-turns])
+                       max-turns)))))
       (if (and (:goal? run)
                (< (long (or (:job/attempt (goal-job (:id run))) 0))
                   max-goal-continuations))
@@ -4642,7 +4651,8 @@
            (if (:goal? run)
              (long (or (get-in configuration [:bots :goal :max-tool-calls])
                        max-goal-tool-calls))
-             max-tool-calls)))
+             (long (or (get-in configuration [:bots :max-tool-calls])
+                       max-tool-calls)))))
       (if (and (:goal? run)
                (< (long (or (:job/attempt (goal-job (:id run))) 0))
                   max-goal-continuations))

@@ -419,6 +419,15 @@
  ;; explicitly gave a schedule. With no scheduled routine it is a store read
  ;; that finds nothing. Set `:enabled? false` to stop it looking at all.
  :bots {:mail-domain "mail.itonami.cloud"
+        ;; How many model turns and tool calls ONE interactive slice may take
+        ;; before it stops and asks. These were constants with no config path,
+        ;; and `bot_bounds/cap` only ever narrows, so a Bot could lower them
+        ;; and nobody could raise them -- an agent that needed a ninth turn to
+        ;; finish said 「考える回数の上限に達したので、ここで止めます」 and
+        ;; there was nothing to turn (ADR-2609072200). Goal mode's ceilings
+        ;; live under :goal and are unchanged.
+        :max-turns 8
+        :max-tool-calls 12
         ;; New Bots receive an isolated local Git root automatically. It is
         ;; continuously reconciled with Drive/Bots/<bot-id>/Workspace. A
         ;; hosted network target may be supplied under :workspace-sync :remote

@@ -1,0 +1,79 @@
+[{:db/id -1
+  :adr/id "adr-2609072200-typing-did-not-redraw-and-the-turn-ceiling-had-no-knob"
+  :adr/title "Typing did not redraw, and the turn ceiling had no knob"
+  :adr/status "accepted"
+  :adr/date "2026-09-07"
+  :adr/related "adr-2609071400-a-run-does-not-own-the-keyboard adr-2609062800-the-input-area-is-an-editor-not-a-readline"
+  :adr/body "## Two reports, one screen
+
+2026-09-07. The echo on submit showed the same sentence twice:
+
+    ❯ 今の itonami bots profile に…bot profile は今の itonami bots profile に…bot profile は
+
+and the answer was 「考える回数の上限に達したので、ここで止めます」.
+
+## The doubling was mine, and it was not the echo
+
+Typing did not redraw the block. At all.
+
+The key loop redrew only on the branches that happened to remember, and when
+the input loop was separated from the turn (ADR-2609071400) the ordinary branch
+-- a character -- stopped being one of them. Measured by driving a pty and
+sending one `X`: the last bytes on the wire are the initial frame, and the `X`
+never reaches the screen.
+
+So nothing appeared while the operator typed, they typed the line again, and
+the buffer really did hold it twice. The echo was correct; it printed what was
+there.
+
+## Why nothing caught it
+
+Every pty check written for the input area ran a slash command or a run in the
+same breath, and both redraw through other paths (`say!`, the progress tick).
+Not one of them typed a character, changed nothing else, and looked.
+
+That is the shape CLAUDE.md's fifth question asks about -- a check that has
+only ever been run in a state where something else would have made it pass.
+The fix is not only the missing redraw:
+
+`editor/step` now takes a chunk of keys and returns
+`{:state :submits :signal :redraw?}`. Whether the screen has to change is a
+VALUE a test can read, rather than a branch a loop has to remember. The loop in
+`bin/itonami` reads it. Control: forcing `:redraw?` to false fails
+`typing-asks-for-a-redraw` by name.
+
+A chunk that changes nothing still redraws. One frame is cheap, and deciding
+which keys are invisible is the decision that was got wrong.
+
+Two more things `step` pins, both of which the old loop got right by accident
+and nothing asserted: every submit in one chunk is carried out (a fast typist
+and a paste both arrive as one read), and a signal stops the chunk there (keys
+behind a Ctrl+D must not be applied to a session that is going away).
+
+## The ceiling had no knob
+
+`考える回数の上限` is `bots/max-turns`, a constant 8. `bot_bounds/cap` only ever
+NARROWS -- that is what a ceiling is for -- so the per-Bot `:bot/max-turns`
+added on 2026-09-06 could lower it and nothing could raise it. Goal mode already
+read its tool-call ceiling from configuration; the interactive ceilings read
+from nowhere.
+
+They now read `[:bots :max-turns]` and `[:bots :max-tool-calls]`, with the
+constants as the default, and both are declared in the shipped defaults so they
+are discoverable rather than folklore. Per-Bot narrowing is unchanged: a Bot
+still cannot raise its own ceiling.
+
+The operator config is raised to 24 turns and 40 tool calls (owner instruction
+「もっと試行回数を増やして」): the turn ceiling matches goal mode's, and the tool
+ceiling has headroom because the workspace tools are cheap and one search costs
+several calls. The previous file is kept beside it as a dated backup.
+
+## What this does not claim
+
+A ceiling that is reached is still evidence about the work, not only about the
+ceiling. The turn that prompted this ran eight `workspace_list` calls looking
+for something the Bot has no tool to read -- its six tools are filesystem and
+git. Twenty-four turns will let it search longer; it will not let it answer
+that question. The Bot's tool set is the thing to change for that, and it is
+not changed here.
+"}]

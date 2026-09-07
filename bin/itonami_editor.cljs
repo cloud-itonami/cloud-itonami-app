@@ -238,6 +238,36 @@
       :eof (if (blank? s) (assoc s :signal :eof) (delete-forward s))
       s)))
 
+(defn step
+  "Apply one chunk's worth of keys and say what the caller has to DO about it.
+
+  Returns `{:state s :submits [...] :signal k :redraw? true}`. The redraw flag
+  is the reason this exists: the loop in `bin/itonami` processed keys and
+  redrew only where it happened to remember to, and after the input loop was
+  separated from the turn it stopped remembering for the ordinary case --
+  typing a character. Nothing appeared on the screen at all, so the operator
+  typed the line again, and the buffer really did hold it twice (reported
+  2026-09-07: an echo showing the same sentence twice).
+
+  Every pty check written before that ran a slash command or a run in the same
+  breath, and both of those redraw through other paths. None of them typed a
+  character and looked. This function makes the answer to `should the screen
+  change?` a value a test can read."
+  [state keys]
+  (loop [ks (seq keys) s state submits [] signal nil]
+    (if (or (nil? ks) signal)
+      {:state s :submits submits :signal signal
+       ;; A chunk that changed nothing still redraws: it is one frame, it is
+       ;; cheap, and the alternative is deciding when a key is invisible --
+       ;; which is the decision that was got wrong.
+       :redraw? true}
+      (let [next* (handle s (first ks))]
+        (cond
+          (:submit next*) (recur (next ks) next* (conj submits (:submit next*)) nil)
+          (:signal next*) {:state next* :submits submits
+                           :signal (:signal next*) :redraw? true}
+          :else (recur (next ks) next* submits nil))))))
+
 ;; ---------------------------------------------------------------------------
 ;; key decoding
 ;; ---------------------------------------------------------------------------

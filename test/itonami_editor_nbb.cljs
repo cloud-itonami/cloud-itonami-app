@@ -362,5 +362,46 @@
                                            :queued 0 :colour false} 100)
                           "待機"))))
 
+
+;; ---------------------------------------------------------------------------
+;; what the loop has to do about a chunk of keys
+;; ---------------------------------------------------------------------------
+
+(deftest typing-asks-for-a-redraw
+  ;; Reported 2026-09-07: nothing appeared while typing, so the operator typed
+  ;; the line again and the buffer really did hold it twice -- the echo showed
+  ;; the same sentence twice on submit.
+  ;;
+  ;; The loop redrew only on the branches that happened to remember, and after
+  ;; the input loop was separated from the turn, the ordinary branch -- a
+  ;; character -- was not one of them. Every pty check written before that ran
+  ;; a slash command or a run in the same breath, and both redraw through other
+  ;; paths. None of them typed a character and looked.
+  (let [{:keys [state submits signal redraw?]} (ed/step (ed/fresh) (ed/decode "X"))]
+    (is (true? redraw?) "a keystroke that changes the buffer must reach the screen")
+    (is (= ["X"] (:lines state)))
+    (is (empty? submits))
+    (is (nil? signal)))
+  ;; and a chunk that changes nothing still redraws: one frame is cheap, and
+  ;; deciding which keys are invisible is the decision that was got wrong
+  (is (true? (:redraw? (ed/step (ed/fresh) [{:kind :up}])))))
+
+(deftest a-chunk-carries-out-everything-it-contained
+  ;; A paste, or a fast typist, arrives as one read. Handling only the first
+  ;; key would drop the rest.
+  (let [{:keys [state submits]} (ed/step (ed/fresh) (ed/decode "one\rtwo\rthree"))]
+    (is (= ["one" "two"] submits) "a submit mid-chunk was dropped")
+    (is (= ["three"] (:lines state)) "what followed the last submit was lost")))
+
+(deftest a-signal-stops-the-chunk-there
+  ;; Ctrl+D on an empty buffer ends the session; keys behind it in the same
+  ;; read must not be applied to a session that is going away.
+  (let [{:keys [signal submits]} (ed/step (ed/fresh) [{:kind :eof}
+                                                      {:kind :char :ch "z"}])]
+    (is (= :eof signal))
+    (is (empty? submits)))
+  ;; the control: without the signal the same keys go through
+  (is (= ["z"] (:lines (:state (ed/step (ed/fresh) [{:kind :char :ch "z"}]))))))
+
 (let [{:keys [fail error]} (run-tests 'itonami-editor-nbb)]
   (js/process.exit (if (pos? (+ (or fail 0) (or error 0))) 1 0)))
