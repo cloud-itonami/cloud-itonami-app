@@ -1,0 +1,78 @@
+;; E-SIGN retention attestation's DECISION CORE — which compliance gap, if
+;; any, an envelope's attestation state leaves open.
+;;
+;; This is the decision inside `cloud.itonami.app.esign.retention/compliance-gaps`,
+;; extracted so it runs on the native word-typed slice. The host (the `.cljc`
+;; wrapper) still assembles the human-readable gap descriptions and the limb
+;; labels; what moves here is the judgement about which gap an input state
+;; names — the part of 電子帳簿保存法 conformance that reduces to booleans.
+;;
+;; ## The two limbs and how they combine (both directions pinned)
+;;
+;; 可視性 (visibility — the three searchable fields are recorded):
+;;   `visibility-gap?` is simply "no retention entry". This is independent of
+;;   the 真実性 limb: either limb can be missing while the other is closed.
+;;
+;; 真実性 (veracity — the tamper-evidence measure):
+;;   an ACCREDITED timestamp closes it outright; otherwise the law accepts one
+;;   of the operator's own measures. As `retention.clj` implements it:
+;;
+;;     - `is-accredited` true                -> integrity-gap = none
+;;     - `is-accredited` false AND NOT proc  -> no-tamper-evidence-measure
+;;     - `is-accredited` false AND proc      -> relying-on-procedure (informational)
+;;
+;; `procedure-documented?` is the operator's own 事務処理規程 and this code
+;; cannot observe it, so it is an INPUT rather than a check — which is exactly
+;; why it lands here as a third boolean next to the two this application
+;; measures itself.
+;;
+;; ## Why this is written down as a core at all
+;;
+;; `compliance-gaps` must never pass silently. The failure mode this prevents
+;; is a deployment that reads "one limb closed" as "compliant" and lets the
+;; other degrade. The core keeps the two limbs separate: a caller that asks
+;; only for `visibility-gap?` is not told anything about 真実性, and a caller
+;; that asks for the gap enum gets the full triple.
+;;
+;; Word-typed slice: three `:bool` inputs, `:i64` code outputs, one
+;; all-scalar record. Same native-crossable surface as the other decision
+;; cores. `:i64` codes are assigned so the host can map them to the `.cljc`
+;; gap keywords without re-deriving the decision.
+;;
+;; Parity: test/cloud/itonami/app/esign_retention_kotoba_parity_test.clj
+
+(ns esign-retention-core
+  (:schemas {;; What the host has established about one envelope's attestation
+             ;; state, asked for one compliance report.
+             :esign/attestation
+             [:record :esign/attestation
+              [[:retention-entry :bool]
+               [:is-accredited :bool]
+               [:procedure-documented :bool]]]})
+  (:export [integrity-none integrity-no-evidence integrity-relying
+           visibility-gap? integrity-gap]))
+
+;; ── integrity gap codes ───────────────────────────────────────────────
+
+(defn integrity-none [] :i64 0)
+(defn integrity-no-evidence [] :i64 1)
+(defn integrity-relying [] :i64 2)
+
+;; ── the two limbs ─────────────────────────────────────────────────────
+
+(defn visibility-gap? [a [:ref :esign/attestation]] :bool
+  ;; 可視性: the law's three searchable fields are recorded, or not. There is
+  ;; no partial state — a record is either retained or it is not.
+  (not (record-get a :retention-entry)))
+
+(defn integrity-gap [a [:ref :esign/attestation]] :i64
+  ;; 真実性: an accredited timestamp closes it. Otherwise the operator's
+  ;; written procedure may still close it, but the gap is then reported as
+  ;; what it rests on (`relying-on-procedure`), not as if a timestamp were
+  ;; present — an accredited measure and a written procedure are different
+  ;; measures and the report must tell them apart.
+  (if (record-get a :is-accredited)
+    (integrity-none)
+    (if (record-get a :procedure-documented)
+      (integrity-relying)
+      (integrity-no-evidence))))

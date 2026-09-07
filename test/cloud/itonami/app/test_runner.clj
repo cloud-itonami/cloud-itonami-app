@@ -195,6 +195,7 @@
             [cloud.itonami.app.work-organism-dispatch-test]
             [cloud.itonami.app.esign-test]
             [cloud.itonami.app.esign-retention-test]
+            [cloud.itonami.app.esign-retention-kotoba-parity-test]
             [cloud.itonami.app.filecoin-test]
             [cloud.itonami.app.fleet-test]
             [cloud.itonami.app.folder-sync-test]
@@ -396,6 +397,7 @@
     cloud.itonami.app.work-organism-dispatch-test
     cloud.itonami.app.esign-test
     cloud.itonami.app.esign-retention-test
+    cloud.itonami.app.esign-retention-kotoba-parity-test
     cloud.itonami.app.filecoin-test
     cloud.itonami.app.fleet-test
     cloud.itonami.app.folder-sync-test
