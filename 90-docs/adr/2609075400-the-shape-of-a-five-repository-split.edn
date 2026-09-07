@@ -61,17 +61,51 @@ this moves as a unit.
 which requires eleven app namespaces including `store` and `server-process`.
 That launcher belongs with the app, not the CLI.
 
-**`-auth` is the hard one.** `identity.clj` is 3,645 lines and `server.clj`
-calls `require-session!` / `require-app-session!` / `require-human-session!`
-from route bodies throughout. Splitting it means deciding what the app asks the
-auth library FOR -- a session record, or a decision -- and that is a design
-question, not a move.
+**`-auth` is the hard one, and the hard part is not what was written here
+first.** The original entry said the question was what the app asks the auth
+library FOR -- a session record, or a decision. Measured 2026-09-07, that is
+not the question:
 
-**`-api` and `-apex` need a boundary that does not exist yet.** `server.clj` is
-7,425 lines of routes AND handlers in one file; there is no HTTP layer to lift
-away from a domain layer. `services/` holds five Workers (`agent-edge`,
-`app-edge`, `itonami-cloud-webhooks`, `itonami-fleet-dispatch`, `mcp-edge`)
-which are the likely `-apex` and edge material, and those ARE separable today.
+    require-session! / require-app-session! / require-human-session!
+      are defined IN server.clj (line 484), not in identity. They read the
+      HTTP exchange and throw ex-info. That is HTTP glue, not auth.
+
+    The real boundary is identity/, and it is:
+      64 files require it, 346 call sites in src.
+      The app asks it for BOTH records and decisions, and that is fine --
+      92 of those 346 are shared error vocabulary (unauthenticated,
+      invalid-origin, invalid-csrf, forbidden, organization-required,
+      agent-session-forbidden, invalid-registration), which is cheap to move.
+
+What actually blocks the split is one line in identity.clj's own ns form: **it
+requires `cloud.itonami.app.store`** (plus `connectors`, `credential`, `did`,
+`passkey`, `session-handoff`, `org-root-did`, `email-login`, `identity-axis`).
+The auth library depends on the app's persistence. So the decision is: does
+auth own its own storage, or does it take a store interface? Until that is
+answered, moving it makes the app depend on the auth repo AND the auth repo
+depend on the app.
+
+**A second reason arrived the same day.** ADR-2609070400 made human
+authentication Web3 first for the workspace, and
+`manifest/human-authentication-policy.edn` records this app as `:role :client`,
+`:active-methods #{:webauthn-passkey}`, `:status :unverified`. So this surface
+is about to gain a whole authentication method (SIWE + ERC-191 / ERC-1271) and
+currently carries an open compliance gap. **Splitting a surface with an
+unclosed gap moves the gap into a new repository without closing it.** Close
+the gap, then split.
+
+**`-apex` was separable, and is done** -- see
+`adr-2609076000-the-apex-workers-leave-the-app`. Four of the five Workers
+moved; `app-edge` stayed, because its dependency on `fleet-core` /
+`kotoba-oracle` is in the shipped Worker rather than only in a test.
+
+**`-api` needs a boundary that does not exist yet.** Measured 2026-09-07:
+`server.clj` is 7,425 lines, 73 requires, 147 `defn` (142 private), and one
+top-level form spanning **2,712 lines** starting at line 3199. There is no HTTP
+layer to lift away from a domain layer -- there is one file that is both.
+Creating that seam is a refactor of a live server, and it can happen inside
+this repository before any repository exists. A repository does not create a
+boundary; it can only hold one that is already there.
 
 ## The order this should go in
 
@@ -88,6 +122,9 @@ which are the likely `-apex` and edge material, and those ARE separable today.
    and can happen before any repository exists.
 
 ## Status
+
+Steps 1 and 2 are done; 3 and 4 are measured and blocked, each for a named
+reason above.
 
 Step 1 is done. `cloud-itonami/cloud-itonami-cli` exists, is registered in west
 at pin `cb85ffd3`, and runs standalone -- `--print-data-dir` resolves to its own
