@@ -1,0 +1,114 @@
+[{:db/id -1
+  :adr/id "adr-2609071400-a-run-does-not-own-the-keyboard"
+  :adr/title "A run does not own the keyboard"
+  :adr/status "accepted"
+  :adr/date "2026-09-07"
+  :adr/related "adr-2609062800-the-input-area-is-an-editor-not-a-readline adr-2609071000-the-frame-cannot-be-wider-than-the-terminal"
+  :adr/body "## What was asked
+
+Owner instruction, 2026-09-07: 描画中も 追加入力, /steer, /queue などを入力したい.
+
+## What made it impossible
+
+A run owned the terminal for its whole duration. The block was erased when the
+turn started and drawn again when it ended, and the only key that meant
+anything in between was ESC, because the only listener attached in between
+watched for ESC.
+
+So `/steer` -- a command whose entire purpose is to reach a run that is ALREADY
+GOING -- could not be typed while one was. It had been shipped in that state,
+and its own docstring said what it was for.
+
+## The change
+
+The input loop and the turn are now separate things.
+
+The loop runs from the moment the REPL opens until the process exits: ONE stdin
+listener for the life of the session, where there used to be one per turn,
+attached when a line was wanted and removed when it arrived. A turn is state
+the loop reads, not a thing that takes the keyboard away.
+
+On submit:
+
+- **a slash command runs immediately**, whatever the turn is doing. That is the
+  point.
+- **a plain line starts a turn** if none is in flight, and **joins the queue**
+  if one is. Two turns at once against one profile is two conversations, and
+  the server would interleave them.
+- the queue drains when a turn completes, one at a time.
+
+`/queue` lists what is waiting; `/queue clear` discards it. `/steer` and
+`/stop` now read the run id from the turn in flight -- they read it from the
+HELD-CARD state before, so they only worked when a write was waiting for
+approval, which is not when anyone wants to steer.
+
+## The screen, when two things want it
+
+Everything that writes during the REPL goes through one function, `say!`, which
+erases the block, writes, and schedules the block to come back. `*print-fn*` is
+rebound onto it, so every `println` in every slash command lands above the
+frame without any of them knowing the frame exists. A write that skips it lands
+on top of the frame, and the frame is what the next erase is measured from.
+
+Three things were found by measuring this, each of which had a plausible
+implementation that was wrong:
+
+**nbb hands `*print-fn*` a line WITHOUT its newline.** So every slash command
+ended mid-row and the block was drawn over it: `/queue` printed a list nobody
+ever saw. The newline is added at the rebinding.
+
+**Breaking the line before drawing moved the block down a row per redraw.**
+Arriving from raw output the cursor really is on a half-written row and the
+line has to be broken -- but `erase-input!` already leaves the cursor on the
+row BELOW it, so doing it again there walked the block down the screen. Eight
+blank rows between the answer and the frame, measured. It is done only when
+arriving from raw output.
+
+**Returning to a partial line by cursor arithmetic does not work.** A partial
+line wider than the terminal wraps, and `ESC[nC` clamps at the last column, so
+a streamed line of sixty numbers resumed at the far right of the wrong row.
+
+That last one is why the answer's incomplete last line is now a ROW OF THE
+BLOCK rather than something left on the terminal: inside the block the row
+count is already true, and the line graduates to the scrollback the moment its
+newline arrives. The progress line moved for the same reason -- both used to be
+lines of their own, which means being told where the block is and disagreeing
+with it the moment either moves.
+
+The block is therefore: the answer's tail, the progress line, the rule, the
+input, the rule, the status bar. The tail comes first because it continues the
+answer directly above it, and a progress line between them would cut the
+sentence in half.
+
+## A refusal ends the turn, not the session
+
+`itonami chat \"…\"` keeps `exit 1` on a refusal: that is where a status has to
+be something a script can read. In the REPL it now prints and returns to the
+prompt.
+
+The reason is the same one that made ESC return to the prompt rather than exit:
+an operator who typed one thing the server would not take has not asked to
+leave, and with a queue behind it, leaving would take the queue too. A refused
+turn leaves the queue unsent and says so, with the two commands that read and
+discard it.
+
+Measured while writing this: `この Bot はすでに実行中です` from a leftover run
+ended the whole session. It now prints and the prompt comes back.
+
+## Measured
+
+On a pty of known size, against the live resident:
+
+- `/status` and `/queue` answer while a turn streams; their output lands above
+  the frame and the frame comes back under it.
+- Typing during a run works, Japanese included; Enter queues, the status bar
+  shows `⏸ 1 件待機 (/queue)`, and the queue drains into the next turn when the
+  first completes (`say A` streaming, `say B` typed and queued, `say B` sent).
+- `/steer` twenty seconds into a sixty-number count reaches the run: it ends
+  with `DONE`.
+- A sixty-number answer wider than the terminal wraps in the scrollback and its
+  tail sits in the block without either overwriting the other.
+
+`/steer` in the first seconds of a turn still reports no run, because until the
+POST returns there is no run id -- there is genuinely nothing to steer yet.
+"}]
