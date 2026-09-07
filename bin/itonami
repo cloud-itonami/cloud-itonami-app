@@ -104,6 +104,7 @@
          '[itonami-splash :as splash]
          '[itonami-text :as text]
          '[itonami-editor :as editor]
+         '[itonami-wave :as wave]
          '[itonami-skills :as skills])
 
 (defn- slurp-file [p]
@@ -1464,6 +1465,58 @@
       (keychain-get) (str "keychain " keychain-service)
       :else "なし — itonami auth login")))
 
+(defn- play-wave!
+  "Hokusai's wave, once, above where the start screen will be.
+
+  ## Drawn in place, not on a cleared screen
+
+  Ten blank lines are written, then each frame moves the cursor up ten rows and
+  overwrites them. `ESC[2J` would have been one character shorter and would
+  have thrown away whatever the operator was reading a second ago — a start
+  screen is a guest in someone else's scrollback.
+
+  The cursor is hidden for the duration and restored in every exit path,
+  including the one where a frame throws, because a terminal left without a
+  cursor stays that way after the process is gone.
+
+  ## It resolves; it does not block
+
+  Returns a promise so the caller sequences it the way it sequences everything
+  else. Eight frames at 80ms is under a second, and `ITONAMI_NO_INTRO=1` or a
+  pipe or `NO_COLOR` skips it entirely — `wave/playable?` decides, and that is
+  a pure function so the decision is testable without a terminal."
+  []
+  (let [colour (colour?)
+        disabled? (boolean (not-empty (str (or (aget js/process.env "ITONAMI_NO_INTRO") ""))))]
+    (if-not (wave/playable? {:tty? (boolean (.-isTTY js/process.stdout))
+                             :color? colour
+                             :disabled? disabled?})
+      (js/Promise.resolve nil)
+      (let [ramp (:ramp ((:skin ctx-theme)))
+            n wave/rows-per-frame
+            write (fn [s] (.write js/process.stdout s))]
+        (write "\u001b[?25l")
+        (dotimes [_ n] (write "\n"))
+        (-> (reduce
+             (fn [p i]
+               (.then p (fn [_]
+                          (js/Promise.
+                           (fn [resolve]
+                             (write (str "\u001b[" n "A"))
+                             (doseq [row (wave/render i colour ramp)]
+                               (write (str "\u001b[2K" row "\n")))
+                             (js/setTimeout resolve 80))))))
+             (js/Promise.resolve nil)
+             (range wave/frame-count))
+            (.then (fn [_]
+                     ;; erase the wave; the start screen takes the height back
+                     (write (str "\u001b[" n "A"))
+                     (dotimes [_ n] (write "\u001b[2K\n"))
+                     (write (str "\u001b[" n "A"))
+                     (write "\u001b[?25h")
+                     nil))
+            (.catch (fn [e] (write "\u001b[?25h") (throw e))))))))
+
 (defn- print-splash!
   "The start screen, then the two facts that had to be measured to be said.
 
@@ -2108,6 +2161,12 @@
                      "「権限が無い」ではありません。"]))}]}))
 
 (register-slash!
+ "/wave" "" "神奈川沖浪裏 — ロゴの波をもう一度"
+ (fn [_ _]
+   (-> (play-wave!)
+       (.then (fn [_] {:say "🌊"})))))
+
+(register-slash!
  "/wallet" "" "Passkey が所有する smart account"
  (fn [_ _]
    (-> (request! {:method :get :path "/api/wallet" :timeout-seconds 15} (session-token))
@@ -2313,7 +2372,7 @@
                  (when-not (:measured? m)
                    (err (str "itonami: 端末が文字幅を答えませんでした。"
                              "ambiguous 幅 " (:columns m) " で続けます。")))
-                 (print-splash!)))
+                 (-> (play-wave!) (.then (fn [_] (print-splash!))))))
         ;; Sign in on open (owner instruction 2026-09-07), because the DID is
         ;; made here and because half the surface refuses an agent session.
         ;;
