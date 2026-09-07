@@ -1692,26 +1692,28 @@
   (swap! repl assoc :editor (editor/fresh @repl-history))
   (let [on-data
         (fn [chunk]
-          (loop [ks (editor/decode (str chunk))]
-            (when (seq ks)
-              (let [k (first ks)]
-                (if (and (= :escape (:kind k)) (:running @repl))
-                  ;; ESC means the run while there is one, and nothing to the
-                  ;; editor either way.
-                  (do (interrupt!) (recur (rest ks)))
-                  (let [next* (editor/handle (:editor @repl) k)]
-                    (swap! repl assoc :editor next*)
-                    (reset! repl-history (:history next*))
-                    (cond
-                      (:submit next*) (do (on-submit! (str/trim (:submit next*)))
-                                          (recur (rest ks)))
-                      (= :eof (:signal next*)) (bye!)
-                      (= :interrupt (:signal next*))
-                      (do (say! (str (text/paint (colour?) splash/dim-code
-                                                 "(exit または Ctrl+D で終了)")
-                                     "\n"))
-                          (recur (rest ks)))
-                      :else (recur (rest ks)))))))))]
+          (let [ks (editor/decode (str chunk))]
+            (if (and (:running @repl) (some #(= :escape (:kind %)) ks))
+              ;; ESC means the run while there is one, and nothing to the
+              ;; editor either way.
+              (interrupt!)
+              (let [{:keys [state submits signal redraw?]}
+                    (editor/step (:editor @repl) ks)]
+                (swap! repl assoc :editor state)
+                (reset! repl-history (:history state))
+                ;; Redraw BEFORE dispatching. This is the line whose absence
+                ;; made typing invisible: the old loop redrew only on the
+                ;; branches that happened to remember, and after the input loop
+                ;; was separated from the turn, the ordinary branch -- a
+                ;; character -- was not one of them.
+                (when redraw? (draw-input! state))
+                (doseq [line submits] (on-submit! (str/trim line)))
+                (case signal
+                  :eof (bye!)
+                  :interrupt (say! (str (text/paint (colour?) splash/dim-code
+                                                    "(exit または Ctrl+D で終了)")
+                                        "\n"))
+                  nil)))))]
     (.on js/process.stdin "data" on-data)
     (.on js/process.stdout "resize" #(when (:editor @repl) (draw-input! (:editor @repl))))
     (draw-input! (:editor @repl))))
