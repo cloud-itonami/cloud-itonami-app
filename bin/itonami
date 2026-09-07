@@ -2054,6 +2054,78 @@
    (-> (passkey-login!)
        (.then (fn [r] (announce-login! r) (redraw!))))))
 
+(defn- wallet-panel
+  "The smart account the Passkey owns.
+
+  Coinbase Smart Wallet's model, which this app already implements: the account
+  is an ERC-4337 contract whose OWNER is the WebAuthn P-256 key, its address is
+  computed counterfactually from that key by the factory's
+  `getAddress(bytes[],uint256)`, and no private key is stored anywhere. So
+  there is no separate wallet to sign in with -- signing in with the Passkey is
+  what produces the account (ADR-2609075000)."
+  [w]
+  (let [a (:principal-account w)
+        cap (:capabilities w)
+        yes (fn [v] (cond (true? v) "できます" (false? v) "できません" :else (str v)))
+        ;; "private key stored できません" reads as a missing capability. It is
+        ;; the opposite: nothing is stored because nothing needs to be.
+        held (fn [v] (cond (true? v) "保存しています" (false? v) "保存していません"
+                           :else (str v)))]
+    {:title "wallet"
+     :tab 0 :scroll 0
+     :tabs
+     [{:label "Account"
+       :lines (if-not (:address a)
+                ["Smart account がまだありません。"
+                 "Passkey でサインインすると、その公開鍵から住所が決まります（/login）。"]
+                [(str "address        " (:address a))
+                 (str "owner          " (:owner-kind a) "  (" (:owner-model a) ")")
+                 (str "factory        " (:factory-family a) " " (:factory-version a))
+                 (str "entry point    " (:entry-point-version a))
+                 (str "deployment     " (:deployment-state a))
+                 (str "same address across chains  "
+                      (yes (:same-address-across-chains? a)))
+                 (str "private key                 "
+                      (held (:private-key-stored? a)))
+                 ""
+                 "住所は Passkey の公開鍵から決まります（counterfactual）。"
+                 "まだ deploy されていなくても受け取りには使えます。"])}
+      {:label "Chains"
+       :lines (vec (for [c (:supported-chains w)]
+                     (str (text/pad-right (str (:name c)) 20)
+                          "chain-id " (:chain-id c)
+                          (when (:network c) (str "  " (:network c)))
+                          "   owner UserOperation: "
+                          (yes (:owner-user-operation-ready? c)))))}
+      {:label "Capabilities"
+       :lines (vec (concat
+                    [(str "provider   " (:wallet-provider w))
+                     (str "private keys         " (held (:private-keys-stored? w)))
+                     ""]
+                    (for [[k v] cap] (str (text/pad-right (name k) 22) (yes v)))
+                    [""
+                     "`pending` は「その UserOperation 経路がまだ通っていない」で、"
+                     "「権限が無い」ではありません。"]))}]}))
+
+(register-slash!
+ "/wallet" "" "Passkey が所有する smart account"
+ (fn [_ _]
+   (-> (request! {:method :get :path "/api/wallet" :timeout-seconds 15} (session-token))
+       (.then (fn [{:keys [status body]}]
+                (if (<= 200 status 299)
+                  {:panel (wallet-panel body)}
+                  {:panel {:title "wallet" :tab 0 :scroll 0
+                           :tabs [{:label "読めません"
+                                   :lines [(str "wallet を読めません (HTTP " status ")")
+                                           (if (human-token)
+                                             "human session はありますが拒否されました。"
+                                             "human session がありません。/login を実行してください。")]}]}})))
+       (.catch (fn [e]
+                 {:panel {:title "wallet" :tab 0 :scroll 0
+                          :tabs [{:label "読めません"
+                                  :lines [(str "server に到達できません: " (base-url))
+                                          (ex-message e)]}]}})))))
+
 (register-slash!
  "/whoami-session" "" "いま何の session で話しているか"
  (fn [_ _]

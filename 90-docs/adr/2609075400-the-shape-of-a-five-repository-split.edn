@@ -1,0 +1,81 @@
+[{:db/id -1
+  :adr/id "adr-2609075400-the-shape-of-a-five-repository-split"
+  :adr/title "The shape of a five-repository split, measured before moving anything"
+  :adr/status "accepted"
+  :adr/date "2026-09-07"
+  :adr/related "adr-2609075000-the-passkey-is-the-wallet"
+  :adr/body "## What was asked
+
+cloud-itonami-app / -cli / -api / -apex に整理してほしい、および -auth も分離。
+
+None of `-cli`, `-api`, `-apex`, `-auth` exists: not in `manifest/west.yml`, and
+`GET /repos/cloud-itonami/<name>` is 404 for all four. So this is four new
+repositories and a split, not a re-registration.
+
+## What is being split
+
+    src        235 files   87,064 lines
+    test       236 files   56,062 lines
+    resources   36 files   27,090 lines
+    docs       118 files   13,633 lines
+    services    33 files    6,501 lines   (5 Cloudflare Workers)
+    bin         19 files    6,356 lines
+
+with a resident on this machine running `clojure -M:server` from a release of
+it, a launchd job, an MCP server, and four pointers that have to stay in step
+(main, west pin, `~/.cloud-itonami/current`, the running process).
+
+## The seams, measured
+
+**`cloud-itonami-cli` is clean.** `bin/itonami` reaches into `src` for exactly
+two namespaces, and neither reaches back into the app:
+
+    commands.cljc     350 lines   requires: itself only
+    repo_profile.cljc 329 lines   requires: itself only
+
+Everything else the CLI needs is its own siblings (`itonami_editor`,
+`itonami_splash`, `itonami_text`, `itonami_harness`, `itonami_profile`,
+`itonami_skills`) and its own tests. This one can move as a unit.
+
+**`bin/cloud-itonami-app` is not.** It goes through `cli.clj` (881 lines),
+which requires eleven app namespaces including `store` and `server-process`.
+That launcher belongs with the app, not the CLI.
+
+**`-auth` is the hard one.** `identity.clj` is 3,645 lines and `server.clj`
+calls `require-session!` / `require-app-session!` / `require-human-session!`
+from route bodies throughout. Splitting it means deciding what the app asks the
+auth library FOR -- a session record, or a decision -- and that is a design
+question, not a move.
+
+**`-api` and `-apex` need a boundary that does not exist yet.** `server.clj` is
+7,425 lines of routes AND handlers in one file; there is no HTTP layer to lift
+away from a domain layer. `services/` holds five Workers (`agent-edge`,
+`app-edge`, `itonami-cloud-webhooks`, `itonami-fleet-dispatch`, `mcp-edge`)
+which are the likely `-apex` and edge material, and those ARE separable today.
+
+## The order this should go in
+
+1. **`cloud-itonami-cli`** -- move `bin/itonami*`, the two `.cljc`, and their
+   tests. The app keeps a dependency on the CLI's `commands` table (or the
+   table moves and the app depends on it; that is one decision to make once).
+2. **`cloud-itonami-apex`** -- the Workers that serve the public surface, which
+   are already separate deployables with their own `wrangler` configs.
+3. **`cloud-itonami-auth`** -- only after deciding what its interface is. A
+   library the app calls, not a service, unless the hosted
+   `auth.itonami.cloud` is meant to move here too, which is a bigger decision.
+4. **`cloud-itonami-api`** -- last, because it requires splitting `server.clj`
+   into routes and handlers first, which is a refactor inside the current repo
+   and can happen before any repository exists.
+
+## Not started
+
+Nothing has been moved. This records the measurement and the order; the split
+itself is the next piece of work, and step 1 is the one that can begin without
+another decision.
+
+The reason for writing this before moving anything: a repository split is the
+kind of change that looks finished long before it is, and the thing that tells
+you it is not is the deploy path -- release directory, launchd job, MCP server,
+west pin -- which has to keep working at every step. Four of those pointers
+were only brought into agreement today.
+"}]
