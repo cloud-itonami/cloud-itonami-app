@@ -236,5 +236,88 @@
         (is (= w (text/display-width line))
             (str w " columns, " (pr-str facts) ": " (text/display-width line)))))))
 
+
+;; ---------------------------------------------------------------------------
+;; how wide the terminal says a glyph is
+;; ---------------------------------------------------------------------------
+
+(deftest ambiguous-width-is-asked-not-assumed
+  ;; UAX#11 leaves U+276F, U+25B6, U+00B7 and all of box drawing to the
+  ;; terminal: one column in a Latin locale, two in a CJK one. Assuming one and
+  ;; being wrong by one is not cosmetic -- it is what made the frame tear
+  ;; (measured 2026-09-07), because a row one column too wide wraps and the
+  ;; block then occupies more rows than were counted.
+  (try
+    (text/set-ambiguous-columns! 1)
+    (is (= 2 (text/display-width "❯ ")))
+    (is (= 2 (text/display-width "▶▶")))
+    (text/set-ambiguous-columns! 2)
+    (is (= 3 (text/display-width "❯ ")) "the terminal's answer was ignored")
+    (is (= 4 (text/display-width "▶▶")))
+    ;; unambiguous widths do not move with it
+    (is (= 4 (text/display-width "営み")))
+    (is (= 3 (text/display-width "abc")))
+    (finally (text/set-ambiguous-columns! 1))))
+
+(deftest only-a-terminal-width-is-accepted-as-an-answer
+  ;; A query that came back as anything else was not an answer. Writing it down
+  ;; would turn "the terminal did not reply" into a measurement.
+  (try
+    (text/set-ambiguous-columns! 2)
+    (is (= 2 (text/set-ambiguous-columns! 0)))
+    (is (= 2 (text/set-ambiguous-columns! 7)))
+    (is (= 2 (text/set-ambiguous-columns! nil)))
+    (is (= 1 (text/set-ambiguous-columns! 1)))
+    (finally (text/set-ambiguous-columns! 1))))
+
+(deftest the-frame-follows-the-measured-width
+  ;; The point of measuring: every row still fits after the answer changes.
+  (try
+    (doseq [n [1 2]]
+      (text/set-ambiguous-columns! n)
+      (let [{:keys [rows]} (ed/render (ed "hi") {:width 40 :prompt "❯ " :status "S"})]
+        (is (every? #(<= (text/display-width %) 40) rows)
+            (str "ambiguous=" n))))
+    (finally (text/set-ambiguous-columns! 1))))
+
+;; ---------------------------------------------------------------------------
+;; the line that runs under a turn
+;; ---------------------------------------------------------------------------
+
+(deftest elapsed-reads-like-a-wait
+  (is (= "0s" (ed/elapsed 0)))
+  (is (= "9s" (ed/elapsed 9400)))
+  (is (= "1m 14s" (ed/elapsed 74000)))
+  (is (= "2h 1m" (ed/elapsed 7260000)))
+  (is (= "0s" (ed/elapsed -5)) "a clock that went backwards is not a negative wait"))
+
+(deftest the-progress-line-says-only-what-arrived
+  (let [line (ed/progress-line {:phase "model" :ms 74000 :tick 0
+                                :interruptible? true :colour false} 80)]
+    (is (str/includes? line "model…"))
+    (is (str/includes? line "1m 14s"))
+    (is (str/includes? line "esc"))
+    ;; there is no percentage and no bar: the server sends phases, not
+    ;; progress, and a bar filling on a timer would be the one thing on this
+    ;; screen that nothing measured
+    (is (not (str/includes? line "%")))
+    (is (not (str/includes? line "█"))))
+  ;; a run that has reported no phase yet says so rather than inventing one
+  (is (str/includes? (ed/progress-line {:ms 3000 :colour false} 80) "working…"))
+  ;; tokens appear only once some have been counted
+  (is (not (str/includes? (ed/progress-line {:ms 3000 :colour false} 80) "tokens")))
+  (is (str/includes? (ed/progress-line {:ms 3000 :tokens 12 :colour false} 80) "12 tokens")))
+
+(deftest the-progress-line-fits-and-turns
+  (doseq [w [20 40 100]]
+    (is (>= w (text/display-width
+               (ed/progress-line {:phase "a-very-long-phase-name-from-the-server"
+                                  :ms 999999 :tokens 12345 :interruptible? true
+                                  :colour false} w)))))
+  ;; it is a spinner: consecutive ticks differ
+  (let [f #(first (ed/progress-line {:ms 0 :tick % :colour false} 40))]
+    (is (not= (f 0) (f 1)))
+    (is (= (f 0) (f (count ed/spinner-frames))) "the frames do not cycle")))
+
 (let [{:keys [fail error]} (run-tests 'itonami-editor-nbb)]
   (js/process.exit (if (pos? (+ (or fail 0) (or error 0))) 1 0)))

@@ -1,0 +1,93 @@
+[{:db/id -1
+  :adr/id "adr-2609071000-the-frame-cannot-be-wider-than-the-terminal"
+  :adr/title "The frame cannot be wider than the terminal, and the width is measured"
+  :adr/status "accepted"
+  :adr/date "2026-09-07"
+  :adr/related "adr-2609062800-the-input-area-is-an-editor-not-a-readline"
+  :adr/body "## The report
+
+2026-09-06, from the operator, against a screenshot: キーボードカーソルが動かない,
+入力すると入力エリアが消えてしまう. And a second screenshot of another agent CLI:
+show what is happening while a turn runs.
+
+## What was actually wrong
+
+The frame is redrawn by moving the cursor up by the number of rows it occupies,
+clearing to the end of the screen, and printing it again. That arithmetic is
+only true while every row FITS the terminal.
+
+Every row is built to fit -- but \"fits\" was this program's opinion of how wide
+a glyph is, and UAX#11 does not settle that. U+276F (the prompt), U+25B6 (the
+status bar), U+00B7 (every separator) and all of box drawing (both rules) are
+East Asian Ambiguous: one column in a Latin locale, two in a CJK one. The
+program assumed one.
+
+When the opinion is short by even one column the row wraps, the block occupies
+more terminal rows than were counted, the next erase moves up too few, and the
+input area walks down the screen leaving copies of itself while the caret lands
+somewhere it was not put. That is what カーソルが動かない and
+入力エリアが消えてしまう are, from outside.
+
+Reproduced 2026-09-07 by making every row twelve columns too wide on a pty of
+known size: stacked, drifting copies of the input area, exactly as reported.
+Nothing else about the build changed.
+
+## Three fixes, in order of how much they are relied on
+
+**1. Auto-wrap off while the block is drawn** (`ESC[?7l` … `ESC[?7h`). The
+terminal clips a too-long row instead of wrapping it, so the block is always
+exactly the number of rows that were printed, whatever anyone thinks a glyph
+is worth. Verified with the same twelve-column error: frame intact. Verified in
+the other direction by leaving wrap on with the same error: the reported
+failure, reproduced.
+
+This is the one that must hold. The two below make the screen right; this one
+makes it impossible for the screen to be broken.
+
+**2. The ambiguous width is measured, not assumed.** At startup, on a terminal,
+the program prints U+276F at a known column, asks where the cursor ended up
+with `ESC[6n`, and subtracts. A terminal that does not answer within 300 ms
+leaves the default of 1 standing AND says so on stderr -- an unanswered query
+must not read as an answer.
+
+`itonami-text/display-width` consults that number for the ambiguous ranges. Only
+1 and 2 are accepted as answers.
+
+**3. `text/rule`.** Writing `(.repeat \"─\" n)` was wrong by construction: U+2500
+is itself Ambiguous, so on a terminal that draws it in two columns the rule came
+out twice the width of the frame it was drawing. The editor's own width check
+caught this the first time it ran against a measured width of 2 -- which is the
+argument for measuring rather than for picking a number.
+
+Also, per redraw: the cursor is hidden, and each row is cleared with `ESC[2K`
+rather than trusting one `ESC[0J` to have reached every column the last frame
+used.
+
+## The line that runs under a turn
+
+`editor/progress-line`: a spinner, the phase the RUN reported, how long it has
+been going, tokens once any have been counted, and `esc で中断` while that is
+true. It owns one terminal row; everything else that writes during a run takes
+it off first, and from the first `assistant.delta` it does not come back --
+it would interleave with the text it was waiting for.
+
+There is no percentage and no bar. The server sends phases, not progress, and a
+bar filling on a timer would be the one thing on that screen that nothing
+measured. The test asserts their absence.
+
+The clock is not restarted when a tool log takes the row: the run has been
+going the whole time, and a timer that reset would report a wait that never
+happened.
+
+Measured against the live resident: `✳ working… (0s · esc で中断)` through
+`✵ model… (30s · esc で中断)`, then gone, with no residue on the screen the
+answer lands on.
+
+## What this cost, and what it was worth
+
+A `git checkout bin/itonami` meant to undo an experiment's hack discarded an
+hour of uncommitted work in the same file. Reapplied, then committed before the
+next experiment. The lesson is the ordinary one and it is written here because
+it happened: an experiment that edits a working file wants its own copy, not a
+checkout to undo it.
+"}]

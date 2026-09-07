@@ -44,6 +44,45 @@
 
 (defn strip-ansi [s] (str/replace (str s) ansi-pattern ""))
 
+(def ambiguous-columns
+  "How many columns this terminal gives an East Asian Ambiguous glyph.
+
+  UAX#11 does not answer this: `\u276f`, `\u25b6`, `\u00b7` and every box-drawing
+  character are Ambiguous, which means 1 in a Latin locale and 2 in a CJK one,
+  and the same program is right in both places only if it ASKS. `bin/itonami`
+  measures it once against the real terminal with `ESC[6n`; until it does, 1 is
+  the assumption, because that is what an unconfigured terminal does.
+
+  It is not a cosmetic number. Measured 2026-09-07: one row wider than the
+  terminal wraps, the frame then occupies more rows than were counted, the
+  erase moves up too few, and the input area drifts down the screen leaving
+  copies of itself -- which is what `カーソルが動かない` and `入力エリアが消えてしまう`
+  looked like from the outside."
+  (atom 1))
+
+(defn set-ambiguous-columns!
+  "Record what the terminal answered. Only 1 and 2 are terminal widths; a query
+  that came back as anything else was not an answer, and the default stands."
+  [n]
+  (when (contains? #{1 2} n) (reset! ambiguous-columns n))
+  @ambiguous-columns)
+
+(defn ambiguous?
+  "Glyphs whose width the standard leaves to the terminal. Not exhaustive --
+  it covers what this program actually draws with."
+  [cp]
+  (or (<= 0x00a1 cp 0x00b7)
+      (<= 0x2010 cp 0x2027)
+      (<= 0x2030 cp 0x205e)
+      (<= 0x2190 cp 0x21bb)          ; arrows
+      (<= 0x2200 cp 0x22ff)
+      (<= 0x2460 cp 0x24ff)
+      (<= 0x2500 cp 0x259f)          ; box drawing and block elements
+      (<= 0x25a0 cp 0x25ff)          ; geometric shapes
+      (<= 0x2600 cp 0x26ff)          ; miscellaneous symbols
+      (<= 0x2701 cp 0x27be)          ; dingbats
+      (<= 0xfffd cp 0xfffd)))
+
 (defn wide?
   "East Asian Wide (W) or Fullwidth (F): two columns in every terminal.
 
@@ -75,7 +114,25 @@
         w
         (let [cp (.codePointAt t i)]
           (recur (+ i (if (> cp 0xFFFF) 2 1))
-                 (+ w (if (wide? cp) 2 1))))))))
+                 (+ w (cond (wide? cp) 2
+                            (ambiguous? cp) @ambiguous-columns
+                            :else 1))))))))
+
+(defn glyph-columns
+  "Columns one code point takes, this terminal's answer included."
+  [cp]
+  (cond (wide? cp) 2 (ambiguous? cp) @ambiguous-columns :else 1))
+
+(defn rule
+  "`ch` repeated to fill at most `n` columns.
+
+  `(.repeat \"─\" n)` was wrong by construction: U+2500 is Ambiguous, so on a
+  terminal that draws it in two columns the rule came out twice the width of
+  the frame it was drawing. The editor's own width test caught it the first
+  time it was run against a measured width of 2."
+  [ch n]
+  (let [w (glyph-columns (.codePointAt (str ch) 0))]
+    (.repeat (str ch) (max 0 (quot n w)))))
 
 (defn pad-right
   "`s` padded with spaces to `n` columns. A string already wider than `n` is
@@ -98,7 +155,7 @@
           (if (>= i (.-length t))
             t
             (let [cp (.codePointAt t i)
-                  cw (if (wide? cp) 2 1)]
+                  cw (glyph-columns cp)]
               (if (> (+ w cw) limit)
                 (str (subs t 0 i) "…")
                 (recur (+ i (if (> cp 0xFFFF) 2 1)) (+ w cw))))))))))
