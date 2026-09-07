@@ -61,6 +61,15 @@
   evidence/2026-09-04-falsify-8.md 参照。着地は kanban/human 判断 (Tier 2)。
   falsify-16 では本テストも緑になったが、/private/tmp worktree は shadow
   レイアウトを持たないためで反証ではない (帰属不変)。
+  **falsify-59 (2026-09-07) で repo root 起動の直接再現 (修理案 A 着地説 REFUTED)**:
+  bin/cloud-itonami-app (head 9e5b24a) の shell 解決は repo 相対分支
+  (`$app_dir/../../kotoba-lang/shell`) が WORKSPACE_ROOT より先 (launcher 36-42 行目、
+  優先順位反転なし)。合成 root /tmp/ci-resident-root-59 に orgs/kotoba-lang/shell を
+  置き CLOUD_ITONAMI_WORKSPACE_ROOT を export して repo root から
+  `bash bin/cloud-itonami-app --print-shell-dir` を実行 → 出力は WORKSPACE_ROOT 配下でなく
+  repo 相対の実 shell (/Users/.../orgs/kotoba-lang/shell) を返す (exit 0)。
+  launcher_test の断言 (workspace shell = stdout) は赤。OPEN 赤-4 は未解決のまま、
+  修理案 A/B は Tier 2 kanban/human 判断継続 (evidence/2026-09-07-falsify-59.md)。
 - OPEN 赤-5: ~~bots_test.clj:1566 durable-goal 並行 deref が高負荷環境で
   flake~~ → **falsify-16 (2026-09-05) で CLOSED**: PR #280 は
   2026-09-05T06:52:58Z に merge 済み (mergeCommit 1905580、gh 実測)。
@@ -557,3 +566,21 @@ agent/fix-open-red-5-three-bound で **falsify-52 時点の porcelain clean か�
 
 **falsify-58 (2026-09-07、運用 軸) で OPEN 赤-2 (expiry-alert) の「09:00 発火後も未修理のまま失敗し続ける」を確認 (SURVIVED、発火実績を新規観測)**: falsify-18 (09-06) の状態「`runs=0 / never exited`、次回発火 2026-09-07 (Mon) 09:00 (Weekday=1/Hour=9/Minute=0)」に対し、本反復 (2026-09-07 18:09 JST) の
 `launchctl print gui/501/com.gftdcojp.itonami.expiry-alert` 実測で **`runs = 1` / `last exit code = 1` / `state = not running`** を観測。ログ `/Users/junkawasaki/.itonami/logs/expiry-alert.log` は mtime **`Sep 7 09:00`** に更新され、内容は `Could not find namespace: authority.scope` (nbb ロード即死、falsify-9/11/17 と同一エラー) を反復出力 — **job は当日 09:00 に実発火し、未修理のまま失敗**。plist **classpath 実測**にも falsify-11 案 A の 3 src (`authority/src` / `org-nist-sha2/src` / `datom-source/src`) のいずれも含まれない (= 修理案 A 未着地)。一方、namespace ソース `orgs/kotoba-lang/authority/src/authority/scope.cljc` は**ディスク上に存在**する (`ls` 実測) — 即ち「無い機能を読んだ」のではなく「ある機能を plist classpath に入れ忘れた」classpath 経路漏れの単独原因。範囲修正: 赤-2 の実体は falsify-18 の「一度も実行されていない (runs=0)」から、本反復で「**毎発火ごとに classpath 不備で失敗 (runs=1, exit=1)**」へ精緻化。修理案 A (classpath 3 src 追加 + plist 再生成 + launchctl relaunch) は kanban/human 判断 (Tier 2) のまま未着地 (修理対象は本体 cloud-itonami-app でなく network-awai リポの plist classpath + システム launchd 改変のため Tier 1 不着地、Tier 2 kanban/human 判断)。運用軸 score は 3 のまま (根拠に「09:00 実発火・失敗の直接観測 + root cause が classpath 経路漏れと確定」を追記)。附帯: 本体 checkout は agent/fix-open-red-5-three-bound / **porcelain clean (dirty 0) 実測**、head 9e5b24a (変更前後テスト緑原理: 本反復は本体未 touch の測定のみ)。7 軸表 16 行目孤立行 `| 反証候補falsify30PLACEHOLDER` 残存 (operator 復旧待ち、append-only で本 bot は編集せず)、falsify-46/49 mid-sentence truncate も回復せず (evidence/2026-09-07-falsify-58.md)。
+
+## NEXT (falsify-59 追記, append-only)
+
+**falsify-59 (2026-09-07、テスト 軸) で OPEN 赤-4 (launcher WORKSPACE_ROOT shadow) の
+修理案 A 着地説を REFUTED (決定論的再現)**: head 9e5b24a の bin/cloud-itonami-app は repo
+相対分支 ($app_dir/../../kotoba-lang/shell) を WORKSPACE_ROOT より先に評価するまま (launcher
+36-42 行実測、優先順位反転なし)。合成 root /tmp/ci-resident-root-59 に orgs/kotoba-lang/shell
+を置き CLOUD_ITONAMI_WORKSPACE_ROOT を export して repo root から
+`bash bin/cloud-itonami-app --print-shell-dir` を実行 → WORKSPACE_ROOT 配下でなく repo 相対の
+実 shell (/Users/junkawasaki/github/com-junkawasaki/orgs/kotoba-lang/shell) を返す (exit 0、
+falsify-8 の赤条件を完全再現)。launcher_test.clj:162 の必然断言は赤。falsify-16 の /private/tmp
+緑は shadow 無しの反証外であることに加え、テスト本来の repo root 起動レイアウトでの直接再現を
+新規観測。OPEN 赤-4 は未解決のまま、修理案 A (launcher を WORKSPACE_ROOT 優先に) / B は Tier 2
+kanban/human 判断継続。テスト軸 score は 3 のまま (根拠に決定論的再現確認を追記、質を覆す変更
+でない)。附帯: 7 軸表 16 行目孤立行 `| 反証候補falsify30PLACEHOLDER` 残存 (operator 復旧待ち、
+append-only で本 bot は編集せず)、falsify-46 mid-sentence truncate も回復せず。本体 checkout は
+agent/fix-open-red-5-three-bound / porcelain clean (dirty 0 実測)、head 9e5b24a (変更前後テスト緑
+原理: 本反復は本体未 touch の測定のみ)。(evidence/2026-09-07-falsify-59.md)
