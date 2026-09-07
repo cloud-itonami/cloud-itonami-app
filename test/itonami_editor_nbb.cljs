@@ -403,5 +403,112 @@
   ;; the control: without the signal the same keys go through
   (is (= ["z"] (:lines (:state (ed/step (ed/fresh) [{:kind :char :ch "z"}]))))))
 
+
+;; ---------------------------------------------------------------------------
+;; the slash menu
+;; ---------------------------------------------------------------------------
+
+(def ^:private cmds
+  [{:name "/help" :description "この一覧"}
+   {:name "/status" :description "状態"}
+   {:name "/steer" :description "割り込み"}
+   {:name "/timestamps" :description "時刻"}
+   {:name "/west-pin-advance" :description "pin"}])
+
+(defn- ed* [s] (type* (ed/fresh [] cmds) s))
+
+(deftest a-slash-opens-the-list-and-typing-narrows-it
+  (is (= ["/help" "/status" "/steer" "/timestamps" "/west-pin-advance"]
+         (mapv :name (:items (ed/menu (ed* "/"))))))
+  ;; `/west-pin-advance` is here because "west" contains "st". That is the
+  ;; substring half of the match doing its job -- it is how `/pin` finds it
+  ;; too -- and the prefix half keeps it last.
+  (is (= ["/status" "/steer" "/timestamps" "/west-pin-advance"]
+         (mapv :name (:items (ed/menu (ed* "/st"))))))
+  (is (= ["/west-pin-advance"] (mapv :name (:items (ed/menu (ed* "/pin"))))))
+  (is (nil? (ed/menu (ed* "hello"))) "the list is for slash commands, not messages"))
+
+(deftest a-prefix-comes-before-a-word-that-merely-contains-it
+  ;; `/st` should offer `/status` before `/timestamps`: a prefix is what the
+  ;; operator is typing, and `st` in the middle of a word is not what they mean.
+  (let [names (mapv :name (:items (ed/menu (ed* "/st"))))]
+    (is (< (.indexOf names "/status") (.indexOf names "/timestamps")))
+    (is (< (.indexOf names "/steer") (.indexOf names "/timestamps")))))
+
+(deftest the-list-closes-once-arguments-are-being-typed
+  ;; A list that keeps covering the screen while arguments are typed is a list
+  ;; that has to be dismissed rather than one that helps.
+  (is (some? (ed/menu (ed* "/steer"))))
+  (is (nil? (ed/menu (ed* "/steer stop counting")))))
+
+(deftest arrows-move-the-selection-and-not-the-history
+  ;; Up in a one-line buffer means history everywhere else. Over a half-typed
+  ;; command name that would throw the name away.
+  (let [s (type* (ed/fresh ["earlier message"] cmds) "/st")
+        d (press s :down)]
+    (is (= 1 (:index (ed/menu d))))
+    (is (= ["/st"] (:lines d)) "history was pulled over the typed command")
+    (is (= 0 (:index (ed/menu (press d :up)))))
+    ;; and it stops at the ends rather than wrapping
+    (is (= 0 (:index (ed/menu (press d :up :up :up)))))
+    (let [last* (press d :down :down :down :down)]
+      (is (= 3 (:index (ed/menu last*))) "the selection ran past the last item"))))
+
+(deftest tab-completes-the-selection
+  (let [s (press (ed* "/st") :down :tab)]
+    (is (= ["/steer "] (:lines s)))
+    (is (= 7 (:col s)) "the caret did not land after the completed name")
+    (is (nil? (ed/menu s)) "the list stayed up over a completed command")))
+
+(deftest enter-completes-a-partial-name-and-sends-a-whole-one
+  ;; Completing `/help` to `/help ` and asking for a second Enter would be the
+  ;; menu getting in the way of the commonest case.
+  (let [partial* (press (ed* "/st") :enter)]
+    (is (nil? (:submit partial*)))
+    (is (= ["/status "] (:lines partial*))))
+  (let [whole (press (ed* "/help") :enter)]
+    (is (= "/help" (:submit whole)) "a fully typed command was completed instead of sent")))
+
+(deftest escape-dismisses-the-list-and-it-stays-dismissed
+  ;; Until the word changes -- otherwise it reappears on the next keystroke and
+  ;; the key looks broken.
+  (let [closed (press (ed* "/st") :escape)]
+    (is (nil? (ed/menu closed)))
+    (is (nil? (ed/menu (press closed :left))))
+    (is (some? (ed/menu (type* closed "a"))) "typing did not bring it back")))
+
+(deftest a-command-with-no-match-shows-no-list
+  ;; And Enter then sends the line, so the operator gets the server's own
+  ;; "no such command" rather than a menu that silently ate the key.
+  (let [s (ed* "/zzz")]
+    (is (nil? (ed/menu s)))
+    (is (= "/zzz" (:submit (press s :enter))))))
+
+(deftest the-list-is-rows-of-the-block-and-the-caret-clears-them
+  (let [{:keys [rows caret]} (ed/render (ed* "/st") (assoc geo :width 60))]
+    ;; rule + 4 candidates + input + rule + status
+    (is (= 8 (count rows)))
+    (is (str/starts-with? (nth rows 1) "▸ ") "the selected row is not marked")
+    (is (every? #(<= (text/display-width %) 60) rows))
+    (is (= [5 5] caret) "the caret did not clear the candidate rows")))
+
+(deftest a-long-list-is-counted-not-silently-cut
+  ;; A list that stops at eight teaches an operator that the ninth command does
+  ;; not exist.
+  (let [many (mapv #(hash-map :name (str "/c" %) :description "d") (range 30))
+        s (type* (ed/fresh [] many) "/c")
+        {:keys [rows]} (ed/render s (assoc geo :width 60))]
+    (is (= 30 (count (:items (ed/menu s)))))
+    (is (= (+ ed/menu-rows-max 1 4) (count rows)))
+    (is (some #(str/includes? % "+22 more") rows))))
+
+(deftest the-status-bar-names-the-keys-that-are-live
+  (let [open (ed/status-line {:profile "p" :slash-count 61 :menu? true :colour false} 100)
+        shut (ed/status-line {:profile "p" :slash-count 61 :colour false} 100)]
+    (is (str/includes? open "選択"))
+    (is (str/includes? open "補完"))
+    (is (not (str/includes? open "履歴")) "it offered a key the menu had taken")
+    (is (str/includes? shut "履歴"))))
+
 (let [{:keys [fail error]} (run-tests 'itonami-editor-nbb)]
   (js/process.exit (if (pos? (+ (or fail 0) (or error 0))) 1 0)))

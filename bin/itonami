@@ -1406,6 +1406,7 @@
       :held (:tool @chat-approval)
       :running? (some? (:running @repl))
       :queued (count (:queue @repl))
+      :menu? (some? (editor/menu (:editor @repl)))
       :colour (colour?)
       :accent-code (or (:accent-code skin) splash/accent-code)
       :dim-code (or (:dim-code skin) splash/dim-code)}
@@ -1751,6 +1752,12 @@
                                                 " — " (ex-message e)))
                                "\n"))))))))
 
+(defn- registry-entries
+  "What the slash menu offers: every registered command, name and description."
+  []
+  (vec (for [e ((:entries ctx-chat))]
+         {:name (:name e) :description (str (:description e))})))
+
 (defn- input-loop!
   "The keyboard, from the moment the REPL opens until the process exits.
 
@@ -1758,7 +1765,9 @@
   TURN, attached when a line was wanted and removed when it arrived, which is
   what made the keyboard go dead while a run was going."
   []
-  (swap! repl assoc :editor (editor/fresh @repl-history))
+  ;; The registry, handed to the editor once: it is fixed after startup, and
+  ;; the menu is a function of the buffer and this list.
+  (swap! repl assoc :editor (editor/fresh @repl-history (registry-entries)))
   (let [on-data
         (fn [chunk]
           (let [ks (editor/decode (str chunk))]
