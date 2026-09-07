@@ -42,9 +42,15 @@
 ;; ---------------------------------------------------------------------------
 
 (defn fresh
-  ([] (fresh []))
-  ([history] {:lines [""] :row 0 :col 0
-              :history (vec history) :hist nil :stash nil}))
+  ([] (fresh [] []))
+  ([history] (fresh history []))
+  ([history commands]
+   {:lines [""] :row 0 :col 0
+    :history (vec history) :hist nil :stash nil
+    ;; The slash menu's source: `[{:name \"/help\" :description \"…\"} …]`.
+    ;; It lives in the state so `handle` stays a function of two arguments and
+    ;; the menu's key semantics can be tested without a registry.
+    :commands (vec commands) :menu 0 :menu-closed? false}))
 
 (defn buffer
   "The whole input as one string, newlines where the operator put them."
@@ -61,6 +67,73 @@
   (let [ls (vec (str/split (str text) #"\n" -1))
         ls (if (seq ls) ls [""])]
     (assoc state :lines ls :row (dec (count ls)) :col (count (peek ls)))))
+
+
+;; ---------------------------------------------------------------------------
+;; the slash menu
+;; ---------------------------------------------------------------------------
+
+(defn menu-query
+  "The `/word` being typed, or nil.
+
+  Open only while the caret is INSIDE the first word of a one-line buffer. Once
+  a space is typed the operator has moved on to arguments, and a list that
+  keeps covering the screen while they type them is a list that has to be
+  dismissed rather than one that helps."
+  [{:keys [lines row col menu-closed?]}]
+  (when (and (not menu-closed?) (= 1 (count lines)) (zero? row))
+    (let [line (first lines)
+          token (re-find #"^/\S*" (str line))]
+      (when (and token (<= col (count token)))
+        token))))
+
+(defn candidates
+  "Commands matching the query: the ones that START with it first, then the
+  ones that merely contain it.
+
+  Prefix before substring because a prefix is what the operator is typing --
+  `/st` should offer `/status` before `/timestamps`, which contains `st` in the
+  middle and is not what anyone reaching for `st` means."
+  [{:keys [commands] :as state}]
+  (if-let [q (menu-query state)]
+    (let [q (str/lower-case q)
+          named (fn [c] (str/lower-case (str (:name c))))
+          starts (filter #(str/starts-with? (named %) q) commands)
+          contains* (remove #(str/starts-with? (named %) q)
+                            (filter #(str/includes? (named %) (subs q 1)) commands))]
+      (vec (concat (sort-by named starts) (sort-by named contains*))))
+    []))
+
+(defn menu
+  "`{:query :items :index}` when the menu is open, nil when it is not."
+  [state]
+  (let [items (candidates state)]
+    (when (seq items)
+      {:query (menu-query state)
+       :items items
+       :index (max 0 (min (or (:menu state) 0) (dec (count items))))})))
+
+(defn- exact-command?
+  "The query is already a whole command name. Enter then means SEND, not
+  complete: completing `/help` to `/help ` and making the operator press Enter
+  twice for the commonest case is a menu getting in the way."
+  [state]
+  (when-let [q (menu-query state)]
+    (boolean (some #(= (str/lower-case (str (:name %))) (str/lower-case q))
+                   (:commands state)))))
+
+(defn- complete
+  "Replace the typed word with the selected command and a space."
+  [state]
+  (if-let [{:keys [items index]} (menu state)]
+    (let [line (first (:lines state))
+          token (re-find #"^/\S*" (str line))
+          name (str (:name (nth items index)))
+          rest* (subs (str line) (count token))
+          new-line (str name (if (str/starts-with? rest* " ") "" " ") rest*)]
+      (assoc state :lines [new-line] :row 0 :col (inc (count name))
+                   :menu 0 :menu-closed? false))
+    state))
 
 ;; ---------------------------------------------------------------------------
 ;; editing
@@ -189,9 +262,10 @@
   take that string and start a turn; one carrying `:signal` names something
   only the caller can do (`:eof`, `:interrupt`)."
   [state {:keys [kind ch text]}]
-  (let [s (dissoc state :submit :signal :cleared)]
+  (let [s (dissoc state :submit :signal :cleared)
+        open? (some? (menu s))]
     (case kind
-      :char (insert-text s ch)
+      :char (assoc (insert-text s ch) :menu 0 :menu-closed? false)
       ;; A paste is text even when it holds newlines: the operator moved it
       ;; here as one thing, and sending its first line is not what they did.
       :paste (insert-text s text)
@@ -201,7 +275,13 @@
       ;; A trailing backslash is the continuation an operator can type without
       ;; a modifier: terminals disagree about Shift+Enter and several send a
       ;; bare Return for it, so a modifier-only newline is unreachable on some.
-      (let [cur (line-at s)]
+      (cond
+        ;; A whole command name already typed: Enter sends it. Completing
+        ;; `/help` to `/help ` and asking for a second Enter would be the menu
+        ;; getting in the way of the commonest case.
+        (and open? (not (exact-command? s))) (complete s)
+        :else
+        (let [cur (line-at s)]
         (if (and (str/ends-with? cur "\\") (= (:col s) (count cur)))
           (-> (assoc s :lines (assoc (:lines s) (:row s)
                                      (subs cur 0 (dec (count cur))))
@@ -212,13 +292,23 @@
               s
               (assoc (fresh (if (= t (peek (:history s)))
                               (:history s)
-                              (conj (:history s) t)))
-                     :submit t)))))
+                              (conj (:history s) t))
+                            (:commands s))
+                     :submit t))))))
 
       :backspace (backspace s)
       :delete (delete-forward s)
-      :up (up s)
-      :down (down s)
+      ;; While the menu is open the arrows move the SELECTION. History and the
+      ;; line above are what they mean the rest of the time, and both would be
+      ;; wrong here: there is no line above a one-line `/word`, and pulling a
+      ;; history entry over a half-typed command name loses it.
+      :up (if open?
+            (update s :menu #(max 0 (dec (or % 0))))
+            (up s))
+      :down (if open?
+              (update s :menu #(min (dec (count (:items (menu s)))) (inc (or % 0))))
+              (down s))
+      :tab (if open? (complete s) s)
       :left (left s)
       :right (right s)
       :word-left (word-left s)
@@ -232,9 +322,13 @@
                                 :col 0))
       ;; Ctrl+C clears what is being written; only an already-empty buffer
       ;; passes the signal up, so a half-typed line is never a lost session.
+      ;; Escape dismisses the list without dismissing anything else. It stays
+      ;; dismissed until the word changes, or it would reappear on the next
+      ;; keystroke and the key would look broken.
+      :escape (if open? (assoc s :menu-closed? true :menu 0) s)
       :interrupt (if (blank? s)
                    (assoc s :signal :interrupt)
-                   (assoc (fresh (:history s)) :cleared true))
+                   (assoc (fresh (:history s) (:commands s)) :cleared true))
       :eof (if (blank? s) (assoc s :signal :eof) (delete-forward s))
       s)))
 
@@ -339,6 +433,7 @@
             (= code 5) (recur (inc i) (conj out {:kind :end}))
             (= code 6) (recur (inc i) (conj out {:kind :right}))
             (= code 8) (recur (inc i) (conj out {:kind :backspace}))
+            (= code 9) (recur (inc i) (conj out {:kind :tab}))
             (= code 11) (recur (inc i) (conj out {:kind :kill-to-end}))
             (= code 14) (recur (inc i) (conj out {:kind :down}))
             (= code 16) (recur (inc i) (conj out {:kind :up}))
@@ -401,13 +496,18 @@
   Truncating instead cut a hint mid-word and left the operator reading half an
   instruction -- and a bar wider than the terminal wraps onto the row the caret
   is about to be moved to, which tears the frame."
-  [{:keys [profile slash-count held running? queued colour accent-code dim-code]} width]
+  [{:keys [profile slash-count held running? queued menu? colour accent-code dim-code]}
+   width]
   (let [p #(text/paint colour %1 %2)
         head (p accent-code (str "\u25b6\u25b6 " profile))
         tail (concat (when (and queued (pos? queued))
                        [(str "\u23f8 " queued " 件待機 (/queue)")])
                      [(str slash-count " slash")]
                      (cond
+                       ;; While the list is up, the arrows and tab mean
+                       ;; something else, and saying the usual thing would be
+                       ;; telling the operator about keys that are not live.
+                       menu? ["\u2191\u2193 選択" "tab / enter 補完" "esc 閉じる"]
                        held [(str "\u26a0 承認待ち: " held)
                              "/approve /deny"]
                        ;; A run in flight does not take the keyboard: the
@@ -464,6 +564,38 @@
                   (p dim-code (str "(" (str/join " \u00b7 " detail) ")")))]
     (text/truncate line (max 8 width))))
 
+(def menu-rows-max
+  "How many candidates the list shows. Eight is what fits over an input area
+  without pushing the conversation off a short terminal; the rest are counted,
+  not hidden -- a list that silently stops at eight teaches an operator that
+  the ninth command does not exist."
+  8)
+
+(defn menu-lines
+  "The candidate list, as rows. Empty when the menu is closed."
+  [state {:keys [width colour accent-code dim-code]}]
+  (if-let [{:keys [items index]} (menu state)]
+    (let [shown (take menu-rows-max items)
+          name-w (apply max 1 (map #(text/display-width (str (:name %))) shown))]
+      (vec (concat
+            (map-indexed
+             (fn [i c]
+               (let [sel? (= i index)
+                     name (text/pad-right (str (:name c)) name-w)
+                     desc (str (:description c))
+                     room (max 4 (- width name-w 5))]
+                 (str (text/paint colour (if sel? accent-code dim-code)
+                                  (if sel? "▸ " "  "))
+                      (text/paint colour (if sel? accent-code dim-code) name)
+                      "  "
+                      (text/paint colour dim-code (text/truncate desc room)))))
+             shown)
+            (when (> (count items) menu-rows-max)
+              [(text/paint colour dim-code
+                           (str "  +" (- (count items) menu-rows-max)
+                                " more — 続けて入力すると絞り込みます"))]))))
+    []))
+
 (defn render
   "The rows to draw and where the caret goes.
 
@@ -471,7 +603,7 @@
   measured from the start of the row INCLUDING the prompt, so the terminal
   half has nothing left to compute."
   [state {:keys [width prompt continuation colour accent-code dim-code status header
-                 tail]}]
+                 tail] :as opts}]
   (let [width (max 24 (or width 80))
         prompt (or prompt "> ")
         pw (text/display-width prompt)
@@ -490,6 +622,9 @@
         ;; graduates to the scrollback the moment its newline arrives.
         tail-rows (when (seq (str tail))
                     (map :text (chunk-line (str tail) width)))
+        ;; The candidate list sits between the rule and the input, so it reads
+        ;; as belonging to what is being typed rather than to the answer above.
+        menu (menu-lines state (assoc opts :width width))
         body (map-indexed
               (fn [i {:keys [text]}]
                 (str (text/paint colour accent-code (if (zero? i) prompt continuation))
@@ -504,6 +639,6 @@
     ;; half. The progress line then sits immediately over the frame, where it
     ;; is read as belonging to the turn rather than to the text.
     {:rows (vec (concat tail-rows (when header [header])
-                        [rule] body [rule] [(or status "")]))
+                        [rule] menu body [rule] [(or status "")]))
      ;; +1 for the rule above the first input row, plus whatever is above it
-     :caret [(+ vr 1 (if header 1 0) (count tail-rows)) (+ pw vc)]}))
+     :caret [(+ vr 1 (if header 1 0) (count tail-rows) (count menu)) (+ pw vc)]}))
