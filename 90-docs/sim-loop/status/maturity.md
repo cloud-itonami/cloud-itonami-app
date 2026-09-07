@@ -36,7 +36,15 @@
   `state = not running` / `runs = 0` / `last exit code = (never exited)`
   (plist は再 bootstrap 待ちで発火履歴 0)、log mtime Aug 31 09:00 静止、
   次回発火 2026-09-07 (Mon) 09:00。帰属不変。
-  (evidence/2026-09-04-falsify-9.md / -11.md / 2026-09-05-falsify-17.md 参照)
+  **falsify-58 (2026-09-07) で発火実績を観測**: job は当日 09:00 に実発火し
+  `runs = 1 / last exit code = 1 / not running`、log mtime Sep 7 09:00 に
+  `Could not find namespace: authority.scope` を反復出力、plist classpath に
+  案 A の 3 src (authority / org-nist-sha2 / datom-source) 未追加のまま、他方
+  namespace ソース `authority/scope.cljc` はディスク上に存在 (classpath 経路
+  漏れ単独原因)。実体は「runs=0 (発火履歴なし)」から「**毎発火ごとに失敗**」へ
+  精緻化、修理案 A は Tier 2 継続。
+  (evidence/2026-09-04-falsify-9.md / -11.md / 2026-09-05-falsify-17.md /
+  2026-09-07-falsify-58.md 参照)
 - OPEN 赤-3: ~~launcher_test leftover-jvm-aliases-are-gone が決定論的赤~~
   → falsify-6 で CLOSED: PR #278 (e97b6ed) がテストを :launcher-known-aliases
   契約に改訂済み、フルスイートで緑を確認。
@@ -545,3 +553,7 @@ agent/fix-open-red-5-three-bound で **falsify-52 時点の porcelain clean か�
 ## NEXT (falsify-56 追記、append-only)
 
 **falsify-56 (2026-09-07、spec/契約 軸) で「値スキーマ (型/必須性) の機械検証は未整備」の全面主張を REFUTED (スコープ修正)**: 生成レジストリ `commands.edn` (head 9e5b24a) を balanced-bracket スキャナで機械パース — command maps **208** (falsify-47 と一致)、flags **123/123 全 plain string**・値スキーマ (map / :type / :required?) flag **0**、params 128 全 `:required? true` 全 `:in "path"`、placeholder 128 で整合 (falsify-10/47 再確認)。一方**新事実**: 別名レジストリ `cli-aliases.edn` は flag 値スキーマ (`:flag`/`:required?`/`:parse`/`:default`/`:enrollment-key`) を明示宣言し、`cli_aliases_test.clj` の `body-specs-use-known-vocabulary` (key 集合を `#{:flag :required? :parse :default :enrollment-key}` に限定、`:parse` を `#{:long :comma-list :boolish :file-contents}` にホワイトリスト) と `every-template-parameter-has-a-source` がそのボキャブラリ/必須性/parse 型を機械検証。resolver `resolve-invocation` (commands.cljc:334-349) は **alias 優先** (両レジストリ merge、alias が生成 registry に勝つ) なので、値スキーマを持つ別名 registry はオペレータ実打コマンドの運用的契約の最上位。範囲修正: spec/契約 行を「値スキーマ機械検証は別名 registry で実施済み、生成 registry flags は値スキーマ無しのまま」に再記述、score 3 のまま (軸の質を覆す変更でない)。附帯: 7 軸表 16 行目孤立行 `| 反証候補falsify30PLACEHOLDER` 残存 (operator 復旧待ち)、falsify-46 mid-sentence truncate も回復せず。本体 checkout は agent/fix-open-red-5-three-bound / head 9e5b24a、**porcelain clean (dirty 0) 実測 (falsify-55 の kotoba-migration untracked 2 件は事後着地/解消と推定)**、本 bot は touch せず作業は wt-msloop で完結。eval は /tmp/f56c.txt (scan) に実出力保存 (evidence/2026-09-07-falsify-56.md)。
+## NEXT (falsify-58 追記、append-only)
+
+**falsify-58 (2026-09-07、運用 軸) で OPEN 赤-2 (expiry-alert) の「09:00 発火後も未修理のまま失敗し続ける」を確認 (SURVIVED、発火実績を新規観測)**: falsify-18 (09-06) の状態「`runs=0 / never exited`、次回発火 2026-09-07 (Mon) 09:00 (Weekday=1/Hour=9/Minute=0)」に対し、本反復 (2026-09-07 18:09 JST) の
+`launchctl print gui/501/com.gftdcojp.itonami.expiry-alert` 実測で **`runs = 1` / `last exit code = 1` / `state = not running`** を観測。ログ `/Users/junkawasaki/.itonami/logs/expiry-alert.log` は mtime **`Sep 7 09:00`** に更新され、内容は `Could not find namespace: authority.scope` (nbb ロード即死、falsify-9/11/17 と同一エラー) を反復出力 — **job は当日 09:00 に実発火し、未修理のまま失敗**。plist **classpath 実測**にも falsify-11 案 A の 3 src (`authority/src` / `org-nist-sha2/src` / `datom-source/src`) のいずれも含まれない (= 修理案 A 未着地)。一方、namespace ソース `orgs/kotoba-lang/authority/src/authority/scope.cljc` は**ディスク上に存在**する (`ls` 実測) — 即ち「無い機能を読んだ」のではなく「ある機能を plist classpath に入れ忘れた」classpath 経路漏れの単独原因。範囲修正: 赤-2 の実体は falsify-18 の「一度も実行されていない (runs=0)」から、本反復で「**毎発火ごとに classpath 不備で失敗 (runs=1, exit=1)**」へ精緻化。修理案 A (classpath 3 src 追加 + plist 再生成 + launchctl relaunch) は kanban/human 判断 (Tier 2) のまま未着地 (修理対象は本体 cloud-itonami-app でなく network-awai リポの plist classpath + システム launchd 改変のため Tier 1 不着地、Tier 2 kanban/human 判断)。運用軸 score は 3 のまま (根拠に「09:00 実発火・失敗の直接観測 + root cause が classpath 経路漏れと確定」を追記)。附帯: 本体 checkout は agent/fix-open-red-5-three-bound / **porcelain clean (dirty 0) 実測**、head 9e5b24a (変更前後テスト緑原理: 本反復は本体未 touch の測定のみ)。7 軸表 16 行目孤立行 `| 反証候補falsify30PLACEHOLDER` 残存 (operator 復旧待ち、append-only で本 bot は編集せず)、falsify-46/49 mid-sentence truncate も回復せず (evidence/2026-09-07-falsify-58.md)。
