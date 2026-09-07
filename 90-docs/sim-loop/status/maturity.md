@@ -516,3 +516,23 @@ head 9e5b24a。負荷 load avg 154.04/159.43/135.05 (極高負荷)。反証軸 s
 ## NEXT (falsify-52 追記、append-only)
 
 **falsify-52 (2026-09-07、再現性/配布 軸) で falsify-51 の範囲修正「verify-manifest の構造検証 (schema/version/asset 単独失敗経路) は個別機械担保が未整備」を反証 (REFUTED)**: falsify-51 は「schema/version/asset の単独失敗経路が bundle され個別機械担保は未整備」と記録したが、本反復は `updater.clj` の `verify-manifest` を直接呼び各構造フィールドを**1 つずつ単独で壊して** 7 経路すべてが (a) fail-closed (ex-info throw) かつ (b) 正しい `:type` を返すことを機械実測。detached worktree `/private/tmp/mt-msloop52` (head 9e5b24a、本体未 touch) で probe namespace `itonami-falsify52-probe` を direct java+clojure.main 実行: schema 不一致→`:update/schema`、version 不正→`:update/version`、assets 空→`:update/assets`、asset sha256 非 hex / size 非正 / platform 非 keyword→各 `:update/asset`、無署名→`:update/signature`、**7 経路すべて個別 PASS** (実行: Ran 8 tests / 8 assertions / 0 failures, 1 error — error は probe の dummy 署名が crypto 層に到達した産物であり产品欠陥ではなく、7 構造経路の個別検証には影響なし、/tmp/f52b.log 実測)。「bundle だから機械担保が未整備」は誤り — 個別経路は本反復で独立に反証可能と確定。falsify-51 の「未整備」を「updater_test の編成は bundle だが個別経路は反証可能 (7 経路検証済み)」へ範囲修正。Tier 2 提案: updater_test の `signed-manifests-fail-closed` を schema/version/assets/asset 別 deftest に分割するのは「機械担保の欠如」でなく「テスト編成の好み」に格下げ。再現性軸 score は 3 のまま (根拠に構造検証 7 経路個別 PASS を追記)。附帯: 7 軸テーブル 16 行目孤立行 `| 反証候補falsify30PLACEHOLDER` 残存のまま (operator 復旧待ち)、falsify-46 mid-sentence truncate も append-only で回復せず。本体 checkout は agent/fix-open-red-5-three-bound / porcelain clean (dirty 0)、head 9e5b24a (evidence/2026-09-07-falsify-52.md)。
+## NEXT (falsify-53 追記、append-only)
+
+**falsify-53 (2026-09-07、運用/滞留帰属 軸) で帰属生存 + 増加継続 (+195 keys / 4 反復跨ぎ) を再確認 (SURVIVED)**: main-refspec regular unused は
+**651 keys / 9.7 GB** (`git annex unused --used-refspec +refs/heads/main` 出力 MD5E-s... 行 651 を機械カウント、
+`git annex info`: local annex keys 651 / size 9.7 GB / unused keys size 9.7 GB 実測)。falsify-49 の 456 keys / 6.41 GiB から
+**+195 keys / +3.3 GiB** (再現性軸 3 反復 [50/51/52] は未測定のため分解不能、単反復レート ~+49 相当の大増加)。
+resident-refspec 正規 unused は **0** (帰属「unused ⊆ resident 現在ツリー」が 651-key / 9.7 GiB スケールで SURVIVED 継続、
+unused−resident=0)。partial chunk は **14 → 14** / temp 186.98MB で不変 (falsify-35 の 1 chunk 解決以降
+連続 17 反復 drift なし、間欠的のまま)。増加源 itonami-app-resident.cljs PID 94682 稼働継続
+(falsify-33〜52 と同一 PID、export_and_sync 不在)、dev /health 127.0.0.1:1338 -> **200** 実測、
+gateway /health 127.0.0.1:8080 -> **404** (falsify-48/49 と同値)。df `/` avail **179Gi / 9%**
+(falsify-49 記録 136Gi / 85% から大回復、100% 飽和は解消のまま)。負荷 load avg 33.22/27.50/33.67 (高負荷)。
+dropunused は引き続き反復緩和、恒久解消は resident ingest 世代削除 (Tier 2)。
+(evidence/2026-09-07-falsify-53.md)。附帯: 7 軸テーブル 16 行目孤立行 `| 反証候補falsify30PLACEHOLDER` 残存のまま (operator 復旧待ち)、
+falsify-46 mid-sentence truncate も append-only で回復せず。**状態変化 (リスク-2 再発)**: 本体 checkout は
+agent/fix-open-red-5-three-bound で **falsify-52 時点の porcelain clean から dirty に変化** —
+`git status --porcelain` で `?? 90-docs/adr/260907-kl-to-kotoba-migration.edn` / `?? 90-docs/kotoba-migration-progress.md`
+の untracked 2 ファイルを実測 (Kotoba 移行 ADR 追記の他 bot/human WIP と推定)。SOUL 不変条件に従い本 bot は
+本体 checkout を touch せず、作業は wt-msloop / bot/maturity-sim-loop で完結。head 9e5b24a。
+運用軸 score は 3 のまま (falsify-1〜53 記録継続、本反復は帰属の同一主張のスケール拡大であり score へ質的変更なし)。
