@@ -1,0 +1,47 @@
+;; BOT SLO's latency-points DECISION CORE — how many stability points a
+;; partition earns from its 90th-percentile response latency.
+;;
+;; `bot_slo.clj` scores a partition out of stability components: availability,
+;; completion, latency, recovery, observability. Each is a 0..20-odd point
+;; award, and the latency limb is the judgement that reduces to a threshold
+;; ladder over one number. That limb — how many points a given p90 second
+;; earns — moves here.
+;;
+;; ## The ladder, as bot_slo.clj states it
+;;
+;;     p90 <= 120s   -> 20 points   (interactive)
+;;     p90 <= 300s   -> 15 points
+;;     p90 <= 600s   -> 10 points
+;;     p90 <= 1800s  ->  5 points
+;;     else          ->  0 points
+;;
+;; There is no partial credit between steps and no separate nil reading in the
+;; ladder itself: a missing p90 (nil in the host) is the caller's concern, not
+;; the ladder's — bot_slo passes a concrete number.
+;;
+;; ## f64 and the native boundary
+;;
+;; This core is typed `:f64` in and `:f64` out, and the whole point of writing
+;; it down is that a latency score with fractional thresholds is expressible
+;; in Kotoba. Measured (slo_f64_probe_test): the compiler lowers :f64 for
+;; `:wasm32-kotoba-v1` (this core's parity target) but the x86_64/aarch64
+;; native backends refuse typed :f64 values (their typed-value slice is one-word
+;; string/record/variant/option/result). So this core is wasm-crossable, NOT
+;; native-crossable — a deliberate difference from the :i64/:bool/:string
+;; sibling cores, and recorded here so nobody claims native f64.
+;;
+;; Parity: test/cloud/itonami/app/bot_slo_latency_kotoba_parity_test.clj
+
+(ns bot-slo-latency-core
+  (:export [latency-points]))
+
+(defn latency-points [p90 :f64] :f64
+  (if (<= p90 120.0)
+    20.0
+    (if (<= p90 300.0)
+      15.0
+      (if (<= p90 600.0)
+        10.0
+        (if (<= p90 1800.0)
+          5.0
+          0.0)))))
