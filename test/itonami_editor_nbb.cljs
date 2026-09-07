@@ -610,5 +610,60 @@
   (is (nil? (text/cookie-value "cloud_itonami_identity" "")))
   (is (nil? (text/cookie-value "cloud_itonami_identity" nil))))
 
+
+;; ---------------------------------------------------------------------------
+;; a panel you can choose from
+;; ---------------------------------------------------------------------------
+
+(def ^:private list-panel
+  {:title "model routing" :tab 0 :index 0 :scroll 0
+   :tabs [{:label "Bot" :task "bot" :scope "default"
+           :items [{:label "murakumo-main" :model "murakumo-main" :provider-id "murakumo"}
+                   {:label "murakumo-edge" :model "murakumo-edge" :provider-id "murakumo"}
+                   {:label "third" :model "third" :provider-id "murakumo"}]}
+          {:label "Chat" :task "chat" :scope "default"
+           :items [{:label "only" :model "only" :provider-id "murakumo"}]}]})
+
+(defn- listed [] (assoc (ed/fresh [] cmds) :panel list-panel))
+
+(deftest a-list-panel-moves-a-selection-not-a-scrollbar
+  ;; /model printed a routing document that contains no model names at all and
+  ;; offered nothing to pick — the same as not having answered.
+  (let [s (press* (listed) :down)]
+    (is (= 1 (get-in s [:panel :index])))
+    (is (= "murakumo-edge" (:model (ed/panel-choice (:panel s)))))
+    (is (= 0 (get-in (press* s :up :up) [:panel :index])) "the selection ran off the top")
+    (is (= 2 (get-in (press* s :down :down :down) [:panel :index]))
+        "the selection ran off the bottom")))
+
+(deftest enter-on-a-list-chooses-and-hands-the-choice-out
+  ;; The editor is pure, so choosing produces a VALUE; the effect happens in
+  ;; the caller. A panel that acted for itself would put an HTTP call inside
+  ;; `handle` and the key semantics would stop being testable.
+  (let [s (press* (listed) :down :enter)]
+    (is (nil? (:panel s)) "the panel stayed open after choosing")
+    (is (= "murakumo-edge" (get-in s [:chose :item :model])))
+    (is (= "bot" (:task (ed/panel-tab (get-in s [:chose :panel])))))
+    (is (= "default" (:scope (ed/panel-tab (get-in s [:chose :panel])))))
+    ;; and it is consumed: the next key must not re-fire it
+    (is (nil? (:chose (ed/handle s {:kind :char :ch "x"}))))))
+
+(deftest enter-on-a-text-panel-still-just-closes
+  (let [s (ed/handle (panelled) {:kind :enter})]
+    (is (nil? (:panel s)))
+    (is (nil? (:chose s)))))
+
+(deftest changing-tab-starts-the-selection-again
+  ;; Carrying index 2 into a tab with one item would point at nothing.
+  (let [s (press* (listed) :down :down :tab)]
+    (is (= 1 (get-in s [:panel :tab])))
+    (is (= 0 (get-in s [:panel :index])))
+    (is (= "only" (:model (ed/panel-choice (:panel s)))))))
+
+(deftest a-list-panel-says-enter-decides
+  (let [{:keys [rows]} (ed/render (listed) (assoc geo :width 60 :rows 24))]
+    (is (some #(str/includes? % "▸ murakumo-main") rows) "the selection is not marked")
+    (is (some #(str/includes? % "enter で決定") rows))))
+
 (let [{:keys [fail error]} (run-tests 'itonami-editor-nbb)]
   (js/process.exit (if (pos? (+ (or fail 0) (or error 0))) 1 0)))

@@ -1258,19 +1258,84 @@
           (println "operator profile は未設定 (Web UI で設定)"))
         (when-let [s (:summary body)] (println (str "summary: " (pr-edn s)))))))))
 
+(defn- model-panel
+  "The models this deployment can reach, per task, with the one in force marked.
+
+  `/model` used to print the routing document as EDN. That document is a list
+  of TASKS and their assignments -- it does not contain a single model name --
+  so the screen answered a question nobody asked and offered nothing to pick
+  (reported 2026-09-07: 「model 一覧が出てこない、選択できない」). The models are in
+  the overview, under `:model-providers`."
+  [routing overview]
+  (let [providers (:model-providers overview)
+        assignments (:assignments routing)
+        scope (or (:default-scope routing) "default")
+        assigned (fn [task]
+                   (first (for [a assignments
+                                :when (and (= task (str (:task a)))
+                                           (= scope (str (:scope a))))]
+                            a)))
+        items (vec (for [p providers
+                         m (:models p)]
+                     {:label (str m)
+                      :detail (str "(" (:name p) ")")
+                      :provider-id (:id p)
+                      :model (str m)}))]
+    {:title "model routing"
+     :tab 0 :index 0 :scroll 0
+     :tabs
+     (if (empty? items)
+       [{:label "models"
+         :lines ["この deployment から使える model がありません。"
+                 "provider が有効か `/plugins` と operator config を確認してください。"]}]
+       (vec (for [t (:tasks routing)]
+              (let [task (str (:task t))
+                    now (assigned task)]
+                {:label (str (:label t) (when (:main? t) " ★"))
+                 :task task
+                 :scope scope
+                 :items (vec (for [i items]
+                               (assoc i :label
+                                      (str (if (and now
+                                                    (= (:model i) (str (:model now)))
+                                                    (= (str (:provider-id i))
+                                                       (str (:provider-id now))))
+                                             "● " "  ")
+                                           (:model i))
+                                      :detail (str (:detail i)
+                                                   "  " (:hint t)))))}))))}))
+
 (register-slash!
- "/model" "[<model>]" "model routing の表示・設定"
- (fn [args _]
-   (if (empty? args)
-     (request-or-refuse!
-      {:method :get :path "/api/bots/model-routing" :timeout-seconds 10}
-      (fn [body] (println (pr-edn body)))
-      (fn [status _]
-        (println (str "model routing は human session が必要です (HTTP " status ")"))))
-     (request-or-refuse!
-      {:method :post :path "/api/bots/model-routing"
-       :body {:model (first args)} :timeout-seconds 10}
-      (fn [body] (println (str "model routing updated: " (pr-edn body))))))))
+ "/model" "" "model を選ぶ（task ごと）"
+ (fn [_ _]
+   (-> (js/Promise.all
+        #js [(request! {:method :get :path "/api/bots/model-routing"
+                        :timeout-seconds 10} (session-token))
+             (request! {:method :get :path "/api/agent-bots"
+                        :timeout-seconds 15} (session-token))])
+       (.then (fn [[routing overview]]
+                (cond
+                  (not (<= 200 (:status routing) 299))
+                  {:panel {:title "model routing"
+                           :tab 0 :scroll 0
+                           :tabs [{:label "使えません"
+                                   :lines [(str "model routing を読めません (HTTP "
+                                                (:status routing) ")")
+                                           (if (human-token)
+                                             "human session はありますが拒否されました。"
+                                             "human session がありません。/login でサインインしてください。")]}]}}
+                  (not (<= 200 (:status overview) 299))
+                  {:panel {:title "model routing" :tab 0 :scroll 0
+                           :tabs [{:label "使えません"
+                                   :lines [(str "Bot 一覧を読めません (HTTP "
+                                                (:status overview) ")")]}]}}
+                  :else
+                  {:panel (model-panel (:body routing) (:body overview))})))
+       (.catch (fn [e]
+                 {:panel {:title "model routing" :tab 0 :scroll 0
+                          :tabs [{:label "使えません"
+                                  :lines [(str "server に到達できません: " (base-url))
+                                          (ex-message e)]}]}})))))
 
 (register-slash!
  "/version" "" "サーバの version / update 状態"
@@ -1840,8 +1905,17 @@
         (= :resend r) (let [prev (str @(:last-input ctx-chat))]
                         (if (str/blank? prev) (redraw!) (submit-message! prev)))
         (instance? js/Promise r)
+        ;; A handler may answer LATE with anything it could have answered with
+        ;; at once -- a panel included. Handling only keywords here dropped
+        ;; `/model`'s panel on the floor: the command ran, fetched, built the
+        ;; panel, and the screen showed nothing (measured 2026-09-07).
         (-> r
-            (.then (fn [v] (if (keyword? v) (on-submit! v) (redraw!))))
+            (.then (fn [v]
+                     (cond
+                       (and (map? v) (:panel v))
+                       (do (swap! repl assoc-in [:editor :panel] (:panel v)) (redraw!))
+                       (keyword? v) (on-submit! (str v))
+                       :else (redraw!))))
             (.catch (fn [e] (say! (str "error: " (ex-message e) "\n")))))
         :else (submit-message! t)))))
 
@@ -1997,6 +2071,39 @@
   (vec (for [e ((:entries ctx-chat))]
          {:name (:name e) :description (str (:description e))})))
 
+(defn- apply-choice!
+  "Carry out what was picked in a panel.
+
+  The panel is data and the editor is pure, so choosing produces a VALUE and
+  the effect happens here. A panel that acted for itself would put an HTTP
+  call inside `handle`, and the key semantics would stop being testable."
+  [{:keys [panel item]}]
+  (let [tab (editor/panel-tab panel)]
+    (if-not (and (:task tab) (:model item))
+      (redraw!)
+      (-> (request! {:method :post :path "/api/bots/model-routing"
+                     :body {:task (:task tab) :scope (:scope tab)
+                            :provider-id (:provider-id item) :model (:model item)}
+                     :timeout-seconds 15}
+                    (session-token))
+          (.then (fn [{:keys [status body]}]
+                   (if (<= 200 status 299)
+                     (say! (str (text/paint (colour?) splash/accent-code
+                                            (str "✓ " (:label tab) " → " (:model item)
+                                                 " (" (:provider-id item) ")"))
+                                "\n"))
+                     (say! (str (text/paint (colour?) "38;5;203"
+                                            (str "✗ 変更できません: HTTP " status
+                                                 (when-let [m (get-in body [:error :message])]
+                                                   (str " — " m))))
+                                "\n")))
+                   (redraw!)))
+          (.catch (fn [e]
+                    (say! (str (text/paint (colour?) "38;5;203"
+                                           (str "✗ server に到達できません: " (ex-message e)))
+                               "\n"))
+                    (redraw!)))))))
+
 (defn- input-loop!
   "The keyboard, from the moment the REPL opens until the process exits.
 
@@ -2024,6 +2131,9 @@
                 ;; was separated from the turn, the ordinary branch -- a
                 ;; character -- was not one of them.
                 (when redraw? (draw-input! state))
+                (when-let [chose (:chose state)]
+                  (swap! repl update :editor dissoc :chose)
+                  (apply-choice! chose))
                 (doseq [line submits] (on-submit! (str/trim line)))
                 (case signal
                   :eof (bye!)

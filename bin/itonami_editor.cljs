@@ -90,6 +90,21 @@
 
 (defn panel-tab [{:keys [tabs tab]}] (nth tabs (or tab 0) (first tabs)))
 
+(defn panel-items
+  "The current tab's choosable items, or nil when it is only text.
+
+  A panel that lists things a person came to pick from has to let them pick;
+  `/model` printed a list nobody could act on, which is the same as not having
+  answered."
+  [panel]
+  (seq (:items (panel-tab panel))))
+
+(defn panel-choice
+  "The item the caret is on, or nil."
+  [panel]
+  (when-let [items (panel-items panel)]
+    (nth (vec items) (max 0 (min (or (:index panel) 0) (dec (count items)))) nil)))
+
 (defn panel-height
   "How many content rows a panel gets. The frame, the tab row and the footer
   take four; the rest of the terminal, up to a limit, is content."
@@ -102,7 +117,26 @@
    {:keys [width colour accent-code label-code dim-code rows]}]
   (let [p #(text/paint colour %1 %2)
         height (panel-height rows)
-        lines (vec (:lines (panel-tab panel)))
+        items (panel-items panel)
+        index (max 0 (min (or (:index panel) 0) (max 0 (dec (count (vec items))))))
+        lines (if items
+                (vec (map-indexed
+                      (fn [i it]
+                        (let [sel? (= i index)]
+                          (str (if sel? "▸ " "  ")
+                               (:label it)
+                               (when-let [d (not-empty (str (:detail it)))]
+                                 (str "   " d)))))
+                      items))
+                (vec (:lines (panel-tab panel))))
+        ;; keep the chosen row on screen when the list is longer than the frame
+        scroll (if items
+                 (let [h (panel-height rows)]
+                   (cond (< index (or (:scroll panel) 0)) index
+                         (>= index (+ (or (:scroll panel) 0) h)) (inc (- index h))
+                         :else (or (:scroll panel) 0)))
+                 (:scroll panel))
+        panel (assoc panel :scroll scroll)
         scroll (max 0 (min (or scroll 0) (max 0 (- (count lines) height))))
         shown (take height (drop scroll lines))
         tab-row (str/join "  "
@@ -116,6 +150,7 @@
         footer (str/join (str " " (p dim-code "·") " ")
                          (remove nil?
                                  [(p dim-code "esc で閉じる")
+                                  (when items (p accent-code "enter で決定"))
                                   (when (> (count tabs) 1)
                                     (p dim-code "tab / ←→ でタブ"))
                                   (when (or more? (pos? scroll))
@@ -328,24 +363,41 @@
   take that string and start a turn; one carrying `:signal` names something
   only the caller can do (`:eof`, `:interrupt`)."
   [state {:keys [kind ch text]}]
-  (let [s (dissoc state :submit :signal :cleared)
+  (let [s (dissoc state :submit :signal :cleared :chose)
         panel (:panel s)
         open? (and (nil? panel) (some? (menu s)))]
     (if panel
       ;; A panel takes over: there is nothing to type into and nothing to send,
       ;; so a key that is not one of these does nothing rather than editing a
       ;; buffer nobody can see.
-      (case kind
-        (:escape :enter :interrupt) (dissoc s :panel)
-        (:tab :right) (update-in s [:panel :tab]
-                                 #(mod (inc (or % 0)) (count (:tabs panel))))
-        :left (update-in s [:panel :tab]
-                         #(mod (dec (+ (count (:tabs panel)) (or % 0)))
-                               (count (:tabs panel))))
-        :down (update-in s [:panel :scroll] #(inc (or % 0)))
-        :up (update-in s [:panel :scroll] #(max 0 (dec (or % 0))))
-        :eof (assoc s :signal :eof)
-        s)
+      (let [items (panel-items panel)]
+        (case kind
+          (:escape :interrupt) (dissoc s :panel)
+          ;; On a list, Enter CHOOSES. The caller acts on `:chose` and closes
+          ;; the panel; on a text panel Enter still just closes.
+          :enter (if-let [choice (panel-choice panel)]
+                   (assoc (dissoc s :panel) :chose {:panel panel :item choice})
+                   (dissoc s :panel))
+          (:tab :right) (-> s
+                            (update-in [:panel :tab]
+                                       #(mod (inc (or % 0)) (count (:tabs panel))))
+                            (assoc-in [:panel :index] 0)
+                            (assoc-in [:panel :scroll] 0))
+          :left (-> s
+                    (update-in [:panel :tab]
+                               #(mod (dec (+ (count (:tabs panel)) (or % 0)))
+                                     (count (:tabs panel))))
+                    (assoc-in [:panel :index] 0)
+                    (assoc-in [:panel :scroll] 0))
+          :down (if items
+                  (update-in s [:panel :index]
+                             #(min (dec (count items)) (inc (or % 0))))
+                  (update-in s [:panel :scroll] #(inc (or % 0))))
+          :up (if items
+                (update-in s [:panel :index] #(max 0 (dec (or % 0))))
+                (update-in s [:panel :scroll] #(max 0 (dec (or % 0)))))
+          :eof (assoc s :signal :eof)
+          s))
       (case kind
       :char (assoc (insert-text s ch) :menu 0 :menu-closed? false)
       ;; A paste is text even when it holds newlines: the operator moved it

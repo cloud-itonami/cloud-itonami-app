@@ -1,0 +1,81 @@
+[{:db/id -1
+  :adr/id "adr-2609074600-model-was-printing-a-document-with-no-models-in-it"
+  :adr/title "/model was printing a document with no models in it"
+  :adr/status "accepted"
+  :adr/date "2026-09-07"
+  :adr/related "adr-2609073400-a-reference-table-is-opened-not-said adr-2609071800-thirty-three-bots-were-pinned-to-a-model-that-requires-payment"
+  :adr/body "## The report
+
+ログインできました。slash model コマンドを押しても model 一覧が出てこない、選択
+できない。
+
+## The command was answering a different question
+
+`/model` fetched `/api/bots/model-routing` and printed it as EDN. That document
+is a list of TASKS and their assignments:
+
+    {:default-scope \"default\" :main-task \"bot\"
+     :tasks [{:task \"bot\" :label \"Bot\" …} {:task \"chat\" …} …]
+     :assignments []}
+
+It does not contain a single model name. The models are somewhere else
+entirely -- in the Bots overview, under `:model-providers`, one entry per
+provider with a `:models` vector. So the screen printed a document nobody
+asked for, showed no models, and offered nothing to pick. With `assignments`
+empty it was almost entirely punctuation.
+
+The 403 fixed yesterday was real and was not the whole fault: with a human
+session the same command would still have shown no models.
+
+## What it is now
+
+A panel, tabs per task (`Bot ★` / Bot同士の会話 / この機械の操作 / チャット),
+items being every provider-and-model pair this deployment can reach, the one
+in force on that task marked `●`, ↑↓ to move and enter to set it.
+
+`POST /api/bots/model-routing` takes `{:task :scope :provider-id :model}` and
+neither Origin nor CSRF is required for a bearer request -- both exist because
+a browser attaches a cookie by itself, and nothing attaches a bearer token by
+itself.
+
+## Panels can now be chosen from
+
+`:items` on a tab makes it a list rather than text: ↑↓ move a selection instead
+of a scrollbar, the selection is kept on screen when the list is longer than
+the frame, and switching tabs starts the selection again -- carrying index 2
+into a tab with one item would point at nothing.
+
+Enter on a list produces a VALUE -- `:chose {:panel … :item …}` -- which the
+REPL acts on. The editor stays pure: a panel that acted for itself would put an
+HTTP call inside `handle`, and every key semantic in this file would stop being
+testable. Enter on a text panel still just closes.
+
+## One more thing that was dropping answers
+
+`on-submit!` unwrapped a promise's result only when it was a keyword. `/model`
+fetches before it can build its panel, so it answers late with a map -- and the
+map went on the floor. The command ran, fetched twice, built the panel, and the
+screen showed nothing. A handler may now answer late with anything it could
+have answered with at once.
+
+## Measured
+
+On a pty against the live resident: `/model` opens with `[Bot ★]` selected and
+six models listed; ↓ moves the marker; enter sets it and the server then
+reports
+
+    assignments: [{\"task\":\"bot\",\"scope\":\"default\",
+                   \"provider-id\":\"murakumo\",\"model\":\"murakumo-main\"}]
+
+where it had been empty. Two controls, each failing by name: enter on a list
+that only closes, and a tab change that keeps the old index.
+
+## Not claimed
+
+The list is what the server offers. Two of the six -- `z-ai/glm-5.3-flash` and
+`qwen/qwen3.8-flash` -- answered `external_model_requires_payment` when
+measured this morning, and choosing one will produce the failure recorded in
+adr-2609071800. The panel does not mark them, because that measurement was
+this morning's and a screen that prints yesterday's reachability as though it
+were today's is the thing this repository keeps writing rules about.
+"}]
