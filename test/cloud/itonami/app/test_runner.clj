@@ -91,6 +91,7 @@
             [cloud.itonami.app.approval-kotoba-parity-test]
             [cloud.itonami.app.routine-kotoba-parity-test]
             [cloud.itonami.app.model-routing-kotoba-parity-test]
+            [cloud.itonami.app.pure-head-probe-test]
             [cloud.itonami.app.bot-turn-guards-test]
             [cloud.itonami.app.model-routing-http-test]
             [cloud.itonami.app.routines-test]
@@ -311,6 +312,7 @@
     cloud.itonami.app.approval-kotoba-parity-test
     cloud.itonami.app.routine-kotoba-parity-test
     cloud.itonami.app.model-routing-kotoba-parity-test
+    cloud.itonami.app.pure-head-probe-test
     cloud.itonami.app.bot-turn-guards-test
     cloud.itonami.app.model-routing-http-test
     cloud.itonami.app.routines-test

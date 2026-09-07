@@ -643,6 +643,16 @@
          ;; `[:option :string]` instead of `option-some?-of`. `compiler.git`
          ;; redirects at GitHub to `kotoba-lang/amu`.
          ;;
+         ;; ADVANCED 2026-09-07 to amu main tip `78cdc2e`, which carries
+         ;; kotoba-sema `3378b1d3` (13 commits past `fcd4e35`, the commit that
+         ;; landed the pure S-expression heads `lam`/`app`/`ref`/`perform` in
+         ;; the frontend). The previous pin's kotoba-sema `1b83233` (2026-08-13)
+         ;; predates the pure heads, so the parity suite could not admit a
+         ;; decision core written in the pure S-expr form. This advance admits
+         ;; them (see `pure_head_probe_test.clj`). The holds below were
+         ;; re-verified against the new compiler's transitive pins — see each
+         ;; comment.
+         ;;
          ;; `io-multiformats` is named here for a reason that is not optional.
          ;; The compiler pin above drags its own, OLDER `io-multiformats`
          ;; (`b3b157e6`) into the tree, and resolution silently preferred it over
@@ -651,25 +661,36 @@
          ;; test suite died before a single assertion ran. Measured 2026-08-08:
          ;; `clojure -M:test -e "(println :ok)"` → `No such var: mf/sha384`.
          ;; Holding it at the app's own pin keeps the parity gate from changing
-         ;; what every other test in this repo is compiled against.
+         ;; what every other test in this repo is compiled against. amu `78cdc2e`
+         ;; names `561fe7df` (newer); the app's own `e7ae323d` is still held so
+         ;; the rest of the suite keeps compiling against the pin it was
+         ;; measured on.
          ;;
          ;; `io-ipld` is the same class of hold. Compiler 1644b32 names
-         ;; `14b53ae` (`ipld.link` → `multiformats.base32`). Newest-wins
-         ;; would replace chain's hasher pin `45917645` (uses
-         ;; `multiformats.core`). `14b53ae` cannot load against the
-         ;; `dc520032` override: that pin folded base32 into core and has
-         ;; no `multiformats.base32` ns. Compiler source does not require
-         ;; ipld; chain.core/commit! does.
-         :override-deps
-         {io.github.kotoba-lang/compiler
-          {:git/url "https://github.com/kotoba-lang/compiler.git"
-           :git/sha "1644b326eefa0951a6343cee9aff88fe9ba745e2"}
-          ;; kototama-native's own deps.edn names a newer kir. Newest-wins
+                  ;; `14b53ae` (`ipld.link` → `multiformats.base32`). Newest-wins
+                  ;; would replace chain's hasher pin `45917645` (uses
+                  ;; `multiformats.core`). `14b53ae` cannot load against the
+                  ;; `dc520032` override: that pin folded base32 into core and has
+                  ;; no `multiformats.base32` ns. Compiler source does not require
+                  ;; ipld; chain.core/commit! does. amu `78cdc2e` names `1a2e10cf`;
+                  ;; the app's own `c7b8f76b` is still held for the same reason.
+                  :override-deps
+                  {io.github.kotoba-lang/compiler
+                   {:git/url "https://github.com/kotoba-lang/compiler.git"
+                    :git/sha "78cdc2e18aa82625230c0b2332e59c5417994b57"}
+                   ;; kototama-native's own deps.edn names a newer kir. Newest-wins
           ;; would silently upgrade the interpreter every test loads, and
           ;; the shipped `*.kir.edn` were emitted for this pin. Hold it.
+          ;; ADVANCED 2026-09-07 to `b021a0d1` (amu main's pin for 78cdc2e):
+          ;; the new compiler's frontend references `kir/host-stack-exhausted?`,
+          ;; which does not exist in `da24cae6` — measured `No such var:
+          ;; kir/host-stack-exhausted?` at the old hold. amu's own comment
+          ;; makes this mandatory: "THIS PIN IS NOT OPTIONAL WHEN THE
+          ;; KOTOBA-SEMA PIN MOVES" (frontend admits `pop` and KIR traps
+          ;; `:unknown-function` if left behind).
           io.github.kotoba-lang/kotoba-kir
           {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
-           :git/sha "da24cae65e82f91352c5b96b0c58f21a52911277"}
+           :git/sha "b021a0d179fb983e8ad7da702252cfa764cd2fc2"}
           io.github.kotoba-lang/io-multiformats
           {:git/url "https://github.com/kotoba-lang/io-multiformats.git"
            :git/sha "e7ae323d3ccbb9aacc92edfd2f3dda20d9b90eed"}
