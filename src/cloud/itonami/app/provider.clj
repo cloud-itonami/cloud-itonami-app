@@ -2,19 +2,11 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.provider-retry :as retry])
   (:import [java.io BufferedReader InputStreamReader]
-           [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
            [java.nio.charset StandardCharsets]
-           [java.security MessageDigest]
-           [java.time Duration]))
-
-(defonce ^HttpClient client
-  (-> (HttpClient/newBuilder)
-      (.connectTimeout (Duration/ofSeconds 4))
-      .build))
+           [java.security MessageDigest]))
 
 ;; The decision and the delay live in `provider-retry`, which depends on
 ;; nothing, so both can be exercised without a socket. What is retried and how
@@ -74,6 +66,10 @@
                     {:type :provider/unreachable :url url}
                     error))
 
+    ;; The shim's own request timeout is a wall the adapter raises for it, so
+    ;; the original `HttpTimeoutException` surfaces only from a connect that
+    ;; stalled before the wall; the shim may also surface it rethrown. Either
+    ;; way a timeout names a capacity problem, not this application's bug.
     (instance? java.net.http.HttpTimeoutException error)
     (throw (ex-info "model provider request timed out"
                     {:type :provider/timeout
@@ -114,25 +110,24 @@
                  max-transient-retries))
   ([method url body api-key headers timeout-seconds transient-retries]
    (loop [attempt 0]
-     (let [builder (-> (HttpRequest/newBuilder (URI/create url))
-                       (.timeout (Duration/ofSeconds timeout-seconds))
-                       (.header "Accept" "application/json")
-                       (.header "Content-Type" "application/json"))
-           _ (when api-key (.header builder "Authorization" (str "Bearer " api-key)))
-           _ (doseq [[header value] headers :when (some? value)]
-               (.header builder (name header) (str value)))
-           request (case method
-                     :get (.GET builder)
-                     :post (.POST builder
-                                  (HttpRequest$BodyPublishers/ofString
-                                   (json/write-str body))))
-           response (try (.send client (.build request)
-                                (HttpResponse$BodyHandlers/ofString))
+     (let [headers (cond-> {"Accept" "application/json"
+                            "Content-Type" "application/json"}
+                     api-key (assoc "Authorization" (str "Bearer " api-key)))
+           headers (into headers
+                         (map (fn [[header value]] [(name header) (str value)]))
+                         (remove (comp nil? val) headers))
+           response (try (http/request
+                          {:url url
+                           :method (case method :get :get :post :post)
+                           :timeout-seconds timeout-seconds
+                           :headers headers
+                           :body (when (= method :post)
+                                   (json/write-str body))})
                          (catch Exception error
                            (timeout->typed error url timeout-seconds)))
-           status (.statusCode response)
-           parsed (try (json/read-str (.body response) :key-fn keyword)
-                       (catch Exception _ {:raw (.body response)}))]
+           status (:status response)
+           parsed (try (json/read-str (:body response) :key-fn keyword)
+                       (catch Exception _ {:raw (:body response)}))]
        (cond
          (<= 200 status 299) parsed
 
@@ -554,7 +549,7 @@
 
 (defn- with-active-agent-reader [response consume!]
   (let [thread (Thread/currentThread)
-        stream (.body response)]
+        stream (java.io.StringReader. ^String (:body response))]
     (swap! active-agent-streams assoc thread stream)
     (try
       (with-open [input stream
@@ -844,27 +839,25 @@
   ([url body api-key headers]
    (streaming-response url body api-key headers request-timeout-seconds))
   ([url body api-key headers timeout-seconds]
-   (let [builder (-> (HttpRequest/newBuilder (URI/create url))
-                     (.timeout (Duration/ofSeconds timeout-seconds))
-                     (.header "Accept" "*/*")
-                     (.header "Content-Type" "application/json"))
-         _ (when api-key
-             (.header builder "Authorization" (str "Bearer " api-key)))
-         _ (doseq [[header value] headers :when (some? value)]
-             (.header builder (name header) (str value)))
-         request (-> builder
-                     (.POST (HttpRequest$BodyPublishers/ofString
-                             (json/write-str body)))
-                     .build)
-         response (try (.send client request
-                              (HttpResponse$BodyHandlers/ofInputStream))
+   (let [hdrs (cond-> {"Accept" "*/*"
+                       "Content-Type" "application/json"}
+                api-key (assoc "Authorization" (str "Bearer " api-key)))
+         hdrs (into hdrs
+                    (map (fn [[header value]] [(name header) (str value)]))
+                    (remove (comp nil? val) headers))
+         response (try (http/request
+                        {:url url
+                         :method :post
+                         :timeout-seconds timeout-seconds
+                         :headers hdrs
+                         :body (json/write-str body)})
                        (catch Exception error
                          (timeout->typed error url timeout-seconds)))]
-     (when-not (<= 200 (.statusCode response) 299)
+     (when-not (<= 200 (:status response) 299)
        (throw (ex-info "model provider streaming request failed"
                        {:type :provider/http-error
-                        :status (.statusCode response) :url url
-                        :response (refusal-body (.body response))})))
+                        :status (:status response) :url url
+                        :response (refusal-body (:body response))})))
      response)))
 
 (defn- emit! [on-delta content]
@@ -893,7 +886,7 @@
              (provider-headers provider request)
              (provider-timeout-seconds provider model))]
         (with-open [reader (BufferedReader.
-                            (InputStreamReader. (.body response)))]
+                            (InputStreamReader. (java.io.StringReader. (:body response))))]
           (doseq [line (line-seq reader)
                   :let [data (when (str/starts-with? line "data:")
                                (str/trim (subs line 5)))]
@@ -932,7 +925,7 @@
               :options {:temperature (or temperature 0.7)}}
              nil)]
         (with-open [reader (BufferedReader.
-                            (InputStreamReader. (.body response)))]
+                            (InputStreamReader. (java.io.StringReader. (:body response))))]
           (doseq [line (line-seq reader)
                   :when (not (str/blank? line))]
             (let [chunk (json/read-str line :key-fn keyword)

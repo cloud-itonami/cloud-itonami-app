@@ -2,20 +2,14 @@
   "Watch-only Bitcoin balances and Passkey-bound PSBT approvals."
   (:require [cloud.itonami.app.bitcoin :as bitcoin]
             [cloud.itonami.app.bitcoin-node :as bitcoin-node]
+            [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.passkey :as passkey]
             [cloud.itonami.app.store :as store]
             [clojure.data.json :as json]
             [clojure.string :as str])
-  (:import [java.net URI URLEncoder]
-           [java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers]
+  (:import [java.net URLEncoder]
            [java.nio.charset StandardCharsets]
-           [java.time Duration]
            [java.util UUID]))
-
-(def ^:private client
-  (-> (HttpClient/newBuilder)
-      (.connectTimeout (Duration/ofSeconds 8))
-      .build))
 
 (defn- bitcoin-link [session link-id]
   (let [link (get-in (store/snapshot)
@@ -38,17 +32,16 @@
                       {:type :bitcoin/explorer-not-configured})))
     (let [address (URLEncoder/encode (:address link)
                                      StandardCharsets/UTF_8)
-          request (-> (HttpRequest/newBuilder
-                       (URI/create (str base-url "/address/" address)))
-                      (.timeout (Duration/ofSeconds 12))
-                      (.header "Accept" "application/json")
-                      .GET .build)
-          response (.send client request (HttpResponse$BodyHandlers/ofString))
-          _ (when-not (= 200 (.statusCode response))
+          response (http/request
+                    {:url (str base-url "/address/" address)
+                     :method :get
+                     :timeout-seconds 12
+                     :headers {"Accept" "application/json"}})
+          _ (when-not (= 200 (:status response))
               (throw (ex-info "Bitcoin explorerから残高を取得できませんでした。"
                               {:type :bitcoin/explorer-failed
-                               :status (.statusCode response)})))
-          payload (json/read-str (.body response) :key-fn keyword)
+                               :status (:status response)})))
+          payload (json/read-str (:body response) :key-fn keyword)
           chain (:chain_stats payload)
           mempool (:mempool_stats payload)
           confirmed (- (long (or (:funded_txo_sum chain) 0))
@@ -77,17 +70,16 @@
                       {:type :bitcoin/explorer-not-configured})))
     (let [address (URLEncoder/encode (:address link)
                                      StandardCharsets/UTF_8)
-          request (-> (HttpRequest/newBuilder
-                       (URI/create (str base-url "/address/" address "/txs")))
-                      (.timeout (Duration/ofSeconds 15))
-                      (.header "Accept" "application/json")
-                      .GET .build)
-          response (.send client request (HttpResponse$BodyHandlers/ofString))
-          _ (when-not (= 200 (.statusCode response))
+          response (http/request
+                    {:url (str base-url "/address/" address "/txs")
+                     :method :get
+                     :timeout-seconds 15
+                     :headers {"Accept" "application/json"}})
+          _ (when-not (= 200 (:status response))
               (throw (ex-info "Bitcoin explorerから取引履歴を取得できませんでした。"
                               {:type :bitcoin/explorer-failed
-                               :status (.statusCode response)})))
-          transactions (json/read-str (.body response) :key-fn keyword)
+                               :status (:status response)})))
+          transactions (json/read-str (:body response) :key-fn keyword)
           address (:address link)
           items
           (mapv

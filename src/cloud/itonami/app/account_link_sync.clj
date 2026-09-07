@@ -3,18 +3,11 @@
   proofs only; local identity code verifies every wallet signature again."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.identity :as identity])
-  (:import [java.net URI URLEncoder]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
+  (:import [java.net URLEncoder]
            [java.nio.charset StandardCharsets]
-           [java.time Duration]
            [java.util.concurrent TimeUnit]))
-
-(defonce ^HttpClient client
-  (-> (HttpClient/newBuilder)
-      (.connectTimeout (Duration/ofSeconds 8))
-      .build))
 
 (defn- keychain-secret []
   (try
@@ -48,28 +41,23 @@
     (throw (ex-info "Account Link sync provider が設定されていません。"
                     {:type :wallet/sync-not-configured})))
   (let [base (str/replace (get-in (settings configuration) [:base-url]) #"/$" "")
-        builder (-> (HttpRequest/newBuilder (URI/create (str base path)))
-                    (.timeout (Duration/ofSeconds 20))
-                    (.header "Accept" "application/json")
-                    (.header "Authorization"
-                             (str "Bearer " (token configuration))))
-        builder (if body
-                  (-> builder
-                      (.header "Content-Type" "application/json")
-                      (.method method
-                               (HttpRequest$BodyPublishers/ofString
-                                (json/write-str body))))
-                  (.method builder method
-                           (HttpRequest$BodyPublishers/noBody)))
-        response (.send client (.build builder)
-                        (HttpResponse$BodyHandlers/ofString))
+        headers (cond-> {"Accept" "application/json"
+                         "Authorization"
+                         (str "Bearer " (token configuration))}
+                  body (assoc "Content-Type" "application/json"))
+        response (http/request
+                  {:url (str base path)
+                   :method (if body :post :get)
+                   :timeout-seconds 20
+                   :headers headers
+                   :body (when body (json/write-str body))})
         payload (try
-                  (json/read-str (.body response) :key-fn keyword)
+                  (json/read-str (:body response) :key-fn keyword)
                   (catch Exception _ {:error "invalid_response"}))]
-    (when-not (<= 200 (.statusCode response) 299)
+    (when-not (<= 200 (:status response) 299)
       (throw (ex-info "Account Link sync request に失敗しました。"
                       {:type :wallet/sync-failed
-                       :status (.statusCode response)})))
+                       :status (:status response)})))
     payload))
 
 (defn push-link! [configuration link]

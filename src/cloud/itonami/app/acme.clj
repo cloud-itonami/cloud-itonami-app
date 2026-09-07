@@ -35,16 +35,14 @@
   hand-rolled one could not offer."
   (:require [asn1.core :as asn1]
             [clojure.data.json :as json]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [cloud.itonami.app.http-client :as http])
   (:import [java.math BigInteger]
            [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
            [java.security KeyFactory KeyPairGenerator MessageDigest Signature]
            [java.security.interfaces ECPublicKey]
            [java.security.spec ECGenParameterSpec PKCS8EncodedKeySpec
             X509EncodedKeySpec]
-           [java.time Duration]
            [java.util Base64]))
 
 (def schema "cloud.itonami.app.acme.v1")
@@ -174,33 +172,26 @@
 
 ;; ── transport ────────────────────────────────────────────────────────────────
 
-(defonce ^:private http-client
-  (delay (-> (HttpClient/newBuilder)
-             (.connectTimeout (Duration/ofSeconds 10))
-             (.followRedirects java.net.http.HttpClient$Redirect/NEVER)
-             .build)))
-
 (defn http-transport
-  "The real one. HTTPS only and no redirects, like every other outbound path
-  here."
+  "The real one. HTTPS only, and the workspace transport does not follow
+  redirects — like every other outbound path here."
   [method url headers body]
   (let [uri (URI/create url)]
     (when-not (= "https" (.getScheme uri))
       (fail! :acme/insecure-transport "ACME directories must be HTTPS" {:url url}))
-    (let [builder (-> (HttpRequest/newBuilder uri)
-                      (.timeout (Duration/ofSeconds 30)))
-          _ (doseq [[k v] headers] (.header builder (name k) (str v)))
-          request (case method
-                    :get (.GET builder)
-                    :head (.method builder "HEAD" (HttpRequest$BodyPublishers/noBody))
-                    :post (.POST builder (HttpRequest$BodyPublishers/ofString
-                                          (or body ""))))
-          response (.send @http-client (.build request)
-                          (HttpResponse$BodyHandlers/ofString))]
-      {:status (.statusCode response)
-       :headers (into {} (map (fn [[k v]] [(str/lower-case k) (first v)]))
-                      (.map (.headers response)))
-       :body (.body response)})))
+    (let [hdrs (into {} (map (fn [[k v]] [(name k) (str v)])) headers)
+          response (http/request
+                    {:url url
+                     :method (case method
+                               :get :get
+                               :head :head
+                               :post :post)
+                     :timeout-seconds 30
+                     :headers hdrs
+                     :body (when (= method :post) (or body ""))})]
+      {:status (:status response)
+       :headers (:headers response)
+       :body (:body response)})))
 
 (def ^:dynamic *transport* http-transport)
 

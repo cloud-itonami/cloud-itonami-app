@@ -62,13 +62,13 @@
             [data-integrity.core :as di]
             [data-integrity.ecdsa :as ecdsa]
             [data-integrity.eddsa :as eddsa]
+            [cloud.itonami.app.http-client :as http]
             [data-integrity.eddsa-rdfc :as eddsa-rdfc]
             [did.core :as did]
             [ed25519.core :as ed]
             [status-list.core :as sl])
   (:import [java.net InetAddress URI]
-           [java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers]
-           [java.time Duration Instant]))
+           [java.time Instant]))
 
 (def schema "cloud.itonami.app.credential-trust.v1")
 
@@ -104,15 +104,6 @@
              (some-> domain str str/trim str/lower-case not-empty)))
 
 ;; ── the network boundary ─────────────────────────────────────────────────────
-
-(defonce ^:private http-client
-  (delay (-> (HttpClient/newBuilder)
-             (.connectTimeout (Duration/ofSeconds 5))
-             ;; Do not follow redirects. A redirect is the trusted domain handing
-             ;; the fetch to an address the operator never approved, which is
-             ;; precisely what the trust list exists to prevent.
-             (.followRedirects java.net.http.HttpClient$Redirect/NEVER)
-             .build)))
 
 (defn- internal-address?
   "Whether `host` resolves anywhere this process should not be reaching.
@@ -162,18 +153,15 @@
                       default-fetch-timeout-seconds)
           max-bytes (or (:max-document-bytes (settings configuration))
                         default-max-document-bytes)
-          request (-> (HttpRequest/newBuilder uri)
-                      (.timeout (Duration/ofSeconds (long timeout)))
-                      (.header "accept" accept)
-                      .GET
-                      .build)
-          response (.send @http-client request (HttpResponse$BodyHandlers/ofString))
-          body (.body response)]
+          response (http/request {:url url :method :get
+                                  :timeout-seconds (long timeout)
+                                  :headers {"accept" accept}})
+          body (:body response)]
       (when (> (count body) max-bytes)
         (fail! :credential-trust/document-too-large
                (str what " exceeds " max-bytes " bytes")
                {:url url :bytes (count body)}))
-      {:status (.statusCode response) :body body})))
+      {:status (:status response) :body body})))
 
 (defn fetch-json
   "GET `url` and parse it as JSON."

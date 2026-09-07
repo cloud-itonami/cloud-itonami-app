@@ -21,16 +21,14 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [cloud.itonami.app.bundle :as bundle]
+            [cloud.itonami.app.http-client :as http]
             [ed25519.core :as ed]
             [ipns.core :as ipns]
             [ipns.record :as rec]
             [kad.routing :as routing]
             [kotoba.protocol.app :as app]
             [protobuf.wire :as pb])
-  (:import [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
-           [java.time Duration Instant ZoneOffset]
+  (:import [java.time Instant ZoneOffset]
            [java.time.temporal ChronoUnit]))
 
 (def seed-env "CLOUD_ITONAMI_APP_IPNS_SEED")
@@ -117,11 +115,6 @@
      :record record
      :octets (rec/serialize record)}))
 
-(defn- http-client []
-  (-> (HttpClient/newBuilder)
-      (.connectTimeout (Duration/ofSeconds 30))
-      .build))
-
 (defn cache-busted-url
   "A delegated router may CDN-cache GET beyond the IPNS record TTL. A publish
   must verify the record that was just accepted, not a still-valid cached
@@ -131,27 +124,29 @@
   (str url (if (str/includes? url "?") "&" "?") "fresh=" nonce))
 
 (defn kad-http
-  "Synchronous http-fn for `kad.routing`. Body is octets either way."
+  "Synchronous http-fn for `kad.routing`. Body is octets either way; octets
+  cross the shim base64-encoded so they stay octets."
   [{:keys [method url headers body]}]
   (let [url (if (= method :get)
               (cache-busted-url url (System/nanoTime))
               url)
-        bldr (reduce-kv (fn [b k v]
-                          (.header b (name k) (str v)))
-                        (-> (HttpRequest/newBuilder (URI/create url))
-                            (.timeout (Duration/ofSeconds 45)))
-                        (or headers {}))
-        req (case method
-              :get (.build (.GET bldr))
-              :put (.build (.PUT bldr
-                                 (HttpRequest$BodyPublishers/ofByteArray
-                                  (if (bytes? body) body (->bytes body)))))
-              (throw (ex-info "unsupported kad method" {:method method})))
-        resp (.send ^HttpClient (http-client) req
-                    (HttpResponse$BodyHandlers/ofByteArray))
-        raw (.body resp)]
-    {:status (.statusCode resp)
-     :body (when (pos? (alength ^bytes raw)) (->octets raw))}))
+        resp (http/request
+              {:url url
+               :method (case method
+                         :get :get
+                         :put :put
+                         (throw (ex-info "unsupported kad method" {:method method})))
+               :timeout-seconds 45
+               :headers (into {} (map (fn [[k v]] [(name k) (str v)])) (or headers {}))
+               :body (when (= method :put)
+                       (.encodeToString (java.util.Base64/getEncoder)
+                                        ^bytes (if (bytes? body) body (->bytes body))))})
+        resp-bytes (when (seq (str (:body resp)))
+                     (.decode (java.util.Base64/getDecoder)
+                              ^String (:body resp)))]
+    {:status (:status resp)
+     :body (when (and resp-bytes (pos? (alength ^bytes resp-bytes)))
+             (->octets resp-bytes))}))
 
 (defn validate-octets
   "validate-fn for kad.routing/resolve. Returns the parsed record or nil."

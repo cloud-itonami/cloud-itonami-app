@@ -37,20 +37,14 @@
             [cloud.itonami.app.mail-gmail :as gmail]
             [cloud.itonami.app.mail-imap :as imap]
             [cloud.itonami.app.mail-pop3 :as pop3]
+            [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.store :as store])
-  (:import [java.net URI URLEncoder]
-           [java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers]
+  (:import [java.net URLEncoder]
            [java.nio.charset StandardCharsets]
-           [java.time Duration]
            [java.util.concurrent Executors ScheduledExecutorService
             ThreadFactory TimeUnit]))
 
 (def schema "cloud.itonami.app.mail-sync.v1")
-
-(defonce ^:private http-client
-  (-> (HttpClient/newBuilder)
-      (.connectTimeout (Duration/ofSeconds 10))
-      .build))
 (defonce ^:private scheduler (atom nil))
 (defonce ^:private syncing? (atom false))
 (defonce ^:private runtime-config (atom {}))
@@ -70,18 +64,17 @@
 (defn- request-json!
   ([token url] (request-json! token url {}))
   ([token url headers]
-   (let [builder (-> (HttpRequest/newBuilder (URI/create url))
-                     (.header "Authorization" (str "Bearer " token))
-                     (.header "Accept" "application/json")
-                     (.header "User-Agent" "cloud-itonami-app")
-                     .GET)
-         _ (doseq [[header value] headers] (.header builder header value))
-         response (.send http-client (.build builder)
-                         (HttpResponse$BodyHandlers/ofString))
-         status (.statusCode response)
+   (let [response (http/request
+                   {:url url
+                    :method :get
+                    :headers (merge {"Authorization" (str "Bearer " token)
+                                     "Accept" "application/json"
+                                     "User-Agent" "cloud-itonami-app"}
+                                    (into {} headers))})
+         status (:status response)
          body (try
-                (json/read-str (.body response) :key-fn keyword)
-                (catch Exception _ {:raw (.body response)}))]
+                (json/read-str (:body response) :key-fn keyword)
+                (catch Exception _ {:raw (:body response)}))]
      (if (<= 200 status 299)
        body
        (throw (ex-info "メールプロバイダーの同期要求が失敗しました。"
@@ -383,19 +376,17 @@
                                         "relay-access"))]
     (let [base-url (or (System/getenv "ITONAMI_WEBHOOK_RELAY_URL")
                        "https://hooks.itonami.cloud")
-          builder (-> (HttpRequest/newBuilder (URI/create (str base-url path)))
-                      (.header "Authorization" (str "Bearer " token))
-                      (.header "Accept" "application/json"))
-          builder (if (= method :post)
-                    (-> builder
-                        (.header "Content-Type" "application/json")
-                        (.POST (java.net.http.HttpRequest$BodyPublishers/ofString
-                                (json/write-str body))))
-                    (.GET builder))
-          response (.send http-client (.build builder)
-                          (HttpResponse$BodyHandlers/ofString))]
-      (when (<= 200 (.statusCode response) 299)
-        (json/read-str (.body response) :key-fn keyword)))))
+          builder {:url (str base-url path)
+                   :method (if (= method :post) :post :get)
+                   :headers (cond-> {"Authorization" (str "Bearer " token)
+                                     "Accept" "application/json"}
+                              (= method :post)
+                              (assoc "Content-Type" "application/json"))
+                   :body (when (= method :post)
+                           (json/write-str body))}
+          response (http/request builder)]
+      (when (<= 200 (:status response) 299)
+        (json/read-str (:body response) :key-fn keyword)))))
 
 (defn poll-relay! []
   (when-let [response (relay-request-json! :get "/v1/events/poll?limit=50" nil)]

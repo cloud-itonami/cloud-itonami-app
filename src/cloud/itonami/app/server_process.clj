@@ -32,13 +32,12 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [cloud.itonami.app.app-client :as client]
-            [cloud.itonami.app.config :as config])
+            [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.http-client :as http])
   (:import [java.io File]
            ;; Neither is in Clojure's default java.lang imports: `ProcessHandle`
            ;; arrived in Java 9, and `Redirect` is nested.
            [java.lang ProcessBuilder$Redirect ProcessHandle]
-           [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers]
            [java.nio.file Files LinkOption Path]
            [java.nio.file.attribute FileAttribute]
            [java.time Duration Instant]
@@ -54,11 +53,6 @@
   little over a minute before `/health` answers, and longer when the classpath
   cache is cold. A budget under that turns a normal first run into a failure."
   (Duration/ofSeconds 300))
-
-(defonce ^:private probe-client
-  (-> (HttpClient/newBuilder)
-      (.connectTimeout (Duration/ofMillis 700))
-      .build))
 
 (defn- data-file ^File [name]
   (io/file (config/data-dir) name))
@@ -84,14 +78,12 @@
   than folded into one boolean — see `store-agreement`."
   [configuration]
   (try
-    (let [request (-> (HttpRequest/newBuilder
-                       (URI/create (str (base-url configuration) "/health")))
-                      (.timeout (Duration/ofSeconds 2))
-                      .GET .build)
-          response (.send probe-client request
-                          (HttpResponse$BodyHandlers/ofString))
-          body (.body response)]
-      (if (and (= 200 (.statusCode response))
+    (let [response (http/request
+                    {:url (str (base-url configuration) "/health")
+                     :method :get
+                     :timeout-seconds 2})
+          body (:body response)]
+      (if (and (= 200 (:status response))
                (str/includes? body "cloud-itonami-app"))
         {:answering? true
          :store (try (some-> (json/read-str body :key-fn keyword) :store

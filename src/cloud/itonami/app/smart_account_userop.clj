@@ -13,18 +13,16 @@
             [clojure.data.json :as json]
             [clojure.string :as str]
             [cloud.itonami.app.esign.assertion :as assertion]
+            [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.smart-account :as smart-account]
             [eth-crypto.core :as eth]
             [ethereum.abi :as abi])
   (:import [java.math BigInteger]
            [java.net InetAddress URI]
-           [java.net.http HttpClient HttpClient$Redirect HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
            [java.nio.charset StandardCharsets]
            [java.security AlgorithmParameters KeyFactory MessageDigest Signature]
            [java.security.spec ECGenParameterSpec ECParameterSpec ECPoint
-            ECPublicKeySpec]
-           [java.time Duration]))
+            ECPublicKeySpec]))
 
 (def schema "cloud.itonami.app.smart-account.owner-user-operation.v1")
 
@@ -74,30 +72,22 @@
                 (str (name kind) " endpoint はHTTPS（またはloopback）で指定してください。")))
       value)))
 
-(defonce ^:private http-client
-  (delay (-> (HttpClient/newBuilder)
-             (.connectTimeout (Duration/ofSeconds 8))
-             (.followRedirects HttpClient$Redirect/NEVER)
-             .build)))
-
 (defn http-transport
   "POST one JSON-RPC request. Endpoint selection and method whitelisting happen
   before this seam; tests replace it with an in-memory chain/bundler."
   [endpoint request]
-  (let [http-request (-> (HttpRequest/newBuilder (URI/create endpoint))
-                         (.timeout (Duration/ofSeconds 25))
-                         (.header "Content-Type" "application/json")
-                         (.header "Accept" "application/json")
-                         (.POST (HttpRequest$BodyPublishers/ofString
-                                 (json/write-str request)))
-                         .build)
-        response (.send @http-client http-request
-                        (HttpResponse$BodyHandlers/ofString))]
-    (when-not (= 200 (.statusCode response))
+  (let [response (http/request
+                  {:url endpoint
+                   :method :post
+                   :timeout-seconds 25
+                   :headers {"Content-Type" "application/json"
+                             "Accept" "application/json"}
+                   :body (json/write-str request)})]
+    (when-not (= 200 (:status response))
       (refuse :wallet/user-operation-rpc-error
-              (str "JSON-RPC endpoint がHTTP " (.statusCode response)
+              (str "JSON-RPC endpoint がHTTP " (:status response)
                    "を返しました。")))
-    (try (json/read-str (.body response) :key-fn keyword)
+    (try (json/read-str (:body response) :key-fn keyword)
          (catch Exception _
            (refuse :wallet/user-operation-rpc-error
                    "JSON-RPC endpoint がJSONを返しませんでした。")))))

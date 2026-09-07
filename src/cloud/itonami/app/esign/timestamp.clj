@@ -38,27 +38,15 @@
   timestamping does not undo the erasure design in
   `cloud.itonami.app.esign`: there is nothing at the TSA to erase."
   (:require [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.http-client :as http]
             [clojure.string :as str]
             [asn1.core :as asn1]
             [cms.jvm :as cms-jvm]
             [rfc3161.core :as ts]
             [x509.core :as x509])
-  (:import [java.net URI]
-           [java.net.http HttpClient HttpClient$Redirect HttpRequest
-            HttpRequest$BodyPublishers HttpResponse$BodyHandlers]
-           [java.security SecureRandom]
-           [java.time Duration]))
+  (:import [java.security SecureRandom]))
 
 (def schema "cloud.itonami.app.esign.timestamp.v1")
-
-(defonce ^:private ^HttpClient http-client
-  (-> (HttpClient/newBuilder)
-      ;; A redirect to somewhere else is a different TSA answering, and the
-      ;; nonce check would not catch it because the redirect target could simply
-      ;; forward the request. Refusing is cheaper than reasoning about it.
-      (.followRedirects HttpClient$Redirect/NEVER)
-      (.connectTimeout (Duration/ofSeconds 10))
-      (.build)))
 
 (defn settings
   "`{:url … :policy … :accredited-roots [pem …] :accreditation \"…\"}` or nil.
@@ -128,18 +116,19 @@
         body (asn1/ints->bytes
               (ts/request (cond-> {:digest digest :nonce nonce-value :cert-req? true}
                             policy (assoc :policy policy))))
-        request (-> (HttpRequest/newBuilder (URI/create url))
-                    (.timeout (Duration/ofSeconds 20))
-                    (.header "Content-Type" "application/timestamp-query")
-                    (.POST (HttpRequest$BodyPublishers/ofByteArray body))
-                    (.build))
-        response (.send http-client request (HttpResponse$BodyHandlers/ofByteArray))]
-    (when-not (= 200 (.statusCode response))
-      (throw (ex-info (str "TSA が " (.statusCode response) " を返しました。")
+        response (http/request
+                  {:url url
+                   :method :post
+                   :timeout-seconds 20
+                   :headers {"Content-Type" "application/timestamp-query"}
+                   :body (.encodeToString (java.util.Base64/getEncoder)
+                                          ^bytes body)})]
+    (when-not (= 200 (:status response))
+      (throw (ex-info (str "TSA が " (:status response) " を返しました。")
                       {:type :esign/tsa-http-error
-                       :status (.statusCode response)
+                       :status (:status response)
                        :url url})))
-    (.body response)))
+    (.decode (java.util.Base64/getDecoder) ^String (:body response))))
 
 (defn attestation-of
   "What a verified token earns: `:accredited` or `:tsa-attested`.

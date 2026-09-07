@@ -36,15 +36,13 @@
   a signature is only reproducible if the instant is an argument, and only
   useful if something eventually passes the real time."
   (:require [clojure.string :as str]
+            [cloud.itonami.app.http-client :as http]
             [drive.object :as object]
             [sigv4.crypto :as crypto]
             [storj.core :as core]
             [storj.protocols :as p]
             [storj.store :as store])
-  (:import [java.net URI]
-           [java.net.http HttpClient HttpClient$Redirect HttpRequest
-            HttpRequest$BodyPublishers HttpResponse$BodyHandlers]
-           [java.time Duration Instant ZoneOffset]
+  (:import [java.time Instant ZoneOffset]
            [java.time.format DateTimeFormatter]))
 
 (def schema "cloud.itonami.app.storj.v1")
@@ -60,64 +58,50 @@
   []
   (.format iso-basic (Instant/now)))
 
-(defonce ^:private ^HttpClient http-client
-  (-> (HttpClient/newBuilder)
-      ;; A redirect invalidates the signature — the protocol docstring says so
-      ;; and java.net.http follows them by default only if asked, but saying it
-      ;; explicitly means a later reader does not have to know the default.
-      (.followRedirects HttpClient$Redirect/NEVER)
-      (.connectTimeout (Duration/ofSeconds 15))
-      (.build)))
+;; Binary fidelity is preserved by an explicit base64 round trip: bytes in,
+;; the same bytes back out. The shim carries strings only.
 
-;; java.net.http refuses to set these from user code (they belong to the
-;; client), and throws IllegalArgumentException rather than ignoring them.
-;; `host` and `content-length` are both signed by SigV4, which is fine: the
-;; client derives each from the URL and the body publisher, and derives the
-;; same values the signer used. Anything else here would be a real mismatch.
+;; The workspace transport rejects headers the HTTP client owns; `host` and
+;; `content-length` are both signed by SigV4, which is fine: the transport
+;; derives each from the URL and the body, and derives the same values the
+;; signer used. Anything else here would be a real mismatch.
 (def ^:private client-owned-headers
   #{"host" "content-length" "connection" "expect" "upgrade"})
 
-(defn- body-publisher [body]
-  (cond
-    (nil? body)     (HttpRequest$BodyPublishers/noBody)
-    (bytes? body)   (HttpRequest$BodyPublishers/ofByteArray body)
-    (string? body)  (HttpRequest$BodyPublishers/ofString body)
-    :else           (HttpRequest$BodyPublishers/ofByteArray
-                     (byte-array (map unchecked-byte body)))))
-
-(defn build-request
-  "The signed request as a `java.net.http.HttpRequest`.
-
-  Separate from sending so that it can be tested, because the send cannot be:
-  no credential for a gateway exists here, and the failure this most plausibly
-  has is one that happens before any network — `.header` throws
-  `IllegalArgumentException` on a name the client owns, which would make the
-  very first real request die on a header SigV4 legitimately signed."
-  ^HttpRequest [{:keys [method url headers body]}]
-  (let [b (HttpRequest/newBuilder (URI/create url))]
-    (.timeout b (Duration/ofSeconds 60))
-    (doseq [[k v] headers
-            :when (not (client-owned-headers (str/lower-case (name k))))]
-      (.header b (name k) (str v)))
-    (.method b (str/upper-case (name method)) (body-publisher body))
-    (.build b)))
-
 (defn http
-  "An `storj.protocols/IHttp` over `java.net.http`.
+  "An `storj.protocols/IHttp` over the workspace transport.
 
-  Bytes stay bytes. `BodyHandlers/ofString` would decode the response as UTF-8
-  and rewrite every byte above 0x7f — the same trap `filecoin/get-bytes` in
-  this app documents, and one that does not announce itself: the corruption
+  Bytes stay bytes. A string decoding of the response would rewrite every
+  byte above 0x7f — the same trap `filecoin/get-bytes` in this app
+  documents, and one that does not announce itself: the corruption
   happens during decoding, so a later re-encode cannot undo it."
   []
   (reify p/IHttp
     (-request [_ req]
-      (let [resp (.send http-client (build-request req)
-                        (HttpResponse$BodyHandlers/ofByteArray))]
-        {:status  (.statusCode resp)
-         :headers (into {} (map (fn [[k v]] [k (first v)]))
-                        (.map (.headers resp)))
-         :body    (.body resp)}))))
+      (let [body-bytes (:body req)
+            binary? (and body-bytes (not (string? body-bytes)))
+            body (cond
+                   (nil? body-bytes) nil
+                   (string? body-bytes) body-bytes
+                   :else (.encodeToString (java.util.Base64/getEncoder)
+                                          ^bytes body-bytes))
+            resp (http/request
+                  {:url (:url req)
+                   :method (keyword (str/lower-case (name (:method req))))
+                   :timeout-seconds 60
+                   :headers (into {}
+                                  (comp (filter (fn [[k _]]
+                                                  (not (client-owned-headers
+                                                        (str/lower-case (name k))))))
+                                        (map (fn [[k v]] [(name k) (str v)])))
+                                  (:headers req))
+                   :body body})
+            resp-body (:body resp)]
+        {:status  (:status resp)
+         :headers (:headers resp)
+         :body    (if (and binary? resp-body)
+                    (.decode (java.util.Base64/getDecoder) ^String resp-body)
+                    resp-body)}))))
 
 (defn config
   "Gateway config from the environment, or nil when it is not set.

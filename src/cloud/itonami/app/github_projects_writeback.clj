@@ -6,11 +6,8 @@
   updatedAt basis captured by the WorkItem lease."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
-            [cloud.itonami.app.identity :as identity])
-  (:import [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
-           [java.time Duration]))
+            [cloud.itonami.app.http-client :as http]
+            [cloud.itonami.app.identity :as identity]))
 
 (def schema "cloud.itonami.app.github-projects-writeback.v1")
 
@@ -132,25 +129,19 @@
       (throw (ex-info "A connected GitHub account is required"
                       {:type :github-projects/token-required})))
     (let [body (json/write-str {:query query :variables variables})
-          client (-> (HttpClient/newBuilder)
-                     (.connectTimeout (Duration/ofSeconds 10))
-                     (.build))
-          request (-> (HttpRequest/newBuilder
-                       (URI/create "https://api.github.com/graphql"))
-                      (.timeout (Duration/ofSeconds 30))
-                      (.header "Authorization" (str "Bearer " token))
-                      (.header "Accept" "application/vnd.github+json")
-                      (.header "Content-Type" "application/json")
-                      (.header "User-Agent" "cloud-itonami-app")
-                      (.POST (HttpRequest$BodyPublishers/ofString body))
-                      (.build))
-          response (.send client request (HttpResponse$BodyHandlers/ofString))]
-      (when-not (<= 200 (.statusCode response) 299)
-        (let [status (.statusCode response)
+          response (http/request
+                    {:url "https://api.github.com/graphql"
+                     :method :post
+                     :timeout-seconds 30
+                     :headers {"Authorization" (str "Bearer " token)
+                               "Accept" "application/vnd.github+json"
+                               "Content-Type" "application/json"
+                               "User-Agent" "cloud-itonami-app"}
+                     :body body})]
+      (when-not (<= 200 (:status response) 299)
+        (let [status (:status response)
               retryable? (contains? #{429 502 503 504} status)
-              retry-after (some-> (.firstValue (.headers response)
-                                                "retry-after")
-                                  (.orElse nil))]
+              retry-after nil]
           (throw (ex-info "GitHub GraphQL request failed"
                           {:type (cond
                                    (= 429 status) :github-projects/rate-limited
@@ -159,4 +150,4 @@
                            :retryable? retryable?
                            :retry-after retry-after
                            :status status}))))
-      (json/read-str (.body response) :key-fn keyword))))
+      (json/read-str (:body response) :key-fn keyword))))

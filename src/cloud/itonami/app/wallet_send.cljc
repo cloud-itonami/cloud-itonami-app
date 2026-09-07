@@ -34,14 +34,11 @@
             [cloud.itonami.app.wallet :as wallet]
             [clojure.string :as str]
             #?(:clj [clojure.data.json :as json])
+            #?(:clj [cloud.itonami.app.http-client :as http])
             [eth-crypto.core :as eth]
             [wallet.chain :as wchain]
             [wallet.chains :as wchains])
-  #?(:clj (:import [java.math BigInteger]
-                   [java.net URI]
-                   [java.net.http HttpClient HttpRequest
-                    HttpRequest$BodyPublishers HttpResponse$BodyHandlers]
-                   [java.time Duration])))
+  #?(:clj (:import [java.math BigInteger])))
 
 (def rpc-methods
   "The ONLY JSON-RPC methods this actor may call."
@@ -102,21 +99,17 @@
   response-map. Injected into sign-and-submit! so tests run against a stub
   and production supplies the configured endpoint."
   [endpoint]
-  (let [client (-> (HttpClient/newBuilder)
-                   (.connectTimeout (Duration/ofSeconds 8))
-                   .build)]
-    (fn [request]
-      (let [http-request (-> (HttpRequest/newBuilder (URI/create endpoint))
-                             (.timeout (Duration/ofSeconds 20))
-                             (.header "Content-Type" "application/json")
-                             (.POST (HttpRequest$BodyPublishers/ofString
-                                     (json/write-str request)))
-                             .build)
-            response (.send client http-request (HttpResponse$BodyHandlers/ofString))]
-        (when-not (= 200 (.statusCode response))
-          (refuse :wallet/rpc-error
-                  (str "RPC endpointがHTTP " (.statusCode response) "を返しました。")))
-        (json/read-str (.body response) :key-fn keyword)))))
+  (fn [request]
+    (let [response (http/request
+                    {:url endpoint
+                     :method :post
+                     :timeout-seconds 20
+                     :headers {"Content-Type" "application/json"}
+                     :body (json/write-str request)})]
+      (when-not (= 200 (:status response))
+        (refuse :wallet/rpc-error
+                (str "RPC endpointがHTTP " (:status response) "を返しました。")))
+      (json/read-str (:body response) :key-fn keyword))))
 
 (defn sign-and-submit!
   "Sign the :awaiting-wallet transfer `transfer-id` with `sgnr` (the org's

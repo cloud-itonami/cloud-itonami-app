@@ -35,13 +35,11 @@
   digital removes."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.wallet :as wallet])
-  (:import [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
-           [java.time Duration Instant]))
+  (:import [java.time Instant]))
 
 (def schema "cloud.itonami.app.commerce.store.v1")
 (def default-facilitator "https://x402.nexus")
@@ -57,27 +55,19 @@
 
 (declare refuse)
 
-(defonce ^:private facilitator-client
-  (-> (HttpClient/newBuilder)
-      (.connectTimeout (Duration/ofSeconds 8))
-      .build))
-
 (defn- verify-payment-http!
   [facilitator payment requirements]
-  (let [request (-> (HttpRequest/newBuilder
-                     (URI/create (str (str/replace facilitator #"/$" "") "/verify")))
-                    (.timeout (Duration/ofSeconds 15))
-                    (.header "Content-Type" "application/json")
-                    (.POST (HttpRequest$BodyPublishers/ofString
-                            (json/write-str {:payment payment
-                                             :requirements requirements})))
-                    .build)
-        response (.send facilitator-client request
-                        (HttpResponse$BodyHandlers/ofString))]
-    (when-not (<= 200 (.statusCode response) 299)
+  (let [response (http/request
+                  {:url (str (str/replace facilitator #"/$" "") "/verify")
+                   :method :post
+                   :timeout-seconds 15
+                   :headers {"Content-Type" "application/json"}
+                   :body (json/write-str {:payment payment
+                                          :requirements requirements})})]
+    (when-not (<= 200 (:status response) 299)
       (refuse :commerce/payment-verifier-unavailable
               "x402決済確認サービスが応答しませんでした。送金hashを保持して再試行してください。"))
-    (json/read-str (.body response) :key-fn keyword)))
+    (json/read-str (:body response) :key-fn keyword)))
 
 (def ^:dynamic *verify-payment!* verify-payment-http!)
 (def ^:dynamic *instant* #(Instant/now))

@@ -19,15 +19,13 @@
             [authorization.model :as authz-model]
             [authorization.ports :as authz-ports]
             [clojure.data.json :as json]
+            [cloud.itonami.app.http-client :as http]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [ed25519.core :as ed]
             [identity.directory :as directory]
             [identity.model :as identity]
             [oauth.model :as oauth])
-  (:import [java.net URI URLEncoder]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
            [java.nio.charset StandardCharsets]
            [java.security MessageDigest SecureRandom]
            [java.time Duration Instant]
@@ -96,9 +94,6 @@
 ;; Provider -> {:service :account}: an OAuth client this deployment holds under
 ;; a name the application did not choose. See `referenced-client`.
 (defonce runtime-oauth-clients (atom {}))
-(defonce http-client (-> (HttpClient/newBuilder)
-                         (.connectTimeout (Duration/ofSeconds 8))
-                         .build))
 
 (defn configure!
   "Install the distribution/tenant profile for this process."
@@ -2678,11 +2673,12 @@
                        (str (url-encode (name key)) "=" (url-encode value)))
                      (remove (comp nil? val) values))))
 
-(defn- request-json! [request]
-  (let [response (.send ^HttpClient http-client request
-                        (HttpResponse$BodyHandlers/ofString))
-        status (.statusCode response)
-        data (json/read-str (.body response) :key-fn keyword)]
+(defn- request-json! [{:keys [url method headers body]}]
+  (let [{:keys [status body]} (http/request {:url url
+                                             :method (or method :get)
+                                             :headers headers
+                                             :body body})
+        data (json/read-str body :key-fn keyword)]
     (when-not (<= 200 status 299)
       (throw (ex-info "接続先が要求を拒否しました。"
                       {:type :oauth/provider-error :status status})))
@@ -2696,19 +2692,19 @@
                :client_secret (:client-secret config)
                :redirect_uri (:redirect-uri transaction)
                :code_verifier (:verifier transaction)})
-        request (-> (HttpRequest/newBuilder (URI/create (:token-endpoint config)))
-                    (.header "Content-Type" "application/x-www-form-urlencoded")
-                    (.header "Accept" "application/json")
-                    (.POST (HttpRequest$BodyPublishers/ofString body))
-                    .build)]
+        request {:url (str (:token-endpoint config))
+                 :method :post
+                 :headers {"Content-Type" "application/x-www-form-urlencoded"
+                           "Accept" "application/json"}
+                 :body body}]
     (request-json! request)))
 
 (defn- profile! [config access-token]
-  (let [request (-> (HttpRequest/newBuilder (URI/create (:profile-endpoint config)))
-                    (.header "Authorization" (str "Bearer " access-token))
-                    (.header "Accept" "application/json")
-                    (.header "User-Agent" "cloud-itonami-app")
-                    .GET .build)]
+  (let [request {:url (str (:profile-endpoint config))
+                 :method :get
+                 :headers {"Authorization" (str "Bearer " access-token)
+                           "Accept" "application/json"
+                           "User-Agent" "cloud-itonami-app"}}]
     (request-json! request)))
 
 (defn- central-auth-config []
@@ -2855,19 +2851,19 @@
                          :client_id (:client-id config)
                          :redirect_uri (:redirect-uri transaction)
                          :code_verifier (:verifier transaction)})
-        request (-> (HttpRequest/newBuilder (URI/create (:token-endpoint config)))
-                    (.header "Content-Type" "application/x-www-form-urlencoded")
-                    (.header "Accept" "application/json")
-                    (.POST (HttpRequest$BodyPublishers/ofString body))
-                    .build)]
+        request {:url (str (:token-endpoint config))
+                 :method :post
+                 :headers {"Content-Type" "application/x-www-form-urlencoded"
+                           "Accept" "application/json"}
+                 :body body}]
     (request-json! request)))
 
 (defn- central-userinfo! [config access-token]
-  (let [request (-> (HttpRequest/newBuilder (URI/create (:profile-endpoint config)))
-                    (.header "Authorization" (str "Bearer " access-token))
-                    (.header "Accept" "application/json")
-                    (.header "User-Agent" "cloud-itonami-app")
-                    .GET .build)]
+  (let [request {:url (str (:profile-endpoint config))
+                 :method :get
+                 :headers {"Authorization" (str "Bearer " access-token)
+                           "Accept" "application/json"
+                           "User-Agent" "cloud-itonami-app"}}]
     (request-json! request)))
 
 (defn complete-central-authentication!
@@ -3275,13 +3271,12 @@
    (if-let [token (access-token :google did)]
      (let [body (json/write-str {"timeMin" time-min "timeMax" time-max
                                  "items" [{"id" "primary"}]})
-           request (-> (HttpRequest/newBuilder
-                        (URI/create "https://www.googleapis.com/calendar/v3/freeBusy"))
-                       (.header "Authorization" (str "Bearer " token))
-                       (.header "Content-Type" "application/json")
-                       (.header "User-Agent" "cloud-itonami-app")
-                       (.POST (HttpRequest$BodyPublishers/ofString body))
-                       .build)
+           request {:url "https://www.googleapis.com/calendar/v3/freeBusy"
+                    :method :post
+                    :headers {"Authorization" (str "Bearer " token)
+                              "Content-Type" "application/json"
+                              "User-Agent" "cloud-itonami-app"}
+                    :body body}
            response (request-json! request)]
        (if-let [err (get-in response [:error :message])]
          {:ok? false :reason err}
@@ -3437,13 +3432,12 @@
                                :refresh_token refresh-token
                                :client_id (:client-id config)
                                :client_secret (:client-secret config)})
-              request (-> (HttpRequest/newBuilder
-                           (URI/create (:token-endpoint config)))
-                          (.header "Content-Type"
-                                   "application/x-www-form-urlencoded")
-                          (.header "Accept" "application/json")
-                          (.POST (HttpRequest$BodyPublishers/ofString body))
-                          .build)
+              request {:url (str (:token-endpoint config))
+                       :method :post
+                       :headers {"Content-Type"
+                                 "application/x-www-form-urlencoded"
+                                 "Accept" "application/json"}
+                       :body body}
               token (request-json! request)
               access (:access_token token)]
           (when-not (str/blank? access)
@@ -3527,12 +3521,12 @@
                                  :refresh_token refresh-token
                                  :client_id (:client_id client)
                                  :client_secret (:client_secret client)})
-                request (-> (HttpRequest/newBuilder (URI/create endpoint))
-                            (.header "Content-Type"
-                                     "application/x-www-form-urlencoded")
-                            (.header "Accept" "application/json")
-                            (.POST (HttpRequest$BodyPublishers/ofString body))
-                            .build)
+                request {:url (str endpoint)
+                         :method :post
+                         :headers {"Content-Type"
+                                   "application/x-www-form-urlencoded"
+                                   "Accept" "application/json"}
+                         :body body}
                 token (request-json! request)
                 access (not-empty (str (:access_token token)))]
             (when access

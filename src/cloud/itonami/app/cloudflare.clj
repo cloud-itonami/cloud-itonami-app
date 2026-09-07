@@ -2,21 +2,15 @@
   "Credentialed HTTP host for yadori's pure Cloudflare request maps."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [cloud.itonami.app.http-client :as http]
             [yadori.cloudflare :as yadori])
-  (:import [java.net URI URLEncoder]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
-           [java.nio.charset StandardCharsets]
-           [java.time Duration]))
-
-(defonce ^:private client
-  (-> (HttpClient/newBuilder) (.connectTimeout (Duration/ofSeconds 10)) .build))
+  (:import [java.net URLEncoder]
+           [java.nio.charset StandardCharsets]))
 
 (def ^:dynamic *environment* #(System/getenv %))
 (def ^:dynamic *send!*
   (fn [request]
-    (let [response (.send client request (HttpResponse$BodyHandlers/ofString))]
-      {:status (.statusCode response) :body (.body response)})))
+    (http/request request)))
 
 (defn- env-name [configuration key default]
   (or (get-in configuration [:domain-service key]) default))
@@ -51,20 +45,21 @@
                                   {:type :domain-service/not-configured})))
         base (str/replace (or (get-in configuration [:domain-service :api-base])
                               yadori/api-base) #"/+$" "")
-        builder (-> (HttpRequest/newBuilder
-                     (URI/create (str base path (query-string query))))
-                    (.timeout (Duration/ofSeconds 30))
-                    (.header "Authorization" (str "Bearer " token))
-                    (.header "Content-Type" "application/json"))
-        publisher #(HttpRequest$BodyPublishers/ofString (json/write-str (or body {})))
-        builder (case method
-                  :get (.GET builder)
-                  :post (.POST builder (publisher))
-                  :patch (.method builder "PATCH" (publisher))
-                  :delete (.DELETE builder)
-                  (throw (ex-info "unsupported Cloudflare request method"
-                                  {:type :domain-service/method :method method})))
-        response (*send!* (.build builder))
+        hdrs {"Authorization" (str "Bearer " token)
+              "Content-Type" "application/json"}
+        method-str (case method
+                     :get "GET"
+                     :post "POST"
+                     :patch "PATCH"
+                     :delete "DELETE"
+                     (throw (ex-info "unsupported Cloudflare request method"
+                                     {:type :domain-service/method :method method})))
+        response (*send!* {:url (str base path (query-string query))
+                           :method (keyword (str/lower-case method-str))
+                           :timeout-seconds 30
+                           :headers hdrs
+                           :body (when (contains? #{:post :patch} method)
+                                   (json/write-str (or body {})))})
         status (:status response)
         decoded (try (json/read-str (:body response) :key-fn keyword)
                      (catch Exception _ {:success false

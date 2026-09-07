@@ -14,11 +14,10 @@
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.store :as store]
+            [cloud.itonami.app.http-client :as http]
             [fileprovider.model :as sync-model])
   (:import [java.io File InputStream]
-           [java.net URI URLEncoder]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
+           [java.net URLEncoder]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files LinkOption Path StandardCopyOption]
            [java.security MessageDigest]
@@ -43,10 +42,6 @@
 (defonce ^:private managed-roots (atom {}))
 (defonce ^:private last-status (atom {}))
 (defonce ^:private root-locks (atom {}))
-(defonce ^:private http-client
-  (-> (HttpClient/newBuilder)
-      (.connectTimeout (Duration/ofSeconds 15))
-      (.build)))
 
 (def ^:dynamic *environment* #(System/getenv %))
 
@@ -538,25 +533,27 @@
 (defn- http-request!
   ([remote-config method path] (http-request! remote-config method path nil nil))
   ([remote-config method path body content-type]
-   (let [uri (URI/create (str (http-base remote-config) path))
-         publisher (if body
-                     (HttpRequest$BodyPublishers/ofByteArray body)
-                     (HttpRequest$BodyPublishers/noBody))
-         builder (doto (HttpRequest/newBuilder uri)
-                   (.timeout (Duration/ofSeconds 120))
-                   (.header "Authorization" (str "Bearer " (remote-token remote-config)))
-                   (.header "Accept" "application/json")
-                   (.method method publisher))
-         _ (when content-type (.header builder "Content-Type" content-type))
-         response (.send ^HttpClient http-client (.build builder)
-                         (HttpResponse$BodyHandlers/ofByteArray))
-         status (.statusCode response)
-         response-body (.body response)]
+   (let [response (http/request
+                   {:url (str (http-base remote-config) path)
+                    :method (keyword (str/lower-case (name method)))
+                    :timeout-seconds 120
+                    :headers (cond-> {"Authorization"
+                                      (str "Bearer " (remote-token remote-config))
+                                      "Accept" "application/json"}
+                               content-type (assoc "Content-Type" content-type))
+                    ;; Bodies here are bytes; they cross the shim base64-encoded.
+                    :body (when body
+                            (.encodeToString (java.util.Base64/getEncoder)
+                                             ^bytes body))})
+         status (:status response)
+         response-bytes (when (seq (str (:body response)))
+                          (.decode (java.util.Base64/getDecoder)
+                                   ^String (:body response)))]
      (when-not (<= 200 status 299)
        (throw (ex-info "hosted Drive request failed"
                        {:type :folder-sync/remote-http-error
                         :status status :path path})))
-     {:status status :headers (.headers response) :bytes response-body})))
+     {:status status :headers nil :bytes response-bytes})))
 
 (defn- http-json
   ([remote-config method path]

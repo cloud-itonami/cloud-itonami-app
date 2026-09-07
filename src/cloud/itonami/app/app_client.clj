@@ -28,16 +28,10 @@
   need one."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
-            [cloud.itonami.app.agent-session :as agent-session])
-  (:import [java.net ConnectException URI]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
+            [cloud.itonami.app.agent-session :as agent-session]
+            [cloud.itonami.app.http-client :as http])
+  (:import [java.net ConnectException]
            [java.time Duration]))
-
-(defonce ^:private client
-  (-> (HttpClient/newBuilder)
-      (.connectTimeout (Duration/ofSeconds 5))
-      .build))
 
 (def ^:dynamic *environment* #(System/getenv %))
 (def ^:dynamic *token*
@@ -92,30 +86,27 @@
   reached at all, which is a different failure from a refusal and should not be
   reported as one."
   [configuration method path {:keys [body token timeout-seconds]}]
-  (let [builder (-> (HttpRequest/newBuilder
-                     (URI/create (str (base-url configuration) path)))
-                    (.timeout (Duration/ofSeconds (long (or timeout-seconds 30))))
-                    (.header "Content-Type" "application/json"))]
-    (when token
-      (.header builder "Authorization" (str "Bearer " token)))
-    (let [built (case method
-                  :get (.GET builder)
-                  :post (.POST builder (HttpRequest$BodyPublishers/ofString
-                                        (json/write-str (or body {})))))]
-      (try
-        (let [response (.send client (.build built)
-                              (HttpResponse$BodyHandlers/ofString))]
-          {:status (.statusCode response)
-           :body (try (json/read-str (.body response) :key-fn keyword)
-                      (catch Exception _ {:raw (.body response)}))})
-        (catch ConnectException _
-          (throw (ex-info (str "cloud-itonami-app に接続できません: "
-                               (base-url configuration))
-                          {:type :app-client/unreachable})))
-        (catch java.io.IOException e
-          (throw (ex-info (str "cloud-itonami-app への通信に失敗しました: "
-                               (ex-message e))
-                          {:type :app-client/unreachable})))))))
+  (let [headers (cond-> {"Content-Type" "application/json"}
+                  token (assoc "Authorization" (str "Bearer " token)))]
+    (try
+      (let [response (http/request
+                      {:url (str (base-url configuration) path)
+                       :method (case method :get :get :post :post)
+                       :headers headers
+                       :body (when (= method :post)
+                               (json/write-str (or body {})))
+                       :timeout-seconds (long (or timeout-seconds 30))})]
+        {:status (:status response)
+         :body (try (json/read-str (:body response) :key-fn keyword)
+                    (catch Exception _ {:raw (:body response)}))})
+      (catch ConnectException _
+        (throw (ex-info (str "cloud-itonami-app に接続できません: "
+                             (base-url configuration))
+                        {:type :app-client/unreachable})))
+      (catch java.io.IOException e
+        (throw (ex-info (str "cloud-itonami-app への通信に失敗しました: "
+                             (ex-message e))
+                        {:type :app-client/unreachable}))))))
 
 (defn unwrap
   "The body on success; otherwise throw carrying the server's own message and
