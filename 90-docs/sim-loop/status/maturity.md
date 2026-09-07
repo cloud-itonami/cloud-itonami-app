@@ -751,3 +751,36 @@ falsify-46 mid-sentence cut は残存のまま (operator 復旧待ち、本 bot 
 ## NEXT (falsify-69 追記、append-only)
 
 **falsify-69 (2026-09-08、運用 軸) で OPEN 赤-2 (expiry-alert) の falsify-58「単独原因 authority.scope」を REFUTED (複数 load 失敗連鎖へスコープ修正)**: 本体 checkout は HEAD=origin/main=**679572b** (falsify-63..68 と同一、porcelain clean)、identity.clj (:import 0 / bare-java 5) は既知 build-broken (本書対象外)。`launchctl print` 実測で expiry-alert は `state = not running / runs = 1 / last exit code = 1` (falsify-58 の独立時点再確認)。**ログ全文 (109 行, mtime Sep 7 09:00, 8547 B) 実測**で、成功 1 行 (2026-07-14 OK) の後に**複数の異なる load 失敗連鎖**を確認: `Could not find namespace: kotoba-rad.cacao-delegate` ×2 / `Protocol not found: IEquiv` @ ipld/core.cljc:36 + ipld/link.cljc:11 (deftype Link) / `Could not find namespace: datalog.index` ×1 / `Could not find namespace: authority.scope` ×3 (**終端**)。インストール済み plist classpath は bonsai/nekko/arrangement/prolly-tree/io-ipld/io-multiformats/chain/org-ietf-cbor/org-ietf-ed25519/org-chainagnostic-cacao/mail/mailer/datalog の src を含む一方、**falsify-11 案 A の 3 src (authority/src / org-nist-sha2/src / datom-source/src) は全て grep -c = 0 で不在**。依存 ns はディスク上実在 (nekko/cacao_delegate.cljc, ipld/core|link.cljc, authority/scope.cljc, datalog/index.cljc) だが `kotoba-lang/kotoba-rad` checkout は不在 (ls 実測)。→ **「単独原因 authority.scope」は REFUTED (スコープ修正)**: 同一ログ内で authority.scope の前段に ipld deftype `Protocol not found: IEquiv` と cacao-delegate / datalog.index の異なる失敗クラスが実在し、authority.scope は load 連鎖の終端。plist classpath は既に nekko/io-ipld/cacao/datalog を含むが同一で失敗しており、**修理案 A の 3 src 追加だけでは ipld IEquiv (load 段階) と cacao-delegate (ネームスペース解決) に触れないため「唯一かつ十分」でない**。score 3 のまま (root cause を単独→連鎖へ範囲修正、job は未修理・未着地のまま)。修理案 A は継続 Tier 2、附帯 Tier 2 提案: 「load 連鎖全体 (ipld IEquiv reader 条件 / cacao-delegate / datalog.index) の精査と nbb + Node v26.0.0 互換性再確認」。次の測定: nbb が Node v26 下で ipld の `#?@(:clj ...)` reader 条件 / IEquiv protocol 解決に失敗する機構の個別再現。附帯: 本体 checkout は反復中 porcelain clean (dirty 0)、本 bot は touch せず wt-msloop のみで完結、修理対象は本体外 (network-awai plist classpath / expiry-alert 依存) のため Tier 1 不着地。7-軸表 16 行目孤立行 placeholder と falsify-46 mid-sentence cut は残存のまま (operator 復旧待ち、本 bot は編集しない)。(evidence/2026-09-08-falsify-69.md)
+## NEXT (falsify-70 追記、append-only)
+
+**falsify-70 (2026-09-08、運用 軸) で falsify-69 の「修理案 A は唯一かつ十分でない（ipld deftype
+IEquiv / cacao-delegate / datalog.index が前段に残る）」を REFUTED — 現行ツリーは案 A 追加だけで
+全 load 連鎖が解決する**: 本体 checkout HEAD=origin/main=**679572b**/porcelain clean、
+expiry-alert state=not running / runs=1 / last exit code=1 (falsify-58/69 と同値再確認)、
+nbb v1.4.208 / Node v26.0.0 実測。**(a) 現行ツリーの plist と同一 classpath (15 エントリ、案 A
+3 src 不在を launchctl print 実測) で scripts/expiry-alert.cljs を nbb 実行 → 唯一
+`Could not find namespace: authority.scope` の単独終端 (EXIT_RC=1) のみ** — Sep-7 ログの
+`deftype IEquiv` (ipld/core.cljc:36, ipld/link.cljc:11)・`kotoba-rad.cacao-delegate`・
+`datalog.index` は現行ツリーで**再現しない** (/tmp/f70_repro2.txt)。**(b) 現行
+io-ipld/src/ipld/link.cljc は `(defrecord Link [cid] ILink ...)` (deftype なし)、git blame
+で `defrecord Link` = commit 309db3f (2026-08-11, "fix Link equality across nbb runtimes") —
+deftype IEquiv 失敗は 2026-08-11 より前の旧 io-ipld リビジョン由来で既解決、`nekko/
+cacao_delegate.cljc` はディスク上実在 (`(ns nekko.cacao-delegate ...)`)、kotoba-rad
+checkout 不在 (ls rc=1) = 旧ログの cacao-delegate は kotoba-rad→nekko 移行前の失敗。
+**(c) 案 A 3 src (authority/src / org-nist-sha2/src / datom-source/src、全てディスク上存在)
+を先行追加した classpath で require 連鎖を直接実行 `(require 'cloud-itonami.ops-keys
+'authority.scope 'ipld.core 'ipld.link 'nekko.cacao-delegate 'datalog.index)` → `:f70-load-ok`
+/ EXIT_RC=0** (kagi/vault 非接触、/tmp/f70_probeB.txt)。falsify-69 の「案 A は前段の ipld
+IEquiv / cacao-delegate に触れず不十分」は旧依存リビジョン前提で、現行ツリーでは案 A が
+**唯一かつ十分の範囲へ復帰**。但し「plist 未追記・実 job 毎発火失敗・未着地・修理 Tier 2
+(ops-classpath.sh 修正 + plist 再生成 + launchctl relaunch、本体外・システム変更で Tier 1
+不着地)」は不変。運用軸 score は 3 のまま (root cause を 単独→連鎖→「連鎖は依存リビジョン
+硬化で縮退、案 A 唯一十分へ復帰」と再範囲修正、job 未修理のまま記録継続)。次の 1 アクション:
+OPEN 赤-2 を「現行ツリーの失敗は authority.scope 単独終端 / 案 A 追加で require 連鎖 EXIT_RC=0」
+へ再範囲修正し、Tier 2 report で案 A 着地ランブックを再提示。附帯: 本体 checkout は反復中
+porcelain clean (dirty 0)、本 bot は touch せず wt-msloop のみで完結。7-軸表 16 行目孤立行
+placeholder と falsify-46 mid-sentence cut は残存のまま (operator 復旧待ち、append-only のため
+本 bot は編集しない)。falsify-69 の next「nbb が Node v26 下で ipld #?@(:clj ...) reader 条件 /
+IEquiv 解決に失敗する機構の個別再現」は本反復 (b) で「失敗は旧リビジョン由来で現行ツリーの
+再現対象ではない」として決着。identity.clj malformation (falsify-63..68 build-broken tip) は
+既知赤として対象外。※ falsify-70 では案 A の着地可否そのものは judge せず (kanban/human 判断)。
