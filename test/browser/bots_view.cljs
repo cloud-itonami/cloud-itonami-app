@@ -82,7 +82,7 @@
             current (.textContent page "#current-view")]
       (check! "Bots nav item is present" nav-visible)
       (check! "the Bots panel is the visible one" (nil? panel-hidden))
-      (check! "the header names the view" (= "Bots" (str/trim (or current "")))))
+      (check! "the header names the view" (= "あなたの Bot" (str/trim (or current "")))))
 
     (println "\n── onboarding is derived from the registry ──")
     (p/let [tiles (.count (.locator page ".bots-tile"))
@@ -294,7 +294,7 @@
 
     (println "\n── the state a single-page app has to keep ──")
     (p/let [_ (.evaluate page "window.__botsProbe = 'kept'")
-            _ (.click page ".local-nav__item[data-view='chat']")
+            _ (.click page ".local-nav__item[data-view='plugins']")
             _ (.waitForTimeout page 600)
             _ (.click page ".local-nav__item[data-view='bots']")
             _ (.waitForTimeout page 1200)

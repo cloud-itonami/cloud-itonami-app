@@ -1636,6 +1636,48 @@
   }
   ")
 
+
+(def bot-workspace-css
+  "Bot-first navigation shared with the public web workspace."
+  "
+  .account-entry{display:flex;align-items:center;gap:1rem;text-decoration:none;
+    color:var(--color-neutral-solid-gray-900);padding:.75rem;border-radius:.75rem}
+  .account-entry small{display:block;color:var(--color-neutral-solid-gray-600)}
+  .account-entry:hover{background:var(--color-neutral-solid-gray-50)}
+  .workspace-wallet{margin-left:auto;white-space:nowrap;color:var(--color-key-900);
+    border:1px solid var(--color-neutral-solid-gray-200);border-radius:.75rem;padding:.5rem .75rem}
+  .bots-view{height:calc(100dvh - var(--workspace-header-height,5rem))}
+  .bots-composer__label,.bots-composer__help{flex-basis:100%}
+  .bots-composer__help{color:var(--color-neutral-solid-gray-600)}
+  .bots-thread__messages{max-width:52rem;margin-inline:auto;width:100%}
+  .bots-composer,.bots-main,.bots-rail{background:var(--color-neutral-white)}
+  .bots-composer textarea{min-height:5rem}
+  #plugin-filter{width:100%;max-width:36rem}
+  @media(min-width:56.01rem){
+    .workspace{grid-template-columns:14rem minmax(0,1fr)}
+    .sidebar{overflow-y:auto}
+    .bots-shell{grid-template-columns:19rem minmax(0,1fr)}
+    .bots-rail__item{padding:1rem .75rem}
+    .bots-composer{padding:1rem 1.5rem}
+    .bots-titlebar{flex-wrap:wrap}
+    body[data-current-view='bots'] .workspace{display:block}
+    body[data-current-view='bots'] .sidebar{position:fixed;top:0;left:0;width:19rem;
+      height:5rem;z-index:40;padding:.5rem 1rem;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+    body[data-current-view='bots'] .sidebar>:not(.account-entry){display:none}
+    body[data-current-view='bots'] .topbar{padding-left:20rem}
+    .bots-plugin-link{padding:1rem .75rem;margin-top:auto}
+  }
+  @media(max-width:56rem){
+    .bots-view{height:calc(100dvh - var(--workspace-header-height,4rem) - var(--mobile-nav-height))}
+    .bots-plugin-link{display:none}
+    .account-entry{position:fixed;top:.5rem;left:.5rem;z-index:50;padding:.25rem}
+    .account-entry>span:last-child{display:none}
+    .account-entry .identity-summary__avatar{width:2rem;height:2rem}
+    .topbar{padding-left:3.5rem;flex-wrap:wrap}
+    .workspace-wallet{max-width:11rem;overflow:hidden;text-overflow:ellipsis}
+  }
+  ")
+
 (def app-css
   "The app's own rules, plus the ones `hanmen` needs for a rendered page to
   look like a page.
@@ -1649,7 +1691,7 @@
   The 8-bit appearance layer (`cloud.itonami.app.appearance/css`) is
   concatenated LAST so that its overrides win, and so that the same token
   guard covers it: every `--eightbit-*` it references it also declares."
-  (str base-css "\n  " hanmen-svg/stylesheet "\n" appearance/css "\n"))
+  (str base-css "\n" bot-workspace-css "\n  " hanmen-svg/stylesheet "\n" appearance/css "\n"))
 
 (def interaction-js
   "The page's interaction layer, which is JavaScript and now lives in a
@@ -1958,33 +2000,32 @@
    [:p {:class "form-help" :id "wallet-owner-status"
         :role "status" :aria-live "polite"}]])
 
-(defn page-html [configuration]
-  (let [cloud? (get-in configuration [:routing :cloud-enabled?])
-        provider (get-in configuration [:routing :default-provider])
-        model (get-in configuration [:routing :default-model])
-        brand (get-in configuration [:brand :name] "Cloud Itonami")
-        mode (appearance/resolve-mode configuration)
-        residency (appearance/residency-plane configuration)
-        css (slurp (io/resource "jp_go_dds/dds.css"))]
-    (page/->page
-     {:title (str "Bots | " brand)
-      :description "安全第一（緑十字）のAIワークスペース"
-      :css css :app-css app-css
-      :head [[:link {:rel "icon" :type "image/png" :href "/icon.png"}]
-             [:link {:rel "apple-touch-icon" :href "/icon.png"}]
-             [:script signal-js] [:script interaction-js]]}
-     ;; `data-appearance` is the whole of a mode (ADR-0091): the server renders
-     ;; the configured default, `interaction.js` flips it to the device's
-     ;; remembered choice, and the stylesheet reads it. Nothing else differs.
-     [:div {:class "workspace" :data-brand brand :data-appearance mode
-            :data-residency (name residency)}
-      (comment-layer)
-      [:aside {:class "sidebar" :aria-label "メインメニュー"}
-       [:div {:class "brand"}
+(defn- account-entry []
+  [:a {:class "account-entry authenticated-only" :id "account-entry"
+            :href "#/settings" :hidden true :aria-label "アカウント"}
+        [:span {:class "identity-summary__avatar" :id "account-entry-avatar"
+                :aria-hidden "true"} "U"]
+        [:span [:strong {:id "account-entry-name"} "アカウント"]
+         [:small "アカウント"]]])
+
+(defn- plugins-view []
+  [:section {:class "view" :data-view-panel "plugins" :hidden true}
+         (view-header "プラグイン" "いつものサービスをつないで、Bot に仕事を頼む。")
+         [:label {:for "plugin-filter"} "プラグインを検索"]
+         [:input {:id "plugin-filter" :type "search" :placeholder "名前で検索"
+                  :autocomplete "off"}]
+         [:p {:id "plugin-summary" :role "status" :aria-live "polite"} "接続を確認中…"]
+         [:div {:class "connector-list" :id "connector-list"}
+          [:div {:class "skeleton"}]]])
+
+(defn- workspace-navigation [brand cloud? residency]
+  [:aside {:class "sidebar" :aria-label "メインメニュー"}
+       [:div {:class "brand" :id "signed-out-brand"}
         [:p {:class "brand__eyebrow"} green-cross "SAFETY FIRST"]
         [:p {:class "brand__name"} brand]
         [:p {:class "brand__mark" :role "img" :aria-label brand} "ai"]
         [:p {:class "brand__note"} "Kotoba でつながる、手元の仕事場"]]
+       (account-entry)
        [:section {:class "workspace-switcher authenticated-only" :hidden true
                   :aria-label "Organization切替"}
         [:label {:class "workspace-switcher__label"
@@ -1997,12 +2038,14 @@
          "作業対象の組織を切り替えます"]]
        [:nav {:class "local-nav" :aria-label "機能メニュー"}
         [:div {:class "nav-primary authenticated-only" :hidden true}
-         (nav-item "bots" "Bots" "◕" "bots-count")
-         (nav-item "storefront" "Store" "▤" nil)
-         (nav-item "wallet" "Wallet" "◈" "wallet-count")
+         (nav-item "bots" "あなたの Bot" "◕" "bots-count")
+         (nav-item "plugins" "プラグイン" "▤" nil)
+         (nav-item "wallet" "ウォレット" "◈" "wallet-count")
          (nav-item "messenger" "Messenger" "◇" "messenger-count")]
         [:div {:class "nav-overflow-panel" :id "mobile-overflow-panel"}
-         [:div {:class "nav-secondary authenticated-only" :hidden true}
+         [:details {:class "nav-secondary nav-section authenticated-only" :hidden true}
+          [:summary {:class "nav-section__summary"} "その他の機能"]
+          (nav-item "storefront" "Store" "▤" nil)
           (nav-item "projects" "Projects" "▦" "projects-count")
           (nav-item "sites" "Sites" "▦" "sites-count")
           (nav-item "drive" "Drive" "◇" "drive-count")
@@ -2032,7 +2075,7 @@
          [:div {:class "sidebar__utility"}
           (nav-item "signin" "サインイン" "↪" nil)
          [:div {:class "authenticated-only" :hidden true}
-           (nav-item "settings" "Settings" "⚙" nil)]]]
+           (nav-item "settings" "アカウント" "⚙" nil)]]]
         [:button {:class "mobile-menu-toggle" :type "button"
                   :aria-controls "mobile-overflow-panel" :aria-expanded "false"
                   :aria-label "その他のメニュー"}
@@ -2052,10 +2095,36 @@
         ;; because the process cannot tell from inside — both bind loopback.
         [:span {:id "workspace-residency" :data-residency (name residency)}
          (if (= :cloud residency) "cloud-agent · murakumo.cloud" "local-agent · この端末")]
-        [:span {:id "workspace-status"} "既存サービスを確認中…"]]]
+        [:span {:id "workspace-status"} "既存サービスを確認中…"]]])
+
+(defn page-html [configuration]
+  (let [cloud? (get-in configuration [:routing :cloud-enabled?])
+        provider (get-in configuration [:routing :default-provider])
+        model (get-in configuration [:routing :default-model])
+        brand (get-in configuration [:brand :name] "Cloud Itonami")
+        mode (appearance/resolve-mode configuration)
+        residency (appearance/residency-plane configuration)
+        css (slurp (io/resource "jp_go_dds/dds.css"))]
+    (page/->page
+     {:title (str "Bots | " brand)
+      :description "安全第一（緑十字）のAIワークスペース"
+      :css css :app-css app-css
+      :head [[:link {:rel "icon" :type "image/png" :href "/icon.png"}]
+             [:link {:rel "apple-touch-icon" :href "/icon.png"}]
+             [:script signal-js] [:script interaction-js]]}
+     ;; `data-appearance` is the whole of a mode (ADR-0091): the server renders
+     ;; the configured default, `interaction.js` flips it to the device's
+     ;; remembered choice, and the stylesheet reads it. Nothing else differs.
+     [:div {:class "workspace" :data-brand brand :data-appearance mode
+            :data-residency (name residency)}
+      (comment-layer)
+      (workspace-navigation brand cloud? residency)
       [:div {:class "main"}
        [:header {:class "topbar" :data-kotoba-window-drag "true"}
-        [:h2 {:class "topbar__title" :id "current-view"} "Bots"]
+        [:h2 {:class "topbar__title" :id "current-view"} "あなたの Bot"]
+        [:a {:class "workspace-wallet authenticated-only" :id "workspace-wallet"
+             :href "#/wallet" :hidden true :aria-label "ウォレットを開く"}
+         [:span {:id "workspace-wallet-label"} "ウォレットを確認"]]
         (comment-mode-toggle)
         (appearance/toggle-button mode)
         [:div {:class "topbar__context authenticated-only" :id "project-titlebar-context"
@@ -2094,7 +2163,7 @@
                    :aria-label "会社Botを常駐化"
                    :title "8事業の職務Botを常駐化"} "▦"]
          [:button {:class "tool-button" :id "bots-new" :type "button"
-                   :aria-label "新しい Bot を作る"} "＋"]]]
+                   :aria-label "新しい Bot を作る"} "＋ 新しい Bot"]]]
        [:main {:id "main-content"}
         (conversation-context-panel)
         [:p {:class "settings-notice global-status" :id "identity-status"
@@ -2175,7 +2244,8 @@
             [:input {:id "bots-filter" :type "search" :placeholder "Botを検索"
                      :autocomplete "off"}]]
            [:ul {:class "bots-rail__list" :id "bots-list"}]
-           [:p {:class "bots-rail__empty" :id "bots-rail-empty"} "まだ Bot がいません"]]
+           [:p {:class "bots-rail__empty" :id "bots-rail-empty"} "まだ Bot がいません"]
+           [:a {:class "bots-plugin-link" :href "#/plugins"} "プラグインを接続 →"]]
           [:div {:class "bots-main"}
            [:aside {:class "bots-routines-panel" :id "bots-routines-panel" :hidden true
                     :aria-label "このBotの定期ジョブ"}
@@ -2295,12 +2365,16 @@
              [:div {:class "bots-run" :id "bots-run" :hidden true}]
              [:ol {:class "bots-thread__messages" :id "bots-messages"}]]
             [:form {:class "bots-composer" :id "bots-form"}
-             [:textarea {:id "bots-input" :rows "1" :maxlength "8000"
-                         :placeholder "この Bot に頼む" :autocomplete "off"}]
+             [:label {:class "bots-composer__label" :for "bots-input"} "何を頼みますか？"]
+             [:textarea {:id "bots-input" :rows "2" :maxlength "8000"
+                         :placeholder "この Bot に頼む" :autocomplete "off"
+                         :aria-describedby "bots-input-help"}]
              [:button {:class "primary-action" :id "bots-send" :type "submit"
-                       :disabled true} "送る"]
+                       :disabled true} "送信"]
              [:button {:class "tool-button" :id "bots-cancel" :type "button"
-                       :hidden true} "中止"]]
+                       :hidden true} "中止"]
+             [:small {:class "bots-composer__help" :id "bots-input-help"}
+              "Enter で改行 · ⌘ / Ctrl + Enter で送信"]]
             [:p {:class "drive-create__status" :id "bots-thread-status-line"
                  :aria-live "polite"}]]]]]
         [:section {:class "legacy-surface" :hidden true}
@@ -3631,8 +3705,9 @@
                         :required true :autocomplete "one-time-code"}]]
               [:button {:class "tool-button" :id "enrollment-submit" :type "submit"}
                "Passkey を登録して参加"]]]])]]
+        (plugins-view)
         [:section {:class "view" :data-view-panel "settings" :hidden true}
-         (view-header "Settings" "サインイン済みのUser、Organization、外部サービス接続を管理します。")
+         (view-header "アカウント" "プロフィール、接続、Bot の設定を管理します。")
          (context-capture-settings)
          (model-routing-settings)
          (agent-machine-settings)
@@ -3696,11 +3771,9 @@
              [:button {:class "primary-action" :id "cloud-alias-reserve"
                        :type "button"} "グローバル予約して確認メールを送信"]]
             [:div {:class "local-card"}
-             (dds/heading 2 "サービス接続" {:size "24"})
-             [:p {:class "view-lead"}
-              "読み取り権限を用途別に確認し、owner の操作で接続します。接続先の token は macOS Keychain に保存されます。"]
-             [:div {:class "connector-list" :id "connector-list"}
-              [:div {:class "skeleton"}]]]
+             (dds/heading 2 "プラグイン" {:size "24"})
+             [:p "Bot が使うサービスを接続・管理します。"]
+             [:a {:href "#/plugins"} "プラグインを開く →"]]
             ;; Mailboxes, listed one per account rather than one per provider:
             ;; the same person's work Gmail and personal Gmail are two rows
             ;; with two sync states, because "Google: エラー" does not say

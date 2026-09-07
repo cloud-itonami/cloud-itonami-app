@@ -170,6 +170,10 @@
       return ({chat:'bots', rooms:'bots', capture:'bots', memory:'settings'})[path] || path;
     };
     const requestedView = viewFromHash(initialFragment) || 'bots';
+    new ResizeObserver(([entry]) => {
+      document.documentElement.style.setProperty('--workspace-header-height',
+        `${entry.target.getBoundingClientRect().height}px`);
+    }).observe($('.topbar'));
     let appUnlocked = false;
     let appBootstrapped = false;
     // Views whose data is public, so the Passkey gate would protect nothing.
@@ -6217,6 +6221,9 @@
     const bootstrapApp = () => {
       if (appBootstrapped) return;
       appBootstrapped = true;
+      loadWallet().catch(() => {
+        $('#workspace-wallet-label').textContent = 'ウォレットを再確認';
+      });
       loadWorkspace('worker', renderWorker);
       loadOrganisms().catch((error) => {
         $('#organism-list').replaceChildren(make('li', 'empty-state', error.message));
@@ -8364,6 +8371,13 @@
         list.append(row);
       });
     };
+    const filterPlugins = () => {
+      const query = $('#plugin-filter').value.trim().toLocaleLowerCase('ja');
+      const cards = Array.from($('#connector-list').children);
+      cards.forEach((card) => { card.hidden = !card.textContent.toLocaleLowerCase('ja').includes(query); });
+      $('#plugin-summary').textContent = `${cards.filter((card) => !card.hidden).length} 件表示 / ${cards.length} 件`;
+    };
+    $('#plugin-filter').addEventListener('input', filterPlugins);
     const renderConnectors = (data) => {
       const list = $('#connector-list'); list.replaceChildren();
       const connections = new Map((data.connections || [])
@@ -8400,6 +8414,7 @@
         });
         card.append(copy, button); list.append(card);
       });
+      filterPlugins();
     };
     const authProviderLabels = {
       google:'Google', microsoft:'Microsoft', github:'GitHub',
@@ -8671,6 +8686,10 @@
       renderAuthMethods(data);
       const identityReady = Boolean(data['authenticated?'] && data['may-act?']);
       appUnlocked = identityReady;
+      $('#signed-out-brand').hidden = identityReady;
+      $('#account-entry-name').textContent = data.user?.['display-name'] || 'アカウント';
+      $('#account-entry-avatar').textContent = Array.from(data.user?.['display-name'] || 'U').slice(0, 1).join('');
+      if (!identityReady) $('#workspace-wallet-label').textContent = 'ウォレットを確認';
       if (data['authenticated?']) renderSessions();
       $$('.local-nav__item').forEach((item) => {
         item.disabled = !identityReady && !publicViews.has(item.dataset.view);
@@ -11821,12 +11840,13 @@
       botsInput.style.height = `${Math.min(botsInput.scrollHeight, 192)}px`;
       const active = selectedBotsRun();
       $('#bots-send').disabled = !botsInput.value.trim() || botsState.shellBusy;
-      $('#bots-send').textContent = active ? '追加で伝える' : '送る';
+      $('#bots-send').textContent = active ? '追加で伝える' : '送信';
       botsCancel.hidden = !(active || botsState.shellBusy);
     };
     botsInput.addEventListener('input', resizeBotsInput);
     botsInput.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)
+          && !event.isComposing && event.keyCode !== 229) {
         event.preventDefault();
         $('#bots-form').requestSubmit();
       }
@@ -12286,6 +12306,10 @@
     };
     const renderWallet = (data) => {
       walletState = data;
+      const principalAddress = data['principal-account']?.address;
+      $('#workspace-wallet-label').textContent = principalAddress
+        ? shortAddress(principalAddress) : 'ウォレットを設定';
+      $('#workspace-wallet').title = principalAddress || 'ウォレットを設定';
       const accounts = data.accounts || [];
       const bots = data.bots || [];
       const transfers = data.transfers || [];

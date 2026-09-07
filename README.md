@@ -70,6 +70,21 @@ enabled by default. The resident remains the authority for Goals, Assignments,
 context envelopes, grants, approval and replay. See
 [ADR-0077](docs/adr/0077-open-agent-interoperability-uses-mcp-a2a-and-agntcy-slim.md).
 
+## Bot workspace
+
+The desktop UI follows the Bot workspace at [app.itonami.cloud](https://app.itonami.cloud/):
+account access at the upper left, a Bot list beside the conversation, a persistent
+wallet entry, and a searchable Plugins view. Additional workspace tools remain in
+「その他の機能」. Moving between these views preserves the current draft.
+
+Enter inserts a newline; Command+Enter or Control+Enter sends. IME composition
+never triggers this shortcut. The wallet entry displays the current principal's
+account, independently of the selected Bot's wallet.
+
+The desktop continues to use its own resident, authenticated session, connection
+permissions, and credential storage. Matching the web UI does not import a web
+session or a web plugin grant into the desktop application.
+
 ## Requirements
 
 - macOS 14 or later for the native shell, EventKit, and Keychain integrations
