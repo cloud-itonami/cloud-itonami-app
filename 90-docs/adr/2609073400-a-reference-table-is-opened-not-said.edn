@@ -1,0 +1,71 @@
+[{:db/id -1
+  :adr/id "adr-2609073400-a-reference-table-is-opened-not-said"
+  :adr/title "A reference table is opened, not said"
+  :adr/status "accepted"
+  :adr/date "2026-09-07"
+  :adr/related "adr-2609073000-a-slash-opens-a-list-the-arrows-can-reach adr-2609062800-the-input-area-is-an-editor-not-a-readline"
+  :adr/body "## What was asked
+
+Owner instruction, 2026-09-07, against a screenshot of Claude Code's help
+screen: 例えば slash help コマンドは メッセージ欄に出すんじゃなくて、こういう感じで
+表示して.
+
+## Why a table is not a message
+
+`/help` printed sixty-one lines into the conversation, where they stayed. An
+answer the operator has to scroll past for the rest of the session to reach the
+thing they actually asked. That is not what a reference table is for: it is
+something you open, look at, and close.
+
+## A panel is data
+
+    {:title \"itonami help\"
+     :tabs [{:label \"General\" :lines [...]} …]
+     :tab 0 :scroll 0}
+
+A slash handler returns `{:panel …}` and the REPL opens it -- a fourth thing a
+handler can return, alongside `:handled`, `:resend` and a promise. Nothing else
+about the registry changed, so any command can show instead of say.
+
+## It takes over the block
+
+While a panel is open there is nothing to type into and nothing to send, so a
+prompt and a status bar full of keys that do nothing would be two lies at once.
+The panel replaces the input area, the cursor is hidden, and the keys mean:
+
+    esc / enter   close
+    tab / → ←     next / previous tab (wrapping, so neither end is a dead key)
+    ↑ ↓           scroll
+    ctrl+d        still leaves -- whatever is on the screen, the way out works
+
+Everything else does nothing. A key that edits a buffer nobody can see is a key
+that loses what it typed the moment the panel closes.
+
+## Two things the frame has to do
+
+**Keep its height.** A tab with two lines and a tab with forty produce the same
+number of rows, padded. Otherwise switching tabs moves everything under the
+panel, and on a terminal that is a redraw the block has to be measured through.
+
+**Say where it is.** `(3-22/29)` in the footer, and the scroll is clamped to
+the end in the RENDERER, not only where the key is handled -- so a scroll value
+past the end still shows the end rather than an empty frame.
+
+## What `/help` shows
+
+Four tabs: General (what this is, and every key), Commands (the twenty-nine
+built-ins), Project (the thirty-two this repository brings, with a line saying
+where they came from and that they change with the repository), CLI (the
+`itonami …` forms and the exit codes). The Project tab is absent in a
+repository that has none, rather than empty.
+
+## Measured
+
+On a pty: `/help` opens with `[General]` marked; tab switches to Commands and
+↓ scrolls it, footer reading `(3-22/29)`; esc closes and typing resumes with
+the input frame back.
+
+Three controls, each failing by name: a panel that does not take over (seven
+checks); a frame that shrinks to its tab's content; a scroll that is not
+clamped to the end.
+"}]

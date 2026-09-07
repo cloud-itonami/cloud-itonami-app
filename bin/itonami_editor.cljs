@@ -69,6 +69,72 @@
     (assoc state :lines ls :row (dec (count ls)) :col (count (peek ls)))))
 
 
+
+;; ---------------------------------------------------------------------------
+;; panels — what a command shows instead of saying
+;; ---------------------------------------------------------------------------
+;;
+;; `/help` used to print sixty-one lines into the conversation, where they
+;; stayed: an answer the operator has to scroll past for the rest of the
+;; session to read the thing they actually asked. A reference table is not a
+;; message. It is a thing you open, look at, and close.
+;;
+;; A panel is data:
+;;
+;;   {:title "Help"
+;;    :tabs [{:label "General" :lines [...]} …]
+;;    :tab 0 :scroll 0}
+;;
+;; It takes over the block while it is open -- there is nothing to type into
+;; and nothing to send -- and Esc gives the input back.
+
+(defn panel-tab [{:keys [tabs tab]}] (nth tabs (or tab 0) (first tabs)))
+
+(defn panel-height
+  "How many content rows a panel gets. The frame, the tab row and the footer
+  take four; the rest of the terminal, up to a limit, is content."
+  [rows]
+  (max 4 (min 20 (- (or rows 24) 8))))
+
+(defn panel-rows
+  "The panel, as rows of the block."
+  [{:keys [title tabs tab scroll] :as panel}
+   {:keys [width colour accent-code label-code dim-code rows]}]
+  (let [p #(text/paint colour %1 %2)
+        height (panel-height rows)
+        lines (vec (:lines (panel-tab panel)))
+        scroll (max 0 (min (or scroll 0) (max 0 (- (count lines) height))))
+        shown (take height (drop scroll lines))
+        tab-row (str/join "  "
+                          (map-indexed
+                           (fn [i t]
+                             (if (= i (or tab 0))
+                               (p accent-code (str "[" (:label t) "]"))
+                               (p dim-code (str " " (:label t) " "))))
+                           tabs))
+        more? (> (count lines) (+ scroll height))
+        footer (str/join (str " " (p dim-code "·") " ")
+                         (remove nil?
+                                 [(p dim-code "esc で閉じる")
+                                  (when (> (count tabs) 1)
+                                    (p dim-code "tab / ←→ でタブ"))
+                                  (when (or more? (pos? scroll))
+                                    (p dim-code (str "↑↓ でスクロール ("
+                                                     (inc scroll) "-"
+                                                     (min (count lines) (+ scroll height))
+                                                     "/" (count lines) ")")))]))]
+    (vec (concat
+          [(str (p dim-code "── ") (p label-code (str title)) " "
+                (p dim-code (text/rule "─" (max 0 (- width (text/display-width (str title)) 5)))))]
+          [(str "  " tab-row)]
+          [""]
+          (map #(text/truncate (str "  " %) width) shown)
+          ;; The frame keeps its height whatever the tab holds, so switching
+          ;; tabs does not make the screen jump.
+          (repeat (max 0 (- height (count shown))) "")
+          [""]
+          [(str "  " footer)]))))
+
 ;; ---------------------------------------------------------------------------
 ;; the slash menu
 ;; ---------------------------------------------------------------------------
@@ -263,8 +329,24 @@
   only the caller can do (`:eof`, `:interrupt`)."
   [state {:keys [kind ch text]}]
   (let [s (dissoc state :submit :signal :cleared)
-        open? (some? (menu s))]
-    (case kind
+        panel (:panel s)
+        open? (and (nil? panel) (some? (menu s)))]
+    (if panel
+      ;; A panel takes over: there is nothing to type into and nothing to send,
+      ;; so a key that is not one of these does nothing rather than editing a
+      ;; buffer nobody can see.
+      (case kind
+        (:escape :enter :interrupt) (dissoc s :panel)
+        (:tab :right) (update-in s [:panel :tab]
+                                 #(mod (inc (or % 0)) (count (:tabs panel))))
+        :left (update-in s [:panel :tab]
+                         #(mod (dec (+ (count (:tabs panel)) (or % 0)))
+                               (count (:tabs panel))))
+        :down (update-in s [:panel :scroll] #(inc (or % 0)))
+        :up (update-in s [:panel :scroll] #(max 0 (dec (or % 0))))
+        :eof (assoc s :signal :eof)
+        s)
+      (case kind
       :char (assoc (insert-text s ch) :menu 0 :menu-closed? false)
       ;; A paste is text even when it holds newlines: the operator moved it
       ;; here as one thing, and sending its first line is not what they did.
@@ -330,7 +412,7 @@
                    (assoc s :signal :interrupt)
                    (assoc (fresh (:history s) (:commands s)) :cleared true))
       :eof (if (blank? s) (assoc s :signal :eof) (delete-forward s))
-      s)))
+      s))))
 
 (defn step
   "Apply one chunk's worth of keys and say what the caller has to DO about it.
@@ -604,6 +686,12 @@
   half has nothing left to compute."
   [state {:keys [width prompt continuation colour accent-code dim-code status header
                  tail] :as opts}]
+  (if-let [panel (:panel state)]
+    ;; A panel replaces the input area rather than sitting over it: there is
+    ;; nothing to type, so a prompt and a status bar of keys that do nothing
+    ;; would be two lies at once.
+    {:rows (panel-rows panel (assoc opts :width (max 24 (or width 80))))
+     :caret [0 0] :panel? true}
   (let [width (max 24 (or width 80))
         prompt (or prompt "> ")
         pw (text/display-width prompt)
@@ -641,4 +729,4 @@
     {:rows (vec (concat tail-rows (when header [header])
                         [rule] menu body [rule] [(or status "")]))
      ;; +1 for the rule above the first input row, plus whatever is above it
-     :caret [(+ vr 1 (if header 1 0) (count tail-rows) (count menu)) (+ pw vc)]}))
+     :caret [(+ vr 1 (if header 1 0) (count tail-rows) (count menu)) (+ pw vc)]})))

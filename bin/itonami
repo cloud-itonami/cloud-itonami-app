@@ -896,9 +896,98 @@
 ;; absence -- the server source was.
 ;; ---------------------------------------------------------------------------
 
+(declare submit-message!)
+
+(def ^:private project-commands
+  "The repository's own slash commands, admitted against the built-ins.
+
+  Registered LAST, so `taken` is the full set of built-in names and a project
+  command can never shadow one. What was refused is kept, because a command
+  that is not there for a reason and a command that was never found look the
+  same on a screen that only lists what worked."
+  (delay
+    (let [taken (set ((:commands ctx-chat)))
+          {:keys [admitted refused]} ((:admit ctx-skills) taken)]
+      (doseq [e admitted]
+        (register-slash!
+         (:command e) "[…]"
+         (let [d (str (:description e))]
+           (str (if (str/blank? d) "project skill" (subs d 0 (min 90 (count d))))
+                (when (:problem e) (str " ⚠ " (:problem e)))))
+         (fn [args _]
+           (submit-message! ((:prompt-for ctx-skills) e args)
+                            (str/trim (str (:command e) " " (str/join " " args))))
+           :handled)))
+      {:admitted admitted :refused refused})))
+
+(defn- command-lines
+  "`  /name  description` rows, aligned on the widest name."
+  [entries]
+  (let [w (apply max 1 (map #(count (str (:name %))) entries))]
+    (mapv (fn [{:keys [name args-hint description]}]
+            (str (text/pad-right (str name) w) "  "
+                 (when-not (str/blank? (str args-hint)) (str args-hint " "))
+                 description))
+          entries)))
+
+(defn- help-panel
+  "What `/help` opens.
+
+  It used to print sixty-one lines into the conversation, where they stayed --
+  an answer to scroll past for the rest of the session to reach the thing that
+  was actually asked. A reference table is not a message; it is something you
+  open, look at and close (ADR-2609073400)."
+  []
+  (let [project (set (map :command (:admitted @project-commands)))
+        entries ((:entries ctx-chat))
+        builtin (remove #(project (:name %)) entries)
+        repo (filter #(project (:name %)) entries)]
+    {:title "itonami help"
+     :tab 0 :scroll 0
+     :tabs
+     (cond-> [{:label "General"
+               :lines ["itonami — cloud-itonami-app の front end。"
+                       "メッセージを打つと対話先の Bot に送られ、/ で始まる行は command として実行されます。"
+                       ""
+                       "キー"
+                       "  enter              送信（/ の候補が出ているときは補完）"
+                       "  \\ + enter          改行（option + enter も可）"
+                       "  ↑ ↓                履歴（複数行のときは行移動、候補が出ているときは選択）"
+                       "  tab                候補を補完"
+                       "  esc                候補を閉じる / 実行中の run を中断"
+                       "  ctrl + c           入力を消す（空なら終了の案内）"
+                       "  ctrl + d           終了"
+                       "  ctrl + a / ctrl + e 行頭 / 行末"
+                       ""
+                       "実行中でも入力できます。/ の command はその場で実行され、"
+                       "ふつうの行は待機列に入って turn が終わると順に送られます（/queue）。"
+                       ""
+                       "profile は リポジトリの .itonami/profile.edn が選びます"
+                       "（itonami profile explain で、何がどこから来たか確認できます）。"]}
+              {:label (str "Commands (" (count builtin) ")")
+               :lines (command-lines builtin)}]
+       (seq repo)
+       (conj {:label (str "Project (" (count repo) ")")
+              :lines (into ["このリポジトリの .claude/skills と .claude/commands から読み込んだ command。"
+                            "立っているリポジトリが変われば、ここも変わります。"
+                            ""]
+                           (command-lines repo))})
+       :always
+       (conj {:label "CLI"
+              :lines ["itonami                                   REPL を開く"
+                      "itonami chat [--profile <p>] [message …]   message があれば 1 ターンで終了"
+                      "itonami commands [term …]                  使える command を検索"
+                      "itonami status                             server と store の状態"
+                      "itonami profile explain                    どの profile が効いているか"
+                      "itonami <command> [--flag value …] [--json]"
+                      ""
+                      (str "commands: " (count (commands/all)) " (generated) + "
+                           (count (commands/alias-commands)) " (named)")
+                      "exit 0 answered / 1 refused / 2 could not answer"]}))}))
+
 (register-slash!
- "/help" "" "この一覧"
- (fn [_ _] (println ((:help-text ctx-chat))) :handled))
+ "/help" "" "この一覧（パネルで開きます）"
+ (fn [_ _] {:panel (help-panel)}))
 
 (register-slash!
  "/exit" "" "終了"
@@ -1228,30 +1317,6 @@
          (do (println "空のまま終了しました") :handled)
          (do (reset! (:last-input ctx-chat) text) :resend))))))
 
-(declare submit-message!)
-
-(def ^:private project-commands
-  "The repository's own slash commands, admitted against the built-ins.
-
-  Registered LAST, so `taken` is the full set of built-in names and a project
-  command can never shadow one. What was refused is kept, because a command
-  that is not there for a reason and a command that was never found look the
-  same on a screen that only lists what worked."
-  (delay
-    (let [taken (set ((:commands ctx-chat)))
-          {:keys [admitted refused]} ((:admit ctx-skills) taken)]
-      (doseq [e admitted]
-        (register-slash!
-         (:command e) "[…]"
-         (let [d (str (:description e))]
-           (str (if (str/blank? d) "project skill" (subs d 0 (min 90 (count d))))
-                (when (:problem e) (str " ⚠ " (:problem e)))))
-         (fn [args _]
-           (submit-message! ((:prompt-for ctx-skills) e args)
-                            (str/trim (str (:command e) " " (str/join " " args))))
-           :handled)))
-      {:admitted admitted :refused refused})))
-
 (register-slash!
  "/hermes" "" "hermes の import 元 (~/.hermes) を見る"
  (fn [_ _]
@@ -1395,7 +1460,9 @@
      :prompt (:prompt skin)
      :continuation (:continuation skin)
      :colour (colour?)
+     :rows (or (.-rows js/process.stdout) 24)
      :accent-code (or (:accent-code skin) splash/accent-code)
+     :label-code (or (:label-code skin) splash/label-code)
      :dim-code (or (:dim-code skin) splash/dim-code)}))
 
 (defn- status-for []
@@ -1426,10 +1493,10 @@
 
 (defn- draw-input! [state]
   (erase-input!)
-  (let [{:keys [rows caret]} (editor/render state (assoc (editor-opts)
-                                                         :status (status-for)
-                                                         :header (header-for)
-                                                         :tail @pending-line))
+  (let [{:keys [rows caret panel?]} (editor/render state (assoc (editor-opts)
+                                                               :status (status-for)
+                                                               :header (header-for)
+                                                               :tail @pending-line))
         [caret-row caret-col] caret
         n (count rows)]
     (out!
@@ -1459,7 +1526,9 @@
       "\r"
       (when (> (dec n) caret-row) (str esc "[" (- (dec n) caret-row) "A"))
       (when (pos? caret-col) (str esc "[" caret-col "C"))
-      esc "[?25h"))
+      ;; A panel has nothing to type into; a cursor parked in its corner reads
+      ;; as an input that is ignoring the keyboard.
+      (when-not panel? (str esc "[?25h"))))
     (reset! input-block {:rows n :caret-row caret-row :drawn? true})))
 
 (defn- redraw!
@@ -1718,6 +1787,9 @@
     (let [r (chat-slash! t)]
       (cond
         (= :exit r) (bye!)
+        ;; A handler that returns a panel is showing rather than saying.
+        (and (map? r) (:panel r))
+        (do (swap! repl assoc-in [:editor :panel] (:panel r)) (redraw!))
         (= :handled r) (redraw!)
         (= :resend r) (let [prev (str @(:last-input ctx-chat))]
                         (if (str/blank? prev) (redraw!) (submit-message! prev)))
