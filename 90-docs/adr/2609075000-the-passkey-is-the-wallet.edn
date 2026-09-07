@@ -1,0 +1,68 @@
+[{:db/id -1
+  :adr/id "adr-2609075000-the-passkey-is-the-wallet"
+  :adr/title "The passkey is the wallet: Coinbase Smart Wallet is already the model"
+  :adr/status "accepted"
+  :adr/date "2026-09-07"
+  :adr/related "adr-2609074200-the-sign-in-never-came-back adr-2609073800-the-cli-can-get-a-passkey-session"
+  :adr/body "## Coinbase Smart Wallet's approach is the one this app already implements
+
+The instruction was to follow it. Measured, it is already followed, and that
+answers the question the last three exchanges were circling.
+
+`src/cloud/itonami/app/smart_account.cljc` reproduces the Coinbase Smart Wallet
+1.1 factory's `getAddress(bytes[],uint256)` locally, for an account whose owner
+is a raw 64-byte P-256 public key. `GET /api/wallet` on this install returns:
+
+    wallet-provider        WebAuthn P-256 / ERC-4337
+    private-keys-stored?   false
+    principal-account      owner-kind  webauthn-p256
+                           factory     coinbase-smart-wallet 1.1
+                           entry point 0.6
+                           deployment  not-yet-deployed
+                           address     0x6160…5f39
+
+And `web.clj` has been saying it on screen the whole time: 「Passkey が Smart
+Account を所有し、Bot は送金内容を提案します。最終 UserOperation は Passkey で
+確認します。MetaMask や Coinbase Wallet は任意です。」
+
+## So there is no wallet sign-in to build, and that is the point
+
+The previous three options -- give a wallet session its own kind, promote it to
+the passkey's, or add wallet support to the hosted authorization server -- were
+answers to a question the Coinbase model does not ask. In that model **the
+passkey IS the wallet's owner**: the account address is derived from the
+passkey's public key, so signing in with the passkey is what produces the
+account. A second, wallet-shaped way in would be a WEAKER root for the same
+identity, not an alternative one.
+
+That is also exactly what the homepage means by 「a wallet signature alone
+authorizes nothing」. It is not a limitation to work around; it is the design.
+
+An external wallet (MetaMask, Coinbase Wallet) stays what
+`/api/wallet/connect/*` already makes it -- something attached to an identity
+that exists, which is why those routes require a human session.
+
+## What was missing was the screen
+
+`/wallet` in the CLI: three tabs. Account (address, owner kind, factory, entry
+point, deployment state, whether the address is the same across chains, whether
+a private key is stored), Chains (each supported chain and whether an owner
+UserOperation can be sent on it), Capabilities (receive, propose-send,
+sign-and-submit, add-owner).
+
+Two words were chosen rather than reused: `private key 保存していません` instead
+of running it through the same yes/no formatter as the capabilities, where
+「できません」 reads as a missing feature when it is the opposite -- nothing is
+stored because nothing needs to be. And the panel says `pending` means the
+UserOperation path is not through yet, not that permission is missing.
+
+## Measured
+
+On a pty against the live resident, through the installed CLI: `/wallet` opens
+on Account with the real address, `coinbase-smart-wallet 1.1`, entry point 0.6,
+`not-yet-deployed`, same address across chains, no private key stored.
+
+`not-yet-deployed` is not a fault to fix. A counterfactual account has an
+address before it has code, and can receive at that address before it is
+deployed; the panel says so.
+"}]
