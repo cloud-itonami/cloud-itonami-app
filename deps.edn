@@ -44,8 +44,8 @@
   ;; Pinned to the kir the pinned compiler emits for. They have to match: KIR
   ;; is a versioned document, and an interpreter reading a shape its emitter
   ;; did not write is exactly the failure the artifact was supposed to remove.
-  io.github.kotoba-lang/kotoba-kir
-  {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
+  io.github.kotoba-lang/osaho
+  {:git/url "https://github.com/kotoba-lang/osaho.git"
    :git/sha "da24cae65e82f91352c5b96b0c58f21a52911277"}
   ;; A second implementation executes the persisted portable Datalog corpus
   ;; during cutover qualification; normal Agent queries remain on langchain.db.
@@ -688,8 +688,8 @@
           ;; makes this mandatory: "THIS PIN IS NOT OPTIONAL WHEN THE
           ;; KOTOBA-SEMA PIN MOVES" (frontend admits `pop` and KIR traps
           ;; `:unknown-function` if left behind).
-          io.github.kotoba-lang/kotoba-kir
-          {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
+          io.github.kotoba-lang/osaho
+          {:git/url "https://github.com/kotoba-lang/osaho.git"
            :git/sha "b021a0d179fb983e8ad7da702252cfa764cd2fc2"}
           io.github.kotoba-lang/io-multiformats
           {:git/url "https://github.com/kotoba-lang/io-multiformats.git"
