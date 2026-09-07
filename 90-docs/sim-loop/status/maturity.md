@@ -702,3 +702,25 @@ published-lock 再発行) の解消確認。附帯: 本体 checkout は反復中
 本 bot は touch せず wt-msloop のみで完結。7-軸表 16 行目孤立行 placeholder と falsify-46
 mid-sentence cut は残存のまま (operator 復旧待ち、本 bot は編集しない)。
 (evidence/2026-09-08-falsify-65.md)
+## NEXT (falsify-66 追記、append-only)
+
+**falsify-66 (2026-09-08、テスト/実装 軸) で「falsify-65 以降に修理が着地し現 tip は再び
+コンパイルできる」を REFUTED — build-broken current tip は継続**: HEAD = origin/HEAD =
+**679572b** (falsify-63/64/65 と同一、`679572b..origin/HEAD` = 0 commits = 修理 commit なし、
+porcelain clean dirty 0 実測)。`git show HEAD:.../identity.clj` で `(:import` opener **0** /
+裸 `[java.*` ベクタ **5** (ファイル行 29-33、`:require [...oauth])` 直後に wrap されず残存)
+の malformation が git object レベルで残存 (falsify-63/64/65 と一致)。HEAD が同一 SHA のため
+falsify-63/64/65 が実測した compile 失敗 (EXIT_RC=1 / Syntax error macroexpanding ns /
+java.nio.charset - failed: #{:import}) は決定論的に継続 (compile 再実行は冗長のため本反復では
+未実施、同一バイト列からの推移的帰結として記録 — 捏造なし)。テスト軸・実装軸の score は 3 のまま
+(重大な新規赤の継続であり質的反証。file-count src 240 / test 243 (tip 679572b, falsify-62 実測)
+は HEAD 前進なしで不変)。修理案 (identity.clj ns で `[java.nio.charset StandardCharsets]` の
+直前に `(:import` を復元し 5 ベクタを wrap、`[java.net ...]` 2 行は migration 目的に沿って
+生かさない) は Tier 2 kanban/human 判断のまま未着地 (着地には本体 checkout 編集 + テスト緑
+確認が必要、本 bot は本体を手に触れない)。修理後の次測定は falsify-62 の bundle/graph 赤
+(bundle published-lock 再発行) の解消確認。附帯: 本体 checkout は反復中 porcelain clean
+(dirty 0)、本 bot は touch せず wt-msloop のみで完結。プローブ訂正: runbook と同型の stale
+orphan worktree (`.../cloud-itonami-app/.git/worktrees/worktree`, git fatal) を踏み、正体
+(orgs/cloud-itonami/cloud-itonami-app) に対して測定。7-軸表 16 行目孤立行 placeholder と
+falsify-46 mid-sentence cut は残存のまま (operator 復旧待ち、本 bot は編集しない)。
+(evidence/2026-09-08-falsify-66.md)
