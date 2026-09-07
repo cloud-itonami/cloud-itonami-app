@@ -27,8 +27,8 @@
                 ;; why nobody saw it. Pinned to the same sha as ../../deps.edn:
                 ;; the artifact is a versioned document and the two runtimes
                 ;; must read it with the same reader.
-                io.github.kotoba-lang/kotoba-kir
-                {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
+                io.github.kotoba-lang/osaho
+                {:git/url "https://github.com/kotoba-lang/osaho.git"
                  :git/sha "da24cae65e82f91352c5b96b0c58f21a52911277"}
                 ;; :local/root, not a git coordinate — jp-go-dds resolves its
                 ;; own siblings the same way, and tools.deps forbids
