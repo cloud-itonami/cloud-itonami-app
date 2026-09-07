@@ -1,0 +1,109 @@
+[{:db/id -1
+  :adr/id "adr-2609078000-the-workforce-runs-and-next-run-at-is-the-oldest-job"
+  :adr/title "The Bot workforce is scheduled and running; next-run-at is the most overdue job, not the next run"
+  :adr/status "accepted"
+  :adr/date "2026-09-07"
+  :adr/body "## The question
+
+Does the Bot workforce run on a schedule, like hermes agent bots? Measured
+2026-09-07 against the live resident.
+
+## The answer: yes, and it works as designed
+
+    fire-due-workforce!   bots.clj:6783
+      <- tick!            bots.clj:7720
+      <- start-tick!      bots.clj:7749, started at server.clj:7270
+         every 60s, thread `cloud-itonami-bot-tick` alive in the resident
+
+Measured throughput, from the app's own outcome window rather than inference:
+
+    :since 2026-09-07T02:43Z  :until 2026-09-07T08:44Z
+    :counts {:completed 47, :running 2, :disk-space/stale-candidate 1}
+
+47 runs completed in six hours, 2 running. Nothing is stopped.
+
+## The field that made it look stopped
+
+`workforce-status` reports
+
+    :next-run-at (some->> jobs (keep :workforce.job/next-run-at) sort first)
+
+That is the EARLIEST next-run-at across all jobs -- the most overdue one. It is
+a backlog marker. It is NOT \\\"when the workforce next runs\\\", and on this install
+it reads 2026-08-28 while jobs are firing every few minutes.
+
+**Anyone who reads that field without reading the code will conclude the
+workforce died ten days ago.** I did. It is the single most misleading value on
+that surface, and renaming it (or labelling it in any UI as \\\"most overdue job\\\")
+would be worth more than any scheduling change.
+
+## Blocked runs already yield their slot
+
+The hypothesis that a Bot which answers \\\"I am blocked on X\\\" resets to the
+15-minute floor and churns forever is **false**. `bots.clj:6080`:
+
+    (when-not (and (= \\\"blocked\\\" state) resident?
+                   (complete-resident-no-op! … {:reason :blocked …})))
+
+A blocked resident run becomes `:safe-no-op` -> `:no-op` -> outcome code 1 ->
+doubled and capped at the ceiling by `workforce_cadence_core.kotoba`. Provider
+`empty-response` / `http-error` take the same path at 6104. `:no-op` was absent
+from the six-hour window because backed-off Bots are not running in it, which is
+the mechanism working rather than failing.
+
+## What is actually true about capacity
+
+    supply   ~7.8 runs/hour   (measured; max-active 1, max-starts-per-tick 1)
+    a sweep of 143 Bots takes ~18.3 hours
+
+`max-active 1` is a deliberate operator setting whose config comment already
+rejects raising it on the basis of the provider reporting `parallel: 2`: that
+number \\\"was written 2026-08-24 about a single service's slots and does not mean
+two origins -- citing it here would be repeating a stale number as if it were a
+measurement.\\\" Nothing here overrides that.
+
+Adjacent, unchanged from the same day's measurement: `app.itonami.cloud` is a
+dispatch router over the fleet catalog (1,294 actors; a 20-actor sample returned
+zero live Workers) and is a different population from the resident's Bots -- the
+two are not out of sync, they are not the same thing. The wallet's chain list is
+Ethereum and Sepolia; Base appears only in `commerce.clj` (x402 USDC) and
+`human_work.cljc`, not in the wallet. `replayable-nonce-key 8453` in
+`smart_account.cljc` is the Coinbase Smart Wallet nonce key and NOT the Base
+chain id, despite the identical number.
+
+## How this investigation went wrong five times, and the one cause
+
+1. \\\"No due-job runner exists\\\" -- the grep found it; `head -6` cut it off.
+2. \\\"Stopped since 2026-08-28\\\" -- misread `next-run-at`, above.
+3. Store measurements flapped -- `#:workforce.job{` counted 149, then 0, while
+   `workforce.job` went 149 -> 2200, because `state.edn` is 28 MB, is rewritten
+   by a live process mid-read, and its namespace-map printing is not stable.
+4. Bot status extraction returned `none` for 228 of 231 records -- the key was
+   guessed, not read.
+5. \\\"complete-resident-no-op! has zero callers\\\" -- the regex required a
+   character after the name and the two call sites end the line.
+
+The common cause is one habit: **writing a pattern before looking at the shape
+it is supposed to match.** Every one of these was a claim about the system that
+was really a claim about my regex.
+
+Two rules worth keeping:
+
+- **`state.edn` is not a parse target.** It is large, live, and its printer is
+  not stable. Ask the running app; read the code that produces the number. Both
+  were available the whole time and both were right the first time.
+- **A count from a truncated command is not a count.** `head` on a grep whose
+  result feeds a conclusion is the 2026-08-03 `kuro`/`kobo` failure, and this
+  workspace already has a rule about it.
+
+## What was NOT done, and what to do next
+
+No code changed. There was no defect to fix.
+
+The useful next piece is an instrument, not a scheduling change: a `/workforce`
+panel showing supply (measured runs/hour), demand (Bots x cadence), the sweep
+time, the backlog with its oldest entry **labelled as the oldest entry**, the
+outcome mix, and what blocked Bots are waiting on (`continuation :summary` is
+already stored). Every value already exists; nothing there is inference. The
+reason to build it is this ADR: the state took an hour and five wrong turns to
+establish, and it should take one screen."}]
