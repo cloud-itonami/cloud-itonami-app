@@ -468,6 +468,18 @@
   []
   (or (human-token) (agent-token)))
 
+(defn- server-origin
+  "What `same-origin?` on the server compares an Origin header against.
+
+  Mirrors the server's own `origin`: `:public-origin` when it is set, else
+  host:port. The claim endpoint checks it because claiming MINTS a session,
+  and a loopback port with no Origin check is a page on any site away from
+  minting one. The CLI is not a browser, so it has to say who it is."
+  []
+  (or (some-> (get-in configuration [:server :public-origin]) str/trim not-empty)
+      (str "http://" (get-in configuration [:server :host] "127.0.0.1")
+           ":" (get-in configuration [:server :port] 1338))))
+
 (defn- base-url []
   (or (some-> (aget js/process.env "CLOUD_ITONAMI_API_URL") str/trim not-empty
               (str/replace #"/+$" ""))
@@ -479,8 +491,9 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- request!
-  "One request. Resolves to {:status :body}; rejects only when nothing answered,
-  which is a different failure from a refusal and is reported as one."
+  "One request. Resolves to {:status :body :set-cookie}; rejects only when
+  nothing answered, which is a different failure from a refusal and is reported
+  as one."
   [{:keys [method path body timeout-seconds headers]} token]
   (let [controller (js/AbortController.)
         timer (js/setTimeout #(.abort controller)
@@ -501,6 +514,12 @@
                      (.then (fn [t]
                               (js/clearTimeout timer)
                               {:status (.-status res)
+                               ;; The claim endpoint answers with the session in
+                               ;; a Set-Cookie and a body that does not carry
+                               ;; it. A client reading only the body waits for a
+                               ;; token that is never coming, which is exactly
+                               ;; what it did (2026-09-07).
+                               :set-cookie (or (.get (.-headers res) "set-cookie") "")
                                :body (try (js->clj (js/JSON.parse t) :keywordize-keys true)
                                           (catch :default _ {:raw t}))})))))
         (.catch (fn [e]
@@ -1866,6 +1885,16 @@
 ;; shape of the answer.
 ;; ---------------------------------------------------------------------------
 
+(def ^:private identity-cookie "cloud_itonami_identity")
+
+(defn- session-cookie-token
+  "The session token out of a `Set-Cookie` header, or nil.
+
+  The claim endpoint sends the session the way a browser is given one. The body
+  it sends alongside carries `:ready?` and nothing secret, on purpose."
+  [set-cookie]
+  (text/cookie-value identity-cookie set-cookie))
+
 (defn- passkey-login!
   "Start a sign-in and wait for the person to finish it in their browser.
 
@@ -1905,13 +1934,18 @@
                            (-> (request! {:method :post
                                           :path "/api/auth/itonami/handoff"
                                           :body {:handoff claim}
+                                          ;; Without this the claim is never
+                                          ;; admitted and the poll runs to its
+                                          ;; timeout with the person already
+                                          ;; signed in — measured 2026-09-07.
+                                          :headers {"origin" (server-origin)}
                                           :timeout-seconds 15}
                                          nil)
-                               (.then (fn [{:keys [status body]}]
-                                        (if (and (<= 200 status 299) (:ready? body)
-                                                 (not-empty (str (:token body))))
-                                          (do (keychain-put! human-keychain-account
-                                                             (str (:token body)))
+                               (.then (fn [{:keys [status body set-cookie]}]
+                                        (if-let [token (and (<= 200 status 299)
+                                                            (:ready? body)
+                                                            (session-cookie-token set-cookie))]
+                                          (do (keychain-put! human-keychain-account token)
                                               {:ok true :body body})
                                           (js/Promise.
                                            (fn [resolve _]

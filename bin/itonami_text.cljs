@@ -134,6 +134,18 @@
   (let [w (glyph-columns (.codePointAt (str ch) 0))]
     (.repeat (str ch) (max 0 (quot n w)))))
 
+(defn cookie-value
+  "The value of `name` in a `Set-Cookie` header, or nil.
+
+  Lives here rather than in the launcher so it can be tested: the claim
+  endpoint hands the session over this way, and a parser that quietly returns
+  nothing is a sign-in that quietly never finishes (measured 2026-09-07 — the
+  poll ran to its timeout with the person already signed in)."
+  [name header]
+  (some-> (re-find (re-pattern (str "(?:^|[;,]\\s*)" name "=([^;,\\s]+)"))
+                   (str header))
+          second str/trim not-empty))
+
 (defn pad-right
   "`s` padded with spaces to `n` columns. A string already wider than `n` is
   returned unchanged: truncating here would hide an overflow the caller needs
