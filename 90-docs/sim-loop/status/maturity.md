@@ -790,3 +790,29 @@ IEquiv 解決に失敗する機構の個別再現」は本反復 (b) で「失�
 ## NEXT (falsify-72 追記、append-only)
 
 **falsify-72 (2026-09-08、spec/契約 軸) で「追加コマンド workspace resources の :gate :app 契約が server.clj ルート (routes 408→409) と一致する」を SURVIVED (5 層突合完了)**: HEAD = origin/main = 679572b (falsify-63..71 と同一 SHA)、本体 porcelain clean (dirty 0)。① `git diff 9e5b24a 679572b -- server.clj` は単一 hunk `@@ -4390,6 +4390,17 @@` のみ = **workspace/resources ルート (GET /api/workspace/resources、require-app-session!、bots/resources) が 408→409 の +1 ルート**と確定。② route_scan.cljc の gate-of 機械導出を実測: require-app-session!→`:app` (131-145)、routes が各ルートに :gate 付与 (282)、registry は :app/:session のみ公開 (303)、:counts {:routes (count all) ...} (310-313)。③ commands.edn (tip c44cc35) の workspace resources エントリ = `{:command ["workspace" "resources"], :method "GET", :template "/api/workspace/resources", :params [], :flags [], :gate :app, :route "/api/workspace/resources"}` が**ちょうど 1 件**。④ 実行可能検証 (detached worktree /private/tmp/mt-msloop72、head 679572b、本体未 touch): scan/registry 評価 → :counts {routes 409, commands 209, human-only 70, unauthenticated 130}、workspace-resources-cmd gate :app、scan/routes の同ルート gate :app (EXIT_RC=0)。⑤ fresh (scan/registry (slurp server.clj)) とチェックイン済み commands.edn を比較 → `:equal true` / 両 gate :app — commands-test fails-when-no-longer-matches の不変量が現 head で成立。spec/契約 軸 score は 3 のまま (falsify-56/71 の範囲修正に本突合を追記、質を覆す変更なし)。注記 (捏造なし・既知赤): `commands_test.clj:39-47 the-registry-matches-the-routes` が設計上の機械ガードだが、現 tip は identity.clj build-broken (falsify-63..68) で :test フルスイート green 実行不可 — 本反復は同一 scanner を直接実行して ④⑤ で不変量を実測 (route-scan は clojure.string のみ require、identity 非依存で単独起動可)。次アクション: OPEN 赤-2 案 A 着地後 rc=0 再確認、または falsify-62 の bundle/graph 赤 (published-lock 再発行) 解消確認 (identity.clj 修理後に実行可能)。附帯: 本体 checkout porcelain clean (dirty 0)、touch せず wt-msloop のみで完結、実行 worktree mt-msloop72 は remove --force / prune 済みで工作ツリー list に残存せず。7-軸表 16 行目孤立行 placeholder / falsify-46 mid-sentence cut は残存のまま (operator 復旧待ち、append-only で本 bot は編集しない)。identity.clj malformation は origin SHA 不変ゆえ存続、対象外 (evidence/2026-09-08-falsify-72.md)。
+
+## NEXT (falsify-73 追記、append-only)
+
+**falsify-73 (2026-09-08、運用 軸) で「修理案 A の 3 src (authority/src + org-nist-sha2/src +
+datom-source/src) がインストール済み/ロード済み launchd classpath に追加済み → 次回
+(2026-09-14 Mon 09:00) 発火で expiry-alert が rc=0 に復旧する (案 A 着地済み)」を
+REFUTED (未着地を確定)**: 本体 checkout HEAD=origin/main=**679572b**/porcelain clean。
+`launchctl list` 実測 `- 1 com.gftdcojp.itonami.expiry-alert`、`launchctl print` 実測
+`state = not running / runs = 1 / last exit code = 1` (event trigger Weekday=1 Hour=9
+Minute=0 = 毎月曜 09:00) で、**ロード済み classpath (15 エントリ) とインストール済み
+plist (mtime Aug 13) いずれも 3 src 全欠** (plist `grep -c 'authority|nist-sha2|datom-source'`
+= **0** / rc=1)。前回発火 Sep-7 09:00 のログ tail 実測は `Error: Could not find namespace:
+authority.scope` (Node v26.0.0) で、falsify-70 の単独終端と同一 — 次回 Mon 09:00 も同一
+失敗見込み (確認は着地後の rc)。**範囲修正 (新情報)**: `git ls-tree -r 679572b` grep
+`expiry|ops-classpath` = ヒット 0 で、修理対象 `scripts/expiry-alert.cljs` も
+`scripts/ops-classpath.sh` も **cloud-itonami-app に存在せず**、job の WorkingDirectory /
+classpath は別リポジトリ **`network-awai/cloud-itonami`** を指す — 修理は対象リポジトリ
+本体外 (sibling repo) に完結し、本 bot の Tier 1 着地範囲外 (Tier 2 kanban/human)。Tier 2
+report で案 A 着地ランブック (network-awai/cloud-itonami 側 ops-classpath.sh に 3 src 追加
+→ plist 再生成 → launchctl bootout/bootstrap) を再提示、着地後の rc=0 再確認が終点判定
+(falsify-11 継承)。運用 軸 score は **3 のまま** (root cause・案 A の十分性は falsify-70
+で確定済み、本反復は未着地確定 + 修理範囲の sibling 帰属のみで green 化測定なし)。附帯:
+本体 checkout porcelain clean (dirty 0)、本 bot は touch せず wt-msloop のみで完結。修理
+対象は本体外のため Tier 1 不着地。7-軸表 16 行目孤立行 placeholder / falsify-46 mid-
+sentence cut は残存 (operator 復旧待ち、append-only で本 bot は編集しない)。identity.clj
+malformation (falsify-63..68) は対象外 (evidence/2026-09-08-falsify-73.md)
