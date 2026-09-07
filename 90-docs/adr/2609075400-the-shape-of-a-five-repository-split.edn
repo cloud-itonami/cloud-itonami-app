@@ -27,15 +27,35 @@ it, a launchd job, an MCP server, and four pointers that have to stay in step
 
 ## The seams, measured
 
-**`cloud-itonami-cli` is clean.** `bin/itonami` reaches into `src` for exactly
-two namespaces, and neither reaches back into the app:
+**`cloud-itonami-cli` is clean** -- but not for the reason written here
+first, and the correction is the useful part.
+
+The original claim was that `bin/itonami` reaches into `src` for exactly two
+namespaces and *neither reaches back into the app*:
 
     commands.cljc     350 lines   requires: itself only
     repo_profile.cljc 329 lines   requires: itself only
 
-Everything else the CLI needs is its own siblings (`itonami_editor`,
-`itonami_splash`, `itonami_text`, `itonami_harness`, `itonami_profile`,
-`itonami_skills`) and its own tests. This one can move as a unit.
+That is true and it decides nothing. Whether a namespace can move out is
+settled by who requires IT, and that had not been looked at. Measured
+2026-09-07:
+
+    cloud.itonami.app.repo-profile   bin/itonami, its own test. No app-side use.
+    cloud.itonami.app.commands       bin/itonami, tests, and cli.clj.
+
+One app-side consumer, and it sets the dependency direction between two of the
+four repositories: if `cli.clj` is live, moving `commands` makes the app depend
+on the CLI; leaving it makes the CLI depend on an app checkout at runtime,
+which is the coupling a split is meant to remove.
+
+`cli.clj` is neither. There is no `:cli` alias in `deps.edn` -- the file's own
+comment at line 591 says a test goes red \"the day :cli is reintroduced\". It is
+tested but has no launcher; PR #270 removed it and `bin/itonami` replaced it.
+
+So the conclusion holds and the reasoning did not. Everything else the CLI
+needs is its own siblings (`itonami_editor`, `itonami_splash`, `itonami_text`,
+`itonami_harness`, `itonami_profile`, `itonami_skills`) and its own tests, and
+this moves as a unit.
 
 **`bin/cloud-itonami-app` is not.** It goes through `cli.clj` (881 lines),
 which requires eleven app namespaces including `store` and `server-process`.
@@ -67,11 +87,19 @@ which are the likely `-apex` and edge material, and those ARE separable today.
    into routes and handlers first, which is a refactor inside the current repo
    and can happen before any repository exists.
 
-## Not started
+## Status
 
-Nothing has been moved. This records the measurement and the order; the split
-itself is the next piece of work, and step 1 is the one that can begin without
-another decision.
+Step 1 is done. `cloud-itonami/cloud-itonami-cli` exists, is registered in west
+at pin `cb85ffd3`, and runs standalone -- `--print-data-dir` resolves to its own
+tree and `itonami status` answers the live resident reading nothing from the app.
+See `adr-2609075600-the-cli-leaves-the-app` in that repository.
+
+Nothing is deleted from this repository yet. Both trees carry the CLI, both
+suites pass, and `~/.local/bin/itonami` still resolves through
+`~/.cloud-itonami/current`. Removing this copy repoints that launcher, so it is
+a separate change and there is never a moment when nothing works.
+
+Steps 2-4 (`-apex`, `-auth`, `-api`) are not started, for the reasons above.
 
 The reason for writing this before moving anything: a repository split is the
 kind of change that looks finished long before it is, and the thing that tells
