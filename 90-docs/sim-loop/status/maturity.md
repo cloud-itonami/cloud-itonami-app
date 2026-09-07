@@ -683,3 +683,22 @@ porcelain clean (dirty 0)、本 bot は touch せず wt-msloop のみで完結�
 本 head では発生せず remove --force で即時削除)。7-軸表 16 行目孤立行
 `| 反証候補falsify30PLACEHOLDER` と falsify-46 mid-sentence truncate は残存のまま
 (operator 復旧待ち、append-only)。(evidence/2026-09-08-falsify-64.md)
+
+## NEXT (falsify-65 追記、append-only)
+
+**falsify-65 (2026-09-08、テスト/実装 軸) で「falsify-64 以降に修理が着地し現 tip は再び
+コンパイルできる」を REFUTED — build-broken current tip は継続**: HEAD = origin/HEAD =
+**679572b** (falsify-63/64 と同一、`679572b..origin/HEAD` = 0 commits = 修理 commit なし)、
+`git show HEAD:.../identity.clj` で `(:import` opener **0** / 裸 `[java.*` ベクタ **5** の
+malformation が git object レベルで残存 (falsify-63/64 と一致)。HEAD が同一 SHA のため
+falsify-63/64 が実測した compile 失敗 (EXIT_RC=1 / Syntax error macroexpanding ns /
+java.nio.charset - failed: #{:import}) は決定論的に継続 (compile 再実行は冗長のため本反復では
+未実施、同一バイト列からの推移的帰結として記録 — 捏造なし)。テスト軸・実装軸の score は 3 のまま (重大な新規赤の継続であり質的反証。file-count src 240 /
+test 243 (tip 679572b, falsify-62 実測) は HEAD 前進なしで不変)。修理案 (identity.clj ns で
+`[java.nio.charset StandardCharsets]` の直前に `(:import` を復元し 5 ベクタを wrap) は
+Tier 2 kanban/human 判断のまま未着地 (着地には本体 checkout 編集 + テスト緑確認が必要、本 bot
+は本体を touch しない)。修理後の次測定は falsify-62 の bundle/graph 赤 (bundle
+published-lock 再発行) の解消確認。附帯: 本体 checkout は反復中 porcelain clean (dirty 0)、
+本 bot は touch せず wt-msloop のみで完結。7-軸表 16 行目孤立行 placeholder と falsify-46
+mid-sentence cut は残存のまま (operator 復旧待ち、本 bot は編集しない)。
+(evidence/2026-09-08-falsify-65.md)
