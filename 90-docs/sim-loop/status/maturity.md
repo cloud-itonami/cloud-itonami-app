@@ -10,8 +10,8 @@
 | 軸 | score | 根拠 (測定) |
 |---|---|---|
 | spec/契約 | 3 | ADR 24 本 (+ ADR-2607254000 の Tier 境界)、commands.edn に 208 コマンドの解決/path-param 契約 (flags は hint で値スキーマなし — falsify-10 実測: プレースホルダ 128 すべてに `:in "path"` 宣言、欠落 0、408=208+70+130 整合)。route 再スキャン vs レジストリの機械検証テスト実在 (commands_test 16 deftest)。値スキーマ (型/必須性) の機械検証は生成 registry の flags では未整備のまま (falsify-56: 123/123 plain string、値スキーマ flag 0) だが、別名レジストリ cli-aliases.edn は `:flag`/`:required?`/`:parse`/`:default` の値スキーマを持ち cli_aliases_test の `body-specs-use-known-vocabulary` 等で機械検証済み (falsify-56 で「未整備」の全面主張を REFUTED、resolver は alias 優先 — commands.cljc:334-349) |
-| 実装 | 3 | src 237 ファイル (head 5e3aac9、falsify-61 実測)、全主要面 (bots/webhook/hermes-compat/store) 実装済み。virtual-shell は per-bot opt-in (デフォルト off) の完全実装の能力で、ライブディスパッチ (bots.clj:2511,3012) / write ゲート (bots.clj:2671) / describe / テスト 5 deftest 揃い、west-refactor 移行の必須前提 (cli.clj:670 `virtual-shell-ready?`) に利用 — falsify-57 で「未活性」の blanket 記述は REFUTED。本ホストは docker ABSENT のため実行時 available? は false (コード活性・実行層は本ホスト不可) |
-| テスト | 3 | test 240 ファイル (head 5e3aac9、falsify-61 実測)。フルスイートが異なるリビジョンで完走: falsify-6 (bde2171)、falsify-7 (2bca892、約45分)、falsify-14 (clean HEAD、1 failure = 赤-4 のみ)、falsify-15 (負荷下 2292 tests / 13880 assertions / 1 failure = 赤-4 のみ)、**falsify-16 (merged main 1905580、負荷下 2292 tests / 13929 assertions / 0 failures EXIT=0)**。決定論的赤 0、flake 修理 (赤-5、PR #280) 着地済み。3 止まりの根拠: flake リトライ機構なし、OPEN 赤-4 未解決、テスト実行がディスク飽和に脆弱 (falsify-16/17) |
+| 実装 | 3 | src 240 ファイル (head 679572b、falsify-62 実測)、全主要面 (bots/webhook/hermes-compat/store) 実装済み。virtual-shell は per-bot opt-in (デフォルト off) の完全実装の能力で、ライブディスパッチ (bots.clj:2511,3012) / write ゲート (bots.clj:2671) / describe / テスト 5 deftest 揃い、west-refactor 移行の必須前提 (cli.clj:670 `virtual-shell-ready?`) に利用 — falsify-57 で「未活性」の blanket 記述は REFUTED。本ホストは docker ABSENT のため実行時 available? は false (コード活性・実行層は本ホスト不可) |
+| テスト | 3 | test 243 ファイル (head 679572b、falsify-62 実測)。フルスイートが異なるリビジョンで完走: falsify-6 (bde2171)、falsify-7 (2bca892、約45分)、falsify-14 (clean HEAD、1 failure = 赤-4 のみ)、falsify-15 (負荷下 2292 tests / 13880 assertions / 1 failure = 赤-4 のみ)、**falsify-16 (merged main 1905580、負荷下 2292 tests / 13929 assertions / 0 failures EXIT=0)**。決定論的赤 0、flake 修理 (赤-5、PR #280) 着地済み。3 止まりの根拠: flake リトライ機構なし、OPEN 赤-4 未解決、テスト実行がディスク飽和に脆弱 (falsify-16/17)。**falsify-62 で新規決定論的赤を実測**: 現 anchor head 5e3aac9 で bundle_test ×2 FAIL / graph_test 1 ERROR (published-lock が bundle 内容変化後未再発行)、falsify-38 (cc7a17d) の 0 failures からの新規出現で「決定論的赤 0」は現在形として不成立 — 詳細は falsify-62 追記 |
 | 反証 | 3 | falsify-1〜26 を evidence/ に記録。falsify-9: 赤-2「KeepAlive 欠如で silent-dead」説を反証 (主因は ops-classpath.sh が upstream の authority.scope 追加に未追従で nbb ロード即死)。falsify-10: spec 軸主張を「解決/path-param 契約 (値スキーマなし)」に範囲修正。falsify-11: 赤-2 案 A「classpath 修正で復旧」説を反証試行 — 決定論的依存連鎖を段階実測、案 A の 3 src 追加が必須十分と確認し expiry-alert.cljs rc=0 まで完全復旧を実測 → 精緻化付きで SURVIVED。検証の终点は rc=0、plist 再 bootstrap が必須条件。falsify-12: テスト軸「赤-5 flake は時間切れ型のみ」説 → survived、3 bound 非同期設計を競合窓として同定。falsify-14 (2026-09-05): リスク-2 dirty 前提を REFUTED (本体 main clean 実測)。falsify-16 (2026-09-05): 「着地後の負荷下完走で flake サイトが赤になる」説 → survived (merged main 1905580 で 0 failures 実測、OPEN 赤-5 CLOSED)。falsify-17 (2026-09-05): 「falsify-16 の cache 整理でディスク満杯は解消 (一回性)」説を REFUTED — 同日中に /System/Volumes/Data が 100% / avail 1.9Gi に再飽和を実測、ディスク飽和は再発性の構造リスクと確定 (evidence/2026-09-05-falsify-17.md)。falsify-18 (2026-09-06): falsify-17 の「増加源は du 到達範囲外の可能性」説を反証 — du 実測で支配項を m365-archive/onedrive 133G に帰属確定 (survived→帰属確定)、expiry-alert not running / runs=0 を再実測 (evidence/2026-09-06-falsify-18.md) 。falsify-23 (2026-09-06): 「滞留世代は manifest-rev 参照解放で回収可能」説を REFUTED — manifest-rev=51d4010c (west update 管理) は resident/dns-resolver の祖先で解放しても annex 参照は残る、真の参照元は resident branch の ingest 履歴 (evidence/2026-09-06-falsify-23.md)。falsify-25 (2026-09-06): 滞留の参照元を resident 現在ツリー (data/ledger/) へ帰属修正 (unused ⊆ resident 現在ツリー 100%、detached HEAD 説反証)。falsify-26 (2026-09-06): 増加後も帰属が生存することを再確認 (SURVIVED)。falsify-28 (2026-09-06): 増加継続下 (unused 3372 / 43.27 GiB) でも帰属生存を再確認、滞留全件が resident 現在ツリー参照 (∩ 100%)。falsify-29 (2026-09-06): 増加継続下 (unused 3385 / 43.44 GiB、falsify-28 比 +13 keys / +0.17 GiB) でも帰属生存を再確認、滞留全件が resident 現在ツリー参照 (∩ 100%、unused−resident=0)。falsify-30 (2026-09-06): 増加継続下 (unused 3398 / 43.61 GiB、+13 keys / +0.17 GiB) でも帰属生存を再確認 (∩ 100%、unused−resident=0)。併せて「avail 反発は増加源の停止/減速を反映」説を REFUTED — 増加源 (export_and_sync.cljs PID 82336) が稼働中のまま avail が 1.5Gi→6.6〜7.8Gi へ回復したことを直接観測 (evidence/2026-09-06-falsify-30.md)。falsify-31 (2026-09-06): 増加継続下でも帰属生存を再確認 (unused 3427 / 43.99 GiB、∩ 100%、unused−resident=0)。併せて avail が 50 Gi / 95% へ大回復し増加源 (PID 82336) が ps で自然停止したことを直接観測 (「停止→回復」は充分条件でなく単一帰属は未特定 — falsify-30 の反証が有効) |
 | 反証候補falsify30PLACEHOLDER
 | 再現性 | 3 | launchd で server/host/tick は再現稼働。releases/ 全 77 ツリーが対応 git commit と byte 完全一致 (falsify-3 実測、2026-09-03) — 測定対象消滅 (falsify-50 REFUTED、~/.cloud-itonami/releases 不存在・運行は source classpath/配布は GitHub Releases ed25519 署名 manifest 検証・version 0.5.7)。ただし不変性は運用規約のみで OS 強制なし |
@@ -592,3 +592,31 @@ agent/fix-open-red-5-three-bound / porcelain clean (dirty 0 実測)、head 9e5b2
 ## NEXT (falsify-61 追記、append-only)
 
 **falsify-61 (2026-09-07、実装/テスト 軸) で 7-軸表の file-count「src 233 / test 231 (head 9e5b24a)」の現在値としての適用を REFUTED (HEAD 前進で stale、再アンカー)**: 本体 main checkout の HEAD が workforce 系 merge で 9e5b24a から **5e3aac9** へ前進 (rev-parse 実測、detached HEAD / porcelain clean) したため、falsify-55 が 9e5b24a にアンカーした src 233 / test 231 は現在値ではなくなった。`git ls-tree -r --name-only HEAD -- src|test | wc -l` で **src 237 / test 240** を再実測 (本体 checkout porcelain clean 実測)。増分を `git diff --diff-filter=A 9e5b24a..5e3aac9` で決定論的に特定: 追加 src 4 (bot_bounds.cljc / esign/retention_attestation_core.kotoba / pure_head_probe.kotoba / repo_profile.cljc)、追加 test 9 (bot_bounds_test / esign_retention_kotoba_parity_test / pure_head_probe_test / pure_head_zeroarg_probe_test / repo_profile_test + 4 nbb_cljs)、削除 0。falsify-55 (anchor 9e5b24a) 自体は当時の現在値として正しく、anchor が HEAD でなくなっただけ — 質の変化でないので score は実装・テストとも 3 のまま。範囲修正: 実装行「src 233 (head 9e5b24a)」→「src 237 (head 5e3aac9、falsify-61 実測)」、テスト行「test 231 (head 9e5b24a)」→「test 240 (head 5e3aac9、falsify-61 実測)」に追従更新 (falsify-53 教訓どおり HEAD 前進に応じて file-count を随時再アンカー)。次反復候補: 検証済み current HEAD で決定論的テスト実行を再観測 (加点点が green 保持か)。附帯: 本体 checkout detached は 9e5b24a→5e3aac9、他 bot (codex/emotional-bots / jvm-host-transport 等) の worktree 混在。7-軸表 16 行目孤立行 `| 反証候補falsify30PLACEHOLDER` 残存 (operator 復旧待ち)、falsify-46 mid-sentence truncate も回復せず。本 bot は本体 checkout に一切 touch せず wt-msloop で完結 (evidence/2026-09-07-falsify-61.md)。
+
+## NEXT (falsify-62 追記、append-only)
+
+**falsify-62 (2026-09-07、テスト 軸) で現 anchor head 5e3aac9 の全スイート決定論的実行を実測 —
+加加点 5 ns は green (SURVIVED)、bundle_test ×2 FAIL / graph_test 1 ERROR の新規決定論的赤 (「決定論的赤 0」REFUTED)**: 本体から独立した detached worktree
+`/private/tmp/mt-msloop62` (head 5e3aac9、本体 checkout 未 touch) で `clojure -M:test`
+(:test alias → cloud.itonami.app.test-runner 全 240 ns) を実行。実測 `Ran 2342 tests
+containing 14116 assertions. 2 failures, 1 errors. exit=1` (log /tmp/f62.log)。**加加点
+5 ns (bot-bounds / pure-head-probe / pure-head-zeroarg / repo-profile /
+esign-retention-kotoba-parity) は全て FAIL/ERROR なしで green** (狭義・falsify-61 次
+アクションは SURVIVED)。失敗 2 + error 1 は workforce 加加点でない既存 ns —
+bundle_test.clj:45/47 `the-published-lock-matches-the-current-document` (生成 bundle の
+chain CID `bafkreiabj4eq...sn2ry` vs published-lock `bafkreiabxxp...gbny` 不一致 ×2) と
+graph_test.clj:117 `publish-points-at-the-chain-cid` (manifest `:bundle-cid-embed-url-mismatch`
+ERROR)。`git merge-base --is-ancestor cc7a17d 5e3aac9` = rc 0 で、falsify-38 (cc7a17d,
+0 failures) から cc7a17d..5e3aac9 間 (Kotoba pure-head / compiler advance / esign
+retention / wave の bundle 内容変化) で新規出現した決定論的赤。テスト軸表の「決定論的赤 0」
+は現在形として不成立 → 範囲修正、新規 OPEN 赤候補 (Tier 2): bundle published-lock の
+再発行 (bundle_test / graph_test の赤解消、着地は kanban/human)。score 3 のまま。
+附帯 (falsify-53 教訓の再適用): 反復中に本体 HEAD が 5e3aac9 → **679572b** へ前進、
+`git ls-tree -r --name-only 679572b -- src|test | wc -l` = **src 240 / test 243**
+(5e3aac9 の 237/240 比 +3/+3) — 7-軸表の file-count を tip 679572b へ再アンカー。
+実行 worktree の target/test-data に annex read-only 残骸 (falsify-16 NEXT-9 の既知
+fail モードの実例) が残り `git worktree remove` が Permission denied — 提案済み手順
+(chmod -R u+wx) で退避・削除し worktree 登録も消滅確認。本体 checkout は反復中も
+porcelain clean (dirty 0)、本 bot は touch せず wt-msloop のみで完結。7-軸表 16 行目
+孤立行 `| 反証候補falsify30PLACEHOLDER` と falsify-46 mid-sentence cut は残存のまま
+(operator 復旧待ち、append-only)。(evidence/2026-09-07-falsify-62.md)
