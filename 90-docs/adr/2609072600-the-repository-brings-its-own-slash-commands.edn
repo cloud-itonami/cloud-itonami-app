@@ -1,0 +1,91 @@
+[{:db/id -1
+  :adr/id "adr-2609072600-the-repository-brings-its-own-slash-commands"
+  :adr/title "The repository brings its own slash commands"
+  :adr/status "accepted"
+  :adr/date "2026-09-07"
+  :adr/related "adr-2609062400-the-hermes-slash-commands-land-on-the-harness-main-has adr-2609042200"
+  :adr/body "## What was missing
+
+Claude Code and hermes both read a repository's `.claude/` and offer what they
+find as `/name` -- the screenshot that started this work says so on its own
+face: 「27 project skill(s) loaded from this repo」.
+
+itonami read nothing. It had twenty-nine slash commands of its own and no way
+to reach the thirty-two this workspace keeps in `.claude/skills/`.
+
+## What is read
+
+    .claude/skills/<name>/SKILL.md   YAML front matter + a Markdown body
+    .claude/commands/<name>.md       the same, without the directory
+
+Both are Claude Code's shapes and both are read, so a repository does not have
+to pick one to be usable here. The root is the nearest ancestor of the working
+directory holding `.git` -- the same root the repository profile already uses,
+so which commands you have follows which repository you are standing in.
+
+## Parsing is separate from reading
+
+`parse` takes text; `discover` takes two functions -- list a directory, read a
+file -- and neither touches `node:fs`. So the rules are testable against a map:
+what counts as front matter, what a missing name falls back to, what happens to
+a file that cannot be parsed.
+
+Three of those rules exist because the obvious implementation is wrong:
+
+- **A value keeps every colon after the first.** A description is a sentence
+  and sentences contain URLs. Splitting on all of them cuts the description at
+  the first `https:`.
+- **An unterminated fence is not front matter.** Treating it as one swallows
+  the whole file as headers and leaves the instructions empty.
+- **A skill whose front matter has no name is LISTED**, under its directory
+  name, carrying a `:problem`. Dropping it would make 「this repository has no
+  skills」 and 「I could not read its skill」 the same screen.
+
+## A project command never shadows a built-in
+
+`/status` meaning two things depending on which repository you are standing in
+is worse than not having the project one, and a shadow that happens silently is
+worse again. Admission runs after every built-in is registered, so the taken
+set is complete, and a refusal is a VALUE -- reported under the start screen
+with its reason, not dropped.
+
+Refused for three reasons, each named: the name is a built-in, two project
+commands claim the same name, or the body is larger than the ceiling (64 KB).
+The last one refuses rather than truncating: half a procedure that says nothing
+about the other half is worse than a command that says why it is not there.
+
+## What is sent, and what is shown
+
+Invoking `/name args` sends the skill body as instructions and the arguments as
+the request, delimited so the agent can tell which is which. No arguments says
+so rather than arriving blank.
+
+The transcript shows the LINE THAT WAS TYPED, not the expansion. Echoing ten
+kilobytes of instructions where the operator typed one line buries the
+conversation in the thing that produced it, so `start-run!` and
+`submit-message!` take an echo separate from the text, and the queue keeps both
+(`/queue` lists what was typed).
+
+## On the screen
+
+The start screen grew a `Project Commands` section -- three named with their
+descriptions and the rest listed by name -- and the counts line gained
+`32 project`. `REPL Commands` went back to the built-ins only: thirty-two names
+inside it buried the ten an operator uses every session. A repository with no
+project commands gets no heading at all, because an empty section reads as a
+broken feature rather than an unused one.
+
+`/help` lists all sixty-one, which follows from the registry being the one
+decider (ADR-2609062400) and needed no work.
+
+## Measured
+
+Against this workspace: 32 discovered, 0 refused, 61 slash commands in `/help`,
+`32 project` on the start screen. `/secrets-location-map <args>` invoked for
+real -- the prompt was composed with the body delimited and the arguments
+below it, a run started, and ESC stopped it.
+
+Controls, each failing by the name of the check it breaks: letting a project
+command shadow a built-in; dropping an unnamed skill instead of listing it;
+splitting front matter on every colon.
+"}]

@@ -199,7 +199,7 @@
   makes the screen testable, and it is why the caller measures `/health`
   rather than this."
   [{:keys [color? columns version base-url profile profile-source cwd home
-           session groups named slash counts tagline bullet
+           session groups named slash counts tagline bullet project
            accent label dim ramp]
     :or {columns 88 version "?" base-url "?" profile "?" profile-source "?"
          cwd "" home "" session "?" counts [] tagline "" bullet "·"}}]
@@ -224,6 +224,13 @@
                     (section {:color? color? :width right-w
                               :title "Named Commands"} named)
                     [""]
+                    ;; The repository's own, when it has any. A repository with
+                    ;; none must not get an empty heading -- that reads as a
+                    ;; feature that is broken rather than one nothing uses.
+                    (when (seq project)
+                      (concat (section {:color? color? :width right-w
+                                        :title "Project Commands"} project)
+                              [""]))
                     [(paint color? accent-code "REPL Commands")]
                     (map #(paint color? dim-code %) (wrap-words slash right-w))))
         tally (str/join (str " " bullet " ") counts)]

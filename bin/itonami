@@ -103,7 +103,8 @@
          '[itonami-profile :as profile]
          '[itonami-splash :as splash]
          '[itonami-text :as text]
-         '[itonami-editor :as editor])
+         '[itonami-editor :as editor]
+         '[itonami-skills :as skills])
 
 (defn- slurp-file [p]
   (try (fs/readFileSync p "utf8") (catch :default _ nil)))
@@ -370,11 +371,23 @@
 ;; only the prompt. (It is drawn once, at start, so a later `/skin` changes
 ;; the next launch, not this one.)
 (harness/mount! harness-ctx (splash/splash-plugin))
+;; The repository's own slash commands. Mounted like every other layer, so
+;; `--dump-config` and `/plugins` name it and the discovery has one home.
+(harness/mount! harness-ctx
+                (skills/plugin
+                 {:root (repo-root (js/process.cwd))
+                  :max-bytes 65536
+                  :io {:join (fn [& parts] (apply path/join parts))
+                       :list-dir (fn [d]
+                                   (try (vec (fs/readdirSync d))
+                                        (catch :default _ nil)))
+                       :read-file slurp-file}}))
 
 (def ^:private ctx-config (harness/ctx-get harness-ctx :ctx/config))
 (def ^:private ctx-theme  (harness/ctx-get harness-ctx :ctx/theme))
 (def ^:private ctx-chat   (harness/ctx-get harness-ctx :ctx/chat))
 (def ^:private ctx-splash (harness/ctx-get harness-ctx :ctx/splash))
+(def ^:private ctx-skills (harness/ctx-get harness-ctx :ctx/skills))
 
 (def app-version
   "The shipped version, read from the resource that carries it. `unknown` is
@@ -1041,8 +1054,8 @@
            (println (str "待機列を空にしました (" (count q) " 件破棄)")))
        (empty? q) (println "待機中の行はありません")
        :else
-       (doseq [[i t] (map-indexed vector q)]
-         (println (str "  " (inc i) ". " (subs t 0 (min 120 (count t))))))))
+       (doseq [[i {:keys [echo]}] (map-indexed vector q)]
+         (println (str "  " (inc i) ". " (subs echo 0 (min 120 (count echo))))))))
    :handled))
 
 (register-slash!
@@ -1215,6 +1228,30 @@
          (do (println "空のまま終了しました") :handled)
          (do (reset! (:last-input ctx-chat) text) :resend))))))
 
+(declare submit-message!)
+
+(def ^:private project-commands
+  "The repository's own slash commands, admitted against the built-ins.
+
+  Registered LAST, so `taken` is the full set of built-in names and a project
+  command can never shadow one. What was refused is kept, because a command
+  that is not there for a reason and a command that was never found look the
+  same on a screen that only lists what worked."
+  (delay
+    (let [taken (set ((:commands ctx-chat)))
+          {:keys [admitted refused]} ((:admit ctx-skills) taken)]
+      (doseq [e admitted]
+        (register-slash!
+         (:command e) "[…]"
+         (let [d (str (:description e))]
+           (str (if (str/blank? d) "project skill" (subs d 0 (min 90 (count d))))
+                (when (:problem e) (str " ⚠ " (:problem e)))))
+         (fn [args _]
+           (submit-message! ((:prompt-for ctx-skills) e args)
+                            (str/trim (str (:command e) " " (str/join " " args))))
+           :handled)))
+      {:admitted admitted :refused refused})))
+
 (register-slash!
  "/hermes" "" "hermes の import 元 (~/.hermes) を見る"
  (fn [_ _]
@@ -1280,13 +1317,31 @@
               :session (session-origin)
               :groups (splash/summarise cmds 5)
               :named (splash/summarise aliases 3)
-              :slash ((:commands ctx-chat))
+              ;; The repository's own commands, named rather than counted: a
+              ;; number tells an operator there are some, a name tells them
+              ;; which one to type.
+              :project (let [admitted (:admitted @project-commands)]
+                         (cond-> (vec (for [e (take 3 admitted)]
+                                        [(:command e)
+                                         (or (not-empty (:description e))
+                                             "project skill")]))
+                           (> (count admitted) 3)
+                           (conj [nil (str "+" (- (count admitted) 3) " more: "
+                                           (str/join " " (map :command
+                                                              (drop 3 admitted))))])))
+              ;; The built-ins only. The repository's own get their own
+              ;; section below: thirty-two names inside `REPL Commands` buried
+              ;; the ten an operator uses every session.
+              :slash (let [project (set (map :command (:admitted @project-commands)))]
+                       (remove project ((:commands ctx-chat))))
               ;; joined by the skin's accent glyph inside the splash, so
               ;; the separator is one the theme owns
-              :counts [(str (count cmds) " commands")
-                       (str (count aliases) " named")
-                       (str (count slash) " slash")
-                       "/help for commands"]}))
+              :counts (cond-> [(str (count cmds) " commands")
+                               (str (count aliases) " named")
+                               (str (count slash) " slash")]
+                        (seq (:admitted @project-commands))
+                        (conj (str (count (:admitted @project-commands)) " project"))
+                        :always (conj "/help for commands"))}))
            ;; Below the frame: a glyph whose width a terminal disagrees about
            ;; cannot push a border off down here, and these two lines are the
            ;; ones an operator acts on.
@@ -1298,6 +1353,12 @@
                         " — 常駐: launchctl kickstart -k gui/$(id -u)/dev.cloud-itonami.app")))
            (when-not (session-token)
              (warn "! agent session がありません — itonami auth login"))
+           ;; A project command that was NOT registered has to say so here. A
+           ;; screen that lists only what worked makes "this repository has no
+           ;; skills" and "I could not use its skills" the same screen.
+           (doseq [e (:refused @project-commands)]
+             (warn (str "! project command を登録しませんでした: " (:command e)
+                        " — " (:reason e))))
            (println)
            (println (splash/paint colour splash/accent-code
                                   "Itonami へようこそ。メッセージを入力するか /help を打ってください。"))
@@ -1594,9 +1655,15 @@
       ;; that just said no; the lines are left where they can be read.
       (refused! (or (:error o) (str "run は " (name (:status o)) " で終わりました"))))))
 
-(defn- start-run! [t]
-  (reset! (:last-input ctx-chat) t)
-  (echo-submitted! t)
+(defn- start-run!
+  "Start one turn. `echo` is what goes in the transcript when that is not the
+  text being sent: a project command expands to its whole skill body, and
+  echoing ten kilobytes of instructions where the operator typed one line
+  buries the conversation in the thing that produced it."
+  ([t] (start-run! t t))
+  ([t echo]
+   (reset! (:last-input ctx-chat) t)
+   (echo-submitted! echo)
   (swap! repl assoc :running {:started (js/Date.now) :phase nil :tokens 0
                               :tick 0 :run-id nil :stopped false})
   (run-tick!)
@@ -1612,31 +1679,33 @@
                  (refused! (str "run を開始できません: HTTP " status
                                 (when-let [m (get-in body [:error :message])]
                                   (str " — " m)))))))
-      (.catch (fn [e]
-                ;; Nothing answered. That is not a refusal and not the end of
-                ;; the session either -- the resident may come back.
-                (swap! repl assoc :running nil)
-                (say! (str (text/paint (colour?) "38;5;203"
-                                       (str "✗ server に到達できません: " (base-url)))
-                           "\n"))
-                (redraw!)))))
+       (.catch (fn [e]
+                 ;; Nothing answered. That is not a refusal and not the end of
+                 ;; the session either -- the resident may come back.
+                 (swap! repl assoc :running nil)
+                 (say! (str (text/paint (colour?) "38;5;203"
+                                        (str "✗ server に到達できません: " (base-url)))
+                            "\n"))
+                 (redraw!))))))
 
 (defn- drain-queue! []
-  (when-let [t (first (:queue @repl))]
+  (when-let [{:keys [text echo]} (first (:queue @repl))]
     (swap! repl update :queue subvec 1)
-    (start-run! t)))
+    (start-run! text echo)))
 
-(defn- submit-message! [t]
-  (if (:running @repl)
+(defn- submit-message!
+  ([t] (submit-message! t t))
+  ([t echo]
+   (if (:running @repl)
     ;; Queued rather than sent: two turns at once against one profile is two
     ;; conversations, and the server would interleave them.
-    (do (swap! repl update :queue conj t)
-        (say! (str (text/paint (colour?) splash/dim-code
-                               (str "⏸ 待機列に追加 (" (count (:queue @repl))
-                                    " 件): " (subs t 0 (min 100 (count t)))))
-                   "\n"))
-        (redraw!))
-    (start-run! t)))
+     (do (swap! repl update :queue conj {:text t :echo echo})
+         (say! (str (text/paint (colour?) splash/dim-code
+                                (str "⏸ 待機列に追加 (" (count (:queue @repl))
+                                     " 件): " (subs echo 0 (min 100 (count echo)))))
+                    "\n"))
+         (redraw!))
+     (start-run! t echo))))
 
 (defn- on-submit!
   "One line the operator sent. A slash command runs NOW, whatever the turn is
@@ -1878,6 +1947,13 @@
     (let [named (map #(str/join " " (:command %)) (commands/alias-commands))
           generated (map commands/command-name (commands/matching [head]))]
       (vec (take 8 (concat (filter #(str/includes? % head) named) generated))))))
+
+;; After every built-in is registered, so the collision check sees all of them.
+(def ^:private project-command-report
+  ;; Forced HERE and not at first use: the delay registers, and registering has
+  ;; to happen after every built-in exists (that is what the collision check
+  ;; reads) but before -main dispatches anything.
+  @project-commands)
 
 (defn -main [& argv]
   (let [argv (vec argv)
