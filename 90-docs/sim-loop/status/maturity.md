@@ -1053,4 +1053,33 @@ detached HEAD 65d3e98 (#290) / porcelain clean (dirty 0) 実測、本 bot は to
 wt-msloop / bot/maturity-sim-loop で完結。identity.clj malformation / kotoba-net 未宣言
 (falsify-63..84) は対象外・既知赤継続。7-軸表 16 行目孤立行 placeholder / falsify-46
 mid-sentence cut は残存のまま (append-only 規約で本 bot は編集しない)。
-(evidence/2026-09-08-falsify-85.md)
+(evidence/2026-09-08-falsify-85.md)## NEXT (falsify-86 追記、append-only)
+
+**falsify-86 (2026-09-08、運用/滞留 軸) で falsify-85 の次の 1 アクションを執行し「0 ベースは
+falsify-32→33 と同型で 1 反復以内に再蓄積する一時状態」を REFUTED — 0 ベースは少なくとも 1
+反復跨ぎで維持 (unused 0 継続・keys 786 不動・avail 163Gi 不変)**: origin/main は本反復で
+d226614 のまま前進 0 (git fetch 実測)`、実装軸に新規シグナルが無いため運用軸の falsify-85
+次の 1 アクション (「同 3 ベクトル + local annex keys + avail を再実測し 0 ベース維持 or
+再蓄積再開を判別」) を測定対象に選択。cloud-itonami-dns-resolver で実測 — 3 ベクトル
+(`--used-refspec +refs/heads/main` / refspec なし全 refs / `--used-refspec
++refs/heads/resident/dns-resolver`) いずれも**正規 unused 0 keys** (partial partial 14 chunk
+186.98 MiB のみ、falsify-35 以降不変)、ok / EXIT_RC=0 各実測。local annex keys は **786 →
+786 (増加 0)** / 11.68 GB 不変 — 滞留蓄積期 (falsify-39..49) は反復あたり +24/+25 で単調増加
+したのに対し増分ゼロ、再蓄積を示すいかなる増加も無い。増加源 itonami-app-resident.cljs は
+**PID 70643 稼働継続** (falsify-85 と同一、export_and_sync 不在)、df `/` avail **163 Gi / 9%**
+(falsify-85 と同値・飽和なし) を実測。falsify-32→33 の exemplar (dropunused 着地後 ~40 分で
++36 keys 再蓄積) とは対照的に、本反復では再蓄積の兆候が厳密にゼロ — 「0 ベース = 短時間で
+再蓄積する一時状態」は成り立たず、0 ベースは少なくとも本反復まで維持された実績として生存。
+**範囲修正 (留保)**: 0 ベースの恒久性は保証されておらず (増加源 PID 70643 稼働継続)、本
+REFUTED は「never re-accumulate」を主張しない — 次反復以降も同ベクトルを再実測し、0 ベース
+維持の複数反復持続 (維持なら「回収は恒久化傾向へ」精緻化) or 再蓄積再開 (falsify-33..53 語調へ
+復帰) を判別。リスク-5 を「0 ベースへ回帰し少なくとも 1 反復跨ぎで維持、増加源稼働継続ゆえ
+再蓄積の可能性残留」へ再アンカー。運用 軸 score は **3 のまま** (滞留の一時状態説を点時刻で
+反証 + 0 ベース維持の記録のみ、実緑測定なし — score は実緑測定でのみ上昇する規約)。附帯
+Tier 2 (kanban/human、falsify-85 と不変): resident 再起動 (94682→70643) の契機と滞留回収の
+帰属 (operator 手動 dropunused/世代削除 vs resident 挙動変化) の精査継続。附帯: 本体 checkout
+(orgs/cloud-itonami/cloud-itonami-app) は detached HEAD 65d3e98 (#290) / porcelain clean
+(dirty 0) 実測、本 bot は touch せず wt-msloop / bot/maturity-sim-loop で完結。identity.clj
+malformation / kotoba-net 未宣言 (falsify-63..84) は対象外・既知赤継続。7-軸表 16 行目孤立行
+placeholder / falsify-46 mid-sentence cut は残存のまま (append-only 規約で本 bot は編集しない)。
+(evidence/2026-09-08-falsify-86.md)
