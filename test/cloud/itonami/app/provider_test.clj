@@ -936,3 +936,13 @@
             (is (= 8192 (count raw))
                 "bounded: a refusal body is an error document, not a generation"))
           (finally (.stop server 0)))))))
+
+(deftest truncated-text-is-not-a-deliverable
+  (let [result (private-fn 'agent-result)]
+    (doseq [reason ["length" "max_tokens"]]
+      (let [error (try (result {:content "Report stops mid sentence"} reason
+                               {:completion_tokens 128} 128)
+                       nil (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        (is (= :provider/output-budget-exhausted (:type error)))
+        (is (= reason (:finish-reason error)))))
+    (is (= "Complete report" (:content (result {:content "Complete report"} "stop"))))))

@@ -615,6 +615,15 @@
                                      (:tool_calls message) finish-reason
                                      (:completion_tokens usage) max-output-tokens)}
                  usage (assoc :usage usage))]
+    ;; A partial report is not a completed deliverable, even when it contains
+    ;; valid text. Never admit it for automatic delivery as a successful turn.
+    (when (and (empty? (:tool-calls result))
+               (contains? #{"length" "max_tokens"} finish-reason))
+      (throw (ex-info "Model output ended before the answer was complete"
+                      {:type :provider/output-budget-exhausted
+                       :finish-reason finish-reason
+                       :max-output-tokens max-output-tokens
+                       :completion-tokens (:completion_tokens usage)})))
     (when (and (str/blank? (:content result))
                (empty? (:tool-calls result)))
       (throw (ex-info
