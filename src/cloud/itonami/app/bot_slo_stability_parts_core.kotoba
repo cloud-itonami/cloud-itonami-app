@@ -1,0 +1,49 @@
+;; BOT SLO's stability-part limbs — availability, completion, observability —
+;; as one .kotoba core.
+;;
+;; `bot_slo.clj` scores a partition's stability out of five limbs: availability,
+;; completion, latency, recovery, observability. The previous two commits moved
+;; the latency-ladder and the recovery-bucket; this core moves the remaining
+;; three, each of which is a pure function of one input:
+;;
+;;   availability  (overdue :i64)          -> 18.0 if none overdue, else 10.0
+;;   completion    (rate :f64, 0..100)     -> 30.0 * (rate / 100)      [0..30]
+;;   observability (coverage :f64, 0..100) ->  7.0 * (coverage / 100)  [0..7]
+;;
+;; ## Why these are judgement worth keeping in Kotoba
+;;
+;; The constants (18/10 availability, 30 completion ceiling, 7 observability
+;; ceiling) are the SLO's own scoring decisions — not host plumbing. Moving
+;; them here means the host (bot_slo.clj) supplies the measured rates and reads
+;; back the awarded points, and the scoring definition lives in the portable
+;; core where a change is a one-line diff with a parity check, not an edit to
+;; the middle of an `evaluate`.
+;;
+;; ## f64 and the native boundary
+;;
+;; These limbs are `:f64` in and `:f64` out (except availability, `:i64` in).
+;; Measured in `slo_f64_probe_test`: the compiler lowers :f64 for the
+;; `:wasm32-kotoba-v1` parity target, but the native x86_64/aarch64 backends
+;; refuse typed :f64. So this core — like its latency/recovery siblings — is
+;; wasm-crossable, deliberately not native-crossable.
+;;
+;; Parity: test/cloud/itonami/app/bot_slo_parts_kotoba_parity_test.clj
+
+(ns bot-slo-stability-parts-core
+  (:export [availability-points completion-points observability-points]))
+
+(defn availability-points [overdue :i64] :f64
+  ;; The scheduler has no continuous-process evidence today, so availability
+  ;; is a point-in-time judgement: no overdue work -> the full 18, any overdue
+  ;; -> 10 (the component is capped and the drain is visible in the score).
+  (if (= overdue 0)
+    18.0
+    10.0))
+
+(defn completion-points [rate :f64] :f64
+  ;; 30 ceiling, scaled linearly by the completion rate. 0% -> 0, 100% -> 30.
+  (* 30.0 (/ rate 100.0)))
+
+(defn observability-points [coverage :f64] :f64
+  ;; 7 ceiling, scaled linearly by the fraction of turns with full telemetry.
+  (* 7.0 (/ coverage 100.0)))
