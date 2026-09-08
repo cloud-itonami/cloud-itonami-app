@@ -30,6 +30,7 @@
             [cloud.itonami.app.commands-test]
             [cloud.itonami.app.connectors-test]
             [cloud.itonami.app.connectors-kotoba-parity-test]
+            [cloud.itonami.app.appearance-kotoba-parity-test]
             [cloud.itonami.app.desktop-test]
             [cloud.itonami.app.device-test]
             [cloud.itonami.app.decision-method-test]
@@ -269,6 +270,7 @@
     cloud.itonami.app.commands-test
     cloud.itonami.app.connectors-test
     cloud.itonami.app.connectors-kotoba-parity-test
+    cloud.itonami.app.appearance-kotoba-parity-test
     cloud.itonami.app.desktop-test
     cloud.itonami.app.device-test
     cloud.itonami.app.decision-method-test

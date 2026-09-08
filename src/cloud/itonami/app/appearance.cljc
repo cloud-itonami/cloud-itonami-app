@@ -18,7 +18,8 @@
 
   Portable on purpose: the resolution and the stylesheet are data, and the
   ClojureScript half of the test suite executes them (`test/portable_nbb.cljs`)."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [cloud.itonami.app.kotoba-oracle :as oracle]))
 
 (def modes
   "Every appearance the workspace can render. Order is the toggle order."
@@ -38,11 +39,8 @@
   (let [s (some-> value
                   (cond-> (keyword? value) name)
                   str str/trim str/lower-case)]
-    (case s
-      ("8bit" "8-bit" "eightbit" "eight-bit" "pixel" "retro") "8bit"
-      ("grok" "grob" "dark-chat" "chat-dark") "grok"
-      ("light" "default" "dads") "light"
-      nil)))
+    (when s
+      (oracle/option-value (oracle/call :appearance-core 'mode-of [s])))))
 
 (defn resolve-mode
   "The appearance the server renders for a fresh document: the configured
@@ -57,14 +55,13 @@
   [config]
   (let [v (get-in config [:residency :plane])
         s (some-> v (cond-> (keyword? v) name) str str/trim str/lower-case)]
-    (if (= "cloud" s) :cloud :local)))
+    (if (oracle/call :appearance-core 'plane-cloud? [(or s "")])
+      :cloud :local)))
 
 (defn next-mode
   "The mode a toggle moves to. Unknown input starts the cycle over."
   [mode]
-  (let [current (or (normalize mode) default-mode)
-        i (or (first (keep-indexed (fn [i m] (when (= m current) i)) modes)) 0)]
-    (nth modes (mod (inc i) (count modes)))))
+  (oracle/call :appearance-core 'next-of [(or (normalize mode) default-mode)]))
 
 ;; ── the 8-bit palette ────────────────────────────────────────────────────
 ;; Eleven of these are the cockpit floor's colours (cloud_itonami.site.home:
