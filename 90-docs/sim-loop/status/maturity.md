@@ -10,7 +10,7 @@
 | 軸 | score | 根拠 (測定) |
 |---|---|---|
 | spec/契約 | 3 | ADR 24 本 (+ ADR-2607254000 の Tier 境界)、commands.edn に 208 コマンドの解決/path-param 契約 (flags は hint で値スキーマなし — falsify-10 実測: プレースホルダ 128 すべてに `:in "path"` 宣言、欠落 0、408=208+70+130 整合)。route 再スキャン vs レジストリの機械検証テスト実在 (commands_test 16 deftest)。値スキーマ (型/必須性) の機械検証は生成 registry の flags では未整備のまま (falsify-56: 123/123 plain string、値スキーマ flag 0) だが、別名レジストリ cli-aliases.edn は `:flag`/`:required?`/`:parse`/`:default` の値スキーマを持ち cli_aliases_test の `body-specs-use-known-vocabulary` 等で機械検証済み (falsify-56 で「未整備」の全面主張を REFUTED、resolver は alias 優先 — commands.cljc:334-349))。**falsify-71 (tip 679572b)**: commands.edn 208→209 (単一 params なし GET 追加 `workspace resources`、migration 変化は :counts +1 のみ、cli-aliases.edn byte 一致)、placeholder 128=128 欠落 0 で整合不変量は migration 後も生存 (falsify-47/56 の再アンカー) |
-| 実装 | 3 | src 240 ファイル (head 679572b、falsify-62 実測)、全主要面 (bots/webhook/hermes-compat/store) 実装済み。virtual-shell は per-bot opt-in (デフォルト off) の完全実装の能力で、ライブディスパッチ (bots.clj:2511,3012) / write ゲート (bots.clj:2671) / describe / テスト 5 deftest 揃い、west-refactor 移行の必須前提 (cli.clj:670 `virtual-shell-ready?`) に利用 — falsify-57 で「未活性」の blanket 記述は REFUTED。本ホストは docker ABSENT のため実行時 available? は false (コード活性・実行層は本ホスト不可) |
+| 実装 | 3 | src 240 ファイル (head 679572b、falsify-62 実測)、全主要面 (bots/webhook/hermes-compat/store) 実装済み。virtual-shell は per-bot opt-in (デフォルト off) の完全実装の能力で、ライブディスパッチ (bots.clj:2511,3012) / write ゲート (bots.clj:2671) / describe / テスト 5 deftest 揃い、west-refactor 移行の必須前提 (cli.clj:670 `virtual-shell-ready?`) に利用 — falsify-57 で「未活性」の blanket 記述は REFUTED。本ホストは docker ABSENT のため実行時 available? は false (コード活性・実行層は本ホスト不可)。**falsify-75 (本日) で新規 build-ブレークを確定 (falsify-63..68 と独立)**: transport 移行 commit 679572b の http_client.clj:16 が kotoba.net.jvm-host を require するが、tip deps.edn に kotoba-net の git dep / :local/root / :paths が一切未宣言 (grep 実測 rc=1)。isolated worktree で updater-test 単一 ns を最小 require (-M:utonly、:test alias の test-runner main-opts 不使用) → `Could not locate kotoba/net/jvm_host` FileNotFoundException EXIT_RC=1 (identity.clj 未 touch で到達)。sibling kotoba-lang/kotoba-net/src/kotoba/net/jvm_host.clj は http-transport を実装し参照先と一致 (undeclared 依存)。修理案 Tier 2: kotoba-net を deps.edn に宣言 (git sha 或は :local/root) → updater_test 単体緑 + フル suite green (evidence/2026-09-08-falsify-75.md) |
 | テスト | 3 | test 243 ファイル (head 679572b、falsify-62 実測)。フルスイートが異なるリビジョンで完走: falsify-6 (bde2171)、falsify-7 (2bca892、約45分)、falsify-14 (clean HEAD、1 failure = 赤-4 のみ)、falsify-15 (負荷下 2292 tests / 13880 assertions / 1 failure = 赤-4 のみ)、**falsify-16 (merged main 1905580、負荷下 2292 tests / 13929 assertions / 0 failures EXIT=0)**。決定論的赤 0、flake 修理 (赤-5、PR #280) 着地済み。3 止まりの根拠: flake リトライ機構なし、OPEN 赤-4 未解決、テスト実行がディスク飽和に脆弱 (falsify-16/17)。**falsify-62 で新規決定論的赤を実測**: 現 anchor head 5e3aac9 で bundle_test ×2 FAIL / graph_test 1 ERROR (published-lock が bundle 内容変化後未再発行)、falsify-38 (cc7a17d) の 0 failures からの新規出現で「決定論的赤 0」は現在形として不成立 — 詳細は falsify-62 追記。**falsify-63 (現 tip 679572b) でスイートがコンパイル不能 (より深刻)**: 679572b java.net.http→kotoba transport migration が identity.clj の ns 形式を破損 ((:import opener 削除 + 5 裸 java ベクタ) — plain require が `Syntax error macroexpanding ns ... identity.clj:1:1` (EXIT 1) で死に、identity を transitively に pull する全テストが load 段階で停止 → 現 tip では assertion を 1 つも実行できない (falsify-62 の 2f+1e 計測は migration 前 5e3aac9 で到達不能)。修理 = identity.clj ns の (:import 復元 (Tier 2 kanban/human) |
 | 反証 | 3 | falsify-1〜26 を evidence/ に記録。falsify-9: 赤-2「KeepAlive 欠如で silent-dead」説を反証 (主因は ops-classpath.sh が upstream の authority.scope 追加に未追従で nbb ロード即死)。falsify-10: spec 軸主張を「解決/path-param 契約 (値スキーマなし)」に範囲修正。falsify-11: 赤-2 案 A「classpath 修正で復旧」説を反証試行 — 決定論的依存連鎖を段階実測、案 A の 3 src 追加が必須十分と確認し expiry-alert.cljs rc=0 まで完全復旧を実測 → 精緻化付きで SURVIVED。検証の终点は rc=0、plist 再 bootstrap が必須条件。falsify-12: テスト軸「赤-5 flake は時間切れ型のみ」説 → survived、3 bound 非同期設計を競合窓として同定。falsify-14 (2026-09-05): リスク-2 dirty 前提を REFUTED (本体 main clean 実測)。falsify-16 (2026-09-05): 「着地後の負荷下完走で flake サイトが赤になる」説 → survived (merged main 1905580 で 0 failures 実測、OPEN 赤-5 CLOSED)。falsify-17 (2026-09-05): 「falsify-16 の cache 整理でディスク満杯は解消 (一回性)」説を REFUTED — 同日中に /System/Volumes/Data が 100% / avail 1.9Gi に再飽和を実測、ディスク飽和は再発性の構造リスクと確定 (evidence/2026-09-05-falsify-17.md)。falsify-18 (2026-09-06): falsify-17 の「増加源は du 到達範囲外の可能性」説を反証 — du 実測で支配項を m365-archive/onedrive 133G に帰属確定 (survived→帰属確定)、expiry-alert not running / runs=0 を再実測 (evidence/2026-09-06-falsify-18.md) 。falsify-23 (2026-09-06): 「滞留世代は manifest-rev 参照解放で回収可能」説を REFUTED — manifest-rev=51d4010c (west update 管理) は resident/dns-resolver の祖先で解放しても annex 参照は残る、真の参照元は resident branch の ingest 履歴 (evidence/2026-09-06-falsify-23.md)。falsify-25 (2026-09-06): 滞留の参照元を resident 現在ツリー (data/ledger/) へ帰属修正 (unused ⊆ resident 現在ツリー 100%、detached HEAD 説反証)。falsify-26 (2026-09-06): 増加後も帰属が生存することを再確認 (SURVIVED)。falsify-28 (2026-09-06): 増加継続下 (unused 3372 / 43.27 GiB) でも帰属生存を再確認、滞留全件が resident 現在ツリー参照 (∩ 100%)。falsify-29 (2026-09-06): 増加継続下 (unused 3385 / 43.44 GiB、falsify-28 比 +13 keys / +0.17 GiB) でも帰属生存を再確認、滞留全件が resident 現在ツリー参照 (∩ 100%、unused−resident=0)。falsify-30 (2026-09-06): 増加継続下 (unused 3398 / 43.61 GiB、+13 keys / +0.17 GiB) でも帰属生存を再確認 (∩ 100%、unused−resident=0)。併せて「avail 反発は増加源の停止/減速を反映」説を REFUTED — 増加源 (export_and_sync.cljs PID 82336) が稼働中のまま avail が 1.5Gi→6.6〜7.8Gi へ回復したことを直接観測 (evidence/2026-09-06-falsify-30.md)。falsify-31 (2026-09-06): 増加継続下でも帰属生存を再確認 (unused 3427 / 43.99 GiB、∩ 100%、unused−resident=0)。併せて avail が 50 Gi / 95% へ大回復し増加源 (PID 82336) が ps で自然停止したことを直接観測 (「停止→回復」は充分条件でなく単一帰属は未特定 — falsify-30 の反証が有効) |
 | 反証候補falsify30PLACEHOLDER
@@ -816,3 +816,42 @@ report で案 A 着地ランブック (network-awai/cloud-itonami 側 ops-classp
 対象は本体外のため Tier 1 不着地。7-軸表 16 行目孤立行 placeholder / falsify-46 mid-
 sentence cut は残存 (operator 復旧待ち、append-only で本 bot は編集しない)。identity.clj
 malformation (falsify-63..68) は対象外 (evidence/2026-09-08-falsify-73.md)
+## NEXT (falsify-75 追記、append-only)
+
+**falsify-75 (2026-09-08、実装 軸) で「falsify-74 境界 (a): identity.clj 修理後は
+updater_test 単体動行で verify-manifest の緑を再確認できる」を REFUTED —
+第二の独立 build-ブレーク (kotoba-net 未宣言依存) を同一 tip に確定**: HEAD =
+origin/main = **679572b** (rev-parse 実測、falsify-63..74 と同一 SHA)、本体 porcelain
+clean (dirty 0)、src 240 / test 243 不変。detached worktree /private/tmp/mt-msloop75
+(head 679572b、本体未 touch) で、:test alias の :main-opts (test-runner、全 suite 強制
+require) を使わず `clojure -Sdeps '{:aliases {:utonly {:extra-paths ["test"]}}}' -M:utonly
+-e "(require 'cloud.itonami.app.updater-test)(run-tests ...)"` で updater-test **単一 ns**
+のみを require → **`Could not locate kotoba/net/jvm_host__init.class ... on classpath`
+FileNotFoundException (EXIT_RC=1)**。依存連鎖を source で確定:
+`updater.clj:13 → [cloud.itonami.app.http-client :as http]` →
+`http_client.clj:16 (:require [kotoba.net.jvm-host :as jvm-host])` →
+`http_client.clj:22 (jvm-host/http-transport {...})`。`git show 679572b:deps.edn` 全文 grep
+で `kotoba-net` ヒット **0** (:deps git dep なし、:paths ["src" "resources"] に含まず、
+:dev 含む全 :local/root ~30 件にもなし)。migration commit 679572b は 36 ファイル
+(updater.clj/identity.clj/http_client.clj 等) を書き換えつつ **deps.edn を変更しておらず**
+(git show --name-only に deps.edn なし)、`git grep jvm-host 679572b -- src test deps.edn`
+は http_client.clj の 3 箇所のみ — つまり transport 移行が依存先 kotoba.net.jvm-host を
+参照しつつ提供元 kotoba-net の宣言を欠く。sibling `../../kotoba-lang/kotoba-net/src/kotoba/
+net/jvm_host.clj` (branch jvm-host-transport) は `(defn http-transport ...)` を実装し
+呼び出し形と一致 (undeclared 依存)。→ falsify-63..68 の「identity.clj 唯一 build-ブレーク」
+範囲を拡張する**新規・独立の発見** (実装 軸: 宣言整合性)。実装 軸 score は **3 のまま**
+(新規 build-ブレーク継続を確定したのみ、green 化測定なし)。修理案 Tier 2
+(kanban/human、本体 checkout 編集を要し Tier 1 不着地): deps.edn に
+`io.github.kotoba-lang/kotoba-net` を git sha 或は `:local/root` で (transport 移行同
+commit 或は直後の修正 commit として) 宣言 → detached worktree で updater_test (7 deftest)
+単体動行緑 + 可能ならフル suite green を終点判定に。テスト 軸へ波及: falsify-62 の
+"決定論的赤 0 は current で不成立" + falsify-63 の "suite コンパイル不能" に本発見
+(build-ブレークは identity.clj だけではない) を追記。次の 1 アクション: Tier 2 report
+で「transport 移行 commit の未完了依存 (kotoba-net 未宣言)」を提出し、kotoba-net 宣言 +
+updater_test 単体緑確認を終点判定に。附帯: 本体 checkout は反復中 porcelain clean
+(dirty 0)、本 bot は touch せず wt-msloop のみで完結、実行 worktree mt-msloop75 は
+remove --force / prune 済みで worktree list に残存せず。7-軸表 16 行目孤立行 placeholder
+/ falsify-46 mid-sentence cut は残存のまま (operator 復旧待ち、append-only で本 bot は
+編集しない)。identity.clj malformation (falsify-63..68) は既知赤として継続、本発見は
+それとは独立の新規 build-ブレーク (evidence/2026-09-08-falsify-75.md)
+
