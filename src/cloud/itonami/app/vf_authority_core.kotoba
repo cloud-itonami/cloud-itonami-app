@@ -1,0 +1,50 @@
+;; The VF economic authority's DECISION CORE — is this (plane, action) pair
+;; one the ADR defines?
+;;
+;; `cloud.itonami.app.vf-authority` (ADR-2609111230 slice 2) issues biscuit
+;; scopes `kotoba://vf/<org>/<plane>/<action>` for workforce bots. Mostly it
+;; is mechanism the native word-typed slice deliberately refuses: turning a
+;; capability keyword into a scope string (`keyword` / `name` conversions),
+;; assembling the wire form (`str` concatenation), reading the `planes`
+;; table (a map of keyword -> action set), and the `authority.scope`
+;; machinery (`parse` / `meet` / `covered?` in `attenuate-slices` and
+;; `authorized?`). All of that stays host.
+;;
+;; What moves here is the one thing in the file that is a DECISION about
+;; plain strings: whether a (plane, action) pair exists in the ADR's
+;; admission table. `vf-scope`'s refusal is exactly this predicate — the
+;; ADR (2609111230 decision 2) names `<plane> ∈ #{event commitment
+;; agreement resource}` and the per-plane action sets this core encodes:
+;;
+;;   event       read, append
+;;   commitment  read, commit
+;;   agreement   read
+;;   resource    read
+;;
+;; The host prepares the two names (`(name p)` / `(name a)` — the keyword
+;; conversion is a host concern) and, on `true`, assembles the
+;; `kotoba://vf/<org>/<plane>/<action>` wire string. The refusal is
+;; faithful: a pair the ADR does not define answers false here, so
+;; `vf-scope` returns nil — the cljc's `(when-let [acts (planes p)]
+;; (when (contains? acts a) ...))` IS this table. A guessed scope would be
+;; invented authority; the core invents nothing.
+;;
+;; Parity: test/cloud/itonami/app/vf_authority_kotoba_parity_test.clj
+(ns cloud.itonami.app.vf-authority-core
+  (:export [scope-admitted?]))
+
+;; Two `:string` names in, `:bool` out. `or` / `and` / `string=?` are the
+;; admitted scalar vocabulary, and the four planes are the ADR's list —
+;; each limb is one plane's action set, written out as a total function so
+;; the table needs no map.
+(defn scope-admitted? [plane :string action :string] :bool
+  (or (and (string=? plane "event")
+           (or (string=? action "read")
+               (string=? action "append")))
+      (and (string=? plane "commitment")
+           (or (string=? action "read")
+               (string=? action "commit")))
+      (and (string=? plane "agreement")
+           (string=? action "read"))
+      (and (string=? plane "resource")
+           (string=? action "read"))))

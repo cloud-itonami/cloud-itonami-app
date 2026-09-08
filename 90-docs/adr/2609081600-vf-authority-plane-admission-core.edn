@@ -1,0 +1,82 @@
+[{:db/id -1
+  :adr/id "adr-2609081600-vf-authority-plane-admission-core"
+  :adr/title "The VF scope admission table moves to a .kotoba core; the host keeps keyword conversion, string assembly and every authority.scope call"
+  :adr/status "accepted"
+  :adr/date "2026-09-08"
+  :adr/related ["adr-2609081000-provider-retry-output-budget-core-and-toposort-map"
+                "adr-2609081200-human-work-marketplace-title-escape-core"
+                "adr-2609081400-vf-calibrate-bucket-decision-core"
+                "adr-2609111230"]
+  :adr/body "## What moved
+
+`cloud.itonami.app.vf-authority` (ADR-2609111230 slice 2) issues the biscuit
+scopes `kotoba://vf/<org>/<plane>/<action>` that give workforce bots an
+economic surface over the shared VF event journal. Most of the file is
+mechanism the native word-typed slice deliberately refuses — keyword
+conversion (`keyword` / `name`), wire-string assembly (`str`), the
+capability→scope map, and every `authority.scope` call (`parse` / `meet` /
+`covered?` in `attenuate-slices` and `authorized?`). All of that stays host.
+
+What moved is the one thing in the file that is a DECISION about plain
+strings: whether a (plane, action) pair exists in the ADR's admission table.
+
+    event       read, append
+    commitment  read, commit
+    agreement   read
+    resource    read
+
+The cljc's `vf-scope` refused through a `planes` map
+(`(when-let [acts (planes p)] (when (contains? acts a) ...))`), and every
+other scope constructor routes through `vf-scope`. The table IS that
+refusal, so the core expresses it on the native slice as a total function
+of the two names, and the host prepares `(name p)` / `(name a)` and
+assembles the wire string only on admission.
+
+Landed this tick:
+
+- `src/cloud/itonami/app/vf_authority_core.kotoba` — `scope-admitted?`,
+  `:string :string` in, `:bool` out; the ADR's four planes written out as
+  `or` / `and` / `string=?` limbs, no map
+- `kotoba_oracle.cljc` `cores` gains `:vf-authority-core`
+- `vf_authority.clj` `vf-scope` routes on the core verdict through
+  `kotoba-oracle`; the `planes` map is gone (the core owns the table) and
+  the keyword/name/str/scope machinery stays host
+- parity test `test/cloud/itonami/app/vf_authority_kotoba_parity_test.clj`
+  + KIR regeneration + JVM-free gen_kir_amu identity
+
+## The split is byte-faithful, not just behavior-preserving
+
+The refusal is a total function of the two names, and the cljc's
+`when-let`/`when` over the `planes` map IS this table. The core invents
+nothing: a pair the ADR does not define answers false, so `vf-scope`
+returns nil. The existing `vf_authority_test.clj` (wire shape, refusal,
+capability mapping, grant order, attenuation, prefix-confusion class) now
+runs through the oracle path and pins it.
+
+Nil discipline (ADR-2609081000): a nil or foreign plane/action produces a
+name the table does not admit, so the answer is false — never a throw and
+never a guessed scope. A guessed scope is invented authority; the core
+invents nothing.
+
+## Measured bounds on the pinned verifier (amu bin, jvm-free)
+
+- `amu check src/cloud/itonami/app/vf_authority_core.kotoba --jvm-free` →
+  `:ok true, :effects #{}` (the authoritative gate; measured on the landed
+  core)
+- `or` / `and` / `string=?` with `:string` literals and a `:bool` result →
+  admitted (the same shape ADR-2609081000 / ADR-2609081200 measured)
+- `keyword` / `name` / `str` concatenation, maps, sets and the
+  `authority.scope` calls do NOT cross the slice — that is why the host
+  keeps them
+
+## Status
+
+Accepted. The 14-layer topo map (ADR-2609081000) lists `vf-authority` as
+a layer-0 wave-0 candidate; measured 2026-09-08 by
+`scripts/kotoba_slice_measure.py` it was slice-ready (no
+:import/throw/regex/java/IO). The candidate was chosen from the measure by
+fewest lines among the three remaining wave-0 slice-ready namespaces
+(`appearance` 331, `connectors` 289, `vf_authority` 117) after
+`human_work_marketplace` and `vf_calibrate` were already on main. The
+shared west checkout is pinned behind origin/main, so this tick measured
+against a fresh origin/main worktree."}]

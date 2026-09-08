@@ -1,0 +1,56 @@
+{:format :kotoba.kir/v4,
+ :signature nil,
+ :functions
+ [{:name scope-admitted?,
+   :params [plane action],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_or_4
+     (let
+      [__kotoba_and_2 (string=? plane "event")]
+      (if
+       __kotoba_and_2
+       (let
+        [__kotoba_or_2 (string=? action "read")]
+        (if __kotoba_or_2 __kotoba_or_2 (string=? action "append")))
+       __kotoba_and_2))]
+    (if
+     __kotoba_or_4
+     __kotoba_or_4
+     (let
+      [__kotoba_or_3
+       (let
+        [__kotoba_and_2 (string=? plane "commitment")]
+        (if
+         __kotoba_and_2
+         (let
+          [__kotoba_or_2 (string=? action "read")]
+          (if __kotoba_or_2 __kotoba_or_2 (string=? action "commit")))
+         __kotoba_and_2))]
+      (if
+       __kotoba_or_3
+       __kotoba_or_3
+       (let
+        [__kotoba_or_2
+         (let
+          [__kotoba_and_2 (string=? plane "agreement")]
+          (if __kotoba_and_2 (string=? action "read") __kotoba_and_2))]
+        (if
+         __kotoba_or_2
+         __kotoba_or_2
+         (let
+          [__kotoba_and_2 (string=? plane "resource")]
+          (if
+           __kotoba_and_2
+           (string=? action "read")
+           __kotoba_and_2)))))))),
+   :param-types [:string :string]}],
+ :oracle-value nil,
+ :schema-identities nil,
+ :exports [scope-admitted?],
+ :schemas nil,
+ :effects #{},
+ :blocks [],
+ :entry nil}

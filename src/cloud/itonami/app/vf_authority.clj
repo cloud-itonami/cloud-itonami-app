@@ -25,25 +25,31 @@
   constructors): read first for every workforce bot, append only for bots
   with a measured production surface, commitment/commit for
   codinator-class coordinators only, and a coordinator hands a worker a
-  slice by `attenuate` — never by re-issuing."
-  (:require [authority.scope :as scope]))
+  slice by `attenuate` — never by re-issuing.
 
-(def ^:private planes
-  {:event #{:read :append}
-   :commitment #{:read :commit}
-   :agreement #{:read}
-   :resource #{:read}})
+  The ADMISSION decision — whether a (plane, action) pair exists at all —
+  is `vf_authority_core.kotoba`, run through the Kotoba oracle. The host
+  owns the keyword conversion (`keyword` / `name`), the wire-string
+  assembly (`str`), the capability→scope map, and every `authority.scope`
+  call (`parse` / `meet` / `covered?`); the core answers the one question
+  that is a judgement, and its refusal is `vf-scope`'s nil."
+  (:require [authority.scope :as scope]
+            [cloud.itonami.app.kotoba-oracle :as oracle]))
 
 (defn vf-scope
   "The wire form of one VF authority: `kotoba://vf/<org>/<plane>/<action>`.
 
   Refuses a plane/action pair the ADR does not define rather than minting a
-  scope nothing downstream knows how to read."
+  scope nothing downstream knows how to read. The refusal is
+  `vf_authority_core.kotoba/scope-admitted?` — the ADR's admission table as
+  a decision over the two names; the host prepares the names and, on
+  admission, assembles the wire string. The core invents nothing, so a pair
+  outside the table answers nil here exactly as the old `planes` map did."
   [org plane action]
   (let [p (keyword plane), a (keyword action)]
-    (when-let [acts (planes p)]
-      (when (contains? acts a)
-        (str "kotoba://vf/" (name org) "/" (name p) "/" (name a))))))
+    (when (oracle/call :vf-authority-core 'scope-admitted?
+                       [(name p) (name a)])
+      (str "kotoba://vf/" (name org) "/" (name p) "/" (name a)))))
 
 (defn vf-capabilities
   "The loop-yakuwari capability keywords that map to VF scopes, with the
