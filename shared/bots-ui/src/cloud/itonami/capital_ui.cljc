@@ -87,7 +87,7 @@
       [:a {:href (str "https://basescan.org/address/" (:vault capital)) :target "_blank" :rel "noopener noreferrer"} (l "BaseScanで取引を見る ↗" "View transactions on BaseScan ↗")]]]
     (when (= "no-vault" (:status capital)) [:div.bw-capital-empty [:span.bw-capital-badge (l "募集前" "Not open yet")]
      [:h3 (l "このBotは、まだ資金を募集していません" "This Bot is not accepting funding yet")]
-     [:p (l "組織が条件を登録し、貸付ラウンドを作成すると預けられます。" "You can lend once the organization registers its terms and opens a round.")]
+     [:p (l "運営側が募集を公開すると、ここから金額を指定して預けられます。募集の作成は出資者の操作ではありません。" "The operator publishes the round. You then choose an amount and deposit here; investors do not create rounds.")]
      [:ol [:li (l "組織が返済・分配条件を公開" "The organization publishes terms")]
       [:li (l "あなたが金額と条件を確認して預ける" "You review terms and lend")]
       [:li (l "満期後の精算が済んだら受け取る" "You claim after maturity and settlement")]]]))
@@ -117,7 +117,7 @@
       [:li (l "確定を待つ。画面に残高が反映されます" "Wait for confirmation and updated balances")]]
      [:div.bw-capital-actions (dds/button (l "戻って修正" "Edit") {:type :outline :disabled capital-busy? :attrs {:on-click (:capital-cancel handlers)}})
       (dds/button (l "ウォレットで確認" "Continue in wallet") {:disabled capital-busy? :attrs {:on-click (:capital-execute handlers)}})]])
-   [:details.bw-capital-admin [:summary (l "運営者向け：募集・資金管理" "For operators: fundraising & management")]
+   (when (:funding-operator? state) [:details.bw-capital-admin [:summary (l "運営者向け：募集・資金管理" "For operators: fundraising & management")]
     [:p (l "資金調達・Botの支出・運用の管理はこちら。操作にはウォレットの権限が必要です。" "Manage fundraising, Bot spending and allocation. Operations require the appropriate wallet authority.")]
     (when yield? [:div.bw-capital-notice
      [:strong (l "運用益型：元本の事業利用なし" "Yield funded: no principal spending")]
@@ -141,5 +141,5 @@
      (field :recipients "許可する送金先（アドレスを空白で区切る）" "Approved recipients (space-separated addresses)")
      [:label [:input {:type "checkbox" :checked (boolean (:policy f)) :on-change #((:capital-field handlers) :policy (.. % -target -checked))}] (l "上記の精算方式を、このラウンドの条件として確認しました" "I accept the stated settlement policy for this round")]
      (dds/button (l "ラウンドの内容を確認" "Review new round") {:disabled capital-busy? :attrs {:on-click #((:capital-prepare handlers) "deploy")}})]
-   ]
+   ])
    (dds/button (l "最新の状況に更新" "Refresh status") {:type :text :attrs {:on-click (:capital-refresh handlers)}})]))
