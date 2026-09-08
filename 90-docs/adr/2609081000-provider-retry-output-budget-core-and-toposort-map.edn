@@ -1,0 +1,106 @@
+[{:db/id -1
+  :adr/id "adr-2609081000-provider-retry-output-budget-core-and-toposort-map"
+  :adr/title "Output-budget-exhausted decision moves to a .kotoba core; the repo-wide clj→kotoba order is a requirement DAG, not a target list"
+  :adr/status "accepted"
+  :adr/date "2026-09-08"
+  :adr/body "## The two questions
+
+1. Which of the remaining `.clj`/`.cljc`/`.cljs` files can move to `.kotoba` next?
+2. In what order?
+
+Question 1 is a target question (the Q9 / native-slice suitability). Question 2
+is an ORDER question (the require DAG). Measuring them together turned out to be
+the useful thing: the topo-sort is complete and acyclic, and it resolves
+question 2 exactly, but question 1 is answered by the *language slice*, not by
+the graph, and nearly every graph-ready node fails the slice check.
+
+## The topo-sort (question 2, determined)
+
+Scanned `cloud-itonami-app` on 2026-09-08 against `origin/main` (e2e3bd8):
+
+- 486 namespace nodes (`.clj`/`.cljc`/`.cljs`), 28 already `.kotoba` decision
+  cores
+- 1,444 internal require edges
+- **14 dependency layers, 0 cycles** — a complete order exists: migrating a
+  layer never depends on an un-migrated later layer
+
+Layer 0 (the sources everything else needs) is the 69 implementation namespaces
+that depend only on already-`.kotoba` cores or external libraries. It is large
+because the app's highest-leverage decisions (`store`, `policy`, `fleet`,
+`health`, `identity`, `approval`, `work-transitions`, `bot`, `routine`) were
+pulled into cores first; what remains at layer 0 is a wide shelf of host and
+mechanism code.
+
+## Question 1 is a slice question, and the graph does not answer it
+
+The `:kotoba-native` slice (ADR-2608650000 / ADR-2607279200) admits only scalar
+`:string` / `:i64` / `:bool` (+ sealed all-scalar records and `[:option …]`).
+Measured 2026-09-08, of the 69 layer-0 implementation namespaces:
+
+- `passkey_options` — map construction + `SecureRandom`/crypto; not a decision
+- `work_receipt_signature` — JVM `javax.crypto` HMAC; mechanism, stays native
+- `loopback_origin` — `java.net.URI`; mechanism
+- `mail_domain_records` — `str/lower-case` + `(?i)` regex + `string-contains?`;
+  no case folding in the language; `.kotoba` cannot express it (see below)
+- `vf_authority` — depends on external `authority.scope`
+- `mail_authentication` — regex + map build
+- `config_policy` / `contracts` / `fleet` / `did` / `connectors` — maps,
+  closures, IO, or collections the slice deliberately refuses
+
+So the order is solvable and the target is nearly empty. The useful next paces
+are the few layer-0 judgements that ARE slice-shaped — one of which,
+`output-budget-exhausted?` in `provider_retry`, landed in this ADR.
+
+## The one that could move: output-budget-exhausted?
+
+`provider_retry/output-budget-exhausted?` — \"did the model stop because it ran
+out of room, rather than finish badly?\" — reduces to three scalar signals and
+was already a pure function with no IO. Nothing in its body needs a map once the
+error type/collection work stays cljc. So it moved:
+
+- `src/cloud/itonami/app/provider_retry_core.kotoba` — `output-budget-exhausted?`
+  over `[:option :string] finish-reason`, two `[:option :i64]` token counts, and
+  `:bool json-ended-early?`
+- `kotoba_oracle.cljc` `cores` map gains `:provider-retry-core`
+- `provider_retry.cljc` `output-budget-exhausted?` now calls the core through
+  `kotoba-oracle`; `transient-response?` and the IO/callers stay cljc
+
+### The nil discipline, kept faithful
+
+The cljc original must answer `false` on absent telemetry, never throw and never
+guess. Its `number?` / `true?` guards are reproduced in the core with
+`option-some?` / `option-value` (`[:option :i64]`): a missing count is `none`,
+so the `>=` limb cannot fire on a `nil`. This is the parity contract the new
+test pins over every combination of present/absent.
+
+### Findings about the language slice (measured 2026-09-08 against pinned amu)
+
+- `string-contains?` — **now admitted** (`amu check --jvm-free` → `:ok true`,
+  `effects #{}`). `fleet_core.kotoba`'s header (2026-08-08) recorded it as
+  refused on every target; re-measured today against the advanced compiler pin,
+  it compiles. The 8-08 note is stale for this pin.
+- `string-starts-with?` / `string-ends-with?` — still no admitted lowering.
+- `[:option :i64]`, `option-some?`, `option-value`, `>=` — all admitted; this
+  is how the nil-covering count comparison is expressed.
+- `string=?`, `=` on `:string`, `and`/`or`, `true?` as bare boolean flow — the
+  existing core vocabulary, all confirmed.
+
+So `mail_domain_records` (prefix matching) is blocked on `string-starts-with?`
+or case folding, not on `string-contains?`; the fleet_core note that conflated
+the two is the stale part.
+
+## The order this lands in
+
+1. `provider_retry_core.kotoba` + oracle registration + cljc delegation +
+   parity test — **done in this ADR**.
+2. Next layer-0 slice-shaped judgements, when they exist; measured on the day,
+   not assumed from this map.
+3. `mail_domain_records` becomes landable when `string-starts-with?` or case
+   folding is admitted — a compiler-side change, tracked as such, not a
+   re-attempt of the file.
+
+## Status
+
+Provider-retry output-budget core landed on main. The 14-layer topo map is the
+reference for question 2; question 1 remains a per-day slice measurement.
+"}]

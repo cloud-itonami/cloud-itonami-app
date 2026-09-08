@@ -91,7 +91,8 @@
    :identity "cloud/itonami/app/identity_core.kotoba"
    :store-core "cloud/itonami/app/store_core.kotoba"
    :workforce-cadence "cloud/itonami/app/workforce_cadence_core.kotoba"
-   :model-routing "cloud/itonami/app/model_routing_core.kotoba"})
+   :model-routing "cloud/itonami/app/model_routing_core.kotoba"
+   :provider-retry-core "cloud/itonami/app/provider_retry_core.kotoba"})
 
 (defn resource-path [id]
   (str "cloud/itonami/app/oracle/" (name id) ".kir.edn"))
@@ -204,6 +205,15 @@
   has to work out which kind a given argument is."
   [n]
   #?(:clj (long n) :cljs (js/BigInt n)))
+
+(def i64-option-type [:option :i64])
+
+(defn i64-option
+  "`[:option :i64]` guest value: host nil -> none, integer -> some."
+  [n]
+  (if (nil? n)
+    [i64-option-type false]
+    [i64-option-type true (i64 n)]))
 
 (defn i64-value
   "Guest `:i64` -> host integer.

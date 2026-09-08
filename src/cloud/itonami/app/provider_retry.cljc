@@ -39,7 +39,8 @@
   `kotoba/grok_bot_runtime_core.kotoba`: at most three attempts, backing off
   2s, 4s, 8s. Same shape here, deliberately -- a second answer to `how long
   should a bot wait for a flaky model` is a second thing to keep true."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [cloud.itonami.app.kotoba-oracle :as oracle]))
 
 (def retryable-http-statuses
   "Statuses that are transient regardless of what the body says."
@@ -161,12 +162,18 @@
   A false answer here only leaves the original, less specific classification in
   place, so absent telemetry answers false rather than guessing."
   [finish-reason completion-tokens max-output-tokens json-ended-early?]
+  ;; The judgement is `provider_retry_core.kotoba`, RUN through the Kotoba
+  ;; oracle (`kotoba-oracle`). The core and the cljc share the nil discipline:
+  ;; every input may be nil (absent telemetry), and nil answers false. The
+  ;; three optional inputs travel as guest OPTIONS — `[:option :string]` for
+  ;; finish-reason, `[:option :i64]` for the counts — because a bare nil is
+  ;; not a value the interpreter admits. `json-ended-early?` is `:bool`.
   (boolean
-   (or (= "length" finish-reason)
-       (true? json-ended-early?)
-       (and (number? completion-tokens)
-            (number? max-output-tokens)
-            (>= (long completion-tokens) (long max-output-tokens))))))
+   (oracle/call :provider-retry-core 'output-budget-exhausted?
+                [(oracle/option (when (string? finish-reason) finish-reason))
+                 (oracle/i64-option completion-tokens)
+                 (oracle/i64-option max-output-tokens)
+                 (boolean (true? json-ended-early?))])))
 
 ;; ── how many output tokens a model will actually give ──────────────────
 

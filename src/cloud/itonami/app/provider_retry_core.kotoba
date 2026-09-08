@@ -1,0 +1,51 @@
+;; Model-request retry DECISION CORE — the part of
+;; `cloud.itonami.app.provider-retry` that is a judgement about scalars.
+;;
+;; `transient-response?` needs the whole error body (a map) and `string=?` over
+;; lower-cased error types, none of which the native slice admits. It stays
+;; cljc. What moves here is `output-budget-exhausted?` — "did the model stop
+;; because it ran out of room, rather than finish badly?" — reduced to three
+;; scalar signals on the native slice.
+;;
+;; The three signals (measured 2026-08-28 against api.murakumo.cloud):
+;;   - the provider saying `length` (`finish-reason`),
+;;   - the count reaching the cap the request set (`completion-tokens >=
+;;     max-output-tokens`),
+;;   - the JSON ending early (a `:bool` the host's parser established).
+;; Any one is sufficient; none is necessary. This mirrors
+;; `output-budget-exhausted?` in provider_retry.cljc.
+;;
+;; Nil discipline (the oracle contract, kept faithful): the cljc caller may see
+;; `nil` for any of the first three inputs (absent telemetry) and must still
+;; answer false rather than throw. So:
+;;   - `finish-reason` is `[:option :string]`: its presence is the cljc's
+;;     `(= "length" finish-reason)` gate, and `option-some?` is false on nil,
+;;     exactly like `(= "length" nil)` → false.
+;;   - `completion-tokens` / `max-output-tokens` are `[:option :i64]`: the
+;;     cljc requires BOTH to be numbers for the `>=` limb to fire. Presence of
+;;     both is `(and (option-some? ct) (option-some? mo))`, and `option-value`
+;;     supplies the default only inside that gate.
+;;   - `json-ended-early?` is a plain `:bool` (the cljc's `true?` coercion
+;;     already ran).
+;;
+;; Parity: test/cloud/itonami/app/provider_retry_kotoba_parity_test.clj
+
+(ns cloud.itonami.app.provider-retry-core
+  (:export [output-budget-exhausted?]))
+
+;; Scalars in, `:bool` out, on the native slice. `or` / `and` / `>=` are
+;; `:bool` and form the body. Every optional input is gated by its own
+;; `option-some?` before being read, so an absent telemetry field answers false
+;; and never reaches an operator on `nil`.
+(defn output-budget-exhausted?
+  [finish-reason [:option :string]
+   completion-tokens [:option :i64]
+   max-output-tokens [:option :i64]
+   json-ended-early? :bool] :bool
+  (or (and (option-some? finish-reason)
+           (string=? (option-value finish-reason "") "length"))
+      json-ended-early?
+      (and (option-some? completion-tokens)
+           (option-some? max-output-tokens)
+           (>= (option-value completion-tokens 0)
+               (option-value max-output-tokens 0)))))
