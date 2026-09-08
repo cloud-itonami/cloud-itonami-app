@@ -94,7 +94,8 @@
    :model-routing "cloud/itonami/app/model_routing_core.kotoba"
    :provider-retry-core "cloud/itonami/app/provider_retry_core.kotoba"
    :human-work-marketplace-core "cloud/itonami/app/human_work_marketplace_core.kotoba"
-   :vf-calibrate-core "cloud/itonami/app/vf_calibrate_core.kotoba"})
+   :vf-calibrate-core "cloud/itonami/app/vf_calibrate_core.kotoba"
+   :vf-authority-core "cloud/itonami/app/vf_authority_core.kotoba"})
 
 (defn resource-path [id]
   (str "cloud/itonami/app/oracle/" (name id) ".kir.edn"))

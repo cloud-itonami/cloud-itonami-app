@@ -13,6 +13,7 @@
             [cloud.itonami.app.vf-authority-test]
             [cloud.itonami.app.vf-calibrate-test]
             [cloud.itonami.app.vf-calibrate-kotoba-parity-test]
+            [cloud.itonami.app.vf-authority-kotoba-parity-test]
             [cloud.itonami.app.business-test]
             [cloud.itonami.app.agent-session-test]
             [cloud.itonami.app.a2a-test]
@@ -250,6 +251,7 @@
     cloud.itonami.app.vf-authority-test
     cloud.itonami.app.vf-calibrate-test
     cloud.itonami.app.vf-calibrate-kotoba-parity-test
+    cloud.itonami.app.vf-authority-kotoba-parity-test
     cloud.itonami.app.a2a-test
     cloud.itonami.app.business-test
     cloud.itonami.app.agent-session-test
