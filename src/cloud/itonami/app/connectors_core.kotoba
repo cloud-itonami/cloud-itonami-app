@@ -1,0 +1,55 @@
+;; The connector scope-implication DECISION CORE — the admission table inside
+;; `cloud.itonami.app.connectors/covered?`.
+;;
+;; `connectors.clj` derives the default enabled set from `historical-grant`
+;; (ADR-2608097000) so a connector added later can never silently widen
+;; anybody's grant. Most of the file is mechanism the native word-typed slice
+;; deliberately refuses: set membership (`contains?`), registry traversal
+;; (`creg/providers` / `cp/descriptor` / `cm/tools`), the client-overlay map,
+;; wire-string assembly, and the OAuth catalogue descriptors. All of that
+;; stays host.
+;;
+;; What moves here is the one thing in the file that is a DECISION about
+;; plain strings: `scope-implications` — the three places where one scope
+;; already contains another, each verified against the provider's own
+;; documentation rather than assumed from the name:
+;;
+;;   gmail.readonly  inside gmail.modify
+;;   Mail.Read       inside Mail.ReadWrite
+;;   Mail.ReadBasic  inside Mail.ReadWrite
+;;
+;; The cljc's `covered?` answered "was `scope` inside `granted`, directly or
+;; by implication?" through `(get scope-implications scope)`. The implication
+;; table IS that judgement, so the core expresses it on the native slice as a
+;; total function of the scope name:
+;;
+;;   (implier-of scope) -> the scope that would cover it, or none
+;;
+;; The host prepares set membership — the one thing `covered?` needs that is
+;; not on the slice (`contains?` on both sides of the implication) — and
+;; routes on the core's verdict. Byte-faithful: the cljc's `(get
+;; scope-implications scope)` IS this function, and a scope outside the table
+;; answers none, so `when-let` reduces to the direct-membership check alone.
+;;
+;; Nil discipline (ADR-2609081000): an unknown scope answers none — never a
+;; throw and never a guessed implier. A guessed implier would silently widen
+;; a grant; the core invents nothing.
+;;
+;; Parity: test/cloud/itonami/app/connectors_kotoba_parity_test.clj and
+;; ADR-2609081800.
+(ns cloud.itonami.app.connectors-core
+  (:export [implier-of]))
+
+;; One `:string` scope name in, `[:option :string]` out: some of the scope
+;; that would cover it, none otherwise. `if` / `string=?` are the admitted
+;; scalar vocabulary, and the three implications are written out as a total
+;; function so the table needs no map. `option-some-of` / `option-none-of`
+;; construct the guest option value.
+(defn implier-of [scope :string] [:option :string]
+  (if (string=? scope "https://www.googleapis.com/auth/gmail.readonly")
+    (option-some-of [:option :string] "https://www.googleapis.com/auth/gmail.modify")
+    (if (string=? scope "Mail.Read")
+      (option-some-of [:option :string] "Mail.ReadWrite")
+      (if (string=? scope "Mail.ReadBasic")
+        (option-some-of [:option :string] "Mail.ReadWrite")
+        (option-none-of [:option :string])))))
