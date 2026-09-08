@@ -62,7 +62,7 @@
        [:details [:summary (label "組織が登録した条件" "Organization-registered terms")]
         [:dl (for [[k ja en] [[:borrower "返済義務を負う主体" "Borrower"] [:repayment "返済条件" "Repayment"] [:distribution "分配条件" "Distribution"] [:withdrawal "出金条件" "Withdrawal"] [:lossPolicy "損失の扱い" "Loss policy"] [:useOfFunds "資金用途" "Use of funds"] [:idleStrategy "未使用資金の運用先" "Idle strategy"] [:dailyLimitUSDC "1日あたりの利用上限（USDC）" "Daily limit (USDC)"] [:chainId "チェーンID" "Chain ID"]]]
          [:div {:key (name k)} [:dt (label ja en)] [:dd (str (get-in funding [:terms k]))]])]
-        [:p (if (get-in state [:capital :vault]) (label "条件に結び付いた貸付ラウンドがあります。" "A verified lending round is linked to registered terms.") (label "条件登録済み。下のフォームから貸付ラウンドを作成できます。" "Terms registered. Create a lending round below."))]])
+        [:p (if (get-in state [:capital :vault]) (label "条件に結び付いた貸付ラウンドがあります。" "A verified lending round is linked to registered terms.") (label "条件登録済み。運営側で募集の公開を準備しています。" "Terms registered. The operator is preparing the round."))]])
       ]
      [:div
       [:div.bw-plugin-filters
