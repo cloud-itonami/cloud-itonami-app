@@ -1201,3 +1201,38 @@ falsify-89 指定の閾値「5 反復超の連続維持 → 恒久化傾向の�
 build-break 接触は本反復の運用軸測定の範囲外・次反復の実装軸再確認事項)。7-軸表 16 行目孤立行
 placeholder / falsify-46 mid-sentence cut は残存のまま (operator 復旧待ち、本 bot は編集しない)。
 (evidence/2026-09-08-falsify-90.md)
+
+## NEXT (falsify-91 追記、append-only)
+
+**falsify-91 (2026-09-08、運用/滞留 軸) で falsify-90 の次の 1 アクションを執行し「0 ベースは
+6 反復を跨ぐと再蓄積する / avail は 150 Gi 未満へ続落する」を REFUTED → 0 ベースは 6 反復超の
+連続維持 (7 時点観測) で恒久化傾向を更に精緻化・avail は 159 Gi で安定**: origin/main は本反復で
+前進 0 (e91bf0f のまま、falsify-90 と同一 SHA) のため、実装軸に新規シグナルが無く、運用軸の
+falsify-90 次の 1 アクション (「0 ベースが 6 反復超の連続で維持されるか」判定・恒久化傾向の更なる
+精緻化+avail 振動の帰属) を測定対象に選択し、実装軸シグナル (e91bf0f の parity 測定面・
+build-break 生存) は次反復の検証対象として附帯記録した (falsify-90 附帯の指定を繰り越し)。
+cloud-itonami-dns-resolver で実測 — 3 ベクトル (--used-refspec +refs/heads/main / refspec なし
+全 refs / --used-refspec +refs/heads/resident/dns-resolver) いずれも**正規 unused 0 keys**
+(partial 14 chunk / 186.98 MiB のみ、falsify-35 以降不変、ok/EXIT_RC=0 各実測)。local annex keys
+は **786 → 786 (増加 0)** / 11.68 GB 不変 — 滞留蓄積期 (falsify-39..49) と対照的に増分ゼロの
+状態が **falsify-85→91 の 7 時点観測 / 6 反復連続維持**で続く。増加源 itonami-app-resident.cljs
+は **PID 70643 稼働継続** (falsify-85..90 と同一 PID、export_and_sync 不在)、df / avail
+**159 Gi / 10%** (falsify-90 の 159 Gi と同値・安定・飽和なし、annex available 170.11→170.65 GB
+微増)。falsify-90 指定の閾値「6 反復超の連続維持 → 恒久化傾向の更なる精緻化」を本反復が充足
+(ただし増加源稼働継続ゆえ恒久性は保証されず「never re-accumulate」は主張しない)。avail の続落
+は不成立 (159 Gi で安定、falsify-89 の 162→156→142 減少トレンドは falsify-90 と同様に REFUTED
+維持、滞留不変下の外部書き込み振動の帰属が整合的)。運用 軸 score は **3 のまま** (0 ベース維持
+の恒久化傾向の更なる精緻化を記録、実緑測定なし)。次の 1 アクション: 次反復で同 vector + keys +
+avail を再実測し 0 ベースの **7 反復超の連続持続** or 再蓄積再開を判別 (7 反復超維持なら恒久化
+傾向を更に精緻化、再開なら falsify-33..53 語調へ復帰)、あわせて avail (159 Gi 安定) の帰属 —
+滞留 (keys 786) 不変下の外部書き込み源を観測。附帯 (実装軸 次反復シグナル): origin/main は
+e91bf0f のまま前進 0 — falsify-90 附帯が指定した「e91bf0f の .kotoba parity 測定面 (falsify-78/79/
+82/83 の 3 値結合水準・配線記録) の変化と 2 build-break (identity.clj / kotoba-net) の生存再確認」
+を次回の実装軸反復で執行する。附帯 Tier 2 (falsify-85..90 と不変): resident 再起動 (94682→70643)
+の契機と滞留回収の帰属の精査は kanban/human 透過提出継続。附帯: 本体 checkout は detached HEAD
+65d3e98 (#290) / porcelain clean (dirty 0)、本 bot は touch せず wt-msloop / bot/maturity-sim-loop
+で完結。identity.clj malformation / kotoba-net 未宣言 (falsify-63..84) は既知赤継続。7-軸表
+16 行目孤立行 placeholder / falsify-46 mid-sentence cut は残存のまま (operator 復旧待ち、本 bot
+は編集しない)。(evidence/2026-09-08-falsify-91.md)
+MD
+echo "append rc=$?" > /tmp/f91append.txt; wc -l "$F" >> /tmp/f91append.txt
