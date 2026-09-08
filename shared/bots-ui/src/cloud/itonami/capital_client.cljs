@@ -29,8 +29,18 @@
         input (if (= action "deploy") (assoc input :policy (when (:policy form) "fixed-round-net-income-v1") :fundingDeadline (quot (.getTime (js/Date. (:fundingDeadline form))) 1000) :maturity (quot (.getTime (js/Date. (:maturity form))) 1000) :recipients (str/split (str/trim (or (:recipients form) "")) #"[\s,]+")) input)]
    {:db (update db :my-bots merge {:capital-busy? true :capital-error nil :capital-plan nil})
     :itonami.promise {:run #(request! input) :success [:capital/prepared project] :failure [:capital/failed project]}})))
-(rf/reg-event-db :capital/prepared
- (fn [db [_ project data]] (if (= project (get-in db [:my-bots :public-selected])) (update db :my-bots merge (if (= project (:project data)) {:capital-plan data :capital-busy? false} {:capital-plan nil :capital-busy? false :capital-error "取引の事業が一致しません"})) db)))
+(defn focus-review! [attempt]
+ (js/requestAnimationFrame
+  (fn [] (if-let [el (.querySelector js/document ".bw-capital-review")]
+   (do (.scrollIntoView el #js {:block "start"}) (when-let [heading (.querySelector el "h3")] (.setAttribute heading "tabindex" "-1") (.focus heading #js {:preventScroll true})))
+   (when (< attempt 12) (focus-review! (inc attempt)))))))
+(rf/reg-fx :capital/focus-review (fn [_] (focus-review! 0)))
+(rf/reg-event-fx :capital/prepared
+ (fn [{:keys [db]} [_ project data]]
+  (if (= project (get-in db [:my-bots :public-selected]))
+   {:db (update db :my-bots merge (if (= project (:project data)) {:capital-plan data :capital-busy? false} {:capital-plan nil :capital-busy? false :capital-error "取引の事業が一致しません"}))
+    :capital/focus-review true} {})))
+(rf/reg-event-db :capital/cancel (fn [db _] (assoc-in db [:my-bots :capital-plan] nil)))
 (defn- confirm! [plan hash attempt]
  (-> (request! {:action "confirm" :id (:id plan) :transactionHash hash})
      (.then (fn [result]
@@ -60,5 +70,5 @@
   (let [project (get-in db [:my-bots :public-selected])]
    {:itonami.promise {:run #((:request! @transport) (str "/api/capital?intent=" (js/encodeURIComponent id))) :success [:capital/prepared project] :failure [:capital/failed project]}})))
 (def handlers
- {:capital-resume #(rf/dispatch [:capital/resume]) :capital-field #(rf/dispatch-sync [:capital/field %1 %2]) :capital-round #(rf/dispatch [:capital/load %])
+ {:capital-cancel #(rf/dispatch [:capital/cancel]) :capital-resume #(rf/dispatch [:capital/resume]) :capital-field #(rf/dispatch-sync [:capital/field %1 %2]) :capital-round #(rf/dispatch [:capital/load %])
   :capital-prepare #(rf/dispatch [:capital/prepare %]) :capital-execute #(rf/dispatch [:capital/execute]) :capital-refresh #(rf/dispatch [:capital/load])})
