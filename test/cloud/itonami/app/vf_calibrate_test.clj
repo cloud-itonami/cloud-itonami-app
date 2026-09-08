@@ -8,7 +8,7 @@
   no flow rate is written, no event is converted into a rate, and a
   resource with no correspondence calibrates nothing."
   (:require [clojure.test :refer [deftest is testing]]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.vf-journal :as vf-journal]
             [cloud.itonami.app.vf-calibrate :as vfc]
             [xmile.model :as xmodel]

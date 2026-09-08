@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.automation
   "User-defined Workers and Agents plus branch-isolated Project dispatch."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.project-repository :as projects]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.worker :as worker]))
@@ -8,7 +8,7 @@
 (def schema "cloud.itonami.app.automation-actors.v1")
 
 (defn- slug [value]
-  (-> (str value) str/trim str/lower-case
+  (-> (str value) str/trim str/lower
       (str/replace #"[^a-z0-9._-]+" "-")
       (str/replace #"(^[-.]+|[-.]+$)" "")
       not-empty))

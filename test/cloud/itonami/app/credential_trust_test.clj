@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.credential-trust-test
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.credential :as credential]
             [cloud.itonami.app.credential-trust :as trust]

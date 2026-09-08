@@ -6,7 +6,7 @@
   nothing here writes to the data dir."
   (:require [clojure.data.json :as json]
             [clojure.edn :as edn]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.capability :as capability]
             [cloud.itonami.app.documents :as documents]

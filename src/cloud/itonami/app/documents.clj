@@ -47,7 +47,7 @@
   (:require [clojure.data.json :as json]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.capability :as capability]
             [cloud.itonami.app.filecoin :as filecoin]
             [cloud.itonami.app.kotobase-objects :as kotobase-objects]
@@ -294,7 +294,7 @@
   where *new* bytes go."
   []
   (case (some-> (System/getenv "CLOUD_ITONAMI_DRIVE_OBJECT_STORE")
-                str/trim not-empty str/lower-case)
+                str/trim not-empty str/lower)
     "kotobase" (if (kotobase-objects/configured?)
                  (kotobase-objects/store)
                  ;; Selected and unusable is a misconfiguration, not a
@@ -318,7 +318,7 @@
   "The configured write backend, without exposing credentials or paths."
   []
   (case (some-> (System/getenv "CLOUD_ITONAMI_DRIVE_OBJECT_STORE")
-                str/trim not-empty str/lower-case)
+                str/trim not-empty str/lower)
     "kotobase" :kotobase
     "storj" :storj
     "fs" :fs
@@ -3303,7 +3303,7 @@
     (when prefix
       (let [names (office-parts bytes)]
         (when-not (some #(str/starts-with? % prefix) (or names []))
-          (throw (ex-info (str (str/upper-case format) " として読めませんでした。")
+          (throw (ex-info (str (str/upper format) " として読めませんでした。")
                           {:type :drive/unsupported-format :format format})))))))
 
 (defn import!
@@ -3355,7 +3355,7 @@
          ;; has no `imported`, and edn has already thrown if its kind was
          ;; not one of ours.
          _ (when (and (= "pptx" format) (nil? imported))
-             (throw (ex-info (str (str/upper-case format) " として読めませんでした。")
+             (throw (ex-info (str (str/upper format) " として読めませんでした。")
                              {:type :drive/unsupported-format :format format})))
          spec (get kinds kind)]
      ;; One version, which is the file. This used to create a seeded
@@ -3427,7 +3427,7 @@
   the document does not say."
   [text needle]
   (let [text (str text)
-        at (str/index-of (str/lower-case text) needle)]
+        at (str/index-of (str/lower text) needle)]
     (if (nil? at)
       text
       (let [from (max 0 (- at snippet-radius))
@@ -3499,13 +3499,13 @@
   both for one document is noise."
   ([query actor] (search query actor (store-instance)))
   ([query actor object-store]
-   (let [needle (str/lower-case (str/trim (str query)))]
+   (let [needle (str/lower (str/trim (str query)))]
      (if (str/blank? needle)
        {:schema schema :ok? true :query "" :count 0 :results []}
        (let [results
              (vec
               (for [candidate (documents (store/snapshot) actor)
-                    :let [in-title? (str/includes? (str/lower-case (str (:name candidate)))
+                    :let [in-title? (str/includes? (str/lower (str (:name candidate)))
                                                    needle)
                           ;; Read once per document, and only when the title
                           ;; did not already answer — and only for something
@@ -3519,7 +3519,7 @@
                           ;; exception stops being noticed the moment it
                           ;; becomes routine.
                           hit (when (and (not in-title?) (not (:file? candidate)))
-                                (some #(when (str/includes? (str/lower-case %) needle) %)
+                                (some #(when (str/includes? (str/lower %) needle) %)
                                       (cached-text
                                        (:etag candidate)
                                        #(let [resource

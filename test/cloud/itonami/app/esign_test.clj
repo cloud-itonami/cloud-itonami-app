@@ -9,7 +9,7 @@
   a real Touch ID prompt would verify the ceremony and leave the archival path
   untested, which is the one that has to keep working."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.credential :as credential]
             [cloud.itonami.app.did :as app-did]

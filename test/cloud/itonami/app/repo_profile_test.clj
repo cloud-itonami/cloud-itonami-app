@@ -5,7 +5,7 @@
   that asserts only `(not accepted?)` counts a refusal for ANY cause as the one
   it meant to exercise — ADR-2608136000 §6, and the reason this file is mostly
   reasons."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.repo-profile :as rp]))
 

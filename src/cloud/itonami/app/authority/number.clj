@@ -22,7 +22,7 @@
   What is deliberately NOT here: whether this operator really holds the block,
   whether a regulator permits the assignment, whether the requester is who they
   say. Those need judgement or law and belong to the actor's Governor."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.authority :as authority]
             [cloud.itonami.app.authority.posture :as posture]
             [cloud.itonami.app.authority.transport :as transport]

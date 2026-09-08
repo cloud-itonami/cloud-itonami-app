@@ -11,7 +11,7 @@
   deployment is only the default, so Kotoba can deploy the same open contract
   family at its own deterministic addresses without changing Principal or
   Wallet data shapes."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [eth-crypto.core :as eth]
             [ethereum.abi :as abi]
             #?@(:clj [[cloud.itonami.app.did :as did]]

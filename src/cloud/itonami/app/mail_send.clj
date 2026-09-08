@@ -23,7 +23,7 @@
   the error names the field, rather than at a provider, where it comes back
   as a 400 with a body nobody reads."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.mail-account :as account]
             [cloud.itonami.app.mail-gmail :as gmail]
             [cloud.itonami.app.mail-domain-authority :as mail-authority]

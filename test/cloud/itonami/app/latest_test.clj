@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.latest-test
   "IPNS latest pointer. Offline: injected kad http-fn, disposable seed."
   (:require [clojure.edn :as edn]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.bundle :as bundle]
             [cloud.itonami.app.latest :as latest]

@@ -8,7 +8,7 @@
   rollback floor until an operator has observed the new backend for long
   enough."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.drive-crypto :as crypto]
             [cloud.itonami.app.kotobase-objects :as kotobase]
@@ -122,7 +122,7 @@
 
 (defn migrate! []
   (when-not (= "kotobase" (some-> (System/getenv "CLOUD_ITONAMI_DRIVE_OBJECT_STORE")
-                                   str/trim str/lower-case))
+                                   str/trim str/lower))
     (throw (ex-info "Set CLOUD_ITONAMI_DRIVE_OBJECT_STORE=kotobase explicitly"
                     {:type :drive/migration-target-not-selected})))
   (when-not (kotobase/configured?)

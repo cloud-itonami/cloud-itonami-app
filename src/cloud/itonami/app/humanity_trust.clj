@@ -4,7 +4,7 @@
   Verification is a live EAS read. Acceptance is bound to the authenticated
   Principal's Passkey Smart Account recipient, persisted atomically, and never
   promoted to a capability or to general trust."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.identity :as app-identity]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.wallet :as wallet]

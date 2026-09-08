@@ -39,7 +39,7 @@
   the repository — git-annex keeps them in `.git/annex/creds`, which is not
   committed, so a clone must supply them again to enable the remote."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str])
+            [kotoba.lang.text :as str])
   (:import [java.util.concurrent TimeUnit]))
 
 (def schema "cloud.itonami.app.project-remote.v1")

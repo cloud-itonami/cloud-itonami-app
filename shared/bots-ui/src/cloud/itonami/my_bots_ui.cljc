@@ -1,7 +1,7 @@
 (ns cloud.itonami.my-bots-ui
   "One private Bot list, thread and approval view. Hosts provide verified
   state and handlers; this component has no browser or native dependency."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def css
   ".my-bots{box-sizing:border-box;max-width:76rem;margin:auto;padding:1rem;font-size:1rem;overflow-wrap:anywhere}.my-bots *{box-sizing:border-box;min-width:0}.my-bots button,.my-bots input,.my-bots textarea{font:inherit;min-height:44px;max-width:100%}.my-bots__layout{display:grid;grid-template-columns:minmax(14rem,20rem) minmax(0,1fr);gap:1rem}.my-bots__list{display:grid;gap:.5rem;align-content:start}.my-bots__row{display:grid;text-align:start;width:100%;padding:.75rem;gap:.375rem}.my-bots__row[aria-current=true]{outline:2px solid currentColor}.my-bots__thread{display:flex;flex-direction:column;gap:1rem}.my-bots__messages{display:grid;gap:.75rem;max-height:55dvh;overflow:auto;white-space:pre-wrap;list-style:none;padding:0}.my-bots__message{padding:1rem;border:1px solid currentColor;border-radius:.75rem}.my-bots__composer{display:grid;gap:.5rem}.my-bots__composer textarea{width:100%;resize:vertical}.my-bots__actions{display:flex;gap:.5rem;flex-wrap:wrap}.my-bots__back{display:none}@media(max-width:700px){.my-bots__layout{grid-template-columns:minmax(0,1fr)}.my-bots[data-selected=true] .my-bots__rail{display:none}.my-bots[data-selected=false] .my-bots__thread{display:none}.my-bots__back{display:block}.my-bots__messages{max-height:50dvh}}")
@@ -25,7 +25,7 @@
 (defn screen [{:keys [locale principal bots bot busy? error phase query name text signin-href runner-ready?]} handlers]
   (let [t #(get-in strings [(if (= locale :ja) :ja :en) %])
         click (fn [key & args] (when-let [f (get handlers key)] (fn [_] (apply f args))))
-        visible (filter #(str/includes? (str/lower-case (:name %)) (str/lower-case (or query ""))) bots)]
+        visible (filter #(str/includes? (str/lower (:name %)) (str/lower (or query ""))) bots)]
     [:main {:class "my-bots" :data-selected (boolean bot)}
      [:h1 "My Bots"]
      (when error [:p {:role "alert"} error])

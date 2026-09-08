@@ -8,7 +8,7 @@
   access nobody decided to want — and they would approve it, because it
   arrives looking like the normal reconnect."
   (:require [clojure.set :as set]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.connectors :as connectors]
             [cloud.itonami.app.kotoba-oracle :as oracle]

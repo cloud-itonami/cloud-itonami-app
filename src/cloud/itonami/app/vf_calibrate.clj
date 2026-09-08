@@ -33,7 +33,7 @@
   verdict: rebuild `assoc-in`s and assembles the report maps. Neither the
   double values nor map mutation cross the slice, exactly the
   ADR-2609081000 oracle pattern."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [xmile.model :as xmodel]
             [cloud.itonami.app.kotoba-oracle :as oracle]))
 

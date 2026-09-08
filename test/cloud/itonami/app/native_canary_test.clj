@@ -18,7 +18,7 @@
 ;; from a passing one.
 
 (ns cloud.itonami.app.native-canary-test
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.native-exec :as native]))
 

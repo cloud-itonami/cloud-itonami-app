@@ -39,7 +39,7 @@
   with no card -- which is a gate that breaks the ordinary case to guard the
   rare one. What it does instead is travel onto the proposal, so a reader can
   see that the funds gate ran on the balance alone."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.authority :as authority]
             [cloud.itonami.app.authority.posture :as posture]
             [cloud.itonami.app.authority.transport :as transport]
@@ -123,7 +123,7 @@
     (refuse :payment/account-inactive
             (str "支払元口座が利用できません: " (:status funding-account))))
 
-  (let [currency (or (some-> currency str str/upper-case not-empty)
+  (let [currency (or (some-> currency str str/upper not-empty)
                      (:currency funding-account))]
     (when-not (= currency (:currency funding-account))
       (refuse :payment/currency-mismatch

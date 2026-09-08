@@ -32,7 +32,7 @@
   Two booleans for the scope, two for the auxiliary route: 4 x 2, checked in
   full. A conjunction is exactly the shape where sampling misses a dropped
   term."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-control]
             [cloud.itonami.app.bots]

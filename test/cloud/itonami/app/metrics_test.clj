@@ -6,7 +6,7 @@
   3. product-specific shapes are passed through, never unified into a funnel this
      app has no basis to define."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.metrics :as metrics]

@@ -15,7 +15,7 @@
   Same discipline as `policy-kotoba-parity-test`, and the same caveat: the
   native compile rows assert that the core is expressible on native, not that
   anything runs there. No capability kit is qualified for `:native-aot`."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.fleet-core :as fleet-core]
             [kotoba.compiler.core :as compiler]

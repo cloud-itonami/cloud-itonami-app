@@ -4,7 +4,7 @@
   Read-only against Gmail — it fetches and files locally. Nothing is sent,
   nothing is labelled provider-side, nothing is deleted."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.mail-account :as account]
             [cloud.itonami.app.mail-projects :as mail-projects]

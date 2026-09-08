@@ -5,12 +5,12 @@
   conversation receives an `itonami/<session>` branch and a durable worktree
   below the application data directory."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config])
   (:import [java.util.concurrent TimeUnit]))
 
 (defn- slug [value]
-  (let [normalized (-> (str value) str/lower-case
+  (let [normalized (-> (str value) str/lower
                        (str/replace #"[^a-z0-9._-]+" "-")
                        (str/replace #"(^[-.]+|[-.]+$)" ""))
         result (or (not-empty normalized) "session")]

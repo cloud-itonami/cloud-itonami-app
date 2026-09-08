@@ -77,7 +77,7 @@
   `:nfs {:enabled? true}`. Not inferred from anything: a Drive that becomes
   network-reachable because a port happened to be free is the failure this
   is written to avoid."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.drive-fs :as drive-fs]
             [kekkai.acl :as acl]

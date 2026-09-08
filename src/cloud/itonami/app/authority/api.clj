@@ -24,7 +24,7 @@
      whatever arrived in the request. That overwrite is the invariants' actual
      enforcement point; the adapters' required-input checks only stop them being
      forgotten."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.authority :as authority]
             [cloud.itonami.app.authority.card :as card]
             [cloud.itonami.app.authority.domain :as domain]

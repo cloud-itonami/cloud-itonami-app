@@ -8,7 +8,7 @@
   here are made by git and the working trees are really deleted."
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.git-hygiene :as subject]))
 

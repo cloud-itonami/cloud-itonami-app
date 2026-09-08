@@ -27,7 +27,7 @@
   would add a running-server requirement to the one capability that does not
   need one."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.http-client :as http])
   (:import [java.net ConnectException]

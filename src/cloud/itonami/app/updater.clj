@@ -8,7 +8,7 @@
   (:require [clojure.data.json :as json]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.http-client :as http])
   (:import [java.math BigInteger]
@@ -96,8 +96,8 @@
   (pos? (compare (version-parts candidate) (version-parts installed))))
 
 (defn platform-key []
-  (let [os (str/lower-case (System/getProperty "os.name" ""))
-        arch (str/lower-case (System/getProperty "os.arch" ""))]
+  (let [os (str/lower (System/getProperty "os.name" ""))
+        arch (str/lower (System/getProperty "os.arch" ""))]
     (cond
       (and (str/includes? os "mac") (contains? #{"aarch64" "arm64"} arch)) :macos-arm64
       (and (str/includes? os "mac") (contains? #{"x86_64" "amd64"} arch)) :macos-x64

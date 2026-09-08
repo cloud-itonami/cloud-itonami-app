@@ -7,7 +7,7 @@
   value proves the library works; verifying the BYTES proves this app
   publishes something a resolver can read."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as local-identity]

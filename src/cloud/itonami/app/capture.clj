@@ -4,7 +4,7 @@
   Capture never calls a model and never asks for a project, due date, or action.
   Those belong to clarification. The raw text is immutable after admission so a
   later tidy title cannot rewrite what the person actually put down."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.store :as store]))
 
 (def schema "cloud.itonami.app.capture.v1")

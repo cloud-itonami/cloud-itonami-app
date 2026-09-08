@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.lawfirm-test
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.lawfirm :as app-lawfirm]
             [cloud.itonami.app.store :as store]

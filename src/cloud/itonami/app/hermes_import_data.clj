@@ -7,7 +7,7 @@
   create a Bot or grant a tool; it only projects portable source evidence."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str])
+            [kotoba.lang.text :as str])
   (:import [java.io File]
            [java.nio.file Files LinkOption]
            [java.security MessageDigest]))

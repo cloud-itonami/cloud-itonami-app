@@ -54,7 +54,7 @@
   It also does not decide admission. `policy/select-provider` does, first and
   unchanged: an assignment is a preference and never a route around review,
   TLS, a credential, or the deployment egress switch."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.app.policy :as policy]))
 

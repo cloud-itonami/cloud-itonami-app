@@ -38,7 +38,7 @@
 
   No store, no clock, no network."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.did :as did]
             [cloud.itonami.app.esign.commitment :as commitment])
   (:import [java.math BigInteger]

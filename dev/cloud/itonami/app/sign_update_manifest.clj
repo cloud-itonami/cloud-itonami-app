@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.sign-update-manifest
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.updater :as updater])
   (:import [java.math BigInteger]
            [java.nio.file Files]

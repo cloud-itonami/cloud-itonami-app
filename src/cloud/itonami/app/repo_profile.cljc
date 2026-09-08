@@ -38,7 +38,7 @@
   discarded — the same shape this workspace keeps finding, where a thing that
   did not happen looks like a thing that did."
   (:require [clojure.edn :as edn]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (def schema "cloud.itonami.app.repo-profile.v1")
 

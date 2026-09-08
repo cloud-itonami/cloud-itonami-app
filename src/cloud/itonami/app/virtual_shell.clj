@@ -8,7 +8,7 @@
   A host-wide semaphore and a per-workspace lock let several Bots share one PC
   without running two mutating shells in the same repository at once."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.workspace-tools :as workspace-tools]
             [cloud.itonami.app.host :as host])
   (:import [java.security MessageDigest]

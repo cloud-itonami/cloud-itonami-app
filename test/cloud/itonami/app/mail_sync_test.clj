@@ -12,7 +12,7 @@
   installed reads nobody's mail; a half-named delegated credential is not a
   credential; configured-and-refused is reported rather than swallowed; and a
   never-synced mailbox does not look like a failing one."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.mail-account :as account]

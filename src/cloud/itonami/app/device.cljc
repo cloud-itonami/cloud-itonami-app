@@ -41,7 +41,7 @@
   value of a check that ran and found nothing. So it is refused loudly and once,
   and the deployment continues without a device name rather than with one
   nobody can type."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.peer :as peer]))
 
 (defonce ^:private runtime-config (atom nil))

@@ -5,7 +5,7 @@
   is tested there against Go; what is here is the parts this app supplies —
   and the store is the one that could quietly lose a piece."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.storj-node :as node]
             [storj.node.protocols :as p]))
@@ -48,7 +48,7 @@
   ;; presents its chain on the check-in handshake, and `check-in!` dials with
   ;; :expected-node-id so a chain that is not the satellite we meant is
   ;; refused before anything is remembered
-  (is (not-any? #(str/includes? (str/lower-case (name %)) "key")
+  (is (not-any? #(str/includes? (str/lower (name %)) "key")
                 (keys (or (with-redefs [node/config
                                         (constantly {:identity-dir "d" :satellite "s"
                                                      :satellite-id "aa" :address "a"})]

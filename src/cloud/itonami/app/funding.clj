@@ -32,7 +32,7 @@
   rather than assumed. JPY has exponent 0, so ¥38,500 is 38500; USD has exponent
   2, so $38.50 is 3850. An unknown currency refuses instead of defaulting,
   because defaulting an exponent is how a figure becomes wrong by 100x."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.store :as store])
   (:import [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
@@ -240,7 +240,7 @@
   scheduled payment. `:linked-by` records who, without making them the owner."
   [session {:keys [label institution branch account-type holder number currency]}]
   (let [organization-id (require-organization! session)
-        currency (or (some-> currency str str/upper-case not-empty) "JPY")
+        currency (or (some-> currency str str/upper not-empty) "JPY")
         account-type (some-> account-type keyword)]
     (when (str/blank? (str institution))
       (refuse :funding/institution-missing "金融機関名が必要です"))
@@ -327,7 +327,7 @@
               "amount-minor は最小通貨単位の整数です（JPY は円、USD はセント）"))
     (when (neg? amount-minor)
       (refuse :funding/amount-invalid "amount-minor が負の値です"))
-    (let [currency (or (some-> currency str str/upper-case not-empty)
+    (let [currency (or (some-> currency str str/upper not-empty)
                        (:currency record))]
       (when-not (= currency (:currency record))
         (refuse :funding/currency-mismatch

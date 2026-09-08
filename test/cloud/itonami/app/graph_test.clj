@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.graph-test
   "L2 graph CID. Offline: in-memory chain store, no PUT."
   (:require [clojure.edn :as edn]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]
             [chain.core :as chain]
             [cloud.itonami.app.bundle :as bundle]

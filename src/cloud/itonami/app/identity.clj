@@ -21,7 +21,7 @@
             [clojure.data.json :as json]
             [cloud.itonami.app.http-client :as http]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [ed25519.core :as ed]
             [identity.directory :as directory]
             [identity.model :as identity]
@@ -282,7 +282,7 @@
         env-name (get config (keyword (str suffix "-env")))]
     (or (some-> env-name System/getenv not-empty)
         (keychain-find (:credential-service config)
-                       (str/upper-case (str/replace suffix "-" "_"))))))
+                       (str/upper (str/replace suffix "-" "_"))))))
 
 ;; A deployment may already hold an OAuth client for a provider under a name
 ;; this app did not choose — issued to some other tool on the same machine,
@@ -373,10 +373,10 @@
          (:identity state)))
 
 (defn- normalize-id [value]
-  (some-> value str str/trim str/lower-case))
+  (some-> value str str/trim str/lower))
 
 (defn- normalize-email [value]
-  (let [email (some-> value str str/trim str/lower-case)]
+  (let [email (some-> value str str/trim str/lower)]
     (when (and email (<= 3 (count email) 254)
                (re-matches #"[^\s@]+@[^\s@]+\.[^\s@]+" email))
       email)))
@@ -959,11 +959,11 @@
   [host]
   (when (:publish-did-web? @runtime-identity-profile)
     (let [state (identity-state (store/snapshot))
-          hostname (-> (str host) str/trim str/lower-case
+          hostname (-> (str host) str/trim str/lower
                        (str/replace #":\d+$" ""))
           named (filter :domain (vals (:organizations state)))]
       (or (some (fn [tenant]
-                  (when (= hostname (str/lower-case (str (:domain tenant))))
+                  (when (= hostname (str/lower (str (:domain tenant))))
                     (:domain tenant)))
                 named)
           (when (= 1 (count named))
@@ -1662,7 +1662,7 @@
   (let [source (or (some-> email (str/split #"@" 2) first)
                    display-name
                    "user")
-        normalized (-> source str str/lower-case
+        normalized (-> source str str/lower
                        (str/replace #"[^a-z0-9._-]+" "-")
                        (str/replace #"^[^a-z0-9]+|[^a-z0-9]+$" ""))
         normalized (if (< (count normalized) 3) "user" normalized)]
@@ -2130,7 +2130,7 @@
     (= :allow (:authz.decision/decision (authz/authorize port request)))))
 
 (defn- normalized-email [value]
-  (some-> value str str/trim str/lower-case not-empty))
+  (some-> value str str/trim str/lower not-empty))
 
 (defn- email-login-user [state email]
   (let [matches (->> (:users state)

@@ -44,7 +44,7 @@
   report success, having done part of a job — and the part it skipped is
   exactly the part somebody revoked, which is to say the part that mattered.
   `admitted-steps` counts; the core compares; a short count refuses."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.bot :as bot]
             [cloud.itonami.app.kotoba-oracle :as oracle]))
 

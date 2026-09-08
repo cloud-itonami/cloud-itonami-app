@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.github-projects-source
   "Bounded GitHub Projects v2 item ingestion. Cursor persistence belongs to the
   host; this adapter converts one GraphQL page into canonical WorkItems."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.github-projects-writeback :as github])
   (:import [java.nio.charset StandardCharsets]
            [java.security MessageDigest]))

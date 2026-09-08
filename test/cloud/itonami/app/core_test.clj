@@ -3,7 +3,7 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.set :as set]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.did :as did]

@@ -26,7 +26,7 @@
   answered the query. A `:valid? true` from here means \"this response belongs to
   a request we made\", nothing more. Verifying the credentials inside is
   `credential-trust`'s job and the caller must do it."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.store :as store]
             [oid4vp.core :as oid4vp])
   (:import [java.security SecureRandom]

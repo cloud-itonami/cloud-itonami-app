@@ -6,7 +6,7 @@
   list stays explicit, and `-main` refuses to run a suite that does not cover
   every test file on the path."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :as test]
             [cloud.itonami.app.authority-test]
             [cloud.itonami.app.vf-journal-test]

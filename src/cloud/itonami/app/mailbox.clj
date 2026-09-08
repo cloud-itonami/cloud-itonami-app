@@ -40,7 +40,7 @@
   read (they were read years ago, in another program), while a synced message
   arrives with the read state its provider reports. A mark raised here wins
   over both, because it is the more recent statement about the same message."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.mail-sync :as mail-sync]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.workspace :as workspace]

@@ -2,7 +2,7 @@
   "Pure shared Bot participation UI for desktop, mobile and itonami.cloud.
   Hosts own authenticated data, effects and navigation. No invented balances,
   availability or wallet authority. This package has no runtime dependencies."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def messages
   {:en {:business "Business Bots" :mine "My Bots"

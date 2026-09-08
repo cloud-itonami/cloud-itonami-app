@@ -7,7 +7,7 @@
   directory per provider meant two mailboxes' messages collided by id, and
   one error per provider meant 'Google is broken' when one of two Google
   mailboxes was fine."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.mail-account :as account]
             [cloud.itonami.app.mail-sync :as mail-sync]
@@ -157,7 +157,7 @@
       (is (nil? (:password-ref public)))
       (is (nil? (:connection-id public)))
       (is (nil? (:delegated-credential public)))
-      (is (not (str/includes? (str/lower-case (pr-str public)) "app-password"))
+      (is (not (str/includes? (str/lower (pr-str public)) "app-password"))
           "not anywhere in it, under any key"))))
 
 (deftest a-mailbox-that-never-synced-does-not-look-like-one-that-is-failing

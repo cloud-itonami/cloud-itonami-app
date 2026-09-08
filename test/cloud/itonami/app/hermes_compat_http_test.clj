@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.hermes-compat-http-test
   "Wire-level proof that a Hermes client can use Itonami without a browser."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.bot :as bot]
             [cloud.itonami.app.config :as config-loader]

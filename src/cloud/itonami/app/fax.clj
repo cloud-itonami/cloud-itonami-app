@@ -46,7 +46,7 @@
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.lawfirm :as app-lawfirm]
             [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [lawfirm.actor :as lf-actor]
             [lawfirm.store :as lf-store]
             [lawfirm.workspace :as lf-workspace])
@@ -137,7 +137,7 @@
   [object-ref ^bytes bytes]
   (let [ref (str object-ref)]
     (and (str/starts-with? ref "sha256:")
-         (= (str/lower-case (subs ref (count "sha256:")))
+         (= (str/lower (subs ref (count "sha256:")))
             (sha256-hex bytes)))))
 
 ;; ---------------------------------------------------------------------------

@@ -30,7 +30,7 @@
   an item, a performer, an assignment and one decision so that
   `approval-state` reports the decision as eligible or ignored, which is the
   observable the namespace actually exposes."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.work-governance :as wg]
             [kotoba.compiler.core :as compiler]

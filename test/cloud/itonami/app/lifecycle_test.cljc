@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.lifecycle-test
   (:require #?(:clj [clojure.test :refer [deftest is testing]]
                :cljs [cljs.test :refer [deftest is testing]])
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.lifecycle :as lifecycle]))
 
 ;; The resident install printed 86 identical untimestamped start lines over

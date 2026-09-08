@@ -22,7 +22,7 @@
   backwards: `multipart/alternative` orders its parts worst-to-best
   (RFC 2046 §5.1.4), so the *last* `text/plain` is the message and the
   first is a fallback for clients that can do no better."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.mail-account :as account]
             [imap.client :as imap]
             [mime.address :as address]
@@ -122,7 +122,7 @@
      :from (or (not-empty (str (:name from)))
                (not-empty (str (:address from)))
                "送信者不明")
-     :from-email (or (not-empty (str/lower-case (str (:address from))))
+     :from-email (or (not-empty (str/lower (str (:address from))))
                      "unknown@local.invalid")
      :to (str/join ", " (:to parts))
      :received-at (or (parse-received-at (:date parts))

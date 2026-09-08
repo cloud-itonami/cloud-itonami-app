@@ -30,7 +30,7 @@
   an operator turns it on. That is the point: the narrowing is now expressible,
   and so is the widening, and both are visible."
   (:require [clojure.set :as set]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.kotoba-oracle :as oracle]
             [connector.consent :as consent]
             [connector.model :as cm]

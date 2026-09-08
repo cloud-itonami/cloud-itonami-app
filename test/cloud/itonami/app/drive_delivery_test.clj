@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.drive-delivery-test
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.documents :as documents]

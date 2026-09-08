@@ -11,7 +11,7 @@
   must get an answer about 可視性 only, and `integrity-gap` only about
   真実性. That is the whole point of keeping them separate: a single combined
   number would let one closed limb read as compliance."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.esign.retention :as retention]
             [kotoba.compiler.core :as compiler]

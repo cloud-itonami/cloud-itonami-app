@@ -4,7 +4,7 @@
             [cloud.itonami.app.identity :as local-identity]
             [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [drive.model :as drive]
             [github.workflow :as github]
             [kotoba.shell.launcher :as shell]
@@ -88,7 +88,7 @@
 
 (defn- decode-transfer [value encoding charset]
   (try
-    (case (some-> encoding str/lower-case)
+    (case (some-> encoding str/lower)
       "base64" (String. (.decode (Base64/getMimeDecoder) value)
                         (Charset/forName charset))
       "quoted-printable" (decode-quoted-printable value charset false)
@@ -106,7 +106,7 @@
            #"(?i)=\?([^?]+)\?([bq])\?([^?]*)\?="
            (fn [[_ charset encoding encoded]]
              (try
-               (if (= "b" (str/lower-case encoding))
+               (if (= "b" (str/lower encoding))
                  (String. (.decode (Base64/getDecoder) encoded)
                           (Charset/forName charset))
                  (decode-quoted-printable encoded charset true))
@@ -122,7 +122,7 @@
     (->> (str/split (str/replace header-block #"\r?\n[ \t]+" " ") #"\r?\n")
          (keep (fn [line]
                  (when-let [[_ name value] (re-matches #"(?i)^([^:]+):\s*(.*)$" line)]
-                   [(keyword (str/lower-case name)) (decode-mime-words value)])))
+                   [(keyword (str/lower name)) (decode-mime-words value)])))
          (into {}))))
 
 (defn- address-parts [value]
@@ -139,7 +139,7 @@
 (defn- text-part [content]
   (let [[top-headers top-body] (str/split content #"\r?\n\r?\n" 2)
         top (message-headers top-headers)
-        multipart? (str/includes? (str/lower-case (or (:content-type top) "")) "multipart/")
+        multipart? (str/includes? (str/lower (or (:content-type top) "")) "multipart/")
         [_ content-type-suffix part-headers part-body]
         (when multipart?
           (re-find #"(?is)Content-Type:\s*text/plain([^\r\n]*)\r?\n(.*?)\r?\n\r?\n(.*?)(?:\r?\n--[^\r\n]+|$)"

@@ -39,7 +39,7 @@
   `kotoba/grok_bot_runtime_core.kotoba`: at most three attempts, backing off
   2s, 4s, 8s. Same shape here, deliberately -- a second answer to `how long
   should a bot wait for a flaky model` is a second thing to keep true."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.kotoba-oracle :as oracle]))
 
 (def retryable-http-statuses
@@ -83,7 +83,7 @@
 
 (defn- body-error-type [parsed]
   (let [t (or (get-in parsed [:error :type]) (:type parsed))]
-    (when (string? t) (str/lower-case t))))
+    (when (string? t) (str/lower t))))
 
 (defn- body-error-code [parsed]
   (let [c (or (get-in parsed [:error :code]) (:code parsed))]
@@ -102,7 +102,7 @@
 
 (defn- body-error-code-name [parsed]
   (let [c (or (get-in parsed [:error :code]) (:code parsed))]
-    (when (string? c) (str/lower-case c))))
+    (when (string? c) (str/lower c))))
 
 (defn transient-response?
   "Is this failed response worth sending again?

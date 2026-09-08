@@ -3,7 +3,7 @@
   Kotobase token environment; they are never accepted as command arguments."
   (:require [clojure.java.io :as io]
             [clojure.edn :as edn]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.repository-actor :as repository-actor]
             [cloud.itonami.app.repository-measurement :as measurement]

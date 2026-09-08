@@ -7,7 +7,7 @@
   exact Git root."
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
-            [clojure.string :as str])
+            [kotoba.lang.text :as str])
   (:import [java.nio.file Files LinkOption Path]))
 
 (def ^:private no-links (make-array LinkOption 0))

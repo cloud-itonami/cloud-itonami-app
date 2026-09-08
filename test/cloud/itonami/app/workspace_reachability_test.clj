@@ -29,7 +29,7 @@
   because the string is there; a segment built by joining fragments would
   not."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]))
 
 (def ^:private no-interface

@@ -26,7 +26,7 @@
   commands the in-app bridge implements (ADR-2608072000), so there is no way to
   hand the URL to the system browser either. Showing an address that cannot be
   opened is honest; a link that silently does nothing is not."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.mobile.terminal :as terminal]
             [jp-go-dds.core :as dds]))
 

@@ -43,7 +43,7 @@
   model context."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.mail-authentication :as authentication]))
 
 (def schema "cloud-itonami.mail-origins.v1")
@@ -92,7 +92,7 @@
   A rule written for `cloudflare.com` should cover `notify.cloudflare.com`, so
   a miss falls back to the registrable domain before giving up."
   [domain]
-  (let [domain (str/lower-case (str/trim (str domain)))]
+  (let [domain (str/lower (str/trim (str domain)))]
     (or (some #(when (= domain (:origin/domain %)) %) (all))
         (some #(when (= (registrable domain) (:origin/domain %)) %) (all)))))
 

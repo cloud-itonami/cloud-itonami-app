@@ -10,7 +10,7 @@
   a local model's output — a real provider would make the assertions about
   chunk order depend on a model's token boundaries."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as local-identity]

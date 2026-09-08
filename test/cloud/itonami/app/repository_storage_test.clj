@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.repository-storage-test
   (:require [clojure.java.io :as io]
             [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.repository-measurement :as measurement]
             [cloud.itonami.app.repository-storage :as repository]

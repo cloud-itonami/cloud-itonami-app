@@ -29,7 +29,7 @@
   asking a CA for more; a rate limit spent on a name somebody else terminates is
   spent for nothing."
   (:require [clojure.java.shell :as shell]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.acme :as acme]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.tls-binding :as tls-binding])

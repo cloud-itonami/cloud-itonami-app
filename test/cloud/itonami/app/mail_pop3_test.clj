@@ -5,7 +5,7 @@
   two protocols, because those are the ways a client built on IMAP habits
   gets it wrong: message numbers that do not survive the session, reading
   that must not delete, and a QUIT that is not a courtesy."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.mail-pop3 :as mail-pop3]
             [pop3.transport :as transport]))

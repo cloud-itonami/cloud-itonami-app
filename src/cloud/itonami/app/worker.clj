@@ -10,7 +10,7 @@
   state file on every change, so streaming deltas through it would rewrite
   `state.edn` once per token; the durable store keeps a bounded completion
   event per run instead. Runs therefore do not survive a restart."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.executor :as executor]
             [cloud.itonami.app.service :as service]
             [cloud.itonami.app.store :as store])

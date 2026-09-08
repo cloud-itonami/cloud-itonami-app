@@ -6,7 +6,7 @@
   version. Responses are accepted only when they bind the same worker, claim,
   version, and organization. Raw identity documents are never stored here."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.human-work :as human-work]
             [cloud.itonami.app.store :as store])
@@ -94,7 +94,7 @@
                  :issuer (:issuer claim) :jurisdiction (:jurisdiction claim)
                  :scopes (:scopes claim) :evidence-ref (:evidence-ref claim)}
         result (*online-check!* provider request)
-        decision (some-> (:decision result) name str/lower-case)]
+        decision (some-> (:decision result) name str/lower)]
     (when-not (and (= worker-id (:worker-id result))
                    (= credential-id (:credential-id result))
                    (= (:claim-version claim) (:claim-version result))
@@ -120,8 +120,8 @@
         request {:schema schema :operation "identity-check"
                  :organization-id organization-id :worker-id worker-id}
         result (*online-check!* provider request)
-        status (some-> (:status result) name str/lower-case)
-        level (some-> (:level result) name str/lower-case)]
+        status (some-> (:status result) name str/lower)
+        level (some-> (:level result) name str/lower)]
     (when-not (and (= worker-id (:worker-id result))
                    (= organization-id (:organization-id result))
                    (contains? human-work/identity-levels level)

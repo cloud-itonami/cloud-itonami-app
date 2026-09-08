@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.human-work-x402-test
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is use-fixtures]]
             [cloud.itonami.app.human-work :as human-work]
             [cloud.itonami.app.human-work-x402 :as x402]

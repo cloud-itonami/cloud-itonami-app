@@ -35,7 +35,7 @@
   The rule that adds the facts up is `domain_binding_core.kotoba`. DNS, the
   outbound probe, the store writes and every `throw` are here — an exception is
   an effect and the core has none."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.credential-trust :as credential-trust]
             [cloud.itonami.app.domain-binding :as binding]
             [cloud.itonami.app.domain-name :as domain-name]
@@ -88,7 +88,7 @@
                 (keep (fn [origin]
                         (try
                           (some-> (URI/create (str origin)) .getHost
-                                  str/lower-case not-empty)
+                                  str/lower not-empty)
                           (catch Exception _ nil))))
                 [(:public-origin configuration)
                  (get-in configuration [:server :public-origin])])))
@@ -122,7 +122,7 @@
   (try
     (let [domain (-> (str value) str/trim (str/replace #"\.$" "")
                      (IDN/toASCII IDN/USE_STD3_ASCII_RULES)
-                     str/lower-case)]
+                     str/lower)]
       (when (domain-name/valid-ascii-name? domain) domain))
     (catch Exception _ nil)))
 
@@ -317,7 +317,7 @@
   about another name is how a name gets activated for a tenant that never
   proved it."
   [host]
-  (let [hostname (-> (str host) str/trim str/lower-case
+  (let [hostname (-> (str host) str/trim str/lower
                      (str/replace #":\d+$" ""))
         all (records)
         now (Instant/now)]

@@ -42,7 +42,7 @@
 
   Absence is not failure and must not be rendered as one. That is the whole
   reason `:unknown` is a distinct value rather than nil coerced to false."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def schema "cloud.itonami.app.mail-authentication.v1")
 
@@ -65,7 +65,7 @@
   The header is a list of `method=result` clauses with optional parameters, and
   the result word is what matters: `spf=pass`, `dkim=fail`, `dmarc=none`."
   [value method]
-  (when-let [value (not-empty (str/lower-case (str/trim (str value))))]
+  (when-let [value (not-empty (str/lower (str/trim (str value))))]
     (some-> (re-find (re-pattern (str "\\b" method "\\s*=\\s*([a-z]+)")) value)
             second
             keyword)))
@@ -78,11 +78,11 @@
   synced before these headers were retained. A missing check is not a failed
   one."
   [headers]
-  (let [headers (into {} (map (fn [[k v]] [(str/lower-case (str k)) v])) (or headers {}))
+  (let [headers (into {} (map (fn [[k v]] [(str/lower (str k)) v])) (or headers {}))
         combined (get headers "authentication-results")
         spf (or (method-result combined "spf")
                 (method-result (get headers "received-spf") "")
-                (some-> (get headers "received-spf") str str/lower-case str/trim
+                (some-> (get headers "received-spf") str str/lower str/trim
                         (str/split #"\s+") first not-empty keyword))]
     {:schema schema
      :spf (or spf :unknown)
@@ -90,11 +90,11 @@
      :dmarc (or (method-result combined "dmarc") :unknown)
      :envelope-from (some-> (get headers "return-path") str
                             (str/replace #"[<>]" "") str/trim not-empty
-                            str/lower-case)
+                            str/lower)
      :evaluated? (boolean (or combined (get headers "received-spf")))}))
 
 (defn- domain-of [address]
-  (some-> address str str/lower-case (str/split #"@") second str/trim not-empty))
+  (some-> address str str/lower (str/split #"@") second str/trim not-empty))
 
 (defn verdict
   "What follows from the receiver's verdict, and nothing more.

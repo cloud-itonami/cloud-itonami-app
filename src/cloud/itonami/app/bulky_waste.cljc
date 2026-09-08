@@ -13,7 +13,7 @@
   worker.  An open-job candidate sees the service area, window and items, which
   is enough to decide whether to book without exposing a resident's address."
   (:require [clojure.set :as set]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.human-work :as human-work]
             #?(:clj [cloud.itonami.app.store :as store])))
 

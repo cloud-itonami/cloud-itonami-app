@@ -6,7 +6,7 @@
   one active assignment; a request never supplies the mailbox principal."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.organism-gateway :as gateway]
             [cloud.itonami.app.secure-file :as secure-file]
             [cloud.itonami.app.store :as store])
@@ -76,8 +76,8 @@
         assignment (gateway/assignment worker-id)]
     (when-not assignment
       (fail! :ao.worker/not-found "organism worker was not found" {:id worker-id}))
-    (when-not (= (str/lower-case (str organization))
-                 (str/lower-case (str (:ao.worker/organization assignment))))
+    (when-not (= (str/lower (str organization))
+                 (str/lower (str (:ao.worker/organization assignment))))
       (fail! :ao.worker/not-found "organism worker is outside the active organization"
              {:id worker-id}))
     (when-not (= :active (:ao.worker/status assignment))
@@ -124,8 +124,8 @@
                   (let [assignment (gateway/assignment worker-id)]
                     (when (and assignment
                                (= :active (:ao.worker/status assignment))
-                               (= (str/lower-case (str (:organization record)))
-                                  (str/lower-case
+                               (= (str/lower (str (:organization record)))
+                                  (str/lower
                                    (str (:ao.worker/organization assignment)))))
                       {:schema schema
                        :worker-id worker-id

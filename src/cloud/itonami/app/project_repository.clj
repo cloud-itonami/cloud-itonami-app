@@ -7,7 +7,7 @@
   Kagi sealed-block pipeline."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.mail-age-key :as age-key]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.documents :as documents]
@@ -37,7 +37,7 @@
 
 (defn- project-slug [project-id]
   (let [slug (-> (or (not-empty (str project-id)) "default")
-                 str/lower-case
+                 str/lower
                  (str/replace #"[^a-z0-9._-]+" "-")
                  (str/replace #"(^[-.]+|[-.]+$)" "")
                  not-empty)]

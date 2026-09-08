@@ -11,7 +11,7 @@
   Every function here came out of an outage, and none of them had a direct test
   before this file existed — they were expressions inside `write-atomic!`,
   reachable only by filling a disk or growing a file past its bound."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def default-max-bytes
   "Bound for a confined write of a DOCUMENT -- content whose size is not ours

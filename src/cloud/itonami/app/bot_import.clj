@@ -49,7 +49,7 @@
   ever printed after a read that succeeded."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]))
 
 (def ^:private default-grok-base "https://itonami.cloud")
@@ -59,7 +59,7 @@
 ;; ── the shape both sources are read into ─────────────────────────────────
 
 (defn- slug [value]
-  (let [s (-> (str value) str/lower-case (str/replace #"[^a-z0-9]+" "-")
+  (let [s (-> (str value) str/lower (str/replace #"[^a-z0-9]+" "-")
               (str/replace #"^-+|-+$" ""))]
     (if (str/blank? s) nil s)))
 
@@ -335,10 +335,10 @@
   rather than proposed twice."
   [source {:keys [business existing] :or {business "cloud-itonami"} :as options}]
   (let [bots (read-source source options)
-        present (into #{} (map str/lower-case) (or existing []))
+        present (into #{} (map str/lower) (or existing []))
         classify (fn [bot]
                    (cond
-                     (contains? present (str/lower-case (str (:name bot))))
+                     (contains? present (str/lower (str (:name bot))))
                      [:already-present nil]
                      (exclusion bot) [:not-importable (exclusion bot)]
                      :else [:importable nil]))

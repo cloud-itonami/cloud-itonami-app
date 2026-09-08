@@ -56,7 +56,7 @@
   that exact reason (see the comment above it). The gate is re-read here instead,
   which is a duplication worth naming."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.domain-tools :as domain-tools]
             [cloud.itonami.app.business-tools :as business-tools]

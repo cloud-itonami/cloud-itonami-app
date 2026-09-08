@@ -5,7 +5,7 @@
   page is known rather than assumed: an assertion that the rendering contains
   a string is an assertion that the string this test put at those coordinates
   came back out."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.pageview :as pageview]

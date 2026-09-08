@@ -26,7 +26,7 @@
   discovered: mail filed against the project stays in the tenant it was filed
   in, because a filing is a record of that tenant's correspondence and carrying
   it across would move somebody else's mail."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.mail-projects :as mail-projects]
             [cloud.itonami.app.project-repository :as project-repository]

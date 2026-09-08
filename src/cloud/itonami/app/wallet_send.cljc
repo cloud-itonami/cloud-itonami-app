@@ -32,7 +32,7 @@
   contract calls are out of scope for a Bot allowance wallet."
   (:require [cloud.itonami.app.store :as store]
             [cloud.itonami.app.wallet :as wallet]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             #?(:clj [clojure.data.json :as json])
             #?(:clj [cloud.itonami.app.http-client :as http])
             [eth-crypto.core :as eth]
@@ -75,7 +75,7 @@
 (defn- lock-for
   "One monitor per (lowercased) address — the in-process single writer."
   [address]
-  (let [address (str/lower-case address)]
+  (let [address (str/lower address)]
     (or (get @address-locks address)
         (get (swap! address-locks
                     (fn [m] (if (contains? m address) m (assoc m address (Object.)))))
@@ -153,8 +153,8 @@
                                                  :path (:derivation-path link)} tx)
                   local-hash (eth/raw-tx-hash raw)
                   node-hash (rpc-call! transport "eth_sendRawTransaction" [raw])]
-              (when-not (= (str/lower-case local-hash)
-                           (str/lower-case (str node-hash)))
+              (when-not (= (str/lower local-hash)
+                           (str/lower (str node-hash)))
                 (refuse :wallet/tx-hash-mismatch
                         (str "nodeの返したtx hashがローカル計算と一致しません: "
                              node-hash " ≠ " local-hash)))

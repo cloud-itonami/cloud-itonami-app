@@ -7,7 +7,7 @@
   parse that does not exist, a name that collides with a generated command and
   quietly shadows it. These are those failures."
   (:require [clojure.set :as set]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.commands :as commands]))
 
@@ -82,7 +82,7 @@
     (doseq [{:keys [command method template]} aliases]
       (when-let [g (get by-name (str/join " " command))]
         (testing (str/join " " command)
-          (is (= (str/upper-case (name method)) (:method g))
+          (is (= (str/upper (name method)) (:method g))
               "alias and generated command disagree on method")
           ;; Placeholder NAMES are flag names, not route identity: the alias
           ;; takes `--id` where the generated command takes `--business`, and

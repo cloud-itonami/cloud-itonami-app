@@ -2,7 +2,7 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [cloud.itonami.app.config-policy :as policy-layer]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.policy :as policy])
   (:import [java.security MessageDigest]))
 

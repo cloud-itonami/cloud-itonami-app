@@ -6,7 +6,7 @@
             [cloud.itonami.app.passkey :as passkey]
             [cloud.itonami.app.store :as store]
             [clojure.data.json :as json]
-            [clojure.string :as str])
+            [kotoba.lang.text :as str])
   (:import [java.net URLEncoder]
            [java.nio.charset StandardCharsets]
            [java.util UUID]))

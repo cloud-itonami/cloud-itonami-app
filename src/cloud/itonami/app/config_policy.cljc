@@ -23,7 +23,7 @@
   normally — so a deployment profile that enabled a provider read as correct
   and did nothing. It was reachable only by loading a real config from a real
   directory with a real profile environment variable set."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (defn deep-merge
   "Merge maps recursively; a later value wins unless both sides are maps.

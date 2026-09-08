@@ -52,7 +52,7 @@
   Checked when the rule is written, against this organization's catalogue. A
   typo would otherwise file mail into a project nobody can open, and it would
   look like it worked."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.mail-origins :as origins]
             [cloud.itonami.app.project-repository :as projects]
             [cloud.itonami.app.store :as store]))
@@ -165,7 +165,7 @@
   pair is why the scan continues past the first match instead of stopping at
   it."
   [address]
-  (let [address (str/lower-case (str/trim (str address)))
+  (let [address (str/lower (str/trim (str address)))
         [local host] (str/split address #"@" 2)]
     (when (and host (contains? relay-hosts host) local)
       (when-let [encoded (second (str/split local #"_at_" 2))]
@@ -188,22 +188,22 @@
   "The sending hostname, seen through Apple's relay when it is one."
   [address]
   (or (relay-origin address)
-      (some-> address str str/lower-case (str/split #"@") second str/trim
+      (some-> address str str/lower (str/split #"@") second str/trim
               not-empty)))
 
 (defn- clause-matches? [message [key value]]
-  (let [value (str/lower-case (str/trim (str value)))]
+  (let [value (str/lower (str/trim (str value)))]
     (case key
-      :from (= value (str/lower-case (str (:from-email message))))
+      :from (= value (str/lower (str (:from-email message))))
       ;; Suffix, so `co.jp` catches `mail.rakuten-bank.co.jp`. Anchored at a dot
       ;; boundary or the whole domain, or `example.com` would also catch
       ;; `notexample.com`.
       :from-domain (let [domain (or (domain-of (:from-email message)) "")]
                      (or (= domain value)
                          (str/ends-with? domain (str "." value))))
-      :subject-contains (str/includes? (str/lower-case (str (:subject message)))
+      :subject-contains (str/includes? (str/lower (str (:subject message)))
                                        value)
-      :label (contains? (set (map #(str/lower-case (name %))
+      :label (contains? (set (map #(str/lower (name %))
                                   (:labels message)))
                         value)
       false)))

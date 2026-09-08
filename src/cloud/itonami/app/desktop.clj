@@ -33,7 +33,7 @@
       caller can see the difference rather than assume it."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config])
   (:import [java.security MessageDigest]
            [java.util.concurrent TimeUnit]))
@@ -87,7 +87,7 @@
           candidates)))
 
 (defn- macos? []
-  (str/includes? (str/lower-case (str (System/getProperty "os.name"))) "mac"))
+  (str/includes? (str/lower (str (System/getProperty "os.name"))) "mac"))
 
 (defn- exec! [args timeout-seconds]
   (let [builder (ProcessBuilder. ^java.util.List (vec args))

@@ -4,7 +4,7 @@
   Editing and publishing are separate state transitions. Published HTML is
   served with a CSP sandbox by the HTTP adapter, so authored markup cannot
   inherit the authenticated application's authority."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.store :as store])
   (:import [java.util UUID]))
 
@@ -26,7 +26,7 @@
     title))
 
 (defn- clean-slug [value]
-  (let [slug (-> (str value) str/trim str/lower-case)]
+  (let [slug (-> (str value) str/trim str/lower)]
     (when-not (re-matches #"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?" slug)
       (fail! :site/invalid-slug "slugは英小文字・数字・ハイフンで指定してください。"))
     slug))

@@ -2,7 +2,7 @@
   "The repos plane, tested on the one thing it exists to get right: an axis
   nobody scored is not a zero, and no average pretends otherwise."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.repos :as repos]

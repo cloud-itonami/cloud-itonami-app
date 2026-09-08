@@ -39,7 +39,7 @@
   `cloud.itonami.app.esign`: there is nothing at the TSA to erase."
   (:require [cloud.itonami.app.config :as config]
             [cloud.itonami.app.http-client :as http]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [asn1.core :as asn1]
             [cms.jvm :as cms-jvm]
             [rfc3161.core :as ts]

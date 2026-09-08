@@ -11,7 +11,7 @@
 
   The two certificates below are self-signed fixtures, generated once with
   `openssl` and dated far out so they do not rot. Nothing here reaches a CA."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.tls-certificate :as tls]
             [cloud.itonami.app.store :as store])

@@ -56,7 +56,7 @@
   provider is proving — nothing can, which is the point of the proof — so it
   never claims to."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.http-client :as http]
             [drive.object :as object]

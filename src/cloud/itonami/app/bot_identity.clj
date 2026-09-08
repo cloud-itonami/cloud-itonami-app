@@ -38,7 +38,7 @@
   identity, and neither path quietly mints a different name for a Bot that
   already had one."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [ed25519.core :as ed]
             [identity.model :as identity-model]
             [cloud.itonami.app.config :as config]

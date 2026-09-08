@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.conversation-context-test
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.conversation-context :as context]
             [cloud.itonami.app.documents :as documents]

@@ -5,7 +5,7 @@
   against real B2 rather than here. What these pin is everything around it: the
   bucket layout, credential resolution, the refusal when there are none, and the
   one parsing rule that has now bitten this codebase twice."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.project-remote :as remote]))
 

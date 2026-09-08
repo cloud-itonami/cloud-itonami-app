@@ -38,7 +38,7 @@
   names, so `:models-what` says it on every response."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.business :as business]
             [dynamics.core :as dynamics]
             [xmile.execute :as execute]

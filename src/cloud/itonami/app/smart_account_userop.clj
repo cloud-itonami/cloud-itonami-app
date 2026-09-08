@@ -11,7 +11,7 @@
   No private key enters this namespace and no signature is persisted by it."
   (:require [asn1.core :as asn1]
             [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.esign.assertion :as assertion]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.smart-account :as smart-account]
@@ -135,7 +135,7 @@
   value)
 
 (defn- same-hex? [left right]
-  (= (str/lower-case (str left)) (str/lower-case (str right))))
+  (= (str/lower (str left)) (str/lower (str right))))
 
 (defn- call-data [signature types values]
   (abi/encode-call-hex (smart-account/function-selector signature) types values))
@@ -148,7 +148,7 @@
 
 (defn- code? [value]
   (and (string? value) (re-matches bytes-pattern value)
-       (not= "0x" (str/lower-case value))))
+       (not= "0x" (str/lower value))))
 
 (defn- chain-config! [configuration chain-id]
   (let [chain-id (try (long chain-id) (catch Exception _ 0))

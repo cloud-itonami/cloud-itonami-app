@@ -9,7 +9,7 @@
   deleting memory does not silently delete a user's conversations."
   (:require [clojure.java.io :as io]
             [clojure.set :as set]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.screen-guest :as screen-guest]
             [cloud.itonami.app.secure-file :as secure-file]
@@ -283,7 +283,7 @@
      :last-error (:last-error profile)}))
 
 (defn- normalized-terms [value]
-  (let [normalized (-> (str value) str/lower-case
+  (let [normalized (-> (str value) str/lower
                        (str/replace #"[^\p{L}\p{N}]+" ""))]
     (if (< (count normalized) 2)
       #{normalized}

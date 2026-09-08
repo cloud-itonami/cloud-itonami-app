@@ -15,7 +15,7 @@
   have been a list to keep in step. Redirecting the directory once is the thing
   that cannot be forgotten."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.store :as store]))

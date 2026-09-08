@@ -6,7 +6,7 @@
   call, and stubbing it would leave the descriptors and the search behaviour
   untested against the data they are written for."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.business-tools :as business-tools]
             [cloud.itonami.app.bot-tools :as bot-tools]

@@ -35,7 +35,7 @@
   its own key — and `sd-jwt-vc.core/verify` supports that path today, this app
   simply cannot be the wallet."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.capability :as capability]
             [cloud.itonami.app.credential :as credential]
             [ed25519.core :as ed]

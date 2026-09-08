@@ -7,7 +7,7 @@
   message (not an execution intent), `reply!`, and `ack!` after its durable
   checkpoint succeeds."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.organism-messenger-transport :as transport])
   (:import [java.net URLEncoder]

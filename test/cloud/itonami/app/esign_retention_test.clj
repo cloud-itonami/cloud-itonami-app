@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.esign-retention-test
   "Erasure by key destruction, the 電子帳簿保存法 search index, and the rule that
   keeps the two from cancelling each other out."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [asn1.core :as asn1]
             [cloud.itonami.app.esign :as esign]

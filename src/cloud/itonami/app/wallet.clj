@@ -21,7 +21,7 @@
   External and kagi accounts walk the same one-use SIWE link path. They remain
   useful for legacy assets, funding, recovery and co-signing, but linking one
   never replaces the Passkey Smart Account."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.passkey :as passkey]
             [cloud.itonami.app.smart-account :as smart-account]
@@ -114,12 +114,12 @@
     (cond-> (assoc descriptor :chain-id chain-id)
       (:address descriptor)
       (assoc :account (str "eip155:" chain-id ":"
-                           (str/lower-case (:address descriptor)))
+                           (str/lower (:address descriptor)))
              :accounts (mapv (fn [{:keys [chain-id name]}]
                                {:namespace "eip155" :chain-id chain-id :name name
                                 :address (:address descriptor)
                                 :account (str "eip155:" chain-id ":"
-                                              (str/lower-case (:address descriptor)))})
+                                              (str/lower (:address descriptor)))})
                              (supported-chains configuration))))))
 
 (defn ensure-principal-account!
@@ -311,12 +311,12 @@
                      (catch Exception _ {:ok? false}))]
       (when-not (:ok? verified)
         (refuse :wallet/verification-failed "Wallet所有署名を検証できませんでした。"))
-      (let [address (str/lower-case (:address transaction))
+      (let [address (str/lower (:address transaction))
             chain-id (:chain-id transaction)
             duplicate? (some #(and (= :active (:status %))
                                    (= "eip155" (:namespace %))
                                    (= chain-id (:chain-id %))
-                                   (= address (str/lower-case (:address %))))
+                                   (= address (str/lower (:address %))))
                              (mapcat vals (vals (get-in (wallet-state) [:links] {}))))]
         (when duplicate?
           (refuse :wallet/already-bound "このchain accountは既に接続済みです。"))

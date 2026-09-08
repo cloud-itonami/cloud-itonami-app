@@ -49,7 +49,7 @@
   already have, for the same reason: a Bot must not become execution authority
   merely by being on screen."
   (:require [clojure.set :as set]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.app.work-governance :as governance])
   #?(:clj (:import [java.security MessageDigest])))
@@ -176,7 +176,7 @@
         (mapv
          (fn [package]
            (let [id (some-> (:id package) str str/trim)
-                 sha256 (some-> (:sha256 package) str str/lower-case str/trim)
+                 sha256 (some-> (:sha256 package) str str/lower str/trim)
                  instructions (some-> (:instructions package) str str/trim)]
              (when-not (and (re-matches skill-id-pattern (or id ""))
                             (re-matches skill-sha256-pattern (or sha256 ""))

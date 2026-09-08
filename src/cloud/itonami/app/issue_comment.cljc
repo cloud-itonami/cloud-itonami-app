@@ -35,7 +35,7 @@
   application renders its own screens from `web.clj` hiccup and drives them
   from `interaction.js`, so a selector, the element's own text, and the view
   name are all searchable strings in the repository the Bot is admitted to."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def max-comment-chars
   "One comment. Long enough for a paragraph of intent, short enough that the
@@ -115,7 +115,7 @@
   [raw]
   (when-let [selector (trimmed (:selector raw) max-selector-chars)]
     (cond-> {:selector selector}
-      (trimmed (:tag raw) 40) (assoc :tag (str/lower-case (trimmed (:tag raw) 40)))
+      (trimmed (:tag raw) 40) (assoc :tag (str/lower (trimmed (:tag raw) 40)))
       (trimmed (:id raw) 120) (assoc :id (trimmed (:id raw) 120))
       (trimmed (:text raw) max-element-text-chars)
       (assoc :text (trimmed (:text raw) max-element-text-chars))

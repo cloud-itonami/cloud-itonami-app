@@ -18,7 +18,7 @@
 
   Portable on purpose: the resolution and the stylesheet are data, and the
   ClojureScript half of the test suite executes them (`test/portable_nbb.cljs`)."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.kotoba-oracle :as oracle]))
 
 (def modes
@@ -38,7 +38,7 @@
   [value]
   (let [s (some-> value
                   (cond-> (keyword? value) name)
-                  str str/trim str/lower-case)]
+                  str str/trim str/lower)]
     (when s
       (oracle/option-value (oracle/call :appearance-core 'mode-of [s])))))
 
@@ -54,7 +54,7 @@
   Same shape as `resolve-mode`: a value that names nothing is not a crash."
   [config]
   (let [v (get-in config [:residency :plane])
-        s (some-> v (cond-> (keyword? v) name) str str/trim str/lower-case)]
+        s (some-> v (cond-> (keyword? v) name) str str/trim str/lower)]
     (if (oracle/call :appearance-core 'plane-cloud? [(or s "")])
       :cloud :local)))
 

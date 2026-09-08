@@ -16,7 +16,7 @@
   ;; Plain `clojure.test`: nbb resolves it to `cljs.test`, so no reader
   ;; conditional is needed here and the sibling portable tests do not use one.
   (:require [clojure.test :refer [deftest is testing]]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.issue-comment :as issue-comment]))
 
 (def ^:private ok

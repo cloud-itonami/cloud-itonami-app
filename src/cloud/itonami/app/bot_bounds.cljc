@@ -33,7 +33,7 @@
   surface can count the bots that carry no ceiling; an absence nobody can see
   is the failure this whole family of rows is against, and silently reading it
   as `unlimited` is how a ceiling ends up meaning nothing."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def schema "cloud.itonami.app.bot-bounds.v1")
 
@@ -141,7 +141,7 @@
           (as-> a (if-let [i (str/last-index-of a "@")] (subs a (inc i)) a))
           (str/split #":")
           first
-          str/lower-case
+          str/lower
           not-empty))
 
 (defn admit-host

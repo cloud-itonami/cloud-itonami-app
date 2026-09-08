@@ -8,7 +8,7 @@
             [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.set :as set]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.walk :as walk]
             [kagi.crypto :as crypto]
             [langchain.edn-persist :as edn-persist]

@@ -14,7 +14,7 @@
 
   The vocabulary is consumed, never reimplemented: every OK/reject verdict
   here comes from `valueflows.conform` and `valueflows.event` at the west pin."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.text] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.vf-journal :as vf-journal])
   (:import [java.nio.file Files]))
 
@@ -110,7 +110,7 @@
      (let [file (java.io.File. *tmp-dir*
                                (str (name org) ".vf-journal.edn"))
            text (slurp file)
-           patched (clojure.string/replace text
+           patched (kotoba.lang.text/replace text
                                            #":root \"[0-9a-f]{64}\""
                                            (str ":root \"" (apply str (repeat 64 "0")) "\""))]
        (spit file patched)

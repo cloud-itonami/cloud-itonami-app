@@ -39,7 +39,7 @@
   silently reverted by the server's next `transact!`. So enrollment is a route on
   the running server, and the CLI is a client of it. Measured rather than
   assumed: this is why there is an HTTP route here at all."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.secure-file :as secure-file]

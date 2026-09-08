@@ -24,7 +24,7 @@
   its bound, whether the disk is too full to start, whether a journal belongs
   to the snapshot beside it, what the warning says -- is a pure function above
   them, and is tested on both runtimes."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.host-bounds :as host-bounds]
             [kotoba.lang.fs :as fs]
             [kotoba.lang.fs-host :as fs-host]

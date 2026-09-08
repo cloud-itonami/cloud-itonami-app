@@ -3,7 +3,7 @@
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.kotobase-federation :as federation]
             [cloud.itonami.app.store :as store]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]])
   (:import [java.nio.file Files]
            [java.time Instant]))

@@ -41,7 +41,7 @@
   happen in the issuer's own console, by a person. What is recorded is a COPY of
   what the issuer showed; where the copy and the issuer disagree, the issuer is
   right and the disagreement is the thing worth displaying."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.funding :as funding]
             [cloud.itonami.app.store :as store])
   (:import [java.math BigDecimal RoundingMode]
@@ -378,7 +378,7 @@
   [session {:keys [label issuer holder number currency funding-account-id
                    limit-observed]}]
   (let [organization-id (require-organization! session)
-        currency (or (some-> currency str str/upper-case not-empty) "JPY")]
+        currency (or (some-> currency str str/upper not-empty) "JPY")]
     (when (blank? issuer)
       (refuse :card-statement/issuer-missing "カード発行会社が必要です"))
     (when-not (contains? funding/currency-exponents currency)
@@ -549,7 +549,7 @@
     (when (and (= :confirmed status) (blank? debit-date))
       (refuse :card-statement/debit-date-required
               "確定した請求には引き落とし日が必要です"))
-    (let [currency (or (some-> currency str str/upper-case not-empty)
+    (let [currency (or (some-> currency str str/upper not-empty)
                        (:currency record))
           account-id (or (some-> funding-account-id str not-empty)
                          (:funding-account-id record))]

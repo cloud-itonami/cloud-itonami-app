@@ -60,7 +60,7 @@
   so the fallback is the self-describing form rather than the aspirational one."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.capability :as capability]
             [cloud.itonami.app.store :as store]
             [data-integrity.core :as di]

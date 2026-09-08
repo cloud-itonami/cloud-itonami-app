@@ -22,7 +22,7 @@
     — not on sync, not on trash. A mail app that quietly emptied the
     server's mailbox as the price of showing it would have destroyed the
     account for every other client it is opened in."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.mail-account :as account]
             [mime.address :as address]
             [mime.parse :as mime]
@@ -74,7 +74,7 @@
      :from (or (not-empty (str (:name from)))
                (not-empty (str (:address from)))
                "送信者不明")
-     :from-email (or (not-empty (str/lower-case (str (:address from))))
+     :from-email (or (not-empty (str/lower (str (:address from))))
                      "unknown@local.invalid")
      :to (str/join ", " (:to parts))
      :received-at (or (parse-received-at (:date parts)) (str (Instant/now)))

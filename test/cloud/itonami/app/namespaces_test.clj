@@ -16,7 +16,7 @@
   so -- because an exclusion list nobody prunes is how a gate like this quietly stops
   gating. Fixing a namespace should require deleting a line from this file."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]))
 
 (def known-broken

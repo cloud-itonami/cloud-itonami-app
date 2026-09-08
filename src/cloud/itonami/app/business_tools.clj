@@ -35,7 +35,7 @@
   so nothing here reaches an analysis plane, a governed ledger, or money. That
   is why this surface takes an agent session while `payment-tools` does not
   (ADR-0009)."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.app-client :as client]))
 
 (def tools

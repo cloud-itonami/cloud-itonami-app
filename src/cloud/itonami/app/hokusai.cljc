@@ -19,7 +19,7 @@
   a submit today is answered 503 `self_model_backend_unavailable`, and that
   answer is carried to the Bot verbatim rather than being turned into a retry
   against some other video service."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def model-id "awai-network/hokusai")
 
@@ -103,7 +103,7 @@
 (defn parse-status
   "A poll answer → `{:id :status :terminal? :succeeded? :content-url :error}`."
   [response]
-  (let [status (str/lower-case (or (present (getv response :status)) "unknown"))
+  (let [status (str/lower (or (present (getv response :status)) "unknown"))
         error (or (getv response :error) (getv response :failure))]
     {:id (present (or (getv response :id) (getv response :jobId)))
      :status status

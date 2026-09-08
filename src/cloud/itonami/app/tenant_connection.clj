@@ -6,7 +6,7 @@
   one membership and an explicit capability set until approval, expiry or
   revocation. The connection id is a handle, not a credential: every operation
   must still present the agent session that requested it."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.store :as store])
   (:import [java.time Instant]
@@ -90,7 +90,7 @@
   (some (fn [membership]
           (let [organization (organization-for state membership)]
             (when (or (= tenant-id (:id organization))
-                      (= (some-> tenant-id str str/lower-case)
+                      (= (some-> tenant-id str str/lower)
                          (:organization-id organization)))
               membership)))
         (memberships-for state (:user-id session))))

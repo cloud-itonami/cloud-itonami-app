@@ -2,7 +2,7 @@
   "Global transport for signed Account Link records. The relay stores public
   proofs only; local identity code verifies every wallet signature again."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.identity :as identity])
   (:import [java.net URLEncoder]

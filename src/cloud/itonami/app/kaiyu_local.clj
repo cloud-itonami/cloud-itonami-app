@@ -28,7 +28,7 @@
   The route vocabulary is this app's own surface list. A path not named
   collapses to `other`, exactly as on the sites, which is what keeps a document
   title or a search term from ever reaching the counters."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [kaiyu.core :as kaiyu]
             [cloud.itonami.app.store :as store]))
 

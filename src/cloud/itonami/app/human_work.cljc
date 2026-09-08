@@ -10,7 +10,7 @@
   are retained; online authorities and payment rails live in explicit adapters
   and never promote a claim merely because the worker supplied a file."
   (:require [clojure.set :as set]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             #?(:clj [cloud.itonami.app.store :as store])))
 
 (def schema "cloud.itonami.app.human-work.v1")
@@ -94,7 +94,7 @@
          (< a-start b-end) (< b-start a-end))))
 
 (defn- normalized-country [value]
-  (let [country (some-> value str str/trim str/upper-case)]
+  (let [country (some-> value str str/trim str/upper)]
     (when-not (and country (re-matches #"[A-Z]{2}" country))
       (fail! :human-work/invalid-location
              "country must be an ISO 3166-1 alpha-2 code"))
@@ -141,7 +141,7 @@
 (defn- normalize-credential [value previous]
   (when-not (map? value)
     (fail! :human-work/invalid-credential "credentials must be objects"))
-  (let [type (some-> (:type value) str str/lower-case)
+  (let [type (some-> (:type value) str str/lower)
         expires-at (some-> (:expires-at value) str str/trim not-empty)
         issued-at (some-> (:issued-at value) str str/trim not-empty)
         scopes (vec (distinct (map #(text! % "credential scope")
@@ -279,7 +279,7 @@
     (fail! :identity/unauthenticated "Verifier and organization are required"))
   (when (= verifier worker-id)
     (fail! :human-work/self-verification "A worker cannot verify their own claim"))
-  (let [decision (some-> decision name str/lower-case)
+  (let [decision (some-> decision name str/lower)
         valid-until (some-> valid-until str str/trim not-empty)]
     (when-not (#{"verified" "rejected" "revoked"} decision)
       (fail! :human-work/invalid-verification
@@ -460,7 +460,7 @@
 
 (defn- normalize-identity-requirement [value]
   (when value
-    (let [level (or (some-> (:minimum-level value) str str/lower-case)
+    (let [level (or (some-> (:minimum-level value) str str/lower)
                     "substantial")
           providers (when (seq (:providers value))
                       (vec (distinct (map #(text! % "identity provider")
@@ -471,8 +471,8 @@
       {:minimum-level level :providers providers})))
 
 (defn- normalize-requirement [value]
-  (let [type (some-> (:type value) str str/lower-case)
-        minimum (or (some-> (:minimum-verification value) str str/lower-case)
+  (let [type (some-> (:type value) str str/lower)
+        minimum (or (some-> (:minimum-verification value) str str/lower)
                     "verified")
         requirement {:type type
                      :scopes (vec (distinct (map #(text! % "required scope")
@@ -495,7 +495,7 @@
                   :locality (some-> (:locality value) str str/trim not-empty)
                   :service-area (some-> (:service-area value) str str/trim not-empty)
                   :minimum-verification
-                  (or (some-> (:minimum-verification value) str str/lower-case)
+                  (or (some-> (:minimum-verification value) str str/lower)
                       (if (= "remote" work-mode) "self-attested" "verified"))}]
     (when (and (not= "remote" work-mode) (nil? (:service-area location)))
       (fail! :human-work/invalid-location "onsite work requires a service-area"))
@@ -519,8 +519,8 @@
    requester-id]
   (when-not (and (present? requester-id) (present? organization-id))
     (fail! :identity/unauthenticated "Requester and organization are required"))
-  (let [work-mode (some-> work-mode str str/lower-case)
-        visibility (or (some-> visibility str str/lower-case) "organization")
+  (let [work-mode (some-> work-mode str str/lower)
+        visibility (or (some-> visibility str str/lower) "organization")
         _ (when-not (contains? visibility-levels visibility)
             (fail! :human-work/invalid "visibility is invalid"))
         _ (when-not (contains? work-modes work-mode)
@@ -710,7 +710,7 @@
 
 (defn review-submission!
   [id {:keys [decision verification-evidence-ref reason]} actor]
-  (let [decision (some-> decision name str/lower-case)]
+  (let [decision (some-> decision name str/lower)]
     (when-not (#{"verified" "rejected"} decision)
       (fail! :human-work/invalid-review "decision must be verified or rejected"))
     (when (and (= "verified" decision)

@@ -13,7 +13,7 @@
   granted, and it reports which of those it skipped for. A skip that looks like
   a pass is the failure this repository has spent a lot of ADRs on."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.desktop :as desktop]))
@@ -138,7 +138,7 @@
       (is (= valid-digest (digest! valid-digest))))
     (testing "anything else is refused, including the plausible near-misses"
       (doseq [bad [nil "" "sha256:" "sha1:abc" valid-digest
-                   (str/upper-case valid-digest)
+                   (str/upper valid-digest)
                    (subs valid-digest 0 (dec (count valid-digest)))]
               :when (not= bad valid-digest)]
         (is (thrown? clojure.lang.ExceptionInfo (digest! bad))

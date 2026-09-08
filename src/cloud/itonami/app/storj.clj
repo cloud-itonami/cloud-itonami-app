@@ -35,7 +35,7 @@
   handed in. This supplies the system clock, which is the right place for it:
   a signature is only reproducible if the instant is an argument, and only
   useful if something eventually passes the real time."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [drive.object :as object]
             [sigv4.crypto :as crypto]
@@ -87,12 +87,12 @@
                                           ^bytes body-bytes))
             resp (http/request
                   {:url (:url req)
-                   :method (keyword (str/lower-case (name (:method req))))
+                   :method (keyword (str/lower (name (:method req))))
                    :timeout-seconds 60
                    :headers (into {}
                                   (comp (filter (fn [[k _]]
                                                   (not (client-owned-headers
-                                                        (str/lower-case (name k))))))
+                                                        (str/lower (name k))))))
                                         (map (fn [[k v]] [(name k) (str v)])))
                                   (:headers req))
                    :body body})

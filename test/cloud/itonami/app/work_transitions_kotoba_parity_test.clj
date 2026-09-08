@@ -19,7 +19,7 @@
   asserted against that set rather than assumed to match it -- if a status is
   added there and not here, this test says so instead of quietly renumbering
   the table."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.work-governance :as wg]
             [kotoba.compiler.core :as compiler]

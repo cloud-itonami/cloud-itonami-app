@@ -6,7 +6,7 @@
   an ACME challenge, and whether a certificate should be replaced — and this
   repository's runtime order says they should not be written as though they
   were."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.domain-name :as domain-name]))
 
 (def challenge-prefix "/.well-known/acme-challenge/")

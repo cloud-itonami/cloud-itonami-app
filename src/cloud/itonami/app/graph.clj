@@ -14,7 +14,7 @@
   Does not republish IPNS. Does not move the auth host."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [chain.core :as chain]
             [cloud.itonami.app.bundle :as bundle]
             [kotoba.protocol.app :as app]

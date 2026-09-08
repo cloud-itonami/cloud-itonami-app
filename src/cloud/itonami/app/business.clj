@@ -51,7 +51,7 @@
   there."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.operator :as operator]
             [cloud.itonami.app.store :as store])
   (:import [java.util UUID]))
@@ -210,7 +210,7 @@
   [ws lei]
   (when-let [root (:file ws)]
     (.isFile (io/file root (str "orgs/cloud-itonami/cloud-itonami-lei-"
-                                (str/lower-case lei) "/blueprint.edn")))))
+                                (str/lower lei) "/blueprint.edn")))))
 
 ;; ---------------------------------------------------------------------------
 ;; face resolution
@@ -404,7 +404,7 @@
   inventing the very binding this entity exists to record."
   [session {:keys [slug name note]}]
   (let [organization-id (require-organization! session)
-        slug (some-> slug str str/trim str/lower-case not-empty)]
+        slug (some-> slug str str/trim str/lower not-empty)]
     (when-not slug
       (refuse :business/slug-missing "business の slug が必要です"))
     (when-not (re-matches slug-pattern slug)
@@ -455,7 +455,7 @@
                                             (str/replace #"^:" "") keyword))
             (contains? bindings :lei)
             (assoc :business/lei (some-> (:lei bindings) str str/trim not-empty
-                                         str/upper-case))
+                                         str/upper))
             (contains? bindings :model)
             (assoc :business/model (some-> (:model bindings) str str/trim not-empty))
             (contains? bindings :leverage)

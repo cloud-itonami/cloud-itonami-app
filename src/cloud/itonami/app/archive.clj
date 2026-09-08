@@ -20,7 +20,7 @@
   app document, the L2 graph commit, and every block of every file in the
   Drive — and a second copy of a token-reading HTTP client is not something
   to discover later."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [kotoba.protocol.cid :as cid])
   (:import [java.security MessageDigest]))
