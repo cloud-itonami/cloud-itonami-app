@@ -24,14 +24,28 @@
        matches (filter #(and (or (str/blank? public-org) (= public-org (:org %)))
                               (str/includes? (str/lower-case (str (:id %) " " (:name %) " " (:description %))) (str/lower-case (or public-query "")))) items)
        status-of #(let [s (get-in % [:funding :status])] (if (#{"accepting" "not-accepting"} s) s "unknown"))
-       filtered (filter #(or (str/blank? public-funding) (= public-funding (status-of %))) matches)
-       statuses [["" "すべて" "All"] ["accepting" "募集中" "Accepting funding"] ["not-accepting" "募集していない" "Not accepting"] ["unknown" "未確認" "Unverified"]]
+       matches-status? (fn [item value] (case value
+        "" true "lending" (true? (get-in item [:funding :lending]))
+        "funded" (true? (get-in item [:funding :funded])) (= value (status-of item))))
+       filtered (filter #(matches-status? % (or public-funding "")) matches)
+       statuses [["" "すべて" "All"] ["lending" "あなたが貸付中" "Your lending"] ["funded" "資金を預かり中" "Holding lender funds"] ["accepting" "募集中" "Accepting funding"] ["not-accepting" "募集していない" "Not accepting"] ["unknown" "未確認" "Unverified"]]
        selected (first (filter #(= public-selected (:id %)) items))]
   [:section.bw-public
    [:div.bw-plugin-heading
     (dds/button "←" {:type :text :attrs {:on-click (:public-back handlers)} :aria-label (label "自分のBotへ戻る" "Back to My Bots")})
     [:h1 (label "公開組織・Bot" "Public organizations & Bots")]]
    (when-not selected [:p (label "応援したいBotの事業を探す。募集条件を確認して、USDCで資金を貸せます。" "Find a Bot business to support. Review its funding terms and lend USDC.")])
+   (when-not selected
+    [:section.bw-capital-balance {:aria-label (label "全体の資金プール" "Total capital pool")}
+     [:span (label "全体のプール残高" "Total pooled assets")]
+     [:strong (or (capital/usdc (get-in public-directory [:pool :totals :pooled])) (label "未確認" "Unverified"))]
+     [:p (label "保管中のUSDC・Aave資産・未使用Bot予算の合計。事業に支出した資金は含みません。" "USDC held, Aave assets and unused Bot budgets. Business spending is excluded.")]
+     (when (= "partial" (get-in public-directory [:pool :status]))
+      [:p {:role "status"} (str (label "一部を取得できません。確認できた残高：" "Some rounds are unavailable. Verified subtotal: ") (capital/usdc (get-in public-directory [:pool :verifiedSubtotal :pooled])))])
+     [:dl (for [[k ja en] [[:outstanding "未返還の元本持分" "Unclaimed principal positions"] [:idleAssets "Aaveで運用中" "In Aave"] [:budgetCash "未使用Bot予算" "Unused Bot budgets"] [:debt "事業の未返済額" "Business debt"] [:distributed "分配済み" "Distributed"]]]
+      [:div {:key (name k)} [:dt (label ja en)] [:dd (or (capital/usdc (get-in public-directory [:pool :totals k])) (label "未確認" "Unverified"))]])]
+     (when (:asOfBlock public-directory) [:p (str (label "確認ブロック：" "Verified block: ") (:asOfBlock public-directory))])
+     (when-not (:personalized public-directory) [:p (label "ウォレットでログインすると、あなたが貸付中のBotを確認できます。" "Sign in with your wallet to see Bots you lend to.")])])
    (when public-error [:p {:role "alert"} public-error])
    (if public-loading? [:p {:role "status"} (label "公開一覧を読み込み中…" "Loading directory…")]
     (if selected
@@ -57,7 +71,7 @@
         (for [org (:orgs public-directory)] [:option {:key (:id org) :value (:id org)} (str (:id org) " (" (:count org) ")")])]]]
       [:div.bw-funding-filters {:role "group" :aria-label (label "資金の受付状況" "Funding availability")}
        (for [[value ja en] statuses]
-        (dds/button (str (label ja en) " (" (count (if (= value "") matches (filter #(= value (status-of %)) matches))) ")")
+        (dds/button (str (label ja en) " (" (count (filter #(matches-status? % value) matches)) ")")
          {:type (if (= value (or public-funding "")) :solid-fill :outline)
           :attrs {:key value :aria-pressed (= value (or public-funding "")) :on-click #((:public-funding handlers) value)}}))]
       [:p (label "受付状況は表示時点の情報です。入金前に最新の条件を確認してください。" "Availability is checked when loaded. Review current terms before depositing.")]
@@ -66,6 +80,8 @@
        [:article.bw-public-card {:key (:id item)}
         [:p [:code (:id item)]] [:h2 (:name item)] [:p.bw-public-excerpt (:description item)]
         [:p (str/join " / " (distinct (map #(if (= "yield-budget-v1" (:policy %)) (label "運用益型" "Yield funded") (label "事業貸付" "Business loan")) (get-in item [:funding :rounds]))))]
+        (when (true? (get-in item [:funding :lending])) [:p.bw-capital-badge (str (label "あなたが貸付中 · " "Your lending · ") (capital/usdc (get-in item [:funding :position])))])
+        (when-let [pooled (get-in item [:funding :pool :totals :pooled])] [:p (str (label "プール残高：" "Pooled assets: ") (capital/usdc pooled))])
         [:p.bw-capital-badge (case (status-of item) "accepting" (label "募集中 · USDC" "Accepting funding · USDC") "not-accepting" (label "現在は募集していません" "Not accepting funding") (label "受付状況を確認できません" "Funding availability unverified"))]
         (dds/button (label "事業・資金情報を見る" "Business & funding details") {:type :outline :attrs {:on-click #((:public-select handlers) (:id item))}})])
       (when (empty? filtered) [:p (label "該当する公開事業がありません。" "No public projects match.")])]))]))
