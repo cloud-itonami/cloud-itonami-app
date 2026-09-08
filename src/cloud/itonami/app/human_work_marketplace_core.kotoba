@@ -1,0 +1,48 @@
+;; The HumanWork listing page's DECISION CORE — the two scalar judgements
+;; inside `cloud.itonami.app.human-work-marketplace/page-html`.
+;;
+;; `page-html` is rendering: it assembles one large HTML document around an
+;; embedded title. Two of its steps are decisions about the caller-supplied
+;; brand name, and both are expressible on the native word-typed slice:
+;;
+;;   - `pick-brand-name` — the cljc's `(or brand-name "Cloud Itonami")`. An
+;;     absent name is replaced with the product wordmark; the choice is a real
+;;     decision (the default is a product name, not a technical fallback), and
+;;     it is what the page shows as its name.
+;;   - `needs-escape?` — whether the name the page will show contains any of
+;;     the three characters the cljc's escape map rewrites (`&` `<` `>`).
+;;     The substitution itself is an operation the native slice does not
+;;     admit (string mutation / concatenation), so the HOST keeps the one-pass
+;;     `str/escape`; this core decides whether to apply it, and the host's
+;;     `if escape-needed …` routes on the verdict. A name containing none of
+;;     the three characters passes through unchanged either way, so the
+;;     rendered page is byte-identical to the pre-split page.
+;;
+;; Nil discipline (the oracle contract, kept faithful): a caller that passes
+;; no brand name must get the wordmark and must NOT be told to escape it
+;; ("Cloud Itonami" contains none of the three characters). Presence travels
+;; as `[:option :string]`; `option-some?` gates both answers, so a binding
+;; is never handed an operator that expects a value.
+;;
+;; Parity: test/cloud/itonami/app/human_work_marketplace_kotoba_parity_test.clj
+;; and ADR-2609081200.
+
+(ns cloud.itonami.app.human-work-marketplace-core
+  (:export [pick-brand-name needs-escape?]))
+
+;; `(or brand-name "Cloud Itonami")` as a function: `none` names the wordmark,
+;; `some` names the caller's value unchanged.
+(defn pick-brand-name [brand-name [:option :string]] :string
+  (if (option-some? brand-name)
+    (option-value brand-name "")
+    "Cloud Itonami"))
+
+;; The escape map `{\& "&amp;" \< "&lt;" \> "&gt;"}` rewrites a name if and
+;; only if it contains one of `&`, `<`, `>`. Presence of any of the three, on
+;; the name the page will actually show — absence answers false, matching
+;; `(or brand-name "Cloud Itonami")` yielding the unescaped wordmark.
+(defn needs-escape? [brand-name [:option :string]] :bool
+  (and (option-some? brand-name)
+       (or (string-contains? (option-value brand-name "") "&")
+           (string-contains? (option-value brand-name "") "<")
+           (string-contains? (option-value brand-name "") ">"))))

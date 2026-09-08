@@ -1,0 +1,55 @@
+[{:db/id -1
+  :adr/id "adr-2609081200-human-work-marketplace-title-escape-core"
+  :adr/title "The HumanWork page's title decisions move to a .kotoba core; the host keeps the substitution it cannot express"
+  :adr/status "accepted"
+  :adr/date "2026-09-08"
+  :adr/body "## What moved
+
+`cloud.itonami.app.human-work-marketplace/page-html` renders one large HTML
+document around an embedded title. Two of its steps are decisions about the
+caller-supplied brand name, and both are expressible on the native word-typed
+slice (ADR-2608650000 / ADR-2607279200):
+
+- `pick-brand-name` — the cljc's `(or brand-name \"Cloud Itonami\")`. An
+  absent name is replaced with the product wordmark; the default is a product
+  decision, not a technical fallback.
+- `needs-escape?` — whether the chosen name contains any of the three
+  characters the cljc's escape map rewrites (`&` `<` `>`).
+
+Landed this tick:
+
+- `src/cloud/itonami/app/human_work_marketplace_core.kotoba` — both exports,
+  over `[:option :string]`, gated by `option-some?` (ADR-2609081000's nil
+  discipline: a missing name answers wordmark / false, never throws)
+- `kotoba_oracle.cljc` `cores` gains `:human-work-marketplace-core`
+- `human_work_marketplace.clj` `page-html` now calls the core through
+  `kotoba-oracle`; the one-pass `str/escape` substitution stays on the host
+- parity test + KIR regeneration + JVM-free gen_kir_amu identity (20/20)
+
+## The substitution stays host-side, and the page is unchanged
+
+The escape substitution itself is a string-mutation operation (a
+character-map one-pass replace) that the native slice does not admit — there
+is no replacement or concatenation lowering (measured on the pinned verifier:
+`str` concat → `:kotoba.error/subset-reject`; `string-contains?` → `:ok
+true`, `effects #{}`). So the split is: core decides, host applies, exactly
+the ADR-2609081000 pattern. The `if escape-needed` branch is meaningful:
+escaping a name containing none of the three characters is the identity, so
+the rendered page is byte-identical to the pre-split page for every input.
+
+## Measured bounds on the pinned verifier (amu bin, jvm-free)
+
+- `string-contains?` on `:string` → admitted, `:ok true`, `effects #{}`
+  (matches ADR-2609081000's re-measurement; the fleet_core 2026-08-08 note
+  remains stale for this pin)
+- `if`/`option-value` returning `:string`, and string-literal returns →
+  admitted
+- `str` concatenation → refused (`:kotoba.error/subset-reject`)
+
+## Status
+
+Accepted. The 14-layer topo map (ADR-2609081000) listed this file as a
+layer-0 slice-ready wave-0 candidate; measured 2026-09-08 by
+`scripts/kotoba_slice_measure.py`, it was slice-ready (no
+:import/throw/regex/java/IO), and `amu check --jvm-free` on the landed core
+returns `:ok true, :effects #{}`."}]
