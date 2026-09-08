@@ -1304,3 +1304,42 @@ placeholder / falsify-46 mid-sentence cut は残存のまま (operator 復旧待
 (evidence/2026-09-08-falsify-92.md) で終わり、新規残骸行は混入していない。falsify-91 追記コマンドの
 残骸 (行 1237-1238: `MD` / `echo "append rc=$?" ...`) は残存のまま (本 bot は編集しない)。**
 (evidence/2026-09-08-falsify-93.md)
+
+## NEXT (falsify-94 追記、append-only)
+
+**falsify-94 (2026-09-08、運用/滞留 軸) で falsify-93 の次の 1 アクションを執行し「0 ベースは
+10 時点観測 / 9 反復連続維持で恒久化傾向を更に精緻化、ただし avail は 150 Gi 未満へ低下し
+falsify-93 の『160 Gi 安定』説を REFUTED」**: 運用軸の falsify-93 次の 1 アクション (「0 ベース
+が 9 反復超の連続で維持されるか」判定・恒久化傾向の更なる精緻化+avail 帰属) を測定対象に選択。
+cloud-itonami-dns-resolver で実測 — 3 ベクトル (--used-refspec +refs/heads/main / refspec なし
+全 refs / --used-refspec +refs/heads/resident/dns-resolver) いずれも**正規 unused 0 keys**
+(partial 14 chunk / 186.98 MiB のみ、falsify-35 以降不変、ok/EXIT_RC=0 各実測)。local annex
+keys は **786 → 786 (増加 0)** / 11.68 GB 不変 — 滞留蓄積期 (falsify-39..49) と対照的に増分
+ゼロの状態が **falsify-85→94 の 10 時点観測 / 9 反復連続維持**で続く (falsify-93 指定の閾値
+「9 反復超」を充足)。増加源 itonami-app-resident.cljs は **PID 70643 稼働継続** (falsify-85..93
+と同一 PID、export_and_sync 不在)。**avail は新規シグナル**: `df -h /` **160 Gi → 149 Gi
+(約 -11 Gi、2 回独立実測で安定)**、annex available local disk space **171.88 → 159.81 GB
+(約 -12 GB)** — **150 Gi 未満へ初めて交差して低下 (falsify-93 の「150 Gi 未満への構造的減少
+なし」帰属は REFUTED)**。consume は keys 786 / 11.68 GB 不変ゆえ annex 外部の書き込み源に帰属
+するが、TCC 遮断 (onedrive / ~/.gftd du 不能) で具体源は特定不能 (operator の du 調査を Tier 2
+継続)。低下幅 (-11 Gi) は falsify-90..93 の ±1-2 Gi 振動より大きいため、一過性低位振動
+(falsify-88 の 142 Gi 先例) か構造的減少への転じの判別は次反復の再実測を要する。運用 軸 score
+は **3 のまま** (0 ベース恒久化傾向の更なる精緻化を記録、avail 低下は監視シグナルとして記録、
+実緑測定なし)。次の 1 アクション: 次反復で同 vector + keys + avail を再実測し 0 ベースの
+**10 反復超の連続持続** or 再蓄積再開を判別 (10 反復超維持なら恒久化傾向を更に精緻化、再開
+なら falsify-33..53 語調へ復帰)、あわせて **avail 149 Gi の続落 (150 Gi 未満への継続低下) vs
+回復**を観測 — 低下継続なら structural-decline と確定し risk-5 を強化、回復なら一過性低位振動
+と確定。附帯 (実装軸 次反復シグナル): origin/main は **c618ef3 のまま** (falsify-93 から新規
+前進なし)。次の実装軸反復では、本反復では対象外とした c618ef3 の parity 測定面 (3 値結合水準・
+配線記録) の変化を実測し、2 build-break (identity.clj / kotoba-net) の生存を再確認する。附帯
+Tier 2 (falsify-85..93 と不変): resident 再起動 (94682→70643) の契機と滞留回収の帰属、および
+本反復の avail -11 Gi 低下の具体源特定 (TCC 遮断) は kanban/human 透過提出継続。附帯: 本体
+checkout は detached HEAD b5df93e (#299) / porcelain clean (dirty 0)、本 bot は touch せず
+wt-msloop / bot/maturity-sim-loop で完結。identity.clj malformation / kotoba-net 未宣言
+(falsify-63..84) は既知赤継続。7-軸表 16 行目孤立行 placeholder / falsify-46 mid-sentence cut
+は残存のまま (operator 復旧待ち、本 bot は編集しない)。
+**付記 (append-only 規約): 本反復 wc 実測で maturity.md は行 1306 まで。falsify-93 追記は
+(evidence/2026-09-08-falsify-93.md) で終わり、新規残骸行は混入していない。falsify-91 追記
+コマンドの残骸 (行 1237-1238: `MD` / `echo "append rc=$?" ...`) は残存のまま (本 bot は編集
+しない)。**
+(evidence/2026-09-08-falsify-94.md)
