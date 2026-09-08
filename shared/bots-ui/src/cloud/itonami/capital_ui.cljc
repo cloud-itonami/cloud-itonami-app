@@ -124,6 +124,7 @@
      [:p (str (l "利益のBot配分: " "Bot share of surplus: ") (get-in capital [:settings :botShareBps]) " bps")]
      [:p (str (l "使えるBot予算: " "Available Bot budget: ") (usdc (get-in capital [:balances :budgetCash])))]
      [:p (l "利益回収ではAaveの全額を一旦引き出します。元本と貸し手利益はVaultに残り、再運用は別の操作です。元本保証ではありません。" "Harvest first recalls all Aave assets. Principal and lender yield remain in the vault; resupply is a separate action. Principal is not guaranteed.")]])
+    (when (get-in capital [:operatorGrant :launcher]) [:p {:role "status"} (l "初回の運営権限は確定済みです。Bot署名サービスの接続・募集作成が完了するまで入金はできません。" "Initial operator authority is confirmed. Deposits wait for operator signer connection and round creation.")])
     (:funding-editor state)
     (when deployed? [:div
      [:label.bw-funding-field (l "管理する操作" "Management action") [:select {:aria-label (l "管理する操作" "Management action") :value admin-action :on-change #((:capital-field handlers) :admin-action (.. % -target -value))}
@@ -133,13 +134,15 @@
      (when (= admin-action "repay") [:div (when-not yield? (field :principal "返済する元本（USDC）" "Principal repayment (USDC)")) (field :income "事業収益（USDC、なしは0）" "Income (USDC; 0 if none)")])
      (when (= admin-action "setExecutor") [:div (field :executor "Botの実行用アドレス" "Bot executor address") [:label [:input {:type "checkbox" :checked (boolean (:allowed f)) :on-change #((:capital-field handlers) :allowed (.. % -target -checked))}] (l "実行を許可する（オフで撤回）" "Grant execution (off revokes)")]])
      (submit admin-action "管理操作を確認" "Review management action")])
-    [:details [:summary (l "2. 新しい募集を作成" "2. Create a funding round")]
+    [:details [:summary (l "2. 運営Botへ募集作成を委任" "2. Delegate round creation to the operator Bot")]
      (when yield-new? [:p (str (l "運用益型で作成。Bot配分 " "Create a yield-funded round. Bot share ") (get-in state [:funding :terms :botShareBps]) (l " bps。元本支出は禁止し、未使用Bot予算は満期に戻します。" " bps. Principal spending is prohibited; unused Bot budget returns at maturity."))])
      (when-not yield-new? [:p (l "先にこのウォレットで組織の条件を登録してください。V1は、募集終了後に支出を開始し、満期に全額を精算する方式です。純収益の100%を貸付持分で分配します。満期後7日を過ぎた未返済額は貸倒として認識し、回収済み資産だけを分配します。Aaveの流動性不足は精算を遅らせます。" "Register the organization terms with this wallet first. V1 starts spending after fundraising closes and settles at maturity. All net income is distributed pro rata to lenders. Unpaid debt after the seven-day grace is recognized as a loss; only recovered assets are distributed. Aave illiquidity can delay settlement.")])
+     (field :executor "運営Botの実行用アドレス" "Operator Bot executor")
+     [:p (l "この初回設定では条件を固定し、Botに募集1件の作成を許可します。入金は募集が実際に公開された後です。" "This initial setup fixes the terms and permits the Bot to create one round. Deposits follow actual publication.")]
      (field :fundingCap "募集上限（USDC）" "Funding cap (USDC)") (field :cashReserve "現金で残す額（USDC）" "Cash reserve (USDC)")
      (field :fundingDeadline "募集終了" "Funding closes" "datetime-local") (field :maturity "返済期限" "Repayment maturity" "datetime-local")
      (field :recipients "許可する送金先（アドレスを空白で区切る）" "Approved recipients (space-separated addresses)")
      [:label [:input {:type "checkbox" :checked (boolean (:policy f)) :on-change #((:capital-field handlers) :policy (.. % -target -checked))}] (l "上記の精算方式を、このラウンドの条件として確認しました" "I accept the stated settlement policy for this round")]
-     (dds/button (l "ラウンドの内容を確認" "Review new round") {:disabled capital-busy? :attrs {:on-click #((:capital-prepare handlers) "deploy")}})]
+     (dds/button (if yield-new? (l "初回の運営権限を確認" "Review initial operator authority") (l "元本利用型の募集を確認" "Review business loan round")) {:disabled capital-busy? :attrs {:on-click #((:capital-prepare handlers) (if yield-new? "deploy-launcher" "deploy"))}})]
    ])
    (dds/button (l "最新の状況に更新" "Refresh status") {:type :text :attrs {:on-click (:capital-refresh handlers)}})]))
