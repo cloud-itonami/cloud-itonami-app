@@ -24,6 +24,15 @@
     [:span.bw-capital-badge "USDC · Base"]]
    [:p.bw-capital-lead (l "Botの事業を支え、事業と未使用資金の運用から分配を受け取ります。" "Fund the business and receive distributions from its activity and idle capital.")]
    (when deployed? [:p.bw-capital-badge (if yield? (l "運用益型 · 元本は事業費に使いません" "Yield funded · principal cannot fund business costs") (l "事業貸付 · 元本を事業に利用" "Business loan · principal funds business"))])
+   [:details.bw-capital-wallet [:summary (l "事業用Safeウォレット" "Business Safe wallet")]
+    (if-let [account (:capital-safe state)]
+     [:div [:p [:code (:address account)]]
+      [:p (l "Base · 所有者の署名で実行。Botの自動決済権限は未接続です。" "Base · Owner-signed execution. Autonomous Bot spending is not connected.")]
+      [:p (l "このSafeの残高・貸付持分を使います。新しい募集の作成時は、接続を解除して所有者ウォレットを使ってください。" "Uses this Safe’s balances and lending position. Disconnect to create a new round with the owner wallet.")]
+      (dds/button (l "所有者ウォレットに戻す" "Use owner wallet") {:type :outline :attrs {:on-click (:capital-disconnect-safe handlers)}})]
+     [:div (field :safe-address "BaseのSafeアドレス" "Safe address on Base")
+      [:p (l "現在の所有者と署名条件をチェーンで確認します。接続だけでは送金もBotへの委任も行いません。" "Verifies current owners and threshold on-chain. Connecting does not transfer funds or delegate to a Bot.")]
+      (dds/button (l "Safeを確認して接続" "Verify and connect Safe") {:disabled capital-busy? :attrs {:on-click (:capital-connect-safe handlers)}})])]
    (when capital-error [:p.bw-capital-notice {:role "alert"} capital-error])
    (when capital-status [:p {:role "status"} capital-status])
    (when capital-pending [:div.bw-capital-notice [:p (l "送信済みの取引があります。再送信せず、確定状況を確認してください。" "A transaction was submitted. Check confirmation before sending again.")]
@@ -89,7 +98,7 @@
      [:p (str (l "操作：" "Action: ") (or (some (fn [[id ja en]] (when (= id (:action capital-plan)) (l ja en))) actions) (l "募集を作成" "Create round")))]
      [:p (str (l "使用するウォレット：" "Wallet: ") (short-address (get-in capital-plan [:transaction :from])))]
      (when (:review capital-plan) [:dl (for [[k value] (:review capital-plan) :when (not (contains? #{:termsHash :policy :controller :asset :vault} k))]
-      [:div {:key (name k)} [:dt (get {:amount (l "金額（USDC）" "Amount (USDC)") :principal (l "返済元本（USDC）" "Principal (USDC)") :income (l "収益（USDC）" "Income (USDC)") :recipient (l "送金先" "Recipient") :payees (l "許可する送金先" "Approved payees") :fundingModel (l "募集方式" "Funding model") :botShareBps (l "利益のBot配分（bps）" "Bot yield share (bps)") :fundingCap (l "募集上限（USDC）" "Funding cap (USDC)") :cashReserve (l "現金留保（USDC）" "Cash reserve (USDC)") :fundingCloses (l "募集終了" "Funding closes") :maturity (l "満期" "Maturity") :executor (l "実行用アドレス" "Executor") :allowed (l "実行を許可" "Execution allowed") :intent (l "請求・タスクID" "Invoice/task ID")} k (name k))] [:dd (str value)]])])
+      [:div {:key (name k)} [:dt (get {:safe (l "利用するSafe" "Acting Safe") :signingOwner (l "署名する所有者" "Signing owner") :autonomousExecution (l "Botの自動実行" "Autonomous execution") :amount (l "金額（USDC）" "Amount (USDC)") :principal (l "返済元本（USDC）" "Principal (USDC)") :income (l "収益（USDC）" "Income (USDC)") :recipient (l "送金先" "Recipient") :payees (l "許可する送金先" "Approved payees") :fundingModel (l "募集方式" "Funding model") :botShareBps (l "利益のBot配分（bps）" "Bot yield share (bps)") :fundingCap (l "募集上限（USDC）" "Funding cap (USDC)") :cashReserve (l "現金留保（USDC）" "Cash reserve (USDC)") :fundingCloses (l "募集終了" "Funding closes") :maturity (l "満期" "Maturity") :executor (l "実行用アドレス" "Executor") :allowed (l "実行を許可" "Execution allowed") :intent (l "請求・タスクID" "Invoice/task ID")} k (name k))] [:dd (str value)]])])
      (when (= "deposit" (:action capital-plan)) [:div.bw-capital-notice
       [:p (l "このラウンドの返済・出金条件を確認してください。元本と利回りは保証されません。" "Review this round's repayment and withdrawal terms. Principal and yield are not guaranteed.")]
            [:details.bw-capital-terms [:summary (l "このラウンドに固定された条件" "Terms bound to this round")]

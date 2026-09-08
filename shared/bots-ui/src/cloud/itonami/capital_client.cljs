@@ -10,14 +10,14 @@
  (try (let [p (js->clj (js/JSON.parse (js/localStorage.getItem (str "itonami.capital.pending." project))) :keywordize-keys true)]
   (when (= (:from p) (last (str/split (or principal "") #":"))) p)) (catch :default _ nil)))
 (defn request! [body] ((:request! @transport) "/api/capital" body))
-(defn load! [project contract]
- ((:request! @transport) (str "/api/capital?project=" (js/encodeURIComponent project) (when contract (str "&vault=" (js/encodeURIComponent contract))))))
+(defn load! [project contract safe]
+ ((:request! @transport) (str "/api/capital?project=" (js/encodeURIComponent project) (when contract (str "&vault=" (js/encodeURIComponent contract))) (when safe (str "&safe=" (js/encodeURIComponent safe))))))
 (rf/reg-event-db :capital/field (fn [db [_ k value]] (-> db (assoc-in [:my-bots :capital-form k] value) (assoc-in [:my-bots :capital-plan] nil))))
 (rf/reg-event-fx :capital/load
  (fn [{:keys [db]} [_ contract]]
   (let [project (get-in db [:my-bots :public-selected])]
-   {:db (update db :my-bots merge {:capital-status "残高を確認しています…" :capital-plan nil})
-    :itonami.promise {:run #(load! project contract) :success [:capital/loaded project] :failure [:capital/failed project]}})))
+   {:db (-> db (update :my-bots merge {:capital-status "残高を確認しています…" :capital-plan nil}) (assoc-in [:my-bots :capital-form :safe-address] (or (get-in db [:my-bots :capital-form :safe-address]) (.get (link-params) "safe") "")))
+    :itonami.promise {:run #(load! project contract (get-in db [:my-bots :capital-safe :address])) :success [:capital/loaded project] :failure [:capital/failed project]}})))
 (rf/reg-event-db :capital/loaded
  (fn [db [_ project data]] (if (= project (get-in db [:my-bots :public-selected])) (update db :my-bots merge {:capital data :capital-status nil :capital-error nil :capital-pending (pending-for project (get-in db [:my-bots :principal]))}) db)))
 (rf/reg-event-db :capital/failed
@@ -25,7 +25,7 @@
 (rf/reg-event-fx :capital/prepare
  (fn [{:keys [db]} [_ action]]
   (let [state (:my-bots db) project (:public-selected state) form (:capital-form state)
-        input (merge form {:action action :project project :vault (get-in state [:capital :vault]) :termsVersion (get-in state [:funding :version])})
+        input (merge form {:action action :project project :safe (get-in state [:capital-safe :address]) :vault (get-in state [:capital :vault]) :termsVersion (get-in state [:funding :version])})
         input (if (and (= action "repay") (= "yield-budget-v1" (get-in state [:capital :settings :policy]))) (assoc input :principal "0") input)
         input (if (= action "deploy") (assoc input :policy (when (:policy form) (or (get-in state [:funding :terms :fundingPolicy]) "fixed-round-net-income-v1")) :fundingDeadline (quot (.getTime (js/Date. (:fundingDeadline form))) 1000) :maturity (quot (.getTime (js/Date. (:maturity form))) 1000) :recipients (str/split (str/trim (or (:recipients form) "")) #"[\s,]+")) input)]
    {:db (update db :my-bots merge {:capital-busy? true :capital-error nil :capital-plan nil})
@@ -70,6 +70,17 @@
  (fn [{:keys [db]} [_ id]]
   (let [project (get-in db [:my-bots :public-selected])]
    {:itonami.promise {:run #((:request! @transport) (str "/api/capital?intent=" (js/encodeURIComponent id))) :success [:capital/prepared project] :failure [:capital/failed project]}})))
+(rf/reg-event-fx :capital/connect-safe
+ (fn [{:keys [db]} _]
+  (let [project (get-in db [:my-bots :public-selected]) address (get-in db [:my-bots :capital-form :safe-address])]
+   {:db (update db :my-bots merge {:capital-busy? true :capital-plan nil})
+    :itonami.promise {:run #((:request! @transport) (str "/api/capital?safe-account=" (js/encodeURIComponent address))) :success [:capital/safe-connected project] :failure [:capital/failed project]}})))
+(rf/reg-event-fx :capital/safe-connected
+ (fn [{:keys [db]} [_ project account]]
+  (if (= project (get-in db [:my-bots :public-selected]))
+   {:db (update db :my-bots merge {:capital-safe account :capital-busy? false :capital-plan nil}) :dispatch-n [[:capital/load] [:my-bots/public]]} {})))
+(rf/reg-event-fx :capital/disconnect-safe
+ (fn [{:keys [db]} _] {:db (update db :my-bots dissoc :capital-safe :capital-plan) :dispatch-n [[:capital/load] [:my-bots/public]]}))
 (def handlers
- {:capital-cancel #(rf/dispatch [:capital/cancel]) :capital-resume #(rf/dispatch [:capital/resume]) :capital-field #(rf/dispatch-sync [:capital/field %1 %2]) :capital-round #(rf/dispatch [:capital/load %])
+ {:capital-connect-safe #(rf/dispatch [:capital/connect-safe]) :capital-disconnect-safe #(rf/dispatch [:capital/disconnect-safe]) :capital-cancel #(rf/dispatch [:capital/cancel]) :capital-resume #(rf/dispatch [:capital/resume]) :capital-field #(rf/dispatch-sync [:capital/field %1 %2]) :capital-round #(rf/dispatch [:capital/load %])
   :capital-prepare #(rf/dispatch [:capital/prepare %]) :capital-execute #(rf/dispatch [:capital/execute]) :capital-refresh #(rf/dispatch [:capital/load])})
