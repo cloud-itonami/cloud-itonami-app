@@ -1162,3 +1162,42 @@ resident 再起動 (94682→70643) の契機と滞留回収の帰属の精査は
 (falsify-63..84) は既知赤継続 (52c156c の build-break 接触は本反復の運用軸測定の範囲外・
 次反復の実装軸再確認事項)。7-軸表 16 行目孤立行 placeholder / falsify-46 mid-sentence cut は
 残存のまま (operator 復旧待ち、本 bot は編集しない)。(evidence/2026-09-08-falsify-89.md)
+
+## NEXT (falsify-90 追記、append-only)
+
+**falsify-90 (2026-09-08、運用/滞留 軸) で falsify-89 の次の 1 アクションを執行し「0 ベースは
+5 反復を跨ぐと再蓄積する / avail は 3 連続で減少する」を REFUTED → 0 ベースは 5 反復超の
+連続維持 (6 時点観測) で恒久化傾向を更に精緻化・avail は 142→159 Gi へ反発 (減少トレンド不成立
+)**: origin/main は本反復で 52c156c → **e91bf0f** (migration vf-authority plane admission
+decision -> vf_authority_core.kotoba、ADR-2609081600、変化 7 本 / +310) へ再前進した。これは
+falsify-89 が実装軸シグナルとした 52c156c (vf-calibrate bucket -> .kotoba) に続く **同種 kotoba
+parity 測定面 migration の 1 反復内再発** (新規 vf_authority_core.kotoba 50 行・
+vf-authority-plane-admission-core.edn 82 行・vf_authority_kotoba_parity_test.clj 新設 101 行、
+repo-root src 3 本変更) — .kotoba・parity_test 分量が反復ごとに増えている。本反復の主要測定は
+運用軸の falsify-89 次の 1 アクション (「0 ベースが 5 反復超の連続で維持されるか」判定・恒久化
+傾向の更なる精緻化+avail 減少トレンドの帰属) を選択し、実装軸シグナル (e91bf0f の parity 測定
+面・build-break) は次反復の検証対象として附帯記録した。cloud-itonami-dns-resolver で実測 — 3
+ベクトル (--used-refspec +refs/heads/main / refspec なし全 refs / --used-refspec
++refs/heads/resident/dns-resolver) いずれも**正規 unused 0 keys** (partial 14 chunk / 186.98
+MiB のみ、falsify-35 以降不変、ok/EXIT_RC=0 各実測)。local annex keys は **786 → 786 (増加 0)**
+/ 11.68 GB 不変 — 滞留蓄積期 (falsify-39..49) と対照的に増分ゼロの状態が **falsify-85→90 の 6
+時点観測 / 5 反復連続維持**で続く。増加源 itonami-app-resident.cljs は **PID 70643 稼働継続**
+(falsify-85..89 と同一 PID、export_and_sync 不在)、df / avail **159 Gi / 10%** (falsify-89 の
+142Gi から +17Gi 反発、annex available local disk 152.87→170.11 GB と同方向、飽和なし —
+falsify-89 の 2 連続減少 162→156→142 Gi はトレンドではなかった (162→156→142→159 の振動))。
+falsify-89 指定の閾値「5 反復超の連続維持 → 恒久化傾向の更なる精緻化」を本反復が充足 (ただし
+増加源稼働継続ゆえ恒久性は保証されず「never re-accumulate」は主張しない)。avail の 2 連続減少
+トレンドは REFUTED — 滞留量 (keys 786) 不変下の ±17Gi 振動は annex 滞留ではなく外部書き込みに
+帰属するのが整合的。運用 軸 score は **3 のまま** (0 ベース維持の継続化・恒久化傾向の精緻化を
+記録、実緑測定なし)。次の 1 アクション: 次反復で同ベクトル + keys + avail を再実測し 0 ベースの
+**6 反復超の連続持続** or 再蓄積再開を判別、あわせて avail 振動 (162→156→142→159 Gi) の帰属
+(滞留不変下の外部書き込み源) を観測。附帯 (実装軸 次反復シグナル): **e91bf0f は 52c156c に続く
+2 本目の parity 測定面直接接触 merge** — 次反復で実装軸として、e91bf0f の .kotoba parity 測定面
+(falsify-78/79/82/83 の 3 値結合水準・配線記録) の変化と 2 build-break (identity.clj / kotoba-net)
+の生存を再確認する。附帯 Tier 2 (falsify-85/86/87/88/89 と不変): resident 再起動 (94682→70643)
+の契機と滞留回収の帰属の精査は kanban/human 提出継続。附帯: 本体 checkout は detached HEAD
+65d3e98 (#290) / porcelain clean (dirty 0)、本 bot は touch せず wt-msloop / bot/maturity-sim-loop
+で完結。identity.clj malformation / kotoba-net 未宣言 (falsify-63..84) は既知赤継続 (e91bf0f の
+build-break 接触は本反復の運用軸測定の範囲外・次反復の実装軸再確認事項)。7-軸表 16 行目孤立行
+placeholder / falsify-46 mid-sentence cut は残存のまま (operator 復旧待ち、本 bot は編集しない)。
+(evidence/2026-09-08-falsify-90.md)
