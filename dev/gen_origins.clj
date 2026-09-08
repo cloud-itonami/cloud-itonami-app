@@ -12,7 +12,7 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.pprint :as pprint]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.mail-origins :as origins]
             [cloud.itonami.app.mail-projects :as mail-projects]))
 
@@ -20,7 +20,7 @@
 
 (defn- domain-of [message]
   (or (mail-projects/relay-origin (:from-email message))
-      (some-> (:from-email message) str str/lower-case (str/split #"@") second)))
+      (some-> (:from-email message) str str/lower (str/split #"@") second)))
 
 (defn -main [& [state-path]]
   (let [state (edn/read-string

@@ -13,7 +13,7 @@
   budget is exhausted, one token UNDER is within. A `<` vs `<=` drift changes
   the boundary answer and nothing else — this test pins the boundary rows
   explicitly so that drift cannot hide."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]
             [kotoba.compiler.core :as compiler]
             [kotoba.kir :as ir]))

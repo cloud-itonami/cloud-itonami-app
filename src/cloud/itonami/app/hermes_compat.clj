@@ -10,7 +10,7 @@
   The adapter changes transport and response envelopes only.  Bot ownership,
   tool grants, write approval, provider admission, receipts, and the durable
   turn ledger remain enforced by `cloud.itonami.app.bots`."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.bots :as bots])
   (:import (java.net URLDecoder)
            (java.nio.charset StandardCharsets)
@@ -489,7 +489,7 @@
   (let [{:keys [bot-id]} (or (get @runs (str run-id))
                              (throw (ex-info (str "Run not found: " run-id)
                                              {:type :hermes/run-not-found})))
-        raw (some-> (:choice body) str str/lower-case str/trim)
+        raw (some-> (:choice body) str str/lower str/trim)
         choice (get {"approve" "once" "approved" "once" "allow" "once"}
                     raw raw)
         _ (when-not (#{"once" "session" "always" "deny"} choice)

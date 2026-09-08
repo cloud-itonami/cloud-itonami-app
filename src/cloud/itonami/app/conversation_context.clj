@@ -4,7 +4,7 @@
   Context is deliberately resolved to plain data and text here.  Nothing in
   this namespace returns a tool, account, workspace, token, or grant, so adding
   a source cannot widen what a Chat or Bot is allowed to do."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.project-repository :as project-repository]
             [cloud.itonami.app.store :as store])
@@ -42,7 +42,7 @@
                     {:type :context/too-many :limit max-refs})))
   (loop [remaining (or refs []) seen #{} result []]
     (if-let [ref (first remaining)]
-      (let [kind (some-> (or (:kind ref) (get ref "kind")) name str/lower-case)
+      (let [kind (some-> (or (:kind ref) (get ref "kind")) name str/lower)
             target (some-> (or (:target ref) (get ref "target")) str str/trim)
             key [kind target]]
         (when-not (contains? allowed-kinds kind)

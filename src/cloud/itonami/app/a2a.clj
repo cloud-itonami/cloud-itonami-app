@@ -4,7 +4,7 @@
   The common library owns wire validation. This namespace owns effects:
   caller ownership, durable idempotency and the isolated Bot turn. No grant,
   cookie, approval receipt, wallet authority or private memory is projected."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.store :as store]
             [kotoba.protocol.a2a :as protocol-a2a]

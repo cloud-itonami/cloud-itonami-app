@@ -17,7 +17,7 @@
   `url.domainToASCII` is not the same function under STD3 rules — swapping one
   for the other would change which names a tenant may claim, quietly, in a
   security boundary. The caller converts and hands the ASCII name here."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def ^:private label-pattern #"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?")
 
@@ -44,8 +44,8 @@
   than read from a profile, so this answers the same way for a caller that has
   the deployment's names and for a test that has three strings."
   [own-names domain]
-  (let [domain (some-> domain str str/lower-case not-empty)
-        own (into #{} (keep #(some-> % str str/lower-case not-empty)) own-names)]
+  (let [domain (some-> domain str str/lower not-empty)
+        own (into #{} (keep #(some-> % str str/lower not-empty)) own-names)]
     (boolean
      (and domain
           (some (fn [host]

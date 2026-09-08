@@ -7,7 +7,7 @@
   `appearance.cljc` is mostly data and mechanism the native word-typed slice
   deliberately refuses: the palette maps, the CSS layers, the hiccup
   `toggle-button`, the `modes` vector, and the string PREPARATION steps
-  (`keyword?` / `name`, `str`, `str/trim`, `str/lower-case` — the case
+  (`keyword?` / `name`, `str`, `str/trim`, `str/lower` — the case
   folding is a host concern, ADR-2609081000). All of that stays host.
 
   What moves here are the three DECISIONS about plain strings:
@@ -27,7 +27,7 @@
 
   Same caveat as the sibling suites: the native compile rows assert the core
   is expressible on native, not that anything runs there."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.appearance :as appearance]
             [cloud.itonami.app.kotoba-oracle :as oracle]
@@ -75,7 +75,7 @@
   (let [defs (str/join "\n" (map-indexed (fn [i v] (call-probe i export ret-type v))
                                          cases))
         probes (str/join " " (map (fn [i] (str "p" i)) (range (count cases))))
-        src (str (clojure.string/replace-first
+        src (str (str/replace-first
                   core-source
                   #"\(:export \[[^\]]+\]\)"
                   (str "(:export [mode-of next-of plane-cloud? " probes "])"))
@@ -127,7 +127,7 @@
     (doseq [[i pl] (map-indexed vector cases)]
       (testing (pr-str pl)
         ;; The host trims/lower-cases first; the core sees the prepared name.
-        (let [prepared (str/lower-case (str/trim pl))]
+        (let [prepared (str/lower (str/trim pl))]
           (is (= (original-plane-cloud? prepared)
                  (boolean (get (run-probes "plane-cloud?" ":bool" [prepared]) "p0")))
               (str "plane-cloud? disagrees on " (pr-str pl))))))))
@@ -142,13 +142,13 @@
                "dark" :neon 8 nil "" ; 8 -> "8" -> none -> light
                ]]
       (is (= (or (original-mode (some-> v (cond-> (keyword? v) name)
-                                        str str/trim str/lower-case))
+                                        str str/trim str/lower))
                  "light")
              (appearance/resolve-mode {:ui {:appearance v}}))
           (str "resolve-mode disagrees on " (pr-str v)))))
   (testing "next-mode"
     (doseq [m ["light" "8bit" "grok" "nonsense" "" "retro" :8bit]]
-      (let [current (or (original-mode (if (keyword? m) (name m) (str/trim (str/lower-case (str m)))))
+      (let [current (or (original-mode (if (keyword? m) (name m) (str/trim (str/lower (str m)))))
                         "light")]
         (is (= (original-next-mode current)
                (appearance/next-mode m))
@@ -156,7 +156,7 @@
   (testing "residency-plane"
     (doseq [v [nil 1 true :orbit "" "cloud" "Cloud" "CLOUD" " local "]]
       (is (= (if (original-plane-cloud? (some-> v (cond-> (keyword? v) name)
-                                                  str str/trim str/lower-case))
+                                                  str str/trim str/lower))
                :cloud :local)
              (appearance/residency-plane {:residency {:plane v}}))
           (str "residency-plane disagrees on " (pr-str v))))))

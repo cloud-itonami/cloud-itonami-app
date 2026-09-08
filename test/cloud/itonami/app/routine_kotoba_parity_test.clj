@@ -23,7 +23,7 @@
   A conjunction is exactly the shape where sampling misses a dropped term. The
   counts are the boundary triple (short, equal, and the host-impossible over)
   rather than a range, because `stale?` cannot see any other distinction."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.routine :as routine]
             [kotoba.compiler.core :as compiler]

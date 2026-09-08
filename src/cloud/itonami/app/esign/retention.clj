@@ -46,7 +46,7 @@
   an operator's 事務処理規程, and neither is decided here. `compliance-gaps`
   reports what is still missing rather than letting a green screen imply an
   answer nobody computed."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def schema "cloud.itonami.app.esign.retention.v1")
 
@@ -136,7 +136,7 @@
   Counterparty matching is substring and case-folded. An inspector searching a
   company name should not have to reproduce the punctuation the operator typed."
   [state {:keys [date-from date-to amount-min amount-max counterparty currency]}]
-  (let [needle (some-> counterparty str str/trim str/lower-case not-empty)]
+  (let [needle (some-> counterparty str str/trim str/lower not-empty)]
     (->> (index state)
          (filter (fn [e]
                    (and (in-range? (:retention/transaction-date e) date-from date-to)
@@ -144,7 +144,7 @@
                         (or (nil? amount-max) (<= (:retention/amount-minor e) amount-max))
                         (or (nil? currency) (= currency (:retention/currency e)))
                         (or (nil? needle)
-                            (str/includes? (str/lower-case (:retention/counterparty e))
+                            (str/includes? (str/lower (:retention/counterparty e))
                                            needle)))))
          vec)))
 

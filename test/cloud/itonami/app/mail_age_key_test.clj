@@ -6,7 +6,7 @@
   whose vault is unreachable needs the Keychain to answer rather than the
   resolution to stop."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.mail-age-key :as age-key]))
 

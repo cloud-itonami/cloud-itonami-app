@@ -28,7 +28,7 @@
   scope or account, so there is no value to assert about. The absence is
   checked by reading `->request`, and the test that would fail if somebody
   added one is the record-shape mismatch the compiler raises."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.handoff :as handoff]
             [kotoba.compiler.core :as compiler]

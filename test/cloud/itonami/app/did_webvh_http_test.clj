@@ -12,7 +12,7 @@
   does: a handler that kept its own two string equals and dropped the oracle
   call would stay green everywhere else."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.did-web :as did-web]

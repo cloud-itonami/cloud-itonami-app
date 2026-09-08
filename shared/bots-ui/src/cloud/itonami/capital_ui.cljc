@@ -1,4 +1,4 @@
-(ns cloud.itonami.capital-ui (:require [clojure.string :as str] [jp-go-dds.core :as dds]))
+(ns cloud.itonami.capital-ui (:require [kotoba.lang.text :as str] [jp-go-dds.core :as dds]))
 (defn usdc [value]
  (when value (let [s (str value) padded (str (apply str (repeat (max 0 (- 7 (count s))) "0")) s) n (count padded)]
   (str (subs padded 0 (- n 6)) "." (let [f (str/replace (subs padded (- n 6)) #"0+$" "")] (str f (apply str (repeat (max 0 (- 2 (count f))) "0")))) " USDC"))))

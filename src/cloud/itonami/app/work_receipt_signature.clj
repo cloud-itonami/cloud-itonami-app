@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.work-receipt-signature
   "Deployment-attested execution receipts. The HMAC key is environment-only;
   EDN stores its name and signature, never the secret."
-  (:require [clojure.string :as str])
+  (:require [kotoba.lang.text :as str])
   (:import [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
            [javax.crypto Mac]

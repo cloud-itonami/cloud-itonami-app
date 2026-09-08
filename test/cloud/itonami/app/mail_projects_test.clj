@@ -5,7 +5,7 @@
   happy path: a filing system is trusted in proportion to how loudly it admits
   what it did not file."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.mail-projects :as mail-projects]

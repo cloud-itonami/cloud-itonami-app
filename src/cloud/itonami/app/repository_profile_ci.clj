@@ -4,7 +4,7 @@
   repository's `main` through GitHub's contents API."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.repository-qualification :as qualification])
   (:import [java.nio.charset StandardCharsets]

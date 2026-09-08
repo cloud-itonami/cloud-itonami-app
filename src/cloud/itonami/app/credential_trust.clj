@@ -53,7 +53,7 @@
   (:require [cloud.itonami.app.org-root-did :as org-root-did]
             [clojure.data.json :as json]
             [didwebvh.did :as webvh-did]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             ;; for the pinned @context bytes. One definition shared rather than a
             ;; second read of the same file: an issuer and a verifier that pin
             ;; different bytes for a context URL disagree about the graph, and two
@@ -101,7 +101,7 @@
   operator meant to trust."
   [configuration domain]
   (contains? (trusted-issuers configuration)
-             (some-> domain str str/trim str/lower-case not-empty)))
+             (some-> domain str str/trim str/lower not-empty)))
 
 ;; ── the network boundary ─────────────────────────────────────────────────────
 

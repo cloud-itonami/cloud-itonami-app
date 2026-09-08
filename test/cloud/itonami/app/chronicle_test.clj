@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.chronicle-test
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is use-fixtures]]
             [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.store :as store]))

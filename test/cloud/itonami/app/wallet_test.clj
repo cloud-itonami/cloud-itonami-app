@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.wallet-test
   (:require [clojure.test :refer [deftest is]]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [btc-crypto.bip32 :as bip32]
             [btc-crypto.bip39 :as bip39]
             [cloud.itonami.app.config :as config]
@@ -251,8 +251,8 @@
                   {:transaction-id (:id base-challenge)
                    :signature (siwe/sign-message (:message base-challenge) private-key)}
                   "localhost")]
-        (is (= (str "eip155:1:" (str/lower-case address)) (:account ethereum)))
-        (is (= (str "eip155:8453:" (str/lower-case address)) (:account base)))
+        (is (= (str "eip155:1:" (str/lower address)) (:account ethereum)))
+        (is (= (str "eip155:8453:" (str/lower address)) (:account base)))
         (let [duplicate (wallet/start-connection!
                          alice {:address address :chain-id 8453}
                          "localhost" "http://localhost:1338")]

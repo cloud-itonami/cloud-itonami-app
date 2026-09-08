@@ -2,7 +2,7 @@
   "Hosted sign-in starts as a GET navigation. Requiring Origin on that start
   is what made 127.0.0.1 unable to reach auth.itonami.cloud at all."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as local-identity]

@@ -44,7 +44,7 @@
   having been handed the other."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.business :as business])
   (:import [java.time Duration Instant LocalDate ZoneOffset]))
 

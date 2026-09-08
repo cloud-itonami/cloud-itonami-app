@@ -9,7 +9,7 @@
 
   The host function is private; we reach it through its var so the .kotoba is
   compared against the *actual* rule, not a copy."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.bot-slo :as slo]
             [kotoba.compiler.core :as compiler]

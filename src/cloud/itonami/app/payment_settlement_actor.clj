@@ -8,7 +8,7 @@
   (:require [clojure.data.json :as json]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config])
   (:import [com.sun.net.httpserver HttpHandler HttpServer]
            [java.net InetSocketAddress]

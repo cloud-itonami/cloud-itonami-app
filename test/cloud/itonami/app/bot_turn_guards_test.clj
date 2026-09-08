@@ -23,7 +23,7 @@
 
   The model seam is redefined rather than reached, the way `routines-test` does
   it. Nothing here calls a model or reaches the network."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.config :as config]

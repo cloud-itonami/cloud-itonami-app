@@ -42,7 +42,7 @@
   cannot verify would refuse calls the server would have accepted."
   (:require [clojure.edn :as edn]
             #?(:clj [clojure.java.io :as io])
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (def resource-name "cloud-itonami-app.commands.edn")
 (def alias-resource-name "cloud-itonami-app.cli-aliases.edn")
@@ -133,9 +133,9 @@
 (defn matching
   "Commands whose name contains every one of `terms`. Empty terms means all."
   [terms]
-  (let [terms (remove str/blank? (map str/lower-case terms))]
+  (let [terms (remove str/blank? (map str/lower terms))]
     (filter (fn [{:keys [command]}]
-              (let [name (str/lower-case (str/join " " command))]
+              (let [name (str/lower (str/join " " command))]
                 (every? #(str/includes? name %) terms)))
             (all))))
 
@@ -166,7 +166,7 @@
   [{:keys [method] :as command} arguments body-override]
   (let [{:keys [path remaining]} (fill-template command arguments)
         read? (= "GET" method)]
-    {:method (keyword (str/lower-case method))
+    {:method (keyword (str/lower method))
      :path (if (and read? (seq remaining))
              (str path "?" (query-string remaining))
              path)

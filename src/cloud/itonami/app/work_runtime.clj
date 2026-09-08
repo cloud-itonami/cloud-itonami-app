@@ -5,7 +5,7 @@
   it repeatedly; this namespace atomically leases WorkItems, dispatches bounded
   AgentRuns, validates receipts, and performs basis-checked source write-back."
   (:require [clojure.set :as set]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.github-projects-source :as github-source]
             [cloud.itonami.app.github-projects-writeback :as github]

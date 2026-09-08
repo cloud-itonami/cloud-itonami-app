@@ -17,7 +17,7 @@
 
   That a peer message does not widen the target's grant is not tested here
   because there is no field for it."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.peer :as peer]
             [kotoba.compiler.core :as compiler]

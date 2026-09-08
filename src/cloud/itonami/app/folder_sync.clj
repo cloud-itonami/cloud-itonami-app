@@ -10,7 +10,7 @@
   (:require [clojure.edn :as edn]
             [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.store :as store]
@@ -535,7 +535,7 @@
   ([remote-config method path body content-type]
    (let [response (http/request
                    {:url (str (http-base remote-config) path)
-                    :method (keyword (str/lower-case (name method)))
+                    :method (keyword (str/lower (name method)))
                     :timeout-seconds 120
                     :headers (cond-> {"Authorization"
                                       (str "Bearer " (remote-token remote-config))

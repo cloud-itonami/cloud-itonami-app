@@ -4,7 +4,7 @@
   `route-scope` / `auxiliary-route`'s sentinel selection would use. The word-
   typed slice keeps everything scalar, so the question is purely whether
   `(app (lam [] ...))` compiles and runs on the pinned compiler."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [kotoba.compiler.core :as compiler]
             [kotoba.kir :as ir]))

@@ -5,7 +5,7 @@
   runner profiles and is the extraction point for kotoba-lang/provider."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config])
   (:import [java.io BufferedReader InputStreamReader]
            [java.util.concurrent TimeUnit]))
@@ -114,7 +114,7 @@
    "not inspect or modify local files.\n\n"
    (str/join "\n\n"
              (map (fn [{:keys [role content]}]
-                    (str (str/upper-case (or role "user")) ":\n" content))
+                    (str (str/upper (or role "user")) ":\n" content))
                   messages))))
 
 (defn argv

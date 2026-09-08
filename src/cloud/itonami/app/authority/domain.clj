@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.authority.domain
   "Passkey-bound authority adapter for billable registration and DNS changes."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.cloudflare :as cloudflare]
             [yadori.cloudflare :as yadori]))
 

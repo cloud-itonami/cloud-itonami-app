@@ -55,7 +55,7 @@
             [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bot :as bot]
             [cloud.itonami.app.bot-authority :as bot-authority]
@@ -386,7 +386,7 @@
 (defn mailbox-address
   "The stable RFC mailbox for a Bot. The id is immutable, unlike its name."
   [configuration bot-id]
-  (str (str/lower-case (str bot-id)) "@"
+  (str (str/lower (str bot-id)) "@"
        (or (get-in configuration [:bots :mail-domain]) "mail.itonami.cloud")))
 
 (defn- mail-destination
@@ -432,7 +432,7 @@
                   (assoc "content-type" "application/json"))
            response (http/request
                      {:url (->query url query)
-                      :method (keyword (str/lower-case (name (or method :get))))
+                      :method (keyword (str/lower (name (or method :get))))
                       :timeout-seconds 30
                       :headers hdrs
                       :body (when body
@@ -2041,8 +2041,8 @@
     :else []))
 
 (defn- addressed-to? [address message]
-  (let [address (str/lower-case address)]
-    (some #(= address (str/lower-case %))
+  (let [address (str/lower address)]
+    (some #(= address (str/lower %))
           (re-seq #"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+"
                   (str (:to message))))))
 
@@ -2708,7 +2708,7 @@
       ;; exists precisely so a host can show what a call would do without holding
       ;; a token to do it. An approval prompt that only names the tool is asking
       ;; somebody to approve a word.
-      (str (str/upper-case (name (or (:connector.http/method request) :get)))
+      (str (str/upper (name (or (:connector.http/method request) :get)))
            " " (:connector.http/url request)
            (when-let [q (seq (:connector.http/query request))]
              (str " " (pr-str (into (sorted-map) q))))))))
@@ -2748,8 +2748,8 @@
                   (filter #(and (= (:bot/owner %) (:bot/owner source))
                                 (= (:bot/organization %) (:bot/organization source)))))
         matches (filter #(or (= (:bot/id %) wanted)
-                             (= (str/lower-case (str (:bot/name %)))
-                                (str/lower-case wanted)))
+                             (= (str/lower (str (:bot/name %)))
+                                (str/lower wanted)))
                         mine)]
     (when (empty? matches)
       (throw (ex-info (str "「" to "」という Bot はありません。")
@@ -5402,7 +5402,7 @@
 (defn- passed? [text]
   (let [t (str/trim (str text))]
     (or (str/blank? t)
-        (= "pass" (str/lower-case t)))))
+        (= "pass" (str/lower t)))))
 
 (defn group-send!
   "One message to a room, and the rounds it causes.

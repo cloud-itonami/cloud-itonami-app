@@ -5,7 +5,7 @@
   cancelling are writes, so the resident Bot approval-card boundary applies.
   A Bot acts for its owning Human User and organization; its id is retained in
   the request source rather than impersonating a Person performer."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.human-work :as human-work]))
 
 (def tool-definitions

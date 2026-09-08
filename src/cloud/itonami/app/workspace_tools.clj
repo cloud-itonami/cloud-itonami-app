@@ -5,7 +5,7 @@
   writes and commits are separate tool names so the Bot host can hold them for
   human approval before this namespace is called."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str])
+            [kotoba.lang.text :as str])
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files LinkOption Path StandardCopyOption]
            [java.nio.file.attribute FileAttribute]))
@@ -106,7 +106,7 @@
       (throw (ex-info "Workspace path must be relative."
                       {:type :workspace/unsafe-path})))
     (let [parts (mapv str (iterator-seq (.iterator path)))]
-      (when (some #(= ".git" (str/lower-case %)) parts)
+      (when (some #(= ".git" (str/lower %)) parts)
         (throw (ex-info "Direct access to .git is denied; use the Git tools."
                         {:type :workspace/git-internals-denied})))
       parts)))

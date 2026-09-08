@@ -38,7 +38,7 @@
   recipient is not. Both are stored; only one is ever fetched here."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str])
+            [kotoba.lang.text :as str])
   (:import [java.util.concurrent TimeUnit]))
 
 (def keychain-service "cloud-itonami-app.mail-age")

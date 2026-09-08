@@ -5,7 +5,7 @@
   reason this namespace exists at all: the hand-rolled Gmail reader it sits
   beside could only ever be exercised by pointing it at somebody's real
   mailbox, so for its whole life it never was."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.mail-imap :as mail-imap]
             [imap.transport :as transport]))

@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.domain-tools-test
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.authority.domain :as authority-domain]

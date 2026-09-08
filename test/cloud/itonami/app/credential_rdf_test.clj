@@ -15,7 +15,7 @@
 
   Every assertion below is on the canonical N-Quads — the bytes a `-rdfc-` suite
   hashes — rather than on the JSON. Checking the JSON is what let the defect hide."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.credential :as credential]
             [data-integrity.core :as di]

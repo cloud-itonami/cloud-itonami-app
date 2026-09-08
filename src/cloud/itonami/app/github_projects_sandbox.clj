@@ -4,7 +4,7 @@
   The probe changes one sandbox item's Status, verifies the resulting basis,
   restores the original option, and verifies restoration. It is intentionally
   unavailable without an explicit environment confirmation."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.github-projects-writeback :as github]
             [cloud.itonami.app.work-runtime :as runtime]))

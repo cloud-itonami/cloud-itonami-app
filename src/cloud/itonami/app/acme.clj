@@ -35,7 +35,7 @@
   hand-rolled one could not offer."
   (:require [asn1.core :as asn1]
             [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http])
   (:import [java.math BigInteger]
            [java.net URI]

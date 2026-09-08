@@ -14,7 +14,7 @@
   The passkey gate is stubbed rather than satisfied: a real ceremony needs an
   authenticator, and what is under test here is the route layer behind that gate."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.credential :as credential]

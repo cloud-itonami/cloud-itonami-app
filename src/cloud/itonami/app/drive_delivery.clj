@@ -15,7 +15,7 @@
             [biscuit.token :as biscuit]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.drive-crypto :as crypto]
             [cloud.itonami.app.secure-file :as secure-file]
@@ -94,7 +94,7 @@
                       (str/replace "<" "&lt;")
                       (str/replace ">" "&gt;"))
                   "</div>")
-        out (if (str/includes? (str/lower-case text) "</body>")
+        out (if (str/includes? (str/lower text) "</body>")
               (str/replace-first text #"(?i)</body>" (str mark "</body>"))
               (str text mark))]
     (.getBytes out StandardCharsets/UTF_8)))

@@ -37,14 +37,14 @@
 
 (ns cloud.itonami.app.native-exec
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [kotoba.compiler.core :as compiler]
             [kotoba.kir :as ir]
             [kotoba.artifact.runtime-identity :as runtime-identity]
             [kotoba.verifier.signing :as signing]))
 
 (def host-target
-  (if (contains? #{"aarch64" "arm64"} (str/lower-case (System/getProperty "os.arch")))
+  (if (contains? #{"aarch64" "arm64"} (str/lower (System/getProperty "os.arch")))
     :aarch64-kotoba-v1
     :x86_64-kotoba-v1))
 

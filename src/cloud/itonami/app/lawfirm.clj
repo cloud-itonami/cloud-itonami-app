@@ -40,7 +40,7 @@
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.workspace :as workspace]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [lawfirm.actor :as actor]
             [lawfirm.projection :as projection]
             [lawfirm.store :as lf-store]

@@ -37,7 +37,7 @@
   files; the format (`.sj1` or bare) is part of the path, which is how a node
   tells a verified piece from an unverified one after a restart."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [proto.wire :as w]
             [storj.node.contact :as contact]

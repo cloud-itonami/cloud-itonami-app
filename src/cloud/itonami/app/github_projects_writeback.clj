@@ -5,7 +5,7 @@
   mutation only when the item still has the exact project, field, option and
   updatedAt basis captured by the WorkItem lease."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.identity :as identity]))
 

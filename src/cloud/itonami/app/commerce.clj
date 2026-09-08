@@ -34,7 +34,7 @@
   it is not a merchant. It is the shipping half, and only that half, that
   digital removes."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.store :as store]
@@ -101,7 +101,7 @@
   [value]
   (if (nil? value)
     :physical
-    (case (some-> value name (str/replace "_" "-") str/lower-case keyword)
+    (case (some-> value name (str/replace "_" "-") str/lower keyword)
       :digital :digital
       :physical :physical
       (refuse :commerce/fulfillment-kind
@@ -116,7 +116,7 @@
     (refuse :commerce/address-required (str field "は住所オブジェクトで指定してください。")))
   (let [read-field (fn [label & keys]
                      (text! (apply present value keys) (str field "の" label) 200))]
-    {:country (str/upper-case (read-field "国" :country))
+    {:country (str/upper (read-field "国" :country))
      :postal-code (read-field "郵便番号" :postal-code :postal_code)
      :region (read-field "都道府県・州" :region)
      :locality (read-field "市区町村" :locality)
@@ -287,7 +287,7 @@
     (overview session)))
 
 (defn- delivery-method! [value]
-  (case (some-> value name (str/replace "_" "-") str/lower-case keyword)
+  (case (some-> value name (str/replace "_" "-") str/lower keyword)
     :download-url :download-url
     :license-key :license-key
     :api-credential :api-credential
@@ -337,7 +337,7 @@
     (overview session)))
 
 (defn- sku! [value]
-  (let [value (some-> value str str/trim str/upper-case)]
+  (let [value (some-> value str str/trim str/upper)]
     (when-not (and value (re-matches #"[A-Z0-9][A-Z0-9._-]{1,63}" value))
       (refuse :commerce/invalid-sku
               "SKUは2〜64文字の英数字、点、ハイフン、アンダースコアで指定してください。"))
@@ -393,7 +393,7 @@
     (overview session)))
 
 (defn- slug! [value]
-  (let [value (some-> value str str/trim str/lower-case)]
+  (let [value (some-> value str str/trim str/lower)]
     (when-not (and value (re-matches #"[a-z0-9][a-z0-9-]{2,62}" value))
       (refuse :commerce/invalid-store-slug
               "store slugは3〜63文字の小文字英数字とハイフンで指定してください。"))
@@ -482,7 +482,7 @@
   [slug]
   (let [state (store/snapshot)]
     (some (fn [[tenant record]]
-            (when (= (str/lower-case (str slug))
+            (when (= (str/lower (str slug))
                      (get-in record [:publication :slug]))
               (public-record state tenant record)))
           (get-in state [:commerce :stores]))))
@@ -541,7 +541,7 @@
 (defn- storefront-record
   [state slug]
   (some (fn [[tenant record]]
-          (when (= (str/lower-case (str slug))
+          (when (= (str/lower (str slug))
                    (get-in record [:publication :slug]))
             [tenant record]))
         (get-in state [:commerce :stores])))
@@ -649,13 +649,13 @@
                     (:lines order))})))
 
 (defn- transaction-hash! [value]
-  (let [value (some-> value str str/trim str/lower-case)]
+  (let [value (some-> value str str/trim str/lower)]
     (when-not (and value (re-matches #"0x[0-9a-f]{64}" value))
       (refuse :commerce/invalid-transaction "Base transaction hashが不正です。"))
     value))
 
 (defn- payer-address! [value]
-  (let [value (some-> value str str/trim str/lower-case)]
+  (let [value (some-> value str str/trim str/lower)]
     (when-not (and value (re-matches #"0x[0-9a-f]{40}" value))
       (refuse :commerce/invalid-payer "支払Walletアドレスが不正です。"))
     value))

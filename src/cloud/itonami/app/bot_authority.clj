@@ -47,7 +47,7 @@
   secret from `bot-identity.seed`: one names Bots, this one speaks for the
   fleet, and a compromise of either should not be a compromise of both."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [ed25519.core :as ed]
             [biscuit.token :as token]
             [biscuit.authority :as biscuit-authority]

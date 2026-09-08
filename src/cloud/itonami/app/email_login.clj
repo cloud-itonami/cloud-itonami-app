@@ -6,7 +6,7 @@
   HTTPS endpoint.  The endpoint credential is named in configuration and read
   from the environment at call time; the credential itself is never persisted."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.policy :as policy])
   (:import [java.net URI]))

@@ -45,7 +45,7 @@
 
   A `:refused` and an `:unavailable` must never be rendered the same way. The
   first is an answer; the second is the absence of one."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.commands :as commands]))
 
 (def schema "cloud.itonami.mobile.terminal.v1")

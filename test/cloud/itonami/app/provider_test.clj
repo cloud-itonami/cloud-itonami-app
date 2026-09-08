@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.provider-test
   (:require [clojure.test :refer [deftest is testing]]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.data.json :as json]
             [cloud.itonami.app.provider :as provider])
   (:import [com.sun.net.httpserver HttpServer HttpHandler]

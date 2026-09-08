@@ -5,7 +5,7 @@
   RFC 7662 introspection, must be active, unexpired, audience-bound to the exact
   resource URL and carry the route's scope. No bearer token is persisted."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.app.store :as store])

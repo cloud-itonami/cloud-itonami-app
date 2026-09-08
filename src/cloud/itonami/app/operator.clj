@@ -39,7 +39,7 @@
   What the app CAN verify is the last step, and it does: `register-endpoint!`
   probes the endpoint and refuses to record it unless it answers."
   (:require [clojure.set :as set]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.fleet :as fleet]
             [cloud.itonami.app.store :as store]))
 

@@ -7,7 +7,7 @@
   of those on a fifteen-minute cadence."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.bot-import :as subject]
             [cloud.itonami.app.bots :as bots]

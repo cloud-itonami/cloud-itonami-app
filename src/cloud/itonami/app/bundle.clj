@@ -18,7 +18,7 @@
   (:require [cloud.itonami.app.archive :as archive]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.web :as web]
             [kotoba.protocol.app :as app]
             [kotoba.protocol.cid :as cid])

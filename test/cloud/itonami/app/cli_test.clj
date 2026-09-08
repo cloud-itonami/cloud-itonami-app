@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.cli-test
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.app-client :as client]
             [cloud.itonami.app.bot-tools :as bot-tools]

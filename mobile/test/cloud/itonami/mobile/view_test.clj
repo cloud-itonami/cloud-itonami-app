@@ -7,7 +7,7 @@
   that a failed read does not read as an empty fleet, that no class outside the
   design system reaches the document, and that an address that cannot be opened
   is not rendered as a link."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.mobile.view :as view]))
 

@@ -14,7 +14,7 @@
   The existing bot_slo-test keeps the assembled stability score honest; this
   test owns the three limbs in isolation so a one-line scoring change in the
   core is caught before it reaches the sum."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]
             [kotoba.compiler.core :as compiler]
             [kotoba.kir :as ir]))

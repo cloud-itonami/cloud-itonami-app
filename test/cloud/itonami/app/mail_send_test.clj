@@ -12,7 +12,7 @@
   one — some pass it, some mangle it, some refuse the message — so a subject
   that reads 見積もりの件 locally and arrives as mojibake is the ordinary
   failure here, not an exotic one."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.mail-account :as account]
             [cloud.itonami.app.mail-send :as mail-send]

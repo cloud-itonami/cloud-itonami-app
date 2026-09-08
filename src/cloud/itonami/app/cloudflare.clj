@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.cloudflare
   "Credentialed HTTP host for yadori's pure Cloudflare request maps."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [yadori.cloudflare :as yadori])
   (:import [java.net URLEncoder]
@@ -55,7 +55,7 @@
                      (throw (ex-info "unsupported Cloudflare request method"
                                      {:type :domain-service/method :method method})))
         response (*send!* {:url (str base path (query-string query))
-                           :method (keyword (str/lower-case method-str))
+                           :method (keyword (str/lower method-str))
                            :timeout-seconds 30
                            :headers hdrs
                            :body (when (contains? #{:post :patch} method)

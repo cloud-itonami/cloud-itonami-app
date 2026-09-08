@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.github-projects-writeback-test
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.github-projects-sandbox :as sandbox]
             [cloud.itonami.app.github-projects-writeback :as github]))

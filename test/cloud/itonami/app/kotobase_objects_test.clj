@@ -2,7 +2,7 @@
   "Offline. The transport is a map, so what is under test is the DAG, the
   identity/location split and the refusals — none of which need
   kotobase.net to be reachable to be wrong."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.archive :as archive]
             [cloud.itonami.app.kotobase-objects :as ko]

@@ -7,7 +7,7 @@
 
   The frame is decision evidence, not execution authority.  It may rank an
   action highly and the capability/HITL gates may still refuse that action."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.loops :as loops]))
 
 (def score-weights

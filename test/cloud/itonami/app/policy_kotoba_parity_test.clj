@@ -43,7 +43,7 @@
   claim they make directly — the decision core is expressible on native — and
   they will start discriminating when the portable targets move ahead of the
   native slice, which is the direction of travel."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.policy :as policy]
             [kotoba.compiler.core :as compiler]

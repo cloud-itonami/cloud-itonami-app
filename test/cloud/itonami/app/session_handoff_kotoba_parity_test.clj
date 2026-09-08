@@ -35,7 +35,7 @@
 
   That the refusals are indistinguishable ON THE WIRE is also not here — it is
   a property of the host boundary, asserted in `identity_lifecycle_test`."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.session-handoff :as session-handoff]
             [kotoba.compiler.core :as compiler]

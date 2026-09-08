@@ -39,7 +39,7 @@
   and no more: whoever can read `data/` can mint capabilities. Named here
   rather than left for somebody to work out."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cacao.core :as cacao]
             [cloud.itonami.app.config :as config]
             [ed25519.core :as ed])

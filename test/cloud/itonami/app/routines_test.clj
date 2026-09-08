@@ -12,7 +12,7 @@
   is stopped one level down at `provider/agent-turn` — a turn with no tool calls
   ends the loop, which is enough for every assertion here and reaches no
   network."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bots :as bots]

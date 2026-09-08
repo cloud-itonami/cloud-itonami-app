@@ -2,7 +2,7 @@
   "The two properties that make local-first analytics defensible, as tests
   rather than as sentences in a docstring."
   (:require [clojure.test :refer [deftest is testing]]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.kaiyu-local :as k]
             [cloud.itonami.app.cli]))
 

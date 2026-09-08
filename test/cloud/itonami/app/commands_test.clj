@@ -11,7 +11,7 @@
   `nbb --classpath src dev/gen_commands.cljs` fails the suite."
   (:require [clojure.java.io :as io]
             [clojure.set :as set]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.app-client :as client]

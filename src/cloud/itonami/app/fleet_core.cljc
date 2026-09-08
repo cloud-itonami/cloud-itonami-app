@@ -17,7 +17,7 @@
   probeable, which ISIC does it code in — are `fleet_core.kotoba` and RUN from
   there (`cloud.itonami.app.kotoba-oracle`). What stays here is the collection
   work they are asked over: filtering, faceting, and the throw."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.kotoba-oracle :as oracle]))
 
 (def ^:private actor-record
@@ -66,8 +66,8 @@
   (oracle/call :fleet-core 'probeable? [(->actor actor)]))
 
 (defn- matches-text? [actor q]
-  (let [q (str/lower-case q)]
-    (some (fn [v] (and v (str/includes? (str/lower-case (str v)) q)))
+  (let [q (str/lower q)]
+    (some (fn [v] (and v (str/includes? (str/lower (str v)) q)))
           [(:id actor) (:name actor) (:domain actor)])))
 
 (defn- isic-of [actor]

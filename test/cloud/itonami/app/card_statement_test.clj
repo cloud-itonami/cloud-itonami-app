@@ -14,7 +14,7 @@
   unverified -- and the test that matters is that an unverified map fails closed
   rather than silently mis-parsing. When a real export exists, its header row
   replaces `header` below and this paragraph goes away."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.authority.api :as api]
             [cloud.itonami.app.authority.payment :as payment]

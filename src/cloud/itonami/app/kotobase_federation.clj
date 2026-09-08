@@ -9,7 +9,7 @@
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.store :as store]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [ed25519.core :as ed])
   (:import [java.security SecureRandom]
            [java.time Instant]

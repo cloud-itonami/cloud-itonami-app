@@ -31,7 +31,7 @@
   replayed root disagrees with a recorded root is corrupt and refuses to load."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.host :as host]
             [valueflows.conform :as conform]

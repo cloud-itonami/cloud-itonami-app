@@ -54,7 +54,7 @@
   `:scanned` so a caller can see how much of the registry was actually
   visible."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.west-kotoba-refactor :as west])
   (:import [java.util.concurrent TimeUnit]))
 

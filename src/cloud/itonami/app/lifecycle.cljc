@@ -25,7 +25,7 @@
   A stop line is the half that did not exist at all: the shutdown hook ran
   `stop!` and printed nothing, so a terminated process and a crashed one left
   the same evidence, which is none."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def prefix "cloud-itonami-app")
 

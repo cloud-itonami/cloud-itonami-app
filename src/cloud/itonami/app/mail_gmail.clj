@@ -11,7 +11,7 @@
   What stays in this namespace is the part that is genuinely this app's:
   turning a Gmail message into the shape every account kind reports, so the
   sync above it never learns which protocol a mailbox was reached over."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [gmail.history :as history]
             [gmail.labels :as labels]
             [gmail.mime :as mime]
@@ -40,7 +40,7 @@
                   (when (str/includes? value "@") value))]
     {:display (or (not-empty (str/trim (str/replace value #"<[^>]*>" "")))
                   email value)
-     :email (str/lower-case (str/trim (or email "")))}))
+     :email (str/lower (str/trim (or email "")))}))
 
 (defn- message->normalized
   "One Gmail message in the shape every account kind reports."

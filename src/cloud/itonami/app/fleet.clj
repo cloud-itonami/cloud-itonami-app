@@ -64,7 +64,7 @@
   and it is absent where that vocabulary does not yet reach."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.fleet-core :as core]))
 
 ;; What a directory query MEANS now lives in cloud.itonami.app.fleet-core, a

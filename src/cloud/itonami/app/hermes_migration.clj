@@ -19,7 +19,7 @@
   reviewed preview tied to the bytes that were actually staged."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.hermes-import-data :as import-data])
   (:import [java.io File]
@@ -440,7 +440,7 @@
                 {"HERMES_HOME" (.getPath profile-home)}))
 
 (defn- database-artifact? [^Path path]
-  (let [name (str/lower-case (str (.getFileName path)))]
+  (let [name (str/lower (str (.getFileName path)))]
     (or (credential-file-names name)
         (str/ends-with? name ".db")
         (str/ends-with? name ".db-wal")
@@ -505,7 +505,7 @@
                   "--format" "jsonl" "--redact"])))
 
 (defn- safe-file-id [id]
-  (let [slug (-> id str/lower-case (str/replace #"[^a-z0-9_-]+" "-"))]
+  (let [slug (-> id str/lower (str/replace #"[^a-z0-9_-]+" "-"))]
     (if (str/blank? slug) (subs (sha256-string id) 0 12) slug)))
 
 (defn- artifact-record [root ^File file kind format & {:keys [redacted]}]

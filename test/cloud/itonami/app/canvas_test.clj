@@ -6,7 +6,7 @@
   3. a proposal's landed-ness is measured against the projection, never stored;
   4. nothing here writes to the canvas ledger."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.canvas :as canvas]

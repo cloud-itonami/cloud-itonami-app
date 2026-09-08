@@ -10,7 +10,7 @@
   Each function takes the TXT values at the relevant owner name. The lookup —
   which owner name, and how to reach DNS — stays with the host, which is the
   only part that could not move."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (defn of-kind
   "The first value that announces itself as `prefix`, or nil.
@@ -21,7 +21,7 @@
   [values prefix]
   (some (fn [value]
           (let [v (str/trim (str value))]
-            (when (str/starts-with? (str/lower-case v) prefix) v)))
+            (when (str/starts-with? (str/lower v) prefix) v)))
         values))
 
 (defn spf
@@ -61,7 +61,7 @@
   [values]
   (if-let [value (of-kind values "v=dmarc1")]
     (let [policy (some-> (re-find #"(?i)\bp\s*=\s*(none|quarantine|reject)" value)
-                         second str/lower-case)]
+                         second str/lower)]
       {:present? (some? policy)
        :enforcing? (contains? #{"quarantine" "reject"} policy)
        :policy policy

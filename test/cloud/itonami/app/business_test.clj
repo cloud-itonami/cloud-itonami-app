@@ -9,7 +9,7 @@
      released install has no workspace at all;
   4. nothing here writes to an analysis plane."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.store :as store])

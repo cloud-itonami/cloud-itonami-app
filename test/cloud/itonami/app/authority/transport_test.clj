@@ -11,7 +11,7 @@
   :transport-failed -- telling a human the actor was unreachable when the truth was
   that their own operator had approved and the provider said no."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.authority.transport :as transport])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
@@ -33,7 +33,7 @@
        (handle [_ exchange]
          (reset! seen-headers
                  (into {} (for [[k v] (.getRequestHeaders ^HttpExchange exchange)]
-                            [(str/lower-case (str k)) (vec v)])))
+                            [(str/lower (str k)) (vec v)])))
          (let [body (.getBytes (json/write-str payload) StandardCharsets/UTF_8)]
            (.set (.getResponseHeaders ^HttpExchange exchange)
                  "Content-Type" "application/json")

@@ -1,5 +1,5 @@
 (ns cloud.itonami.public-bots
- (:require [clojure.string :as str] [jp-go-dds.core :as dds] [cloud.itonami.capital-ui :as capital]))
+ (:require [kotoba.lang.text :as str] [jp-go-dds.core :as dds] [cloud.itonami.capital-ui :as capital]))
 (defn funding-editor [{:keys [locale funding-form funding-saving? funding-error]} handlers]
  (let [label (fn [ja en] (if (= locale :ja) ja en))]
 [:details [:summary (label "1. 募集条件を登録" "1. Register funding terms")]
@@ -22,7 +22,7 @@
  (let [ja? (= locale :ja) label (fn [ja en] (if ja? ja en))
        items (:items public-directory)
        matches (filter #(and (or (str/blank? public-org) (= public-org (:org %)))
-                              (str/includes? (str/lower-case (str (:id %) " " (:name %) " " (:description %))) (str/lower-case (or public-query "")))) items)
+                              (str/includes? (str/lower (str (:id %) " " (:name %) " " (:description %))) (str/lower (or public-query "")))) items)
        status-of #(let [s (get-in % [:funding :status])] (if (#{"accepting" "not-accepting"} s) s "unknown"))
        matches-status? (fn [item value] (case value
         "" true "lending" (true? (get-in item [:funding :lending]))

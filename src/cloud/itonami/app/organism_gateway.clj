@@ -5,7 +5,7 @@
   opaque byte cursor and projects only allow-listed lifecycle metadata."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.organism-worker :as organism-worker])
   (:import [java.io RandomAccessFile]
            [java.nio.charset StandardCharsets]
@@ -61,10 +61,10 @@
   "List externally assigned AOs visible to one organization slug."
   [organization]
   (let [workers (assignments)
-        organization (str/lower-case (str organization))
+        organization (str/lower (str organization))
         visible (->> workers
                      (filter #(= organization
-                                 (str/lower-case
+                                 (str/lower
                                   (str (:ao.worker/organization %)))))
                      (mapv organism-worker/public-assignment))]
     (cond-> {:schema "cloud.itonami.app.organism-directory.v1"

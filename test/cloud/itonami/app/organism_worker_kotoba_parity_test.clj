@@ -18,7 +18,7 @@
   not prove is that the application would derive them the same way if it ever
   called the core. It does not call the core — nothing does yet — and when
   something does, that call site is what should own this derivation."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.organism-worker :as ow]
             [kotoba.compiler.core :as compiler]

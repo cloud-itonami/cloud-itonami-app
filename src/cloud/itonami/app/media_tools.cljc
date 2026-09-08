@@ -16,7 +16,7 @@
   Portable except for the one HTTP round trip, which is the JVM resident's
   (`#?(:clj)`); the tool definitions, admission and result shaping run under
   ClojureScript too, and the portable suite executes them."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.hokusai :as hokusai]
             [cloud.itonami.app.policy :as policy]
             #?(:clj [cloud.itonami.app.provider :as provider])))

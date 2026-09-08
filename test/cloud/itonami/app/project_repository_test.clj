@@ -12,7 +12,7 @@
   So these tests exist to say what survived the rescue actually works, rather
   than that it compiles."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.project-repository :as projects]

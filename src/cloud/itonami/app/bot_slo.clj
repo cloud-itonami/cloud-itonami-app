@@ -7,7 +7,7 @@
   remains `:unmeasured` and fails its gate instead of becoming zero or green."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str])
+            [kotoba.lang.text :as str])
   (:import [java.time Duration Instant]))
 
 (def schema "cloud.itonami.app.bot-slo.v1")

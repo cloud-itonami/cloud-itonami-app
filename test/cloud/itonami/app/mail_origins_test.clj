@@ -6,7 +6,7 @@
   it, which is theirs. These pin that separation, and pin the one property that
   makes the trust field worth having — that it is never inferred from how much
   mail arrived."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.mail-origins :as origins]))
 

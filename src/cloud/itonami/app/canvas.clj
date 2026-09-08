@@ -43,7 +43,7 @@
   unknown balance instead of reading it as zero."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.store :as store])
   (:import [java.util UUID]))

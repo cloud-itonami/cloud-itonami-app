@@ -50,7 +50,7 @@
   and `accept-witness-proof` is already the intake for a witness that signs
   somewhere else — it verifies before it stores, so it needs no authentication
   to be safe."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [didwebvh.did :as webvh-did]
             [didwebvh.entry :as webvh-entry]
             [didwebvh.hash :as webvh-hash]

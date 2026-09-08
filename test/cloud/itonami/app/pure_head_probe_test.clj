@@ -22,7 +22,7 @@
   the `:i64` word-typed slice, so the claim transfers to the native slice
   that the other decision cores self-restrict to.
   "
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [kotoba.compiler.core :as compiler]
             [kotoba.kir :as ir]))

@@ -2,7 +2,7 @@
   "Bounded local agent execution with explicit device capabilities and HIL."
   (:require [agent.run :as agent-run]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.cli-runner :as cli-runner]
             [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.desktop :as desktop]
@@ -191,7 +191,7 @@
 (defn- clean-domains [domains]
   (->> domains
        (map str)
-       (map str/lower-case)
+       (map str/lower)
        (map str/trim)
        (filter #(re-matches #"[a-z0-9.-]+" %))
        distinct
@@ -323,8 +323,8 @@
 
 (defn- allowed-url! [settings value]
   (let [uri (URI/create (str value))
-        scheme (some-> (.getScheme uri) str/lower-case)
-        host (some-> (.getHost uri) str/lower-case)
+        scheme (some-> (.getScheme uri) str/lower)
+        host (some-> (.getHost uri) str/lower)
         allowed (set (get-in settings [:browser :allowed-domains]))]
     (when-not (and (#{"http" "https"} scheme)
                    host

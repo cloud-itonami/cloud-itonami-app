@@ -19,7 +19,7 @@
   (compartment `personal`)."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.bundle :as bundle]
             [cloud.itonami.app.http-client :as http]
             [ed25519.core :as ed]

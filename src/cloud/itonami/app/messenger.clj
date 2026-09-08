@@ -10,7 +10,7 @@
   loopback-only local surface but is not E2EE.  `:signal-v1` stores an opaque
   envelope produced by a client; this namespace never claims to encrypt bytes
   it did not encrypt."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.store :as store])
   (:import [java.nio.charset StandardCharsets]
            [java.security KeyFactory MessageDigest Signature]

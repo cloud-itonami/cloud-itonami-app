@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.human-work-marketplace
   "Public, read-only HumanWorkRequest listing. Acceptance stays behind the
   Passkey session and exact eligibility check."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.kotoba-oracle :as oracle]))
 
 (defn page-html [brand-name]

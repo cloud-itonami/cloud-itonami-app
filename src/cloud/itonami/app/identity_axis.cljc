@@ -5,7 +5,7 @@
   that branch on their own `str/blank?` for the same rule are a second
   implementation and must not land."
   (:require [cloud.itonami.app.kotoba-oracle :as oracle]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (defn- blank-did? [did]
   (str/blank? (str did)))

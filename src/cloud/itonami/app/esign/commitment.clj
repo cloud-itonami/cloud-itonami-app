@@ -61,7 +61,7 @@
   stored, never from a re-serialization.
 
   Everything here is pure: no store, no clock, no network, no crypto keys."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [jcs.core :as jcs])
   (:import [java.nio.charset StandardCharsets]
            [java.security MessageDigest]))

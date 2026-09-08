@@ -3,7 +3,7 @@
   `api.hellofax.com`, and nothing in this repository ever has: no account is
   provisioned and a live call costs money and rings a real phone line."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.fax :as fax]
             [cloud.itonami.app.lawfirm :as app-lawfirm]
@@ -55,7 +55,7 @@
 
 (deftest only-the-approved-bytes-match
   (is (true? (fax/document-matches? (str "sha256:" pdf-digest) pdf)))
-  (is (true? (fax/document-matches? (str "sha256:" (str/upper-case pdf-digest)) pdf)))
+  (is (true? (fax/document-matches? (str "sha256:" (str/upper pdf-digest)) pdf)))
   (is (false? (fax/document-matches? (str "sha256:" pdf-digest) (bytes-of "別の書面"))))
   (testing "and an unidentified document is not a match — 'I cannot tell' is not a yes"
     (is (false? (fax/document-matches? nil pdf)))

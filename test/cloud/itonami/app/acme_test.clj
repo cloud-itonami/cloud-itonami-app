@@ -12,7 +12,7 @@
   the CA's error names none of it."
   (:require [asn1.core :as asn1]
             [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.acme :as acme])
   (:import [java.math BigInteger]

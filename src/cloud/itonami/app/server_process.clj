@@ -30,7 +30,7 @@
   presence means 'this was serving', never 'this was attempted'."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.app-client :as client]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.http-client :as http])

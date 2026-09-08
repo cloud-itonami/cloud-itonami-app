@@ -14,7 +14,7 @@
 
   Same caveat as `fleet-core-kotoba-parity-test`: the native compile rows
   assert the core is expressible on native, not that anything runs there."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.provider-retry :as retry]
             [kotoba.compiler.core :as compiler]
@@ -50,7 +50,7 @@
                                            (call-probe i fr ct mo jee))
                                          cases))
         probes (str/join " " (map (fn [i] (str "p" i)) (range (count cases))))
-        src (str (clojure.string/replace-first
+        src (str (str/replace-first
                   core-source
                   #"\(:export \[[^\]]+\]\)"
                   (str "(:export [output-budget-exhausted? " probes "])"))

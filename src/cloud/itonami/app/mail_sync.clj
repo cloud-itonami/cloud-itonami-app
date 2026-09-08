@@ -30,7 +30,7 @@
   of the two mailboxes is perfectly fine."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.mail-account :as account]
@@ -87,8 +87,8 @@
 (defn classify
   "Add portable local labels without changing provider-side labels."
   [{:keys [subject from-email labels]}]
-  (let [text (str/lower-case (str subject " " from-email))
-        remote (set (map #(-> % str str/lower-case
+  (let [text (str/lower (str subject " " from-email))
+        remote (set (map #(-> % str str/lower
                               (str/replace #"[^a-z0-9._-]+" "-")
                               keyword)
                          labels))]

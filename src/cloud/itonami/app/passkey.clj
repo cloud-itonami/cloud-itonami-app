@@ -10,7 +10,7 @@
             [cloud.itonami.app.identity-axis :as axis]
             [cloud.itonami.app.passkey-options :as options]
             [cloud.itonami.app.store :as store]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [identity.authenticators :as authenticators])
   (:import [java.time Instant]
            [java.util UUID]))

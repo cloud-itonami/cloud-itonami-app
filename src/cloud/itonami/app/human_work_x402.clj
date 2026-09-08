@@ -6,7 +6,7 @@
   the evidenced work transition. Signed payer payloads are forwarded once and
   never persisted; only requirements and settlement receipts are retained."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.human-work :as human-work]
             [cloud.itonami.app.store :as store])

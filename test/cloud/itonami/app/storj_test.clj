@@ -3,7 +3,7 @@
   inspected without a gateway — which is also the limit of what these prove:
   that the request is well-formed and the byte contract holds, not that Storj
   accepts either. No credential for a real bucket exists in this workspace."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.storj :as storj]
             [drive.object :as object]

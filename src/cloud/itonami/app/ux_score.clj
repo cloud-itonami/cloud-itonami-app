@@ -5,7 +5,7 @@
   are observable UI counts/ratios, the weighted result is deterministic, and
   the system-dynamics trajectory is delegated to the OASIS XMILE engine."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.xml :as cxml]
             [xmile.execute :as execute]
             [xmile.xml :as xxml])

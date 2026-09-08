@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.fleet-test
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.set]
-            [clojure.string]
+            [kotoba.lang.text]
             [cloud.itonami.app.fleet :as fleet]))
 
 (deftest catalog-loads
@@ -172,7 +172,7 @@
     (let [od (fleet/by-execution :on-demand)
           sector (filter #(= :sector-agent (:role %)) od)]
       (is (< 400 (count sector)))
-      (is (every? #(clojure.string/starts-with? (:repo %) "cloud-itonami-isic-") sector))))
+      (is (every? #(kotoba.lang.text/starts-with? (:repo %) "cloud-itonami-isic-") sector))))
 
   (testing "on-demand is broader than the sector agents"
     ;; It spans every family the authority now classifies — occupation,

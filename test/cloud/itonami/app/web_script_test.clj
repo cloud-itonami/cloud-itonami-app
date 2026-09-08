@@ -26,7 +26,7 @@
   quiet teaches them it ran — so it neither fails nor stays silent."
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.web :as web]))

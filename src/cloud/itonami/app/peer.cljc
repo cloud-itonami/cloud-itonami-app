@@ -8,7 +8,7 @@
 
   Decisions live in `peer_core.kotoba`. This namespace hands it booleans and
   reads back its answers."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.kotoba-oracle :as oracle]))
 
 (def schema "cloud.itonami.app.peer.v1")

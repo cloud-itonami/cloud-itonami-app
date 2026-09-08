@@ -8,7 +8,7 @@
   (:require [agent.run :as agent-run]
             [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bots :as bots]

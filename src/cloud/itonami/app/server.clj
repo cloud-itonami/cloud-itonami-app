@@ -2,7 +2,7 @@
   (:require [clojure.data.json :as json]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.kaiyu-local :as kaiyu-local]
             [cloud.itonami.app.a2a :as a2a]
             [cloud.itonami.app.agent-session :as agent-session]
@@ -127,7 +127,7 @@
   (let [body (slurp (.getRequestBody exchange))
         content-type (or (.getFirst (.getRequestHeaders exchange)
                                     "Content-Type") "")]
-    (if (str/includes? (str/lower-case content-type) "application/edn")
+    (if (str/includes? (str/lower content-type) "application/edn")
       (if (str/blank? body) {} (edn/read-string body))
       (if (str/blank? body) {} (json/read-str body :key-fn keyword)))))
 
@@ -430,7 +430,7 @@
   [^HttpExchange exchange]
   (some-> exchange .getRequestHeaders (.getFirst "Authorization")
           str/trim
-          (as-> header (when (str/starts-with? (str/lower-case header) "bearer ")
+          (as-> header (when (str/starts-with? (str/lower header) "bearer ")
                          (str/trim (subs header 7))))
           not-empty))
 
@@ -573,7 +573,7 @@
                    (str/includes? accept "text/event-stream"))
       (throw (ex-info "MCP Accept must include JSON and event-stream"
                       {:type :mcp-http/not-acceptable})))
-    (when-not (str/starts-with? (str/lower-case content-type)
+    (when-not (str/starts-with? (str/lower content-type)
                                 "application/json")
       (throw (ex-info "MCP request must be application/json"
                       {:type :mcp-http/unsupported-media-type})))
@@ -722,7 +722,7 @@
                   content-type (or (.getFirst (.getRequestHeaders exchange)
                                               "Content-Type") "")
                   request (read-json-limited exchange (* 2 1024 1024) nil)]
-              (when-not (str/starts-with? (str/lower-case content-type)
+              (when-not (str/starts-with? (str/lower content-type)
                                           "application/json")
                 (throw (ex-info "A2A request must be application/json"
                                 {:type :a2a/unsupported-media-type})))
@@ -6948,7 +6948,7 @@
                :offset (parse-bounded-int (:offset query) 0 1000000)
                :title (:title query)
                :include-hidden (#{"true" "1" "yes"}
-                                (str/lower-case
+                                (str/lower
                                  (str (:include_hidden query))))}))
 
       (and (= method "POST") (= path "/api/sessions"))

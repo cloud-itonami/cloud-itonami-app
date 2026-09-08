@@ -3,7 +3,7 @@
   live chain surface is exercised by hand and recorded in the PR, because a
   test that depends on mainnet being reachable fails for reasons that have
   nothing to do with this code."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.filecoin :as filecoin]
             [drive.object :as object]

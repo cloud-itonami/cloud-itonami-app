@@ -37,7 +37,7 @@
   wants three times and clients show `mtime`. Reporting the creation instant
   for all three is honest — it is the only one that exists — and better than
   reporting `now`, which makes every file look modified on every listing."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.store :as store]
             [drive.object :as object]

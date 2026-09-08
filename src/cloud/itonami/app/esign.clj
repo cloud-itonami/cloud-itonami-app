@@ -94,7 +94,7 @@
   content-addressed store. Writing signed content to Filecoin or IPFS first and
   deciding erasure afterwards is not recoverable — which is why
   `cloud.itonami.app.filecoin` staging is not in this path."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.credential :as credential]
             [webauthn.assurance :as assurance]
             [cloud.itonami.app.did :as did]

@@ -31,7 +31,7 @@
   looking decimals hides which is which."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.fleet :as fleet]
             [cloud.itonami.app.operator :as operator]))

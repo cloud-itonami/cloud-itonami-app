@@ -53,7 +53,7 @@
   :endpoint-not-configured, which is what it answered while it had no surface at
   all. See ADR-2607300300's remaining gaps."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]))
 
 (defn settings
@@ -86,7 +86,7 @@
   "The header an actor's consent surface expects. Derived from the authority key so the
   three actors agree without a table: :card -> X-CARD-CONSENT-TOKEN."
   [authority-key]
-  (str "X-" (str/upper-case (name authority-key)) "-CONSENT-TOKEN"))
+  (str "X-" (str/upper (name authority-key)) "-CONSENT-TOKEN"))
 
 (defn consent-token
   "The consent token for one authority, read from the environment at call time.

@@ -34,7 +34,7 @@
 
   `handoff_core.kotoba`. This namespace hands it booleans and reads back its
   answers, keeping no second copy of a rule it could quietly disagree with."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.kotoba-oracle :as oracle]))
 
 (def schema "cloud.itonami.app.handoff.v1")

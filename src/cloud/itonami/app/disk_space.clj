@@ -8,7 +8,7 @@
   mutation. Unknown, stale, open, symlinked, Git-owned and unclassified paths
   fail closed."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str])
+            [kotoba.lang.text :as str])
   (:import [java.nio.file FileVisitResult Files LinkOption Path SimpleFileVisitor]
            [java.nio.file.attribute BasicFileAttributes]
            [java.security MessageDigest]
@@ -274,7 +274,7 @@
 
 (defn- gguf-tree? [^Path path]
   (boolean (some #(and (Files/isRegularFile ^Path % (nofollow-options))
-                       (str/ends-with? (str/lower-case (str (.getFileName ^Path %))) ".gguf"))
+                       (str/ends-with? (str/lower (str (.getFileName ^Path %))) ".gguf"))
                  (walk-paths path 2))))
 
 (defn- classify [root-kind ^Path path]

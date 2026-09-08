@@ -8,7 +8,7 @@
      never 0 and never a plausible-looking number;
   4. a ledger of a different shape is named as such, not rendered as empty."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.loops :as loops]

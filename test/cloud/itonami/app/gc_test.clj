@@ -8,7 +8,7 @@
   from `:ok`, because 'could not measure' printing the same thing as
   'measured and fine' is the exact defect the receipt exists to prevent."
   (:require [clojure.edn :as edn]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.bot-slo :as bot-slo]
             [cloud.itonami.app.config :as config]

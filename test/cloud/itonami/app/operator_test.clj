@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.operator-test
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.fleet :as fleet]
             [cloud.itonami.app.operator :as operator]

@@ -45,7 +45,7 @@
 
   All three carry the same sync state, in the same place, so a caller showing
   a list of mailboxes does not have to ask three questions."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.store :as store]))
 
@@ -304,9 +304,9 @@
   [{:keys [address host port username password protocol
            smtp-host smtp-port smtp-username display-name]}
    {:keys [user-did]}]
-  (let [kind (if (= "pop3" (str/lower-case (str/trim (str (or protocol "imap")))))
+  (let [kind (if (= "pop3" (str/lower (str/trim (str (or protocol "imap")))))
                :pop3 :imap)
-        address (str/lower-case (require-text! address "メールアドレス"))
+        address (str/lower (require-text! address "メールアドレス"))
         host (require-text! host (if (= :pop3 kind) "POP3 サーバー" "IMAP サーバー"))
         username (str/trim (or (not-empty (str username)) address))
         password (require-text! password "パスワード")

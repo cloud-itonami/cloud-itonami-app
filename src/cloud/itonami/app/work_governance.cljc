@@ -7,7 +7,7 @@
   separation keeps a board item from becoming execution authority merely by
   moving columns."
   (:require [clojure.set :as set]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [yakuwari.reconcile :as reconcile]
             [yakuwari.spec :as yakuwari]))
 

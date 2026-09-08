@@ -38,7 +38,7 @@
   as `:never-recorded` / `:stale` at the payment gate -- the correct outcome. The
   wrong outcome, and the easy one to write by accident, is a parser that yields
   a plausible zero and refuses every payment forever while looking like it works."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def schema "cloud.itonami.app.paypay-bank.v1")
 

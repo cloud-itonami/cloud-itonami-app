@@ -12,7 +12,7 @@
   The document (`GET /`) is still sent to localhost on the same port so the
   signed-in app and WebAuthn share one name. Other API routes stay put so
   probes against the bind address keep working."
-  (:require [clojure.string :as str])
+  (:require [kotoba.lang.text :as str])
   (:import [java.net URI]))
 
 (defn- host-parts [host]
@@ -25,7 +25,7 @@
       {:name "::1" :port (second (re-matches #"\[::1\]:(\d+)" h))}
 
       :else
-      (let [[name port] (str/split (str/lower-case h) #":" 2)]
+      (let [[name port] (str/split (str/lower h) #":" 2)]
         {:name name :port port}))))
 
 (defn document-redirect
@@ -39,7 +39,7 @@
     (try
       (let [public (str/replace public-origin #"/+$" "")
             uri (URI. public)
-            public-host (some-> (.getHost uri) str/lower-case)
+            public-host (some-> (.getHost uri) str/lower)
             public-port (let [p (.getPort uri)]
                           (when (pos? p) (str p)))
             {:keys [name port]} (host-parts host)]

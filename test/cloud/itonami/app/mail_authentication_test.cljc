@@ -6,7 +6,7 @@
   verdict function that answered `:authenticated` for a message it had no
   evidence about would be worse than the heuristics it replaced — those at least
   looked uncertain."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.mail-authentication :as authentication]))
 

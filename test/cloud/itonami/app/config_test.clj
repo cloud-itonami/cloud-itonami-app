@@ -21,7 +21,7 @@
   both could apply. Pretending otherwise would be worse than saying so."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config]))
 

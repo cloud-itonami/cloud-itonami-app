@@ -14,7 +14,7 @@
   which is not an error anywhere: the build passes, the page ships, and the
   layout is quietly wrong (ADR-2608060000). Not writing spacing at all is the
   only version of this that cannot rot."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [jp-go-dds.core :as dds]
             [jp-go-dds.page :as page]))
 

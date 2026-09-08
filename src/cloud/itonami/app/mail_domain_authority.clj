@@ -31,7 +31,7 @@
   `redirect=` in an SPF record is not followed, so a domain that delegates its
   terminal mechanism reads as not-closed. That is a real limit and the owner's
   way past it is an explicit `-all` or `~all`."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.domain-binding :as binding]
             [cloud.itonami.app.domain-verification :as naming]
             [cloud.itonami.app.identity :as identity]
@@ -145,7 +145,7 @@
         (vals (authorities))))
 
 (defn- domain-of [address]
-  (some-> address str (str/split #"@") second str/trim str/lower-case not-empty))
+  (some-> address str (str/split #"@") second str/trim str/lower not-empty))
 
 (defn assert-sender-permitted!
   "Refuse a send whose From-domain another tenant has proven mail authority for.
@@ -238,7 +238,7 @@
   [session {:keys [domain selector]}]
   (let [organization (owner-session! session)
         domain (naming/normalize-domain domain)
-        selector (some-> selector str str/trim str/lower-case not-empty)]
+        selector (some-> selector str str/trim str/lower not-empty)]
     (when-not domain
       (fail! :mail-domain-authority/invalid-domain
              "確認する完全なドメイン名を入力してください。"))

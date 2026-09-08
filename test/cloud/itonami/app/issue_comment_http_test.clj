@@ -7,7 +7,7 @@
   200 with the same body, and every other assertion in this file would still
   pass while an HTTP request sat open for the length of a Goal."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.config :as config-loader]

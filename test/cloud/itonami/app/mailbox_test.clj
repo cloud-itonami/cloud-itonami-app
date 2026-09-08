@@ -6,7 +6,7 @@
   functions and none of these, so what is under test is mostly whether the
   app asks the model the right questions and stores only the difference."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.mailbox :as app-mailbox]
             [cloud.itonami.app.store :as store]

@@ -22,7 +22,7 @@
 
   Everything here is pure — text in, data out. The file reading and writing
   belongs to the callers, which is what lets one implementation serve both."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 ;; ---------------------------------------------------------------------------
 ;; reading the cond
@@ -191,7 +191,7 @@
 (defn split-segments
   "A route path into segments, splitting on `/` only outside a character class.
 
-  `clojure.string/split` cannot be used: `/api/business/([^/]+)/bind` contains a
+  `str/split` cannot be used: `/api/business/([^/]+)/bind` contains a
   slash INSIDE `[^/]`, and splitting on it turns one capture group into the two
   fragments `([^` and `]+)`. Measured — it produced commands literally named
   `business ]+) bind`."

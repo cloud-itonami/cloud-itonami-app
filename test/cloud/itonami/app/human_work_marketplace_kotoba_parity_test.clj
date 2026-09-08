@@ -23,7 +23,7 @@
 
   Same caveat as the sibling suites: the native compile rows assert the core
   is expressible on native, not that anything runs there."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.human-work-marketplace :as marketplace]
             [kotoba.compiler.core :as compiler]
@@ -54,7 +54,7 @@
 (defn- run-probes [cases export]
   (let [defs (str/join "\n" (map-indexed (fn [i v] (call-probe i v export)) cases))
         probes (str/join " " (map (fn [i] (str "p" i)) (range (count cases))))
-        src (str (clojure.string/replace-first
+        src (str (str/replace-first
                   core-source
                   #"\(:export \[[^\]]+\]\)"
                   (str "(:export [pick-brand-name needs-escape? " probes "])"))

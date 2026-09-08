@@ -5,7 +5,7 @@
   oracle call would still 200, and every other test in this repository would
   stay green. Invert the artifact; the process must stop answering."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.health :as health]

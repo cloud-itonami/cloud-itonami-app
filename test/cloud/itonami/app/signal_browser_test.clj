@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.signal-browser-test
   (:require [clojure.java.shell :as shell]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]))
 
 (deftest browser-key-management-ratchet-and-group-session

@@ -4,7 +4,7 @@
   Apple callbacks never decide sync policy or see storage ciphertext. This
   namespace maps Drive items to the localhost wire format and applies the
   same schedule/residency state machine used by the web UI."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.drive-crypto :as crypto]
             [cloud.itonami.app.store :as store]

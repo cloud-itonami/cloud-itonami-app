@@ -5,7 +5,7 @@
   of another tenant's — to a set that until now only described an agent acting
   inside its own workspace. The risk changes with the direction, so the
   approval screen has to be able to say which it is."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.tenant-connection :as tc]))
 
