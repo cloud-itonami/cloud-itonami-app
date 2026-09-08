@@ -1096,3 +1096,32 @@ falsify-86 が指定した「複数反復維持なら恒久化傾向へ精緻化
 (実装軸 新規シグナルなし)、本体 checkout detached 65d3e98 porcelain clean (dirty 0)、
 identity.clj/kotoba-net 既知赤継続、7-軸表 16 行目孤立行 placeholder 残存
 (evidence/2026-09-08-falsify-87.md)。
+## NEXT (falsify-88 追記、append-only)
+
+**falsify-88 (2026-09-08、運用/滞留 軸) で falsify-87 の次の 1 アクションを執行し「0 ベースは
+3 反復を跨ぐと再蓄積する一時状態 (falsify-32→33 exemplar)」を REFUTED → SURVIVED — 0 ベース
+は 3 反復連続維持 (keys 786 不動・新增加 0) で恒久化の兆しへ精緻化**: origin/main は本反復で
+d226614 → **b5df93e** (PR #299 operator-launch-flow、変化 1 本 = shared/bots-ui/capital_ui.cljc
++5 行のみ、repo-root src/・test/・shared/bots-core 非接触) に前進した。しかし実装軸の .kotoba
+parity 測定面も build-break (identity.clj / kotoba-net) も本 merge に非接触 (git show --stat
+実測) のため、新規シグナルは運用軸の falsify-87 次の 1 アクション (「0 ベースが 3 反復超の連続
+で維持されるか」判定) を測定対象に選択。cloud-itonami-dns-resolver で実測 — 3 ベクトル
+(`--used-refspec +refs/heads/main` / refspec なし全 refs / `--used-refspec
++refs/heads/resident/dns-resolver`) いずれも**正規 unused 0 keys** (partial 14 chunk / 186.98
+MiB のみ、falsify-35 以降不変、`ok`/EXIT_RC=0 各実測)。local annex keys は **786 → 786 (増加
+0)** / 11.68 GB 不変 — 滞留蓄積期 (falsify-39..49、反復あたり +24/+25 単調増加) と対照的に増分
+ゼロの状態が **falsify-85→86→87→88 の 4 反復観測 / 3 反復連続維持**で続く。増加源
+itonami-app-resident.cljs は **PID 70643 稼働継続** (falsify-85/86/87 と同一、export_and_sync
+不在)、df `/` avail **156 Gi / 10%** (falsify-87 の 162Gi から -6Gi 微減、飽和なし)。falsify-87
+指定の閾値「3 反復超の連続維持 → 恒久化の兆しへ精緻化」を本反復が充足 → 回収は恒久化の兆し
+ステージへ進んだ (ただし増加源稼働継続ゆえ恒久性は保証されず「never re-accumulate」は主張
+しない)。運用 軸 score は **3 のまま** (0 ベース維持の継続化を記録、実緑測定なし)。次の 1
+アクション: 次反復で同ベクトル + keys + avail を再実測し 0 ベースの **4 反復超の連続持続** or
+再蓄積再開を判別、あわせて avail 微減 (-6Gi) の帰属を観測。附帯 (実装軸 次反復シグナル):
+origin/main 前進 b5df93e を次反復で実装軸として再確認 (parity 測定面 / build-break 生存は本
+反復で非接触を確認済み)。附帯 Tier 2 (falsify-85/86/87 と不変): resident 再起動 (94682→70643)
+の契機と滞留回収の帰属の精査は kanban/human 提出継続。附帯: 本体 checkout は detached HEAD
+65d3e98 (#290) / porcelain clean (dirty 0)、本 bot は touch せず wt-msloop / bot/maturity-sim-loop
+で完結。identity.clj malformation / kotoba-net 未宣言 (falsify-63..84) は b5df93e に非接触で
+既知赤継続。7-軸表 16 行目孤立行 placeholder / falsify-46 mid-sentence cut は残存のまま
+(operator 復旧待ち、本 bot は編集しない)。(evidence/2026-09-08-falsify-88.md)
