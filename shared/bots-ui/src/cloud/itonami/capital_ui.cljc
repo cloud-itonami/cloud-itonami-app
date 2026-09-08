@@ -18,6 +18,15 @@
      [:label (l "貸付ラウンド" "Lending round") [:select {:value (:vault capital) :on-change #((:capital-round handlers) (.. % -target -value))}
       (for [round (:rounds capital)] [:option {:key (:vault round) :value (:vault round)} (:vault round)])]]
      [:p [:a {:href (str "https://basescan.org/address/" (:vault capital)) :target "_blank" :rel "noopener noreferrer"} (l "コントラクト・取引履歴" "Contract and transactions")]]
+     [:details {:open true} [:summary (l "このラウンドに固定された条件" "Terms bound to this round")]
+      [:p (str (l "条件バージョン：" "Terms version: ") (:termsVersion capital))]
+      [:dl (for [[k ja en] [[:borrower "借入主体" "Borrower"] [:repayment "返済義務" "Repayment"] [:distribution "分配条件" "Distribution"] [:withdrawal "出金条件" "Withdrawal"] [:lossPolicy "損失負担" "Loss policy"] [:useOfFunds "使途" "Use of funds"]]]
+       [:div {:key (name k)} [:dt (l ja en)] [:dd (get-in capital [:settings :registeredTerms k])]])]
+      [:p (str (l "募集終了 / 満期（UTC）：" "Funding closes / maturity (UTC): ")
+       #?(:cljs (when-let [n (get-in capital [:settings :fundingDeadline])] (.toISOString (js/Date. (* n 1000)))) :clj "") " / "
+       #?(:cljs (when-let [n (get-in capital [:settings :maturity])] (.toISOString (js/Date. (* n 1000)))) :clj ""))]
+      [:p (l "純収益は100%を持分に応じて分配します。未返済額は満期後7日の猶予後に損失として認識します。Aaveの流動性不足で精算が遅れることがあります。" "All net income is distributed pro rata. Unpaid debt is recognized as loss after the seven-day maturity grace. Aave illiquidity can delay settlement.")]
+      [:p (str (l "日次上限 / 現金留保：" "Daily limit / cash reserve: ") (usdc (get-in capital [:settings :dailyLimit])) " / " (usdc (get-in capital [:settings :cashReserve])))]]
      [:p (l "表示はチェーン上の残高です。未確定の取引が含まれる場合があります。" "Balances are read from the chain and may include transactions awaiting finality.")]
      [:dl (for [[k ja en] [[:position "自分の貸付持分" "My lending position"] [:principal "ラウンド元本" "Round principal"] [:cash "利用可能な現金" "Cash"] [:debt "Botへの貸付残高" "Business debt"] [:idleAssets "Aave運用残高" "Aave assets"] [:businessIncome "返済時の事業収益" "Business income received"] [:distributed "分配済み" "Distributed"] [:writtenOff "認識済み貸倒額" "Recognized default loss"]]]
       [:div {:key (name k)} [:dt (l ja en)] [:dd (or (usdc (get-in capital [:balances k])) (l "未確認" "Unverified"))]])]
