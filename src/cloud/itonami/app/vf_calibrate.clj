@@ -22,9 +22,20 @@
   The recomputed run is `loops/model` verbatim, over the calibrated model —
   the same re-run the portfolio already does per business, moved behind the
   journal-advance hook. This namespace never runs the simulator itself and
-  never writes flow rates."
+  never writes flow rates.
+
+  The bucket decision — which of `unmatched` / `rebased` / `ignored` a
+  correspondence lands in — is `vf_calibrate_core.kotoba`, run through the
+  Kotoba oracle. The host prepares the two facts that are not on the native
+  slice (whether the journal carries a measure: a `get-in` on the inventory
+  map; whether the bound constant is a leaf: an `xmodel/lookup` +
+  `Double/parseDouble` — a measured fact about the model) and applies the
+  verdict: rebuild `assoc-in`s and assembles the report maps. Neither the
+  double values nor map mutation cross the slice, exactly the
+  ADR-2609081000 oracle pattern."
   (:require [clojure.string :as str]
-            [xmile.model :as xmodel]))
+            [xmile.model :as xmodel]
+            [cloud.itonami.app.kotoba-oracle :as oracle]))
 
 (def ^:dynamic *correspondences*
   "org → {resource-id → XMILE constant name}. The ADR's `:vf/xmile` table.
@@ -47,6 +58,20 @@
       (when (seq s)
         (try (Double/parseDouble s) (catch Exception _ nil))))))
 
+(defn- calibration-kind
+  "The bucket decision, delegated to `vf_calibrate_core.kotoba`.
+
+  The two booleans are the cljc's `(nil? measure)` / `(leaf-constant? ...)`
+  tests, prepared here because each needs a map or a JVM double parse; the
+  core turns them into the three-way verdict the report and the apply path
+  both route on (the cljc's `cond` IS this table). Nil discipline: an
+  absent measure is `some?`-false, exactly like the cljc's `(nil? measure)`
+  limb, and never throws."
+  [measure leaf]
+  (oracle/call :vf-calibrate-core 'calibration-kind
+               [(boolean (some? measure))
+                (boolean (some? leaf))]))
+
 (defn calibrated-model
   "The model with every correspondence the INVENTORY has a value for
   rebased to that value. Returns the model unchanged (identical value)
@@ -55,13 +80,13 @@
   (let [table (get *correspondences* org)]
     (reduce-kv
      (fn [model resource-id constant-nm]
-       (if-some [measure (get-in inventory [resource-id :onhand-quantity
-                                            :has-numerical-value])]
-         (if (leaf-constant? model constant-nm)
+       (let [measure (get-in inventory [resource-id :onhand-quantity
+                                        :has-numerical-value])
+             leaf (leaf-constant? model constant-nm)]
+         (if (= "rebased" (calibration-kind measure leaf))
            (assoc-in model [:xmile/variables constant-nm :xmile/eqn]
                      (str (double measure)))
-           model)
-         model))
+           model)))
      m
      table)))
 
@@ -78,18 +103,19 @@
     (reduce-kv
      (fn [acc resource-id constant-nm]
        (let [measure (get-in inventory [resource-id :onhand-quantity
-                                        :has-numerical-value])]
-         (cond
-           (nil? measure)
+                                        :has-numerical-value])
+             leaf (leaf-constant? m constant-nm)]
+         (case (calibration-kind measure leaf)
+           "unmatched"
            (update acc :unmatched conj {:resource resource-id :constant constant-nm})
 
-           (leaf-constant? m constant-nm)
+           "rebased"
            (update acc :rebased conj {:resource resource-id
                                       :constant constant-nm
-                                      :from (leaf-constant? m constant-nm)
+                                      :from leaf
                                       :to (double measure)})
 
-           :else
+           "ignored"
            (update acc :ignored conj {:resource resource-id :constant constant-nm}))))
      {:rebased [] :unmatched [] :ignored []}
      table)))
