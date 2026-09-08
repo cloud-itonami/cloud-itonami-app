@@ -139,6 +139,11 @@
       (dds/button (if deployed? (l "Botにラウンド開始を依頼" "Ask Bot to start round") (l "Botに募集公開を依頼" "Ask Bot to publish round"))
        {:disabled (or capital-busy? (not (:executionEnabled grant)) (= "needs-gas" (:status grant)))
         :attrs {:on-click #((:capital-prepare handlers) (if deployed? "operator-start" "operator-launch"))}})])
+    (when (:capital-start-bot handlers)
+     [:div.bw-capital-notice
+      [:h3 (l "作業用Botを起動" "Start a working Bot")]
+      [:p (l "この事業の調査・実行計画を始めます。資金の募集開始とは別の操作です。" "Start research and an execution plan for this project, independently of the funding round.")]
+      (dds/button (l "Botで調査を開始" "Start Bot research") {:disabled (boolean (:busy? state)) :attrs {:on-click (:capital-start-bot handlers)}})])
     (:funding-editor state)
     (when deployed? [:div
      [:label.bw-funding-field (l "管理する操作" "Management action") [:select {:aria-label (l "管理する操作" "Management action") :value admin-action :on-change #((:capital-field handlers) :admin-action (.. % -target -value))}
