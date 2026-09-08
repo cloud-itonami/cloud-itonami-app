@@ -1498,3 +1498,16 @@ kotoba-net 未宣言 (falsify-63..84) は対象外・既知赤が継続。7-軸�
 falsify-46 mid-sentence cut / falsify-91 末尾残骸 (本付記参照) は残存のまま (append-only
 規約で本 bot は編集しない)。
 (evidence/2026-09-09-falsify-95.md)
+**falsify-96 (2026-09-09, 運用/滞留 軸)**: 0 ベースの **12 時点観測 / 11 反復連続維持**を再実測
+(unused 0・keys 786 不動・partial 14 chunk のみ、falsify-85→96) — 主張 (a) 再出現も (b) 再蓄積も
+検出されず SURVIVED、falsify-95 指定の閾値「11 反復超」を充足し恒久化傾向を**更に精緻化**。
+**avail は 148 → 159 Gi (df)、annex 158.81 → 170.18 GB (約 +11 Gi/+11.37 GB) と 150 Gi を大きく
+上回って 159-163 Gi 帯へ回復** — 主張 (c)「150 Gi 未満の低位プラトー定着」仮説 REFUTED (evidence/
+2026-09-09-falsify-96.md)。falsify-94/95 の 150 Gi 未満滞在 (149→148 Gi) は**一過性の低位振動**と
+確定、structural-decline-monitor 強化は撤回し risk-5 を「avail は 148-163 Gi 帯を振動」へ再アンカー。
+増加源 PID 70643 が不変のままの回復ゆえ、消費は稼働自体ではなく一時的書き込みバースト/外部解放に帰属
+(TCC 遮断で具体源特定不能、operator の du 調査を Tier 2 継続)。score 3 のまま (0 ベース恒久化傾向の
+更なる精緻化、実緑測定でのみ上昇する規約)。次の 1 アクション: 同 vector + keys + avail を再実測し
+**12 反復超の連続持続** or 再蓄積再開を判別、avail の 159 Gi 定着 vs 再度の 150 Gi 未満ドロップを観測
+(再ドロップなら 148-163 Gi 帯内振動の周期性を検証)。附帯 (実装軸): origin/main は c618ef3 のまま
+(falsify-93/94/95 から連続 4 反復、新規前進なし)。
