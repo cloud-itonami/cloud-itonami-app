@@ -25,7 +25,7 @@
 (rf/reg-event-fx :capital/prepare
  (fn [{:keys [db]} [_ action]]
   (let [state (:my-bots db) project (:public-selected state) form (:capital-form state)
-        input (merge form {:action action :project project :safe (get-in state [:capital-safe :address]) :vault (get-in state [:capital :vault]) :termsVersion (get-in state [:funding :version])})
+        input (merge form {:action action :project project :safe (get-in state [:capital-safe :address]) :vault (get-in state [:capital :vault]) :launcher (get-in state [:capital :operatorGrant :launcher]) :termsVersion (get-in state [:funding :version])})
         input (if (and (= action "repay") (= "yield-budget-v1" (get-in state [:capital :settings :policy]))) (assoc input :principal "0") input)
         input (if (contains? #{"deploy" "deploy-launcher"} action) (assoc input :policy (when (:policy form) (or (get-in state [:funding :terms :fundingPolicy]) "fixed-round-net-income-v1")) :fundingDeadline (quot (.getTime (js/Date. (:fundingDeadline form))) 1000) :maturity (quot (.getTime (js/Date. (:maturity form))) 1000) :recipients (str/split (str/trim (or (:recipients form) "")) #"[\s,]+")) input)]
    {:db (update db :my-bots merge {:capital-busy? true :capital-error nil :capital-plan nil})
@@ -52,10 +52,13 @@
 (rf/reg-event-fx :capital/execute
  (fn [{:keys [db]} _]
   (let [plan (get-in db [:my-bots :capital-plan]) project (:project plan) send! (:send! @transport)]
-   {:db (update db :my-bots merge {:capital-busy? true :capital-status "ウォレットで取引内容を確認してください" :capital-error nil})
-    :itonami.promise {:run #(-> (if (:approval plan) (send! (:approval plan) true) (js/Promise.resolve nil))
-                              (.then (fn [_] (send! (:transaction plan) false)))
-                              (.then (fn [hash] (try (js/localStorage.setItem (str "itonami.capital.pending." project) (js/JSON.stringify (clj->js {:plan (select-keys plan [:id :project]) :hash hash :from (get-in plan [:transaction :from])}))) (catch :default _ nil)) (confirm! plan hash 0))))
+   {:db (update db :my-bots merge {:capital-busy? true :capital-status (if (:requiresOperatorSigner plan) "Botが募集の実行を確認しています…" "ウォレットで取引内容を確認してください") :capital-error nil})
+    :itonami.promise {:run #(-> (if (:requiresOperatorSigner plan)
+                               (-> (request! {:action "operator-execute" :id (:id plan)})
+                                   (.then (fn [result] (or (:hash result) (throw (js/Error. "Botの取引は未送信です。状態を更新してください。"))))))
+                               (-> (if (:approval plan) (send! (:approval plan) true) (js/Promise.resolve nil))
+                                   (.then (fn [_] (send! (:transaction plan) false)))))
+                              (.then (fn [hash] (try (js/localStorage.setItem (str "itonami.capital.pending." project) (js/JSON.stringify (clj->js {:plan (select-keys plan [:id :project]) :hash hash :from (last (str/split (get-in db [:my-bots :principal]) #":"))}))) (catch :default _ nil)) (confirm! plan hash 0))))
                      :success [:capital/executed project] :failure [:capital/failed project]}})))
 (rf/reg-event-fx :capital/executed
  (fn [{:keys [db]} [_ project result]]
