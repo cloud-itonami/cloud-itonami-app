@@ -16,7 +16,7 @@
 (rf/reg-event-fx :capital/load
  (fn [{:keys [db]} [_ contract]]
   (let [project (get-in db [:my-bots :public-selected])]
-   {:db (update db :my-bots merge {:capital-status "残高を確認しています…" :capital-plan nil})
+   {:db (-> db (update :my-bots merge {:capital-status "残高を確認しています…" :capital-plan nil}) (assoc-in [:my-bots :capital-form :safe-address] (or (get-in db [:my-bots :capital-form :safe-address]) (.get (link-params) "safe") "")))
     :itonami.promise {:run #(load! project contract (get-in db [:my-bots :capital-safe :address])) :success [:capital/loaded project] :failure [:capital/failed project]}})))
 (rf/reg-event-db :capital/loaded
  (fn [db [_ project data]] (if (= project (get-in db [:my-bots :public-selected])) (update db :my-bots merge {:capital data :capital-status nil :capital-error nil :capital-pending (pending-for project (get-in db [:my-bots :principal]))}) db)))
