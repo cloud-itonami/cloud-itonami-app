@@ -92,7 +92,8 @@
    :store-core "cloud/itonami/app/store_core.kotoba"
    :workforce-cadence "cloud/itonami/app/workforce_cadence_core.kotoba"
    :model-routing "cloud/itonami/app/model_routing_core.kotoba"
-   :provider-retry-core "cloud/itonami/app/provider_retry_core.kotoba"})
+   :provider-retry-core "cloud/itonami/app/provider_retry_core.kotoba"
+   :human-work-marketplace-core "cloud/itonami/app/human_work_marketplace_core.kotoba"})
 
 (defn resource-path [id]
   (str "cloud/itonami/app/oracle/" (name id) ".kir.edn"))

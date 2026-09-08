@@ -1,0 +1,50 @@
+{:format :kotoba.kir/v4,
+ :signature nil,
+ :functions
+ [{:name pick-brand-name,
+   :params [brand-name],
+   :result :string,
+   :effects #{},
+   :body
+   (if
+    (option-some?-of [:option :string] brand-name)
+    (option-value-of [:option :string] brand-name "")
+    "Cloud Itonami"),
+   :param-types [[:option :string]]}
+  {:name needs-escape?,
+   :params [brand-name],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_2 (option-some?-of [:option :string] brand-name)]
+    (if
+     __kotoba_and_2
+     (let
+      [__kotoba_or_3
+       (string-contains?
+        (option-value-of [:option :string] brand-name "")
+        "&")]
+      (if
+       __kotoba_or_3
+       __kotoba_or_3
+       (let
+        [__kotoba_or_2
+         (string-contains?
+          (option-value-of [:option :string] brand-name "")
+          "<")]
+        (if
+         __kotoba_or_2
+         __kotoba_or_2
+         (string-contains?
+          (option-value-of [:option :string] brand-name "")
+          ">")))))
+     __kotoba_and_2)),
+   :param-types [[:option :string]]}],
+ :oracle-value nil,
+ :schema-identities nil,
+ :exports [pick-brand-name needs-escape?],
+ :schemas nil,
+ :effects #{},
+ :blocks [],
+ :entry nil}

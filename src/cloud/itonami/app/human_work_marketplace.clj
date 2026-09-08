@@ -1,13 +1,32 @@
 (ns cloud.itonami.app.human-work-marketplace
   "Public, read-only HumanWorkRequest listing. Acceptance stays behind the
   Passkey session and exact eligibility check."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [cloud.itonami.app.kotoba-oracle :as oracle]))
 
 (defn page-html [brand-name]
-  (str "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\">"
+  "Assemble the HumanWork listing page.
+
+  The title's two decisions — which name to show (`(or brand-name
+  \"Cloud Itonami\")`) and whether that name needs HTML-entity escaping — are
+  `human_work_marketplace_core.kotoba`, run through the Kotoba oracle. The
+  one-pass substitution itself stays here: `str/escape` is a string-mutation
+  operation the native slice does not admit, and the core's `needs-escape?`
+  verdict decides whether to apply it. A name containing none of the three
+  characters passes through unchanged either way, so the rendered page is
+  byte-identical to the page before the split. Nil discipline: a caller with
+  no brand name gets the wordmark and no escaping, exactly like
+  `(or brand-name \"Cloud Itonami\")`."
+  (let [name-option (oracle/option (when (string? brand-name) brand-name))
+        title-name (oracle/call :human-work-marketplace-core 'pick-brand-name
+                                [name-option])
+        escape-needed (oracle/call :human-work-marketplace-core 'needs-escape?
+                                   [name-option])]
+    (str "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\">"
        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-       "<title>Human Work — " (str/escape (or brand-name "Cloud Itonami")
-                                           {\& "&amp;" \< "&lt;" \> "&gt;"})
+       "<title>Human Work — " (if escape-needed
+                                  (str/escape title-name {\& "&amp;" \< "&lt;" \> "&gt;"})
+                                  title-name)
        "</title><style>"
        ":root{color-scheme:light;font-family:system-ui,-apple-system,sans-serif;background:#f7f6f1;color:#17211b}"
        "body{margin:0}header,main{max-width:72rem;margin:auto;padding:2rem}header{padding-bottom:1rem}"
@@ -32,4 +51,4 @@
        "if(j.requirements?.identity){const z=document.createElement('span');z.className='badge';z.textContent='本人確認 '+j.requirements.identity['minimum-level'];b.append(z)}c.append(b);"
        "if(j.compensation){const p=document.createElement('p');p.className='pay';const d=j.compensation['asset-decimals']||6,a=j.compensation['amount-atomic'];const whole=a.length>d?a.slice(0,-d):'0',fraction=(a.length>d?a.slice(-d):a.padStart(d,'0')).replace(/0+$/,'');p.textContent=whole+(fraction?'.'+fraction:'')+' '+j.compensation.asset+' · '+j.compensation.network+' · '+j.compensation['settlement-status'];c.append(p)}"
        "const a=document.createElement('a');a.href='/?human-work='+encodeURIComponent(j.id);a.textContent='ログインして詳細・応募条件を確認';c.append(a);jobs.append(c)})"
-       "}).catch(()=>{status.textContent='公開案件を取得できませんでした。';});</script></body></html>"))
+       "}).catch(()=>{status.textContent='公開案件を取得できませんでした。';});</script></body></html>")))
