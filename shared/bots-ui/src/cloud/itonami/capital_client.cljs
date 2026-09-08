@@ -27,7 +27,7 @@
   (let [state (:my-bots db) project (:public-selected state) form (:capital-form state)
         input (merge form {:action action :project project :safe (get-in state [:capital-safe :address]) :vault (get-in state [:capital :vault]) :termsVersion (get-in state [:funding :version])})
         input (if (and (= action "repay") (= "yield-budget-v1" (get-in state [:capital :settings :policy]))) (assoc input :principal "0") input)
-        input (if (= action "deploy") (assoc input :policy (when (:policy form) (or (get-in state [:funding :terms :fundingPolicy]) "fixed-round-net-income-v1")) :fundingDeadline (quot (.getTime (js/Date. (:fundingDeadline form))) 1000) :maturity (quot (.getTime (js/Date. (:maturity form))) 1000) :recipients (str/split (str/trim (or (:recipients form) "")) #"[\s,]+")) input)]
+        input (if (contains? #{"deploy" "deploy-launcher"} action) (assoc input :policy (when (:policy form) (or (get-in state [:funding :terms :fundingPolicy]) "fixed-round-net-income-v1")) :fundingDeadline (quot (.getTime (js/Date. (:fundingDeadline form))) 1000) :maturity (quot (.getTime (js/Date. (:maturity form))) 1000) :recipients (str/split (str/trim (or (:recipients form) "")) #"[\s,]+")) input)]
    {:db (update db :my-bots merge {:capital-busy? true :capital-error nil :capital-plan nil})
     :itonami.promise {:run #(request! input) :success [:capital/prepared project] :failure [:capital/failed project]}})))
 (defn focus-review! [attempt]
@@ -60,7 +60,7 @@
 (rf/reg-event-fx :capital/executed
  (fn [{:keys [db]} [_ project result]]
   (if (= project (get-in db [:my-bots :public-selected]))
-   {:db (update db :my-bots merge {:capital-busy? false :capital-plan nil :capital-status "取引が確定しました"}) :dispatch [:capital/load (:contract result)]} {})))
+   {:db (update db :my-bots merge {:capital-busy? false :capital-plan nil :capital-status "取引が確定しました"}) :dispatch [:capital/load (when-not (= "deploy-launcher" (get-in result [:receipt :action])) (:contract result))]} {})))
 (rf/reg-event-fx :capital/resume
  (fn [{:keys [db]} _]
   (let [p (get-in db [:my-bots :capital-pending]) project (get-in p [:plan :project])]
