@@ -1,0 +1,64 @@
+(ns cloud.itonami.capital-client (:require [clojure.string :as str] [re-frame.core :as rf]))
+(defonce transport (atom nil))
+(defn link-params [] (js/URLSearchParams. (subs (.-hash js/location) (min 1 (count (.-hash js/location))))))
+(defn link-project [] (.get (link-params) "capital"))
+(defonce listener (atom false))
+(defn install! [adapters]
+ (reset! transport adapters)
+ (when-not @listener (reset! listener true) (.addEventListener js/window "hashchange" #(when (link-project) (rf/dispatch [:my-bots/public])))))
+(defn pending-for [project principal]
+ (try (let [p (js->clj (js/JSON.parse (js/localStorage.getItem (str "itonami.capital.pending." project))) :keywordize-keys true)]
+  (when (= (:from p) (last (str/split (or principal "") #":"))) p)) (catch :default _ nil)))
+(defn request! [body] ((:request! @transport) "/api/capital" body))
+(defn load! [project contract]
+ ((:request! @transport) (str "/api/capital?project=" (js/encodeURIComponent project) (when contract (str "&vault=" (js/encodeURIComponent contract))))))
+(rf/reg-event-db :capital/field (fn [db [_ k value]] (-> db (assoc-in [:my-bots :capital-form k] value) (assoc-in [:my-bots :capital-plan] nil))))
+(rf/reg-event-fx :capital/load
+ (fn [{:keys [db]} [_ contract]]
+  (let [project (get-in db [:my-bots :public-selected])]
+   {:db (assoc-in db [:my-bots :capital-status] "残高を確認しています…")
+    :itonami.promise {:run #(load! project contract) :success [:capital/loaded project] :failure [:capital/failed project]}})))
+(rf/reg-event-db :capital/loaded
+ (fn [db [_ project data]] (if (= project (get-in db [:my-bots :public-selected])) (update db :my-bots merge {:capital data :capital-status nil :capital-error nil :capital-pending (pending-for project (get-in db [:my-bots :principal]))}) db)))
+(rf/reg-event-db :capital/failed
+ (fn [db [_ project error]] (if (= project (get-in db [:my-bots :public-selected])) (update db :my-bots merge {:capital-error (str error) :capital-busy? false :capital-status nil}) db)))
+(rf/reg-event-fx :capital/prepare
+ (fn [{:keys [db]} [_ action]]
+  (let [state (:my-bots db) project (:public-selected state) form (:capital-form state)
+        input (merge form {:action action :project project :vault (get-in state [:capital :vault]) :termsVersion (get-in state [:funding :version])})
+        input (if (= action "deploy") (assoc input :policy (when (:policy form) "fixed-round-net-income-v1") :fundingDeadline (quot (.getTime (js/Date. (:fundingDeadline form))) 1000) :maturity (quot (.getTime (js/Date. (:maturity form))) 1000) :recipients (str/split (str/trim (or (:recipients form) "")) #"[\s,]+")) input)]
+   {:db (update db :my-bots merge {:capital-busy? true :capital-error nil :capital-plan nil})
+    :itonami.promise {:run #(request! input) :success [:capital/prepared project] :failure [:capital/failed project]}})))
+(rf/reg-event-db :capital/prepared
+ (fn [db [_ project data]] (if (= project (get-in db [:my-bots :public-selected])) (update db :my-bots merge (if (= project (:project data)) {:capital-plan data :capital-busy? false} {:capital-plan nil :capital-busy? false :capital-error "取引の事業が一致しません"})) db)))
+(defn- confirm! [plan hash attempt]
+ (-> (request! {:action "confirm" :id (:id plan) :transactionHash hash})
+     (.then (fn [result]
+       (if (= "confirmed" (:status result)) (do (try (js/localStorage.removeItem (str "itonami.capital.pending." (:project plan))) (catch :default _ nil)) result)
+        (if (< attempt 120)
+         (js/Promise. (fn [resolve reject] (js/setTimeout #(-> (confirm! plan hash (inc attempt)) (.then resolve) (.catch reject)) 2000)))
+         (throw (js/Error. (str "確定待ちです。取引ID: " hash)))))))))
+(rf/reg-event-fx :capital/execute
+ (fn [{:keys [db]} _]
+  (let [plan (get-in db [:my-bots :capital-plan]) project (:project plan) send! (:send! @transport)]
+   {:db (update db :my-bots merge {:capital-busy? true :capital-status "ウォレットで取引内容を確認してください" :capital-error nil})
+    :itonami.promise {:run #(-> (if (:approval plan) (send! (:approval plan) true) (js/Promise.resolve nil))
+                              (.then (fn [_] (send! (:transaction plan) false)))
+                              (.then (fn [hash] (try (js/localStorage.setItem (str "itonami.capital.pending." project) (js/JSON.stringify (clj->js {:plan (select-keys plan [:id :project]) :hash hash :from (get-in plan [:transaction :from])}))) (catch :default _ nil)) (confirm! plan hash 0))))
+                     :success [:capital/executed project] :failure [:capital/failed project]}})))
+(rf/reg-event-fx :capital/executed
+ (fn [{:keys [db]} [_ project result]]
+  (if (= project (get-in db [:my-bots :public-selected]))
+   {:db (update db :my-bots merge {:capital-busy? false :capital-plan nil :capital-status "取引が確定しました"}) :dispatch [:capital/load (:contract result)]} {})))
+(rf/reg-event-fx :capital/resume
+ (fn [{:keys [db]} _]
+  (let [p (get-in db [:my-bots :capital-pending]) project (get-in p [:plan :project])]
+   {:db (assoc-in db [:my-bots :capital-busy?] true)
+    :itonami.promise {:run #(confirm! (:plan p) (:hash p) 0) :success [:capital/executed project] :failure [:capital/failed project]}})))
+(rf/reg-event-fx :capital/load-intent
+ (fn [{:keys [db]} [_ id]]
+  (let [project (get-in db [:my-bots :public-selected])]
+   {:itonami.promise {:run #((:request! @transport) (str "/api/capital?intent=" (js/encodeURIComponent id))) :success [:capital/prepared project] :failure [:capital/failed project]}})))
+(def handlers
+ {:capital-resume #(rf/dispatch [:capital/resume]) :capital-field #(rf/dispatch-sync [:capital/field %1 %2]) :capital-round #(rf/dispatch [:capital/load %])
+  :capital-prepare #(rf/dispatch [:capital/prepare %]) :capital-execute #(rf/dispatch [:capital/execute]) :capital-refresh #(rf/dispatch [:capital/load])})
