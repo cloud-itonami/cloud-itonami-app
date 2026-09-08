@@ -17,6 +17,7 @@
        admin-action (or (:admin-action f) "spend")
        field (fn [k ja en & [type]] [:label.bw-funding-field (l ja en)
          [:input (cond-> {:type (or type "text") :value (or (get f k) "") :on-change #((:capital-field handlers) k (.. % -target -value))}
+           (= type "datetime-local") (assoc :on-input #((:capital-field handlers) k (.. % -target -value)))
            (contains? #{:amount :principal :income :fundingCap :cashReserve} k) (assoc :input-mode "decimal" :placeholder "0.00"))]])
        submit (fn [action ja en] (dds/button (l ja en) {:disabled (or capital-busy? (and (contains? #{"deposit" "withdraw" "allocate" "recall" "spend"} action) (not (re-matches #"[0-9]+(\.[0-9]{1,6})?" (or (:amount f) ""))))) :attrs {:on-click #((:capital-prepare handlers) action)}}))]
   [:section.bw-capital
