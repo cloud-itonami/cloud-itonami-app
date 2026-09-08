@@ -1,0 +1,56 @@
+;; BOT BOUNDS' spend-admission DECISION CORE — may this Bot start another turn?
+;;
+;; `bot_bounds.cljc`/admit-spend judges whether a Bot that has spent `spent`
+;; tokens against a `budget` may start another turn. Three outcomes and
+;; deliberately not two:
+;;
+;;   - unbounded  — the Bot carries NO budget ceiling; nothing was checked
+;;   - within     — a ceiling exists and the spend has not reached it
+;;   - exhausted  — a ceiling exists and the spend reached/exceeded it
+;;
+;; `unbounded` is NOT the same fact as `within`, and the host keeps them apart
+;; ("a bound is not an authorisation / enforced when set, and REPORTED when
+;; absent"). A caller that collapsed them would let a missing ceiling read as
+;; a passed one, which is how a budget stops meaning anything.
+;;
+;; The host (`bot_bounds.cljc`) computes `spent` over the window — that is
+;; collection work (take-last / reduce / remove over history) and stays in the
+;; .cljc. What moves here is the *judgement*: given whether a budget exists
+;; and the two numbers, which of the three outcomes applies.
+;;
+;; ## The boundary, pinned
+;;
+;; The host's test is `(< spent (long budget))` — STRICTLY less. So an exact
+;; boundary spends `spent == budget` are NOT within; they are exhausted. The
+;; parity test holds `budget` itself (exhausted) and `budget - 1` (within)
+;; so a `<` vs `<=` mistake cannot hide.
+;;
+;; Sizes: `:i64` budget and spend, `:i64` outcome code. Same word-typed
+;; (:i64/:bool) slice as the sibling decision cores — native-crossable, no
+;; f64 needed.
+;;
+;; Parity: test/cloud/itonami/app/bot_bounds_kotoba_parity_test.clj
+
+(ns bot-bounds-core
+  (:schemas {;; What the host has established about one admission request.
+             :bounds/request
+             [:record :bounds/request
+              [[:has-budget :bool]
+               [:spent :i64]
+               [:budget :i64]]]})
+  (:export [outcome-unbounded outcome-within outcome-exhausted admit-spend]))
+
+(defn outcome-unbounded [] :i64 0)
+(defn outcome-within [] :i64 1)
+(defn outcome-exhausted [] :i64 2)
+
+(defn admit-spend [r [:ref :bounds/request]] :i64
+  ;; No budget ceiling -> unbounded, and that is a separate fact from a
+  ;; ceiling that was checked and had room.
+  (if (not (record-get r :has-budget))
+    (outcome-unbounded)
+    ;; A ceiling exists: strictly-less is the boundary. At the ceiling the
+    ;; spend is exhausted, not within.
+    (if (< (record-get r :spent) (record-get r :budget))
+      (outcome-within)
+      (outcome-exhausted))))
