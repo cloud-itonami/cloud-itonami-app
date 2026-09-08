@@ -19,9 +19,10 @@
   the default enabled set is computed, not chosen: **a tool is on by default
   only if every scope it needs was already inside this application's
   pre-registry grant.** `historical-grant` below records that grant for no
-  other purpose, `scope-implications` records the three places where one scope
-  already contains another, and `connectors-test` asserts the resulting scope
-  set is a subset. Wiring the registry in cannot widen anybody's grant.
+  other purpose, `connectors_core.kotoba` records the three places where one
+  scope already contains another (`implier-of`, run through the Kotoba
+  oracle), and `connectors-test` asserts the resulting scope set is a subset.
+  Wiring the registry in cannot widen anybody's grant.
 
   Everything outside that boundary — Drive file *contents*, calendar writes,
   the whole of GitHub's `repo`, and Slack/Notion/Google Chat, which this
@@ -30,6 +31,7 @@
   and so is the widening, and both are visible."
   (:require [clojure.set :as set]
             [clojure.string :as str]
+            [cloud.itonami.app.kotoba-oracle :as oracle]
             [connector.consent :as consent]
             [connector.model :as cm]
             [connector.provider :as cp]
@@ -69,20 +71,6 @@
                 "User.Read" "Mail.ReadWrite" "Mail.Send"
                 "Files.Read" "Calendars.ReadBasic"}})
 
-(def scope-implications
-  "Scopes already contained in a scope the application held.
-
-  Three, each verified against the provider's own documentation rather than
-  assumed from the name: `gmail.modify` covers reading (which is exactly why
-  one entry could not ask for less), and Microsoft's `Mail.ReadWrite` covers
-  `Mail.Read`. `Calendars.Read` is NOT here — it is wider than the
-  `Calendars.ReadBasic` this application held, so Microsoft's calendar tools
-  are off by default even though Google's are on."
-  {"https://www.googleapis.com/auth/gmail.readonly"
-   "https://www.googleapis.com/auth/gmail.modify"
-   "Mail.Read" "Mail.ReadWrite"
-   "Mail.ReadBasic" "Mail.ReadWrite"})
-
 (def client-overlay
   "What a descriptor cannot know: this application's own naming.
 
@@ -118,10 +106,20 @@
            :provider]))
 
 (defn- covered?
-  "Whether `scope` was inside `granted`, directly or by implication."
+  "Whether `scope` was inside `granted`, directly or by implication.
+
+  The implication table — `scope-implications`, the three places where one
+  scope already contains another — is `connectors_core.kotoba/implier-of`,
+  run through the Kotoba oracle. The host prepares the set membership
+  (`contains?`, a collection traversal the native word-typed slice does not
+  admit) and routes on the core's verdict; the core owns the table, so a
+  scope outside it answers none and this reduces to the direct-membership
+  check alone, exactly as the old map lookup did."
   [granted scope]
   (boolean (or (contains? granted scope)
-               (when-let [implier (get scope-implications scope)]
+               (when-let [implier (oracle/option-value
+                                   (oracle/call :connectors-core 'implier-of
+                                                [scope]))]
                  (contains? granted implier)))))
 
 (defn default-enabled-tools

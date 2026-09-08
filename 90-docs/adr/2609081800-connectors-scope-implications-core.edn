@@ -1,0 +1,93 @@
+[{:db/id -1
+  :adr/id "adr-2609081800-connectors-scope-implications-core"
+  :adr/title "The connector scope-implication table moves to a .kotoba core; the host keeps set membership and every registry call"
+  :adr/status "accepted"
+  :adr/date "2026-09-08"
+  :adr/related ["adr-2609081000-provider-retry-output-budget-core-and-toposort-map"
+                "adr-2609081200-human-work-marketplace-title-escape-core"
+                "adr-2609081400-vf-calibrate-bucket-decision-core"
+                "adr-2609081600-vf-authority-plane-admission-core"
+                "adr-2608097000"]
+  :adr/body "## What moved
+
+`cloud.itonami.app.connectors` (ADR-2608097000) derives the default enabled
+set from `historical-grant` so a connector added later can never silently
+widen anybody's grant. Most of the file is mechanism the native word-typed
+slice deliberately refuses — set membership (`contains?`), registry
+traversal (`creg/providers` / `cp/descriptor` / `cm/tools`), the
+client-overlay map, wire-string assembly, and the OAuth catalogue
+descriptors. All of that stays host.
+
+What moved is the one thing in the file that is a DECISION about plain
+strings: the `scope-implications` table — the three places where one scope
+already contains another, each verified against the provider's own
+documentation rather than assumed from the name:
+
+    gmail.readonly  inside gmail.modify
+    Mail.Read       inside Mail.ReadWrite
+    Mail.ReadBasic  inside Mail.ReadWrite
+
+The cljc's `covered?` answered \"was `scope` inside `granted`, directly or by
+implication?\" through `(get scope-implications scope)`. The implication
+table IS that judgement, so the core expresses it on the native slice as a
+total function of the scope name:
+
+    (implier-of scope) -> the scope that would cover it, or none
+
+The host prepares set membership — the one thing `covered?` needs that is
+not on the slice (`contains?` on both sides of the implication) — and
+routes on the core's verdict. A scope outside the table answers none, so
+`when-let` reduces to the direct-membership check alone, exactly as the old
+map lookup produced. Byte-faithful: the cljc's `(get scope-implications
+scope)` IS this function.
+
+Landed this tick:
+
+- `src/cloud/itonami/app/connectors_core.kotoba` — `implier-of`, `:string`
+  in, `[:option :string]` out (some of the covering scope, none otherwise);
+  the three implications written out as `string=?` limbs, no map
+- `kotoba_oracle.cljc` `cores` gains `:connectors-core`
+- `connectors.clj` `covered?` routes through `kotoba-oracle`; the
+  `scope-implications` map is gone (the core owns the table) and set
+  membership / registry / catalogue machinery stays host
+- parity test `test/cloud/itonami/app/connectors_kotoba_parity_test.clj`
+  + KIR regeneration + JVM-free gen_kir_amu identity
+
+## The split is byte-faithful, not just behavior-preserving
+
+The implication table is a total function of the scope name, and the cljc's
+`(get scope-implications scope)` IS this table. The core invents nothing: a
+scope outside the table answers none, so `covered?`'s `when-let` reduces to
+the direct check. The existing `connectors_test.clj` (subset property,
+default enabled set, enabled/also semantics, catalogue rows, widened
+scopes, unknown-provider reporting) now runs through the oracle path and
+pins it.
+
+Nil discipline (ADR-2609081000): an unknown scope answers none — never a
+throw and never a guessed implier. A guessed implier would silently widen a
+grant; the core invents nothing.
+
+## Measured bounds on the pinned verifier (amu bin, jvm-free)
+
+- `amu check src/cloud/itonami/app/connectors_core.kotoba --jvm-free` →
+  `:ok true, :effects #{}` (the authoritative gate; measured on the landed
+  core)
+- `if` / `string=?` with `:string` literals and an `[:option :string]`
+  result (via `option-some-of` / `option-none-of`) → admitted (the option
+  constructor is the same vocabulary the existing option-argument cores and
+  their parity probes already use)
+- `contains?` / set literals / registry traversal do NOT cross the slice —
+  that is why the host keeps them
+
+## Status
+
+Accepted. The 14-layer topo map (ADR-2609081000) lists `connectors` as a
+layer-0 wave-0 candidate; measured 2026-09-08 by
+`scripts/kotoba_slice_measure.py` against a fresh origin/main worktree
+(`e91bf0f`) it was slice-ready (no :import/throw/regex/java/IO). The
+candidate was chosen from the measure by fewest lines among the two
+remaining slice-ready wave-0 namespaces (`appearance` 331, `connectors`
+289) after `human_work_marketplace`, `vf_calibrate` and `vf_authority` were
+already on main. The shared west checkout is pinned behind origin/main, so
+this tick again measured against the fresh worktree and let its verdict
+stand."}]

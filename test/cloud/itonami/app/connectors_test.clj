@@ -11,6 +11,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.connectors :as connectors]
+            [cloud.itonami.app.kotoba-oracle :as oracle]
             [connector.model :as cm]
             [connector.provider :as cp]
             [connector.registry :as creg]))
@@ -21,7 +22,10 @@
       (let [asked (connectors/granted-scopes provider)
             extra (remove (fn [s]
                             (or (contains? granted s)
-                                (contains? granted (get connectors/scope-implications s))))
+                                (contains? granted
+                                           (oracle/option-value
+                                            (oracle/call :connectors-core 'implier-of
+                                                         [s])))))
                           asked)]
         (is (empty? extra)
             (str (name provider) " would newly request " (pr-str (vec (sort extra))))))))
@@ -43,7 +47,9 @@
               (str (:connector/name t) " is on for a provider with no historical grant"))
           (doseq [s (:connector/scopes t)]
             (is (or (contains? granted s)
-                    (contains? granted (get connectors/scope-implications s)))
+                    (contains? granted
+                               (oracle/option-value
+                                (oracle/call :connectors-core 'implier-of [s]))))
                 (str (:connector/name t) " is on but needs " s))))))))
 
 (deftest the-wideners-are-off-and-named
