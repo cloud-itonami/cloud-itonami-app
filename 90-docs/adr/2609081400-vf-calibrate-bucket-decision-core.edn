@@ -1,0 +1,79 @@
+[{:db/id -1
+  :adr/id "adr-2609081400-vf-calibrate-bucket-decision-core"
+  :adr/title "The XMILE calibration bridge's bucket decision moves to a .kotoba core; the host keeps the map and double machinery"
+  :adr/status "accepted"
+  :adr/date "2026-09-08"
+  :adr/related ["adr-2609081000-provider-retry-output-budget-core-and-toposort-map"
+                "adr-2609081200-human-work-marketplace-title-escape-core"
+                "adr-2609111230"]
+  :adr/body "## What moved
+
+`cloud.itonami.app.vf-calibrate` (ADR-2609111230 slice 3) is the XMILE
+calibration bridge: a measured VF event recalibrates the constants its
+resource is bound to, nothing else moves. Most of the file is mechanism the
+native word-typed slice deliberately refuses — reading the correspondence
+table (a map), `xmodel/lookup`, `Double/parseDouble`, `assoc-in`, assembling
+the report maps. All of that stays host.
+
+What moved is the one thing in the file that is a DECISION about plain
+booleans: which of the three buckets a correspondence lands in.
+
+    measure absent      -> \"unmatched\"  (the honest default, nothing moves)
+    measured + leaf     -> \"rebased\"    (the model's operating point becomes
+                                          the journal's measured present)
+    measured + not-leaf -> \"ignored\"    (a binding onto a COMPUTED variable)
+
+The cljc's `calibration` routed on this with a `cond` (`(nil? measure)` /
+`(leaf-constant? ...)`), and `calibrated-model` applied the same decision
+as a rebase test. Both facts that feed the verdict are not on the slice —
+whether the inventory carries a measure (a `get-in` on the journal map) and
+whether the bound constant is a bare-number equation (`xmodel/lookup` +
+`Double/parseDouble`) — so the HOST prepares them as booleans and the core
+decides.
+
+Landed this tick:
+
+- `src/cloud/itonami/app/vf_calibrate_core.kotoba` — `calibration-kind`,
+  two `:bool` in, `:string` bucket out; a total function of the two
+  facts, matching the cljc's `cond` table exactly
+- `kotoba_oracle.cljc` `cores` gains `:vf-calibrate-core`
+- `vf_calibrate.clj` `calibrated-model` and `calibration` now route on the
+  core verdict through `kotoba-oracle`; the doubles (`:from`/`:to`/rebase
+  value), the `assoc-in` write, and the report assembly stay host
+- parity test `test/cloud/itonami/app/vf_calibrate_kotoba_parity_test.clj`
+  + KIR regeneration + JVM-free gen_kir_amu identity
+
+## The split is byte-faithful, not just behavior-preserving
+
+The verdict is a total function of the two booleans, and BOTH cljc functions
+already routed on exactly this two-boolean test (the `cond`'s first limb IS
+`(nil? measure)`, its second IS the truthiness of `(leaf-constant? ...)`).
+So the core expresses the original decision on the native slice; the host
+reads the verdict and applies it. Every report row and every rebase is
+unchanged: the existing `vf_calibrate_test.clj` (journal append → model
+rebase → report rows) now runs through the oracle path and pins it.
+
+Nil discipline (ADR-2609081000): an absent measure is `some?`-false, exactly
+like the cljc's `(nil? measure)` limb, and never throws — the core's
+absent-measure limb answers \"unmatched\" first.
+
+## Measured bounds on the pinned verifier (amu bin, jvm-free)
+
+- `amu check src/cloud/itonami/app/vf_calibrate_core.kotoba --jvm-free` →
+  `:ok true, :effects #{}` (the authoritative gate; measured on the landed
+  core)
+- nested `if` with `:bool` condition and `:string` literals → admitted
+  (the same shape ADR-2609081200 measured for `if`/string returns)
+- the doubles, maps, and `Double/parseDouble` do NOT cross the slice — that
+  is why `leaf-constant?`, `assoc-in`, and the report maps stay host
+
+## Status
+
+Accepted. The 14-layer topo map (ADR-2609081000) listed `vf-calibrate` as a
+layer-0 slice-ready wave-0 candidate; measured 2026-09-08 by
+`scripts/kotoba_slice_measure.py` it was slice-ready (no
+:import/throw/regex/java/IO), and the landed core passes the JVM-free gate.
+Like the human-work-marketplace tick, the candidate was chosen from the
+measure by fewest lines after skipping the already-landed
+`human_work_marketplace` (also on main as of this landing)."
+ }]

@@ -1,0 +1,54 @@
+;; The XMILE calibration bridge's DECISION CORE — the bucket classification
+;; inside `cloud.itonami.app.vf-calibrate/calibration` and `calibrated-model`.
+;;
+;; `vf_calibrate.clj` is a bridge between the VF journal and an XMILE model
+;; (ADR-2609111230 slice 3). Mostly that is mechanism the native slice
+;; deliberately refuses: reading the correspondence table (a map), looking a
+;; variable up in the XMILE model (`xmodel/lookup`), parsing its equation as a
+;; bare number (`Double/parseDouble`), mutating the model (`assoc-in`) and
+;; assembling the report (maps of vectors). All of that stays host.
+;;
+;; What moves here is the one thing in the file that is a DECISION about
+;; plain booleans: which of the three buckets a correspondence lands in.
+;; The host prepares the two facts that are not themselves on the slice —
+;;
+;;   - `has-measure?`  — the journal's inventory carries a current numeric
+;;     register value for the resource (host: `get-in` on the inventory),
+;;   - `is-leaf?`      — the bound constant's equation is a bare number,
+;;     exactly the shape `loops/sensitivity` perturbs (host: `xmodel/lookup`
+;;     + `Double/parseDouble` — a measured fact about the model, not a
+;;     judgement call),
+;;
+;; and this core decides the bucket, matching the cljc's `cond` faithfully:
+;;
+;;   measure absent      -> "unmatched"  (binding exists, measurement absent —
+;;                                        the honest default, nothing moves)
+;;   measured + leaf     -> "rebased"    (the model's operating point becomes
+;;                                        the journal's measured present)
+;;   measured + not-leaf -> "ignored"    (a binding onto a COMPUTED variable:
+;;                                        writing would overwrite a derived
+;;                                        value — not a calibration, a different
+;;                                        model)
+;;
+;; The `:from`/`:to` numbers in the `:rebased` report row and the
+;; `assoc-in` write that applies the rebase are doubles and map mutation —
+;; neither crosses the native slice — so the HOST reads the verdict and
+;; applies it. That split is byte-faithful: the verdict is a total function
+;; of the two booleans, and both cljc functions (report and apply) route on
+;; exactly this decision (the cljc's `(nil? measure)` / `leaf-constant?`
+;; cond IS this table).
+;;
+;; Parity: test/cloud/itonami/app/vf_calibrate_kotoba_parity_test.clj
+(ns cloud.itonami.app.vf-calibrate-core
+  (:export [calibration-kind]))
+
+;; Two booleans in, `:string` bucket out. The absent-measure limb is first
+;; because it is the wide, safe default — most correspondences have no
+;; measurement and must move nothing (the docstring's "an unnamed resource
+;; is an observation the model has no place for").
+(defn calibration-kind [has-measure? :bool is-leaf? :bool] :string
+  (if has-measure?
+    (if is-leaf?
+      "rebased"
+      "ignored")
+    "unmatched"))
