@@ -1,0 +1,75 @@
+{:format :kotoba.kir/v4,
+ :signature nil,
+ :functions
+ [{:name mode-of,
+   :params [name],
+   :result [:option :string],
+   :effects #{},
+   :body
+   (if
+    (string=? name "8bit")
+    (option-some-of [:option :string] "8bit")
+    (if
+     (string=? name "8-bit")
+     (option-some-of [:option :string] "8bit")
+     (if
+      (string=? name "eightbit")
+      (option-some-of [:option :string] "8bit")
+      (if
+       (string=? name "eight-bit")
+       (option-some-of [:option :string] "8bit")
+       (if
+        (string=? name "pixel")
+        (option-some-of [:option :string] "8bit")
+        (if
+         (string=? name "retro")
+         (option-some-of [:option :string] "8bit")
+         (if
+          (string=? name "grok")
+          (option-some-of [:option :string] "grok")
+          (if
+           (string=? name "grob")
+           (option-some-of [:option :string] "grok")
+           (if
+            (string=? name "dark-chat")
+            (option-some-of [:option :string] "grok")
+            (if
+             (string=? name "chat-dark")
+             (option-some-of [:option :string] "grok")
+             (if
+              (string=? name "light")
+              (option-some-of [:option :string] "light")
+              (if
+               (string=? name "default")
+               (option-some-of [:option :string] "light")
+               (if
+                (string=? name "dads")
+                (option-some-of [:option :string] "light")
+                (option-none-of [:option :string])))))))))))))),
+   :param-types [:string]}
+  {:name next-of,
+   :params [mode],
+   :result :string,
+   :effects #{},
+   :body
+   (if
+    (string=? mode "light")
+    "8bit"
+    (if
+     (string=? mode "8bit")
+     "grok"
+     (if (string=? mode "grok") "light" "8bit"))),
+   :param-types [:string]}
+  {:name plane-cloud?,
+   :params [name],
+   :result :bool,
+   :effects #{},
+   :body (string=? name "cloud"),
+   :param-types [:string]}],
+ :oracle-value nil,
+ :schema-identities nil,
+ :exports [mode-of next-of plane-cloud?],
+ :schemas nil,
+ :effects #{},
+ :blocks [],
+ :entry nil}

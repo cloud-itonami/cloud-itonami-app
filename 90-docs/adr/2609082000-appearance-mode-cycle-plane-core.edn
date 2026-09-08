@@ -1,0 +1,90 @@
+[{:db/id -1
+  :adr/id "adr-2609082000-appearance-mode-cycle-plane-core"
+  :adr/title "The appearance spelling table, the toggle cycle and the plane predicate move to a .kotoba core; the host keeps every string mutation, the palettes, the CSS and the hiccup"
+  :adr/status "accepted"
+  :adr/date "2026-09-08"
+  :adr/related ["adr-2609081000-provider-retry-output-budget-core-and-toposort-map"
+                "adr-2609081200-human-work-marketplace-title-escape-core"
+                "adr-2609081400-vf-calibrate-bucket-decision-core"
+                "adr-2609081600-vf-authority-plane-admission-core"
+                "adr-2609081800-connectors-scope-implications-core"
+                "adr-2608097000"]
+  :adr/body "## What moved
+
+`cloud.itonami.app.appearance` (ADR-2608097000, ADR-0091) renders one
+workspace in three appearances — `light` (DADS as shipped), `8bit`, `grok`.
+Most of the file is data and mechanism the native word-typed slice
+refuses by design: the palette maps, the CSS layers (`css` / `grok-css`),
+the hiccup `toggle-button`, the `modes` vector, and the string PREPARATION
+steps (`keyword?` / `name`, `str`, `str/trim`, `str/lower-case` — case
+folding is not in the language, the ADR-2609081000 note on
+`mail_domain_records`). All of that stays host.
+
+What moves here are the three DECISIONS about plain strings:
+
+    mode-of      :string -> [:option :string]
+                 the `normalize` case table — which appearance a prepared
+                 (trimmed, lower-cased) name denotes. The cljc's
+                 `(case s (\"8bit\" \"8-bit\" \"eightbit\" \"eight-bit\"
+                 \"pixel\" \"retro\") \"8bit\" ...)` group IS this function.
+
+    next-of      :string -> :string
+                 the toggle cycle — light -> 8bit -> grok -> light, with the
+                 unknown-name fallback answering 8bit. The cljc's
+                 keep-indexed/nth/mod formula over the `modes` vector IS this
+                 function, and `(or (normalize mode) default-mode)` feeds the
+                 canonical mode (or light) so the fallback matches i=0.
+
+    plane-cloud? :string -> :bool
+                 the residency judgement — is this prepared plane name
+                 \\\"cloud\\\"? The cljc's `(= \\\"cloud\\\" s)` IS this predicate;
+                 the host maps the boolean to the :cloud / :local keyword.
+
+The host prepares (keyword->name, trim, lower-case) and routes on the
+verdicts; `resolve-mode`'s `(or ... default-mode)` and `toggle-button`'s
+label/title `case` stay host. Byte-faithful: a name the table does not
+contain answers none, so `(or (normalize ...) default-mode)` reduces to the
+default exactly as the old `case` produced; an unnormalizable toggle input
+restarts the cycle from light exactly as the old index formula did.
+
+## Nil discipline
+
+A name the table does not contain answers none (mode-of) / false
+(plane-cloud?) — never a throw and never a guessed mode. A guessed
+appearance would render a mode the stylesheet does not define; the core
+invents nothing (ADR-2609081000).
+
+## Landed this tick
+
+- `src/cloud/itonami/app/appearance_core.kotoba` — `mode-of`, `next-of`,
+  `plane-cloud?`, all `if` / `string=?` limbs, no map
+- `kotoba_oracle.cljc` `cores` gains `:appearance-core`
+- `appearance.cljc` `normalize` / `next-mode` / `residency-plane` route
+  through `kotoba-oracle`; the case table and the cycle formula are gone;
+  prep, palettes, CSS, hiccup and `:cloud`/:local mapping stay host
+- parity test `test/cloud/itonami/app/appearance_kotoba_parity_test.clj`
+  + KIR regeneration + JVM-free gen_kir_amu identity
+
+## Measured bounds on the pinned verifier (amu bin, jvm-free)
+
+- `amu check src/cloud/itonami/app/appearance_core.kotoba --jvm-free` ->
+  `:ok true, :effects #{}` (the authoritative gate; measured on the landed
+  core)
+- `if` / `string=?` with `:string` literals, `[:option :string]` results via
+  `option-some-of` / `option-none-of`, and a `:bool` result -> admitted (the
+  same vocabulary the option-argument cores and their parity probes already
+  use)
+- `str/trim` / `str/lower-case` / maps / vectors / hiccup do NOT cross the
+  slice — that is why the host keeps them
+
+## Status
+
+Accepted. The 14-layer topo map (ADR-2609081000) lists `appearance` as a
+layer-0 wave-0 candidate; measured 2026-09-08 by
+`scripts/kotoba_slice_measure.py` against a fresh origin/main worktree
+(`d3ce2cd`) it was the last remaining slice-ready wave-0 namespace (`amu`
+gate off the whole-file check, by design — the file is data and mechanism;
+the extracted core carries the decisions). The candidate was chosen from the
+measure: sole candidate after `connectors` landed at ADR-2609081800. The
+shared west checkout is pinned behind origin/main, so this tick again
+measured against the fresh worktree and let its verdict stand."}]

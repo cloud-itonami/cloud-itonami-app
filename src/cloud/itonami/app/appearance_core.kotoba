@@ -1,0 +1,89 @@
+;; The loopback workspace's appearance DECISION CORE — the three string
+;; judgements inside `cloud.itonami.app.appearance` (`normalize`,
+;; `next-mode`, `residency-plane`).
+;;
+;; `appearance.cljc` is mostly data and mechanism the native word-typed slice
+;; deliberately refuses: the palette maps, the CSS layers (`css`,
+;; `grok-css`), the hiccup `toggle-button`, the `modes` vector, and the
+;; string PREPARATION steps (`keyword?` / `name`, `str`, `str/trim`,
+;; `str/lower-case` — the case folding lives in the host, ADR-2609081000
+;; note on mail_domain_records). All of that stays host.
+;;
+;; What moves here are the three DECISIONS about plain strings:
+;;
+;;   mode-of       — the normalize case table: which appearance a
+;;                   (trimmed, lower-cased) name denotes, or none. The cljc's
+;;                   `(case s ...)` group IS this function.
+;;
+;;   next-of       — the toggle cycle: light -> 8bit -> grok -> light, with
+;;                   unknown input answering 8bit (the cycle restarts from
+;;                   light — the cljc's `(or (normalize mode) default-mode)`
+;;                   with `i=0` IS this fallback).
+;;
+;;   plane-cloud?  — the residency judgement: is this (trimmed, lower-cased)
+;;                   plane name the cloud plane? The cljc's `(= "cloud" s)`
+;;                   IS this predicate; the host maps the boolean to the
+;;                   `:cloud` / `:local` keyword.
+;;
+;; The host prepares (keyword->name, trim, lower-case), the core decides.
+;; Nil discipline (ADR-2609081000): a name the table does not contain
+;; answers none for mode-of and false for plane-cloud? — never a throw and
+;; never a guessed mode. A guessed appearance would render a mode the
+;; stylesheet does not define; the core invents nothing.
+;;
+;; Parity: test/cloud/itonami/app/appearance_kotoba_parity_test.clj
+;; and ADR-2609082000.
+(ns cloud.itonami.app.appearance-core
+  (:export [mode-of next-of plane-cloud?]))
+
+;; One `:string` name in, `[:option :string]` out: some of the canonical mode
+;; that names it, none otherwise. `if` / `string=?` are the admitted scalar
+;; vocabulary, and all thirteen spellings are written out as a total function
+;; so the table needs no map. The host already trimmed and lower-cased.
+(defn mode-of [name :string] [:option :string]
+  (if (string=? name "8bit")
+    (option-some-of [:option :string] "8bit")
+    (if (string=? name "8-bit")
+      (option-some-of [:option :string] "8bit")
+      (if (string=? name "eightbit")
+        (option-some-of [:option :string] "8bit")
+        (if (string=? name "eight-bit")
+          (option-some-of [:option :string] "8bit")
+          (if (string=? name "pixel")
+            (option-some-of [:option :string] "8bit")
+            (if (string=? name "retro")
+              (option-some-of [:option :string] "8bit")
+              (if (string=? name "grok")
+                (option-some-of [:option :string] "grok")
+                (if (string=? name "grob")
+                  (option-some-of [:option :string] "grok")
+                  (if (string=? name "dark-chat")
+                    (option-some-of [:option :string] "grok")
+                    (if (string=? name "chat-dark")
+                      (option-some-of [:option :string] "grok")
+                      (if (string=? name "light")
+                        (option-some-of [:option :string] "light")
+                        (if (string=? name "default")
+                          (option-some-of [:option :string] "light")
+                          (if (string=? name "dads")
+                            (option-some-of [:option :string] "light")
+                            (option-none-of [:option :string])))))))))))))))
+
+;; The toggle cycle as a total function: the mode AFTER the given canonical
+;; mode, with the unknown-name fallback answering 8bit (host feeds
+;; `(or (normalize mode) default-mode)` = "light", whose successor is "8bit").
+(defn next-of [mode :string] :string
+  (if (string=? mode "light")
+    "8bit"
+    (if (string=? mode "8bit")
+      "grok"
+      (if (string=? mode "grok")
+        "light"
+        "8bit"))))
+
+;; The residency-plane judgement: a (trimmed, lower-cased) plane name is the
+;; cloud plane exactly when it is "cloud". Anything else — absent, a typo,
+;; empty — is local, not a crash. The host maps this boolean to the
+;; `:cloud` / `:local` keyword the workspace renders.
+(defn plane-cloud? [name :string] :bool
+  (string=? name "cloud"))

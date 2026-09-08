@@ -96,7 +96,8 @@
    :human-work-marketplace-core "cloud/itonami/app/human_work_marketplace_core.kotoba"
    :vf-calibrate-core "cloud/itonami/app/vf_calibrate_core.kotoba"
    :vf-authority-core "cloud/itonami/app/vf_authority_core.kotoba"
-   :connectors-core "cloud/itonami/app/connectors_core.kotoba"})
+   :connectors-core "cloud/itonami/app/connectors_core.kotoba"
+   :appearance-core "cloud/itonami/app/appearance_core.kotoba"})
 
 (defn resource-path [id]
   (str "cloud/itonami/app/oracle/" (name id) ".kir.edn"))
