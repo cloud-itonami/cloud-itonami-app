@@ -5,6 +5,12 @@
 [:details [:summary (label "1. 募集条件を登録" "1. Register funding terms")]
        [:p (label "この公開リポジトリの管理者であるGitHubアカウントをプラグインで接続してください。登録内容は公開されます。" "Connect a GitHub plugin account with administrator access to this public repository. Submitted terms are public.")]
        [:form {:on-submit (fn [event] (.preventDefault event) ((:funding-save handlers)))}
+        [:label.bw-funding-field (label "募集方式" "Funding model") [:select {:value (or (:fundingPolicy funding-form) "fixed-round-net-income-v1") :on-change #((:funding-field handlers) :fundingPolicy (.. % -target -value))}
+         [:option {:value "fixed-round-net-income-v1"} (label "事業貸付：元本を事業に使う" "Business loan: spend principal")]
+         [:option {:value "yield-budget-v1"} (label "運用益型：利益だけをBot予算にする" "Yield funded: only realized surplus funds Bot")]]]
+        (when (= "yield-budget-v1" (:fundingPolicy funding-form)) [:div
+         [:p (label "元本の事業支出は禁止。回収済みの利益をBot予算と貸し手分配に分けます。USDC・Aaveの損失リスクは残ります。" "Principal cannot fund business spending. Realized surplus is split between Bot budget and lenders. USDC and Aave loss risks remain.")]
+         [:label.bw-funding-field (label "利益のBot配分（bps、5000＝50%）" "Bot share of surplus (bps; 5000 = 50%)") [:input {:required true :type "number" :min 1 :max 10000 :step 1 :value (or (:botShareBps funding-form) "") :on-change #((:funding-field handlers) :botShareBps (.. % -target -value))}]]])
         (for [[k ja en] [[:borrower "返済義務を負う法人・組織" "Responsible borrower"] [:repayment "返済期限・返済義務" "Repayment obligation and maturity"] [:distribution "事業収益・DeFi収益の分配条件" "Business and DeFi income distribution"] [:withdrawal "出金条件・待機期間" "Withdrawal conditions and waiting period"] [:lossPolicy "損失・債務不履行時の扱い" "Loss and default policy"] [:useOfFunds "Botが使える用途・送金先の範囲" "Permitted Bot spending and recipients"]]]
          [:label.bw-funding-field {:key (name k)} (label ja en) [:textarea {:required true :min-length 8 :max-length 2000 :value (or (get funding-form k) "") :on-change #((:funding-field handlers) k (.. % -target -value))}]])
         [:label.bw-funding-field (label "1日あたりの利用上限（USDC）" "Daily spending limit (USDC)") [:input {:required true :input-mode "decimal" :value (or (:dailyLimitUSDC funding-form) "") :on-change #((:funding-field handlers) :dailyLimitUSDC (.. % -target -value))}]]
@@ -59,6 +65,7 @@
       (for [item filtered]
        [:article.bw-public-card {:key (:id item)}
         [:p [:code (:id item)]] [:h2 (:name item)] [:p.bw-public-excerpt (:description item)]
+        [:p (str/join " / " (distinct (map #(if (= "yield-budget-v1" (:policy %)) (label "運用益型" "Yield funded") (label "事業貸付" "Business loan")) (get-in item [:funding :rounds]))))]
         [:p.bw-capital-badge (case (status-of item) "accepting" (label "募集中 · USDC" "Accepting funding · USDC") "not-accepting" (label "現在は募集していません" "Not accepting funding") (label "受付状況を確認できません" "Funding availability unverified"))]
         (dds/button (label "事業・資金情報を見る" "Business & funding details") {:type :outline :attrs {:on-click #((:public-select handlers) (:id item))}})])
       (when (empty? filtered) [:p (label "該当する公開事業がありません。" "No public projects match.")])]))]))

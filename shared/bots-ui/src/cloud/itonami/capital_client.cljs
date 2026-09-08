@@ -26,7 +26,8 @@
  (fn [{:keys [db]} [_ action]]
   (let [state (:my-bots db) project (:public-selected state) form (:capital-form state)
         input (merge form {:action action :project project :vault (get-in state [:capital :vault]) :termsVersion (get-in state [:funding :version])})
-        input (if (= action "deploy") (assoc input :policy (when (:policy form) "fixed-round-net-income-v1") :fundingDeadline (quot (.getTime (js/Date. (:fundingDeadline form))) 1000) :maturity (quot (.getTime (js/Date. (:maturity form))) 1000) :recipients (str/split (str/trim (or (:recipients form) "")) #"[\s,]+")) input)]
+        input (if (and (= action "repay") (= "yield-budget-v1" (get-in state [:capital :settings :policy]))) (assoc input :principal "0") input)
+        input (if (= action "deploy") (assoc input :policy (when (:policy form) (or (get-in state [:funding :terms :fundingPolicy]) "fixed-round-net-income-v1")) :fundingDeadline (quot (.getTime (js/Date. (:fundingDeadline form))) 1000) :maturity (quot (.getTime (js/Date. (:maturity form))) 1000) :recipients (str/split (str/trim (or (:recipients form) "")) #"[\s,]+")) input)]
    {:db (update db :my-bots merge {:capital-busy? true :capital-error nil :capital-plan nil})
     :itonami.promise {:run #(request! input) :success [:capital/prepared project] :failure [:capital/failed project]}})))
 (defn focus-review! [attempt]
