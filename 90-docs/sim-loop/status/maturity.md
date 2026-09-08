@@ -1270,3 +1270,37 @@ placeholder / falsify-46 mid-sentence cut は残存のまま (operator 復旧待
 **付記 (append-only 規約): maturity.md 末尾 (falsify-91 追記の後) に falsify-91 追記コマンドの残骸と見られる
 2 行 (`MD` / `echo "append rc=$?" ...`) が混入 — wc 実測 1238 行、行 1237-1238 が残骸。本 bot は削除・編集
 せずその後に追記し、ガバナンス報告対象として kanban/human へ透過報告する。** (evidence/2026-09-08-falsify-92.md)
+
+## NEXT (falsify-93 追記、append-only)
+
+**falsify-93 (2026-09-08、運用/滞留 軸) で falsify-92 の次の 1 アクションを執行し「0 ベースは
+連続維持 (9 時点観測) で恒久化傾向を更に精緻化・avail は 160 Gi で安定」**: 運用軸の falsify-92
+次の 1 アクション (「0 ベースが 8 反復超の連続で維持されるか」判定・恒久化傾向の更なる精緻化+avail
+帰属) を測定対象に選択。cloud-itonami-dns-resolver で実測 — 3 ベクトル (--used-refspec
++refs/heads/main / refspec なし全 refs / --used-refspec +refs/heads/resident/dns-resolver)
+いずれも**正規 unused 0 keys** (partial 14 chunk / 186.98 MiB のみ、falsify-35 以降不変、
+ok/EXIT_RC=0 各実測)。local annex keys は **786 → 786 (増加 0)** / 11.68 GB 不変 — 滞留蓄積期
+(falsify-39..49) と対照的に増分ゼロの状態が **falsify-85→93 の 9 時点観測 / 8 反復連続維持**で
+続く (falsify-92 の 8 時点を 1 時点上回る)。増加源 itonami-app-resident.cljs は **PID 70643 稼働
+継続** (falsify-85..92 と同一 PID、export_and_sync 不在)、df / avail **160 Gi / 10%** (falsify-92
+の 158 Gi から +2 Gi 上方振動、飽和なし、annex available 169.95→171.88 GB 極小増)。falsify-92 指定
+の閾値「8 反復超の連続持続 → 恒久化傾向の更なる精緻化」を本反復が充足 (ただし増加源稼働継続ゆえ
+恒久性は保証されず「never re-accumulate」は主張しない)。avail の続落は不成立 (160 Gi で安定、150 Gi
+未満への構造的減少なし、falsify-89 の 162→156→142 減少トレンドは REFUTED 維持、滞留不変下の外部
+書き込み振動の帰属が整合的)。運用 軸 score は **3 のまま** (0 ベース維持の恒久化傾向の更なる精緻化
+を記録、実緑測定なし)。次の 1 アクション: 次反復で同 vector + keys + avail を再実測し 0 ベースの
+**9 反復超の連続持続** or 再蓄積再開を判別 (9 反復超維持なら恒久化傾向を更に精緻化、再開なら
+falsify-33..53 語調へ復帰)、あわせて avail (160 Gi 安定) の帰属 — 滞留 (keys 786) 不変下の外部
+書き込み源を観測。附帯 (実装軸 次反復シグナル): origin/main は **d3ce2cd → c618ef3 へ再前進**
+(appearance_core.kotoba、ADR-2609082000) — falsify-89/90/92 に続く同種 kotoba parity 測定面
+migration の 4 反復連続再発、parity_test 174 行 (d3ce2cd の 134 行より更に増)。次の実装軸反復で
+c618ef3 の parity 測定面 (3 値結合水準・配線記録) の変化と 2 build-break (identity.clj / kotoba-net)
+の生存を実測する。附帯 Tier 2 (falsify-85..92 と不変): resident 再起動 (94682→70643) の契機と滞留
+回収の帰属の精査は kanban/human 透過提出継続。附帯: 本体 checkout は detached HEAD b5df93e (#299) /
+porcelain clean (dirty 0)、本 bot は touch せず wt-msloop / bot/maturity-sim-loop で完結。
+identity.clj malformation / kotoba-net 未宣言 (falsify-63..84) は既知赤継続。7-軸表 16 行目孤立行
+placeholder / falsify-46 mid-sentence cut は残存のまま (operator 復旧待ち、本 bot は編集しない)。
+**付記 (append-only 規約): 本反復 wc 実測で maturity.md は行 1272 まで。falsify-92 追記は
+(evidence/2026-09-08-falsify-92.md) で終わり、新規残骸行は混入していない。falsify-91 追記コマンドの
+残骸 (行 1237-1238: `MD` / `echo "append rc=$?" ...`) は残存のまま (本 bot は編集しない)。**
+(evidence/2026-09-08-falsify-93.md)
