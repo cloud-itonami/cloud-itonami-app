@@ -1,0 +1,55 @@
+{:format :kotoba.kir/v4,
+ :signature nil,
+ :functions
+ [{:name output-budget-exhausted?,
+   :params
+   [finish-reason
+    completion-tokens
+    max-output-tokens
+    json-ended-early?],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_or_3
+     (let
+      [__kotoba_and_2
+       (option-some?-of [:option :string] finish-reason)]
+      (if
+       __kotoba_and_2
+       (string=?
+        (option-value-of [:option :string] finish-reason "")
+        "length")
+       __kotoba_and_2))]
+    (if
+     __kotoba_or_3
+     __kotoba_or_3
+     (let
+      [__kotoba_or_2 json-ended-early?]
+      (if
+       __kotoba_or_2
+       __kotoba_or_2
+       (let
+        [__kotoba_and_3
+         (option-some?-of [:option :i64] completion-tokens)]
+        (if
+         __kotoba_and_3
+         (let
+          [__kotoba_and_2
+           (option-some?-of [:option :i64] max-output-tokens)]
+          (if
+           __kotoba_and_2
+           (>=
+            (option-value-of [:option :i64] completion-tokens 0)
+            (option-value-of [:option :i64] max-output-tokens 0))
+           __kotoba_and_2))
+         __kotoba_and_3)))))),
+   :param-types
+   [[:option :string] [:option :i64] [:option :i64] :bool]}],
+ :oracle-value nil,
+ :schema-identities nil,
+ :exports [output-budget-exhausted?],
+ :schemas nil,
+ :effects #{},
+ :blocks [],
+ :entry nil}
