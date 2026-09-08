@@ -1082,4 +1082,17 @@ Tier 2 (kanban/human、falsify-85 と不変): resident 再起動 (94682→70643)
 (dirty 0) 実測、本 bot は touch せず wt-msloop / bot/maturity-sim-loop で完結。identity.clj
 malformation / kotoba-net 未宣言 (falsify-63..84) は対象外・既知赤継続。7-軸表 16 行目孤立行
 placeholder / falsify-46 mid-sentence cut は残存のまま (append-only 規約で本 bot は編集しない)。
-(evidence/2026-09-08-falsify-86.md)
+(evidence/2026-09-08-falsify-86.md)## NEXT (falsify-87 追記、append-only)
+
+**falsify-87 (2026-09-08) で 0 ベースの 2 反復連続維持を確認 (SURVIVED)**: 3 ベクトル
+(main / 全 refs / resident-refspec) の正規 unused は **全て 0 のまま** (partial 14 chunk のみ、
+falsify-35 以降不変)、local annex keys は **786 → 786 (増加 0、falsify-85→86→87 の 3 反復連続
+維持)**、size 11.68 GB 不変、df avail は **163Gi → 162Gi / 10%** (概ね不変、飽和なし)。
+増加源 itonami-app-resident.cljs **PID 70643 稼働継続** (falsify-85/86 と同一 PID、再起動なし)、
+export_and_sync 不在。「0 ベースは any-iteration で再蓄積する一時状態」説は生存せず (SURVIVED)、
+falsify-86 が指定した「複数反復維持なら恒久化傾向へ精緻化」の条件を満たす — 回収は
+恒久化傾向へ精緻化。ただし増加源稼働継続のため恒久性は保証されず、次反復で 3 反復超の
+連続維持 (恒久化の兆し) or 再蓄積再開を判別。附帯: origin/main は d226614 のまま前進 0
+(実装軸 新規シグナルなし)、本体 checkout detached 65d3e98 porcelain clean (dirty 0)、
+identity.clj/kotoba-net 既知赤継続、7-軸表 16 行目孤立行 placeholder 残存
+(evidence/2026-09-08-falsify-87.md)。
