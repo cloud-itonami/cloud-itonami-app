@@ -855,3 +855,32 @@ remove --force / prune 済みで worktree list に残存せず。7-軸表 16 行
 編集しない)。identity.clj malformation (falsify-63..68) は既知赤として継続、本発見は
 それとは独立の新規 build-ブレーク (evidence/2026-09-08-falsify-75.md)
 
+## NEXT (falsify-76 追記、append-only)
+
+**falsify-76 (2026-09-08、実装 軸) で falsify-75 修理案第 1 歩 (kotoba-net :local/root 宣言) のみで
+updater_test 単一 ns が jvm-host 未解決を越えて green 完走と実測 — claim SURVIVED、範囲精緻化**:
+HEAD = origin/main = **679572b** (falsify-63..75 と同一 SHA)、本体 porcelain clean (dirty 0)、
+git ls-tree 実測 src 240 / test 243 (falsify-75 と一致)。detached worktree `/private/tmp/mt-msloop76`
+(head 679572b、本体未 touch) で、falsify-75 の「:main-opts 全 suite 強制 require を避けた単一 ns 実行」を、
+`-Sdeps` で kotoba-net `{:local/root "/Users/junkawasaki/github/com-junkawasaki/orgs/kotoba-lang/
+kotoba-net"}` を追加して実施 → identity.clj に一切 touch せず
+`Ran 6 tests containing 19 assertions / 0 failures, 0 errors / EXIT_RC=0` (/tmp/f76.log 実測)。
+falsify-75 が同一連鎖で `Could not locate kotoba/net/jvm_host__init.class` (rc=1) に停止したのに対し、
+kotoba-net 宣言単独で undeclared 依存は解消。load path を source で確定: updater_test.clj → updater.clj:13
+(config + http-client) → http_client.clj:16 (kotoba.net.jvm-host) + config.clj (edn/io/config-policy/str/
+policy — identity 非関与)。**範囲精緻化**: falsify-74 境界 (a) / falsify-75 の暗黙前提「updater_test 緑に
+identity.clj 修理が前提」は不成立 — updater_test の load path は identity.clj に到達せず、2 つの
+build-break は独立かつ異なるテスト面に影響する (A) kotoba-net 未宣言 = http-client transitively pull 面
+(updater_test 等)、(B) identity.clj malformation = identity transitively pull 面 (suite 大部分)。実装 軸
+score は **3 のまま** (フル suite は identity.clj により依然コンパイル不能、一 hermetic suite の unblock
+確認のみで suite 全体 green 化測定なし)。修理案 Tier 2 (kanban/human、本体 checkout 編集を要し Tier 1
+不着地): (A) は deps.edn への kotoba-net 宣言 (:git/sha 或は :local/root) のみで updater_test 単体緑が EOF
+(本反復で実測済み)、(B) は falsify-68 の identity.clj (:import 復元) が EOF (detached worktree 一次 compile
+rc=0 + フル suite green)。両着地後のフル suite green を最終終点に、falsify-62 の bundle/graph 赤
+(published-lock 再発行) もその後再確認。テスト 軸に波及: falsify-75 の「build-break は identity.clj だけ
+ではない」に「updater_test 面は kotoba-net 宣言が必須十分、identity.clj はこの面に非関与」を精緻化追記。
+附帯: 本体 checkout は反復中 porcelain clean (dirty 0)、本 bot は touch せず wt-msloop のみで完結、
+実行 worktree mt-msloop76 は remove --force / prune 済みで worktree list に残存せず。7-軸表 16 行目孤立行
+placeholder / falsify-46 mid-sentence cut は残存のまま (operator 復旧待ち、append-only で本 bot は編集
+しない)。identity.clj malformation (falsify-63..68) は既知赤として継続、本反復は独立の build-break の
+一方 (kotoba-net) を unblock 検証 (evidence/2026-09-08-falsify-76.md)
