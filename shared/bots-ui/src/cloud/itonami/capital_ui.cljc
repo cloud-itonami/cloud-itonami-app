@@ -2,7 +2,7 @@
 (defn usdc [value]
  (when value (let [s (str value) padded (str (apply str (repeat (max 0 (- 7 (count s))) "0")) s) n (count padded)]
   (str (subs padded 0 (- n 6)) "." (let [f (str/replace (subs padded (- n 6)) #"0+$" "")] (str f (apply str (repeat (max 0 (- 2 (count f))) "0")))) " USDC"))))
-(def actions [["deposit" "預け入れ" "Deposit"] ["withdraw" "募集期間中の出金" "Withdraw before start"] ["start" "事業ラウンドを開始" "Start business round"] ["spend" "Botの事業支出" "Bot business spending"] ["repay" "元本返済・収益入金" "Repay / add income"] ["allocate" "未使用資金をAaveへ" "Allocate idle funds to Aave"] ["recall" "Aaveから回収" "Recall from Aave"] ["settle" "ラウンドを精算" "Settle round"] ["claim" "元本・分配金を受け取る" "Claim principal and distribution"] ["setExecutor" "Botの実行権限" "Bot spending authority"] ["harvest" "利益を回収しBot予算に分ける" "Realize yield and fund Bot budget"]])
+(def actions [["operator-launch" "Botが募集を公開" "Bot publishes round"] ["operator-start" "Botがラウンドを開始" "Bot starts round"] ["deposit" "預け入れ" "Deposit"] ["withdraw" "募集期間中の出金" "Withdraw before start"] ["start" "事業ラウンドを開始" "Start business round"] ["spend" "Botの事業支出" "Bot business spending"] ["repay" "元本返済・収益入金" "Repay / add income"] ["allocate" "未使用資金をAaveへ" "Allocate idle funds to Aave"] ["recall" "Aaveから回収" "Recall from Aave"] ["settle" "ラウンドを精算" "Settle round"] ["claim" "元本・分配金を受け取る" "Claim principal and distribution"] ["setExecutor" "Botの実行権限" "Bot spending authority"] ["harvest" "利益を回収しBot予算に分ける" "Realize yield and fund Bot budget"]])
 (defn short-address [s] (when s (if (> (count s) 16) (str (subs s 0 6) "…" (subs s (- (count s) 4))) s)))
 (defn panel [{:keys [locale capital capital-form capital-plan capital-status capital-error capital-busy? capital-pending] :as state} handlers]
  (let [ja? (= locale :ja) l (fn [ja en] (if ja? ja en)) f (or capital-form {})
@@ -97,7 +97,7 @@
       [:li (l "満期後の精算が済んだら受け取る" "You claim after maturity and settlement")]]]))
    (when capital-plan
     [:section.bw-capital-review {:aria-label (l "取引の確認" "Transaction review")}
-     [:h3 {:tab-index -1} (l "ウォレットで確認する内容" "Review in your wallet")]
+     [:h3 {:tab-index -1} (if (:requiresOperatorSigner capital-plan) (l "Botの実行内容" "Review Bot action") (l "ウォレットで確認する内容" "Review in your wallet"))]
      [:p (str (:project capital-plan) " · Base USDC")]
      [:p (str (l "操作：" "Action: ") (or (some (fn [[id ja en]] (when (= id (:action capital-plan)) (l ja en))) actions) (if (= "deploy-launcher" (:action capital-plan)) (l "募集作成の初回権限を設定（入金ではありません）" "Set initial round-creation authority (not a deposit)") (l "募集を作成" "Create round"))))]
      [:p (str (l "使用するウォレット：" "Wallet: ") (short-address (get-in capital-plan [:transaction :from])))]
@@ -120,7 +120,7 @@
       [:li (l "取引を確認・署名" "Review and sign the transaction")]
       [:li (l "確定を待つ。画面に残高が反映されます" "Wait for confirmation and updated balances")]]
      [:div.bw-capital-actions (dds/button (l "戻って修正" "Edit") {:type :outline :disabled capital-busy? :attrs {:on-click (:capital-cancel handlers)}})
-      (dds/button (l "ウォレットで確認" "Continue in wallet") {:disabled capital-busy? :attrs {:on-click (:capital-execute handlers)}})]])
+      (dds/button (if (:requiresOperatorSigner capital-plan) (l "Botが署名して実行" "Bot signs and executes") (l "ウォレットで確認" "Continue in wallet")) {:disabled capital-busy? :attrs {:on-click (:capital-execute handlers)}})]])
    (when (:funding-operator? state) [:details.bw-capital-admin [:summary (l "運営者向け：募集・資金管理" "For operators: fundraising & management")]
     [:p (l "資金調達・Botの支出・運用の管理はこちら。操作にはウォレットの権限が必要です。" "Manage fundraising, Bot spending and allocation. Operations require the appropriate wallet authority.")]
     (when yield? [:div.bw-capital-notice
@@ -128,11 +128,21 @@
      [:p (str (l "利益のBot配分: " "Bot share of surplus: ") (get-in capital [:settings :botShareBps]) " bps")]
      [:p (str (l "使えるBot予算: " "Available Bot budget: ") (usdc (get-in capital [:balances :budgetCash])))]
      [:p (l "利益回収ではAaveの全額を一旦引き出します。元本と貸し手利益はVaultに残り、再運用は別の操作です。元本保証ではありません。" "Harvest first recalls all Aave assets. Principal and lender yield remain in the vault; resupply is a separate action. Principal is not guaranteed.")]])
-    (when (get-in capital [:operatorGrant :launcher]) [:p {:role "status"} (l "初回の運営権限は確定済みです。Bot署名サービスの接続・募集作成が完了するまで入金はできません。" "Initial operator authority is confirmed. Deposits wait for operator signer connection and round creation.")])
+    (when-let [grant (:operatorGrant capital)]
+     [:div.bw-capital-notice
+      [:h3 (l "運営Botの準備" "Operator Bot readiness")]
+      [:p (l "初回の署名済み権限で、Botが募集を作成・開始します。" "The Bot creates and starts the round using the authority you already signed.")]
+      (when (= "needs-gas" (:status grant))
+       [:div [:p (l "BotのBase ETHが不足しています。実行用ウォレットへガス代を補充してください。USDCの入金先ではありません。" "Add Base ETH for gas to the executor wallet. This is not the USDC deposit address.")]
+        [:code {:style {:overflow-wrap "anywhere"}} (:executor grant)]])
+      (when (:error grant) [:p {:role "status"} (:error grant)])
+      (dds/button (if deployed? (l "Botにラウンド開始を依頼" "Ask Bot to start round") (l "Botに募集公開を依頼" "Ask Bot to publish round"))
+       {:disabled (or capital-busy? (not (:executionEnabled grant)) (= "needs-gas" (:status grant)))
+        :attrs {:on-click #((:capital-prepare handlers) (if deployed? "operator-start" "operator-launch"))}})])
     (:funding-editor state)
     (when deployed? [:div
      [:label.bw-funding-field (l "管理する操作" "Management action") [:select {:aria-label (l "管理する操作" "Management action") :value admin-action :on-change #((:capital-field handlers) :admin-action (.. % -target -value))}
-      (for [[id ja en] (drop 2 actions) :when (and (not= id "claim") (or (not= id "harvest") yield?))] [:option {:key id :value id} (l ja en)])]]
+      (for [[id ja en] (drop 4 actions) :when (and (not= id "claim") (or (not= id "harvest") yield?))] [:option {:key id :value id} (l ja en)])]]
      (when (contains? #{"spend" "allocate" "recall"} admin-action) (field :amount "金額（USDC）" "Amount (USDC)"))
      (when (= admin-action "spend") [:div (field :recipient "登録済みの送金先" "Approved recipient") (field :intent "請求・タスクの識別ハッシュ（0x…）" "Invoice/task hash (0x…)")])
      (when (= admin-action "repay") [:div (when-not yield? (field :principal "返済する元本（USDC）" "Principal repayment (USDC)")) (field :income "事業収益（USDC、なしは0）" "Income (USDC; 0 if none)")])
