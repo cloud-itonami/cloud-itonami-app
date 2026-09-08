@@ -37,6 +37,7 @@
    (when-not selected [:p (label "応援したいBotの事業を探す。募集条件を確認して、USDCで資金を貸せます。" "Find a Bot business to support. Review its funding terms and lend USDC.")])
    (when-not selected
     [:section.bw-capital-balance {:aria-label (label "全体の資金プール" "Total capital pool")}
+     (when-let [safe (get-in state [:capital-safe :address])] [:p (str (label "貸付元のSafe：" "Lending Safe: ") (capital/short-address safe))])
      [:span (label "全体のプール残高" "Total pooled assets")]
      [:strong (or (capital/usdc (get-in public-directory [:pool :totals :pooled])) (label "未確認" "Unverified"))]
      [:p (label "保管中のUSDC・Aave資産・未使用Bot予算の合計。事業に支出した資金は含みません。" "USDC held, Aave assets and unused Bot budgets. Business spending is excluded.")]
