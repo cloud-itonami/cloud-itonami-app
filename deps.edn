@@ -1,6 +1,11 @@
 {:paths ["src" "resources"]
  :deps
- {org.clojure/clojure {:mvn/version "1.12.5"}
+ {
+        ;; kotoba.lang.text, not clojure.string. Pinned as an explicit floor:
+        ;; tools.deps takes the NEWEST sha it is shown, so without a floor here
+        ;; this repo silently rides whatever a sibling happens to name.
+        io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}
+       org.clojure/clojure {:mvn/version "1.12.5"}
   ;; 回遊 — the shared visit-telemetry vocabulary. Used here for the LOCAL
   ;; workspace counters only: nothing this library touches is transmitted
   ;; (see cloud.itonami.app.kaiyu-local). Zero deps.
@@ -566,12 +571,7 @@
    :git/sha "b0f434c81f778c00321af9572da2346a5e0fc5c7"}}
 
  :aliases
- {:build {:deps {
-        ;; kotoba.lang.text, not clojure.string. Pinned as an explicit floor:
-        ;; tools.deps takes the NEWEST sha it is shown, so without a floor here
-        ;; this repo silently rides whatever a sibling happens to name.
-        io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}
-       io.github.clojure/tools.build {:mvn/version "0.10.8"}}
+ {:build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.8"}}
           :ns-default build}
   :release-sign {:extra-paths ["dev"]
                  :main-opts ["-m" "cloud.itonami.app.sign-update-manifest"]}
