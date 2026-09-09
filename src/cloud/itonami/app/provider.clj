@@ -743,7 +743,16 @@
              :model (or (:served-model result) requested)
              :requested-model requested :fallback? false))
     (catch Exception primary
-      (let [error-type (:type (ex-data primary))
+      (let [_ (when (and (:backoff-on-rate-limit? provider)
+                               (= 429 (:status (ex-data primary))))
+                       ;; Capacity rejection is backpressure, not permission to
+                       ;; start a second model request. Preserve the cause for
+                       ;; the durable scheduler to retry this same Goal.
+                       (throw (ex-info "model capacity is busy; retry after backoff"
+                                       {:type :provider/rate-limited :status 429
+                                        :requested-model requested}
+                                       primary)))
+            error-type (:type (ex-data primary))
             ;; A model can be an intentionally literal operational route. In
             ;; that case a fallback is not resilience: it turns one failed SLO
             ;; probe into load on a second plane and makes the result stop
