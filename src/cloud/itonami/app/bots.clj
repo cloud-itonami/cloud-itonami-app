@@ -174,22 +174,9 @@
   raise a limit that was never the problem."
   3)
 (def ^:private default-resident-max-output-tokens
-  "The output budget an unattended resident turn asks for.
-
-  1024 until 2026-08-29, when four of fifteen resident turns died at
-  :provider/output-budget-exhausted with decision_frame JSON cut at 1024/1024.
-  16384 then matched the gateway's public ceiling. That number is not the
-  shipped install default: a fresh install that asked gad for it filled
-  --parallel 2.
-
-  Matched to the murakumo provider default (400, same as the homepage try
-  box) rather than set to a second number. The per-model cap, the endpoint's
-  observed ceiling and the context window still bound this in
-  `provider/requested-max-tokens`, so this is the ask, not the guarantee. An
-  operator who wants a different resident envelope sets
-  `[:bots :workforce :max-output-tokens]`, which is read first. Do not copy
-  16384 into an overlay to match a shipped default -- 400 is what ships."
-  400)
+  "Use the admitted route ceiling. The provider still enforces discovered
+  limits and the remaining context window; concurrency is bounded separately."
+  16384)
 (def ^:private default-resident-max-input-tokens
   "The total prompt envelope for one unattended resident model call.
 

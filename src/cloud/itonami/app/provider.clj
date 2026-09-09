@@ -507,10 +507,8 @@
   ;; allowance on reasoning: HTTP 200, finish_reason=length, content="". A Bot
   ;; then appears to accept the person's message without answering. This is the
   ;; provider-layer fallback when neither the request nor the provider record
-  ;; names a cap. It is not the murakumo shipped install default -- that is
-  ;; 400 in cloud-itonami-app.defaults.edn. Do not copy 16384 into an overlay
-  ;; "to match shipped default". Endpoints that serve less are handled by the
-  ;; observed-ceiling bound below.
+  ;; names a cap. Match the admitted route ceiling; endpoints that serve less
+  ;; are handled by the observed-ceiling bound below.
   16384)
 
 (defn- requested-max-tokens
@@ -553,16 +551,31 @@
     (swap! active-agent-streams assoc thread stream)
     (try
       (with-open [input stream
-                  reader (BufferedReader. (InputStreamReader. input))]
+                  reader (BufferedReader. input)]
         (consume! reader))
       (finally (swap! active-agent-streams dissoc thread)))))
+
+(defn- agent-messages [provider messages]
+  (let [messages (mapv provider-message messages)]
+    (if (= "murakumo" (:id provider))
+      ;; The owned llama.cpp template rejects a second system message, even
+      ;; when adjacent to the first. Keep reference-text framing verbatim;
+      ;; never promote user, tool, or assistant content to system authority.
+      (let [systems (filter #(= "system" (:role %)) messages)
+            others (remove #(= "system" (:role %)) messages)]
+        (if (seq systems)
+          (into [{:role "system"
+                  :content (str/join "\n\n" (map :content systems))}]
+                others)
+          messages))
+      messages)))
 
 (defn- agent-request-body
   [provider {:keys [model messages tools temperature reasoning-effort
                     disable-thinking? text-only? require-tool?]
              :as request}]
   (cond-> {:model model
-           :messages (mapv provider-message messages)
+           :messages (agent-messages provider messages)
            :stream false
            :temperature (or temperature 0.2)
            :max_tokens (requested-max-tokens provider request)}
@@ -825,8 +838,10 @@
   frame from the code that wanted them. Same defect the comment in
   `error-message` records for the non-streaming arm, in the arm the resident
   Goal path actually takes."
-  [^java.io.InputStream stream]
-  (with-open [in stream]
+  [stream]
+  (with-open [in (if (string? stream)
+                   (java.io.ByteArrayInputStream. (.getBytes ^String stream StandardCharsets/UTF_8))
+                   stream)]
     (let [buffer (byte-array refusal-body-limit)
           read (.readNBytes in buffer 0 refusal-body-limit)]
       (when (pos? read)

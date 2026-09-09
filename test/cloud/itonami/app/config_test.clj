@@ -217,9 +217,9 @@
   (let [config (config/load-config)
         provider (some #(when (= "murakumo" (:id %)) %)
                        (:providers config))]
-    (is (= 400 (:max-output-tokens provider)))
-    (is (= 400 (get-in config [:bots :workforce :max-output-tokens]))
-        "the resident sibling ships the same 400; 16384 is not the install default")
+    (is (= 16384 (:max-output-tokens provider)))
+    (is (= 16384 (get-in config [:bots :workforce :max-output-tokens]))
+        "the resident and provider use the admitted route output ceiling")
     (is (= "murakumo-main" (:default-model provider)))
     (is (= ["murakumo-main" "murakumo-edge"
             "awai-network/basho"
