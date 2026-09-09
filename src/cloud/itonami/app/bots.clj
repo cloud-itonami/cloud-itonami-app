@@ -6003,6 +6003,15 @@
                        "この端末に保存され、会話には残りません。このメッセージは"
                        "記録していません。")
                   {:type :secret/plaintext-in-message :bot bot-id})))))
+    ;; A yielded Goal still owns its checkpoint even without an active thread.
+    ;; A fresh turn must not overwrite that Bot-keyed saved run. Same-run
+    ;; continuation remains allowed; callers can steer the existing Goal.
+    (let [saved (get-in (snapshot) [:runs bot-id])
+          job (goal-job (:id saved))]
+      (when (and (:goal? saved) (agent-run/active? (:job/run job))
+                 (not= (:id saved) (:run-id advance-options)))
+        (throw (ex-info "この Bot の Goal は継続中です。既存の Goal に追加の指示を送ってください。"
+                        {:type :bot/goal-in-progress :run-id (:id saved)}))))
     ;; A new instruction is a new direction, and it starts BEFORE the message is
     ;; recorded — everything from here belongs to it, including the request the
     ;; Bot may raise on this turn. Whatever the previous direction left waiting
