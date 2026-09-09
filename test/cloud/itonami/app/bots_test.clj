@@ -88,9 +88,9 @@
     ;; provider default (400) rather than a second number of its own; the
     ;; per-model cap, observed ceiling and context window still bound it
     ;; downstream.
-    (is (= 400 (get-in resident-config
+    (is (= 16384 (get-in resident-config
                       [:bots :goal :max-output-tokens])))
-    (is (= 400 (:max-output-tokens
+    (is (= 16384 (:max-output-tokens
                 (request resident-config provider b run "murakumo-main"))))
     (is (= 8192 (get-in resident-config [:bots :goal :max-input-tokens])))
     (is (= 8192 (:context-input-limit-tokens
