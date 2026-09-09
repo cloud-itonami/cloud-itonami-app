@@ -17,6 +17,7 @@
             [cloud.itonami.app.business-test]
             [cloud.itonami.app.agent-session-test]
             [cloud.itonami.app.a2a-test]
+            [cloud.itonami.app.controller-standby-test]
             [cloud.itonami.app.kaiyu-local-test]
             [cloud.itonami.app.launcher-test]
             [cloud.itonami.app.business-http-test]
@@ -255,6 +256,7 @@
     cloud.itonami.app.vf-calibrate-kotoba-parity-test
     cloud.itonami.app.vf-authority-kotoba-parity-test
     cloud.itonami.app.a2a-test
+    cloud.itonami.app.controller-standby-test
     cloud.itonami.app.business-test
     cloud.itonami.app.agent-session-test
     cloud.itonami.app.kaiyu-local-test
