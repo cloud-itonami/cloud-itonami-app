@@ -39,6 +39,12 @@
   ;; that cannot read the command tables would assert nothing.
   {:extra-paths ["test" "../src" "../resources"]
    :extra-deps
-   {io.github.kotoba-lang/jp-go-digital-design-system
+   {;; `cloud.itonami.app.commands` requires `kotoba.lang.text`, so the suite
+    ;; cannot load the command tables without it. Pinned to the same sha the
+    ;; application's own deps.edn names as its explicit floor -- two different
+    ;; shas here would let this suite assert against a different resolver than
+    ;; the one that ships.
+    io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}
+    io.github.kotoba-lang/jp-go-digital-design-system
     {:local/root "../../../kotoba-lang/jp-go-digital-design-system"}}
    :main-opts ["-m" "cloud.itonami.mobile.test-main"]}}}

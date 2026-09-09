@@ -1,0 +1,28 @@
+;; cloud-itonami-apex.agent-edge-writes.edn
+;;
+;; The write templates the agent ingress Worker carries, pinned here because the
+;; Worker itself is not in this repository. `services/agent-edge` moved to
+;; cloud-itonami/cloud-itonami-apex, which owns agent.itonami.cloud; a byte copy
+;; stayed behind here until 2026-09-09, carrying the same Worker name and the
+;; same custom domain, so a deploy from this tree could overwrite the live one.
+;;
+;; `mobile/test/cloud/itonami/mobile/terminal_test.clj` compares this table with
+;; `cloud.itonami.mobile.terminal/offered-writes`. It used to slurp the Worker's
+;; source through `../services/agent-edge/src/index.js`. A sibling path that
+;; resolves on one machine and not on another is a check that reports a pass
+;; wherever it cannot look, which is the defect ADR-2608136000 §2 names, so what
+;; crosses the repository boundary is this artifact instead -- the seam
+;; cloud-itonami-cli already uses for the tables this app generates.
+;;
+;; A pinned copy of a generated thing is the thing that drifts, so it is checked:
+;; `scripts/verify-itonami-surface-split.cljs` in the superproject compares
+;; :writes against the live Worker source, because the superproject is the only
+;; checkout that holds both repositories. Refresh this file from the apex tree
+;; and move :source/revision with it; do not edit :writes to make a test pass.
+{:source/repo     "cloud-itonami/cloud-itonami-apex"
+ :source/path     "services/agent-edge/src/index.js"
+ :source/revision "a3c578507b9a40ae3e3919021c18189d22db8ca4"
+ :source/observed "2026-09-09"
+ :writes ["/api/agent-bots/{id}/messages"
+          "/p/{profile}/api/sessions"
+          "/p/{profile}/api/sessions/{session}/messages"]}
