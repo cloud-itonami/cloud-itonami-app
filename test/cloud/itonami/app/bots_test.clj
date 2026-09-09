@@ -5381,3 +5381,28 @@
             (swap! store/state assoc-in [:bots :goal-jobs "pending" :job/run :agent.run/status] :succeeded)
             (bots/fire-due-workforce! {:bots {:workforce {:max-active 1}}} alice "2026-08-16T00:00:00Z")
             (is (= [:submitted] @submitted))))))))
+
+(deftest busy-maintenance-reserve-cannot-admit-ordinary-work
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [p] p)]
+        (tenants!)
+        (let [catalog (workforce-catalog [(engineer-entry) (tamaki-entry)]) submitted (atom [])]
+          (bots/provision-workforce! {} alice catalog)
+          (bots/provision-workforce! {} alice-in-etzhayyim catalog)
+          (swap! store/state update-in [:bots :workforce-jobs]
+                 (fn [jobs] (into {} (map (fn [[id j]] [id (assoc j :workforce.job/next-run-at "2026-08-15T00:00:00Z")]) jobs))))
+          (let [reserved (first (filter #(= "org-1" (:workforce.job/organization %))
+                                       (vals (get-in @store/state [:bots :workforce-jobs]))))]
+            (with-redefs-fn
+              {(ns-resolve 'cloud.itonami.app.bots 'disk-pressure-relief-job?)
+               #(= (:workforce.job/key reserved) (:workforce.job/key %))
+               (ns-resolve 'cloud.itonami.app.bots 'workforce-bot-inferring?) (constantly true)
+               (ns-resolve 'cloud.itonami.app.bots 'workforce-bot-active?)
+               #(= (:workforce.job/bot reserved) %)
+               #'bots/submit-goal! (fn [& _] (swap! submitted conj :ordinary) {:id "leaked"})}
+              (fn []
+                (let [result (bots/fire-due-workforce! {:bots {:workforce {:max-active 1}}}
+                                                     [alice alice-in-etzhayyim] "2026-08-16T00:00:00Z")]
+                  (is (empty? (:started result)))
+                  (is (empty? @submitted)))))))))))
