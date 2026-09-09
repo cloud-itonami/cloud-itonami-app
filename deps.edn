@@ -13,7 +13,7 @@
         ;; namespace existed anywhere. Adds no transitive HTTP client --
         ;; java.net.http is in the JDK; the sibling json/text deps are
         ;; first-party and zero-dep, and text is the same sha pinned above.
-        io.github.kotoba-lang/http {:git/sha "4ce7e385c0c7f4bc892df414ddca9a29aaddb914"}
+        io.github.kotoba-lang/http {:git/sha "d54e2a23f05856dd2d5fbf01a7336a5fbd8b4a8e"}
         ;; One promise type across both runtimes, for the move off the JVM.
         ;; host/jvm's async transport returns a CompletableFuture and
         ;; host/node's returns a js/Promise; promesa treats them as the same

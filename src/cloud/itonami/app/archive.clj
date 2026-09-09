@@ -82,18 +82,15 @@
                  :timeout-seconds 60
                  :headers {"Authorization" (str "Bearer " bearer)
                            "Content-Type" (str content-type)}
-                 :body (.encodeToString (java.util.Base64/getEncoder)
-                                        ^bytes bytes)})]
+                 :body-bytes bytes})]
       {:status (:status resp) :body (:body resp) :url url})))
 
 (defn get-bytes
   "Unauthenticated GET. Returns `{:status :bytes :url}`. The object is binary,
-  so it crosses the shim base64-encoded and is decoded here."
+  so the transport explicitly requests bytes without UTF-8 decoding."
   [cid]
   (let [url (str origin "/ipfs/" cid)
-        resp (http/request {:url url :method :get :timeout-seconds 30})
-        b64 (:body resp)]
+        resp (http/request {:url url :method :get :timeout-seconds 30 :response-type :bytes})]
     {:status (:status resp)
-     :bytes (when (seq (str b64))
-              (.decode (java.util.Base64/getDecoder) ^String b64))
+     :bytes (:body resp)
      :url url}))

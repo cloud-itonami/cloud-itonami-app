@@ -10,6 +10,27 @@
             [drive.workspace :as ws]
             [unixfs.file :as unixfs]))
 
+(deftest archive-http-preserves-binary-bytes
+  (let [server (com.sun.net.httpserver.HttpServer/create (java.net.InetSocketAddress. "127.0.0.1" 0) 0)
+        payload (byte-array (map unchecked-byte (range 256)))
+        stored (atom nil)]
+    (.createContext server "/" (reify com.sun.net.httpserver.HttpHandler
+                                (handle [_ exchange]
+                                  (let [put? (= "PUT" (.getRequestMethod exchange))
+                                        _ (when put? (reset! stored (.readAllBytes (.getRequestBody exchange))))
+                                        body (if put? (.getBytes "{}" "UTF-8") @stored)]
+                                    (.sendResponseHeaders exchange (if put? 201 200) (alength body))
+                                    (with-open [out (.getResponseBody exchange)] (.write out body))))))
+    (.start server)
+    (try
+      (with-redefs [archive/origin (str "http://127.0.0.1:" (.getPort (.getAddress server)))]
+        (binding [archive/*environment* (constantly "fixture-token")]
+          (let [store (ko/store) cid (ko/content-ref store payload)]
+            (is (:ok? (object/-put-object store cid payload)))
+            (is (= (vec payload) (vec @stored)))
+            (is (= (vec payload) (vec (object/-get-object store cid)))))))
+      (finally (.stop server 0)))))
+
 (defn- bytes-of [n]
   (let [out (byte-array n)]
     (loop [i 0 s 0x2468ace0]

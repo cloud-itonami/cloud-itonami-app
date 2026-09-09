@@ -12,7 +12,7 @@
                     (and (>= (count v) (+ from (count value))) (= value (subvec v from (+ from (count value))))) s
                     :else (throw (ex-info "Journal append mismatch" {:path path}))))
     (throw (ex-info "Unknown journal operation" {:op op}))))
-(let [[source destination mappings-file] *command-line-args*
+(let [[source destination mappings-file blocked-workspaces-file] *command-line-args*
       _ (assert (and source destination mappings-file) "source destination mappings.edn required")
       target (io/file destination)
       _ (assert (not (.exists target)) "Destination must be new")
@@ -48,8 +48,18 @@
                     (fn [jobs] (into {} (for [[id j] jobs]
                       [id (if (held-bots (:workforce.job/bot j))
                             (assoc j :workforce.job/enabled? false :workforce.job/disabled-reason :controller-migration-review) j)]))))
+      blocked-workspaces (if blocked-workspaces-file (set (edn/read-string (slurp blocked-workspaces-file))) #{})
+      asset-blocked-bots (set (for [[id bot] (get-in migrated [:bots :bots])
+                                :when (contains? blocked-workspaces (:bot/workspace bot))] id))
+      migrated (update-in migrated [:bots :workforce-jobs]
+                    (fn [jobs] (into {} (for [[id j] jobs]
+                      [id (if (asset-blocked-bots (:workforce.job/bot j))
+                            (assoc j :workforce.job/enabled? false :workforce.job/disabled-reason :controller-migration-assets-unavailable) j)]))))
       config (edn/read-string (slurp (io/file source "config.edn")))
       config (-> config (assoc-in [:server :host] "127.0.0.1") (assoc-in [:server :port] 1438)
+                 (assoc-in [:bots :workforce :max-active] 2)
+                 (assoc-in [:bots :workforce :recovery-max-active] 2)
+                 (assoc-in [:bots :workforce :max-starts-per-tick] 2)
                  (assoc-in [:updates :enabled?] false)
                  (assoc-in [:work-governance :enabled?] false)
                  (assoc-in [:domain-binding :recheck?] false)
@@ -61,5 +71,5 @@
   (spit (io/file target "controller-migration.edn")
         (pr-str {:source-sha256 digest :source-journal-sha256 (sha (.getBytes journal "UTF-8"))
                  :bot-count (count (get-in migrated [:bots :bots])) :path-fields-updated @changed
-                 :held-inflight-jobs @held :at (str (java.time.Instant/now))}))
+                 :held-inflight-jobs @held :asset-blocked-bots asset-blocked-bots :at (str (java.time.Instant/now))}))
   (prn {:bots (count (get-in migrated [:bots :bots])) :path-fields-updated @changed :held-inflight-count (count @held)}))
