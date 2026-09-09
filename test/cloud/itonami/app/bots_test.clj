@@ -5362,3 +5362,22 @@
           (bots/submit-goal! {:bots {:workforce {:recovery-max-active 0}}}
                             alice bot-id "interactive job" "interactive"))
         (is (= ["interactive"] @admitted))))))
+
+(deftest deferred-work-backpressures-new-scheduled-goals
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [p] p)]
+        (bots/provision-workforce! {} alice (workforce-catalog [(engineer-entry)]))
+        (swap! store/state update-in [:bots :workforce-jobs]
+               (fn [jobs] (into {} (map (fn [[id j]] [id (assoc j :workforce.job/next-run-at "2026-08-15T00:00:00Z")]) jobs))))
+        (swap! store/state assoc-in [:bots :goal-jobs "pending"]
+               {:job/resident-workforce? true :job/session alice
+                :job/bot "another-bot" :job/run {:agent.run/status :checkpointed}})
+        (let [submitted (atom [])]
+          (with-redefs [bots/submit-goal! (fn [& _] (swap! submitted conj :submitted) {:id "new"})]
+            (let [result (bots/fire-due-workforce! {:bots {:workforce {:max-active 1}}} alice "2026-08-16T00:00:00Z")]
+              (is (empty? @submitted))
+              (is (= :workforce-backlog (:reason (first (:skipped result))))))
+            (swap! store/state assoc-in [:bots :goal-jobs "pending" :job/run :agent.run/status] :succeeded)
+            (bots/fire-due-workforce! {:bots {:workforce {:max-active 1}}} alice "2026-08-16T00:00:00Z")
+            (is (= [:submitted] @submitted))))))))
