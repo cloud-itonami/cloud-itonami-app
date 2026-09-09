@@ -62,11 +62,11 @@
   withheld, and withheld HERE as well as at the ingress.
 
   Two gates for one rule is deliberate. The ingress Worker is the authority and
-  answers 404 for a path it does not carry (`services/mcp-edge/src/index.js`
-  chose 404 over 405 so a scanner learns nothing). But a 404 read back on a
-  phone says \"no such thing\", which is false — the command exists, this
-  surface declines to offer it. So the client refuses first, in its own words,
-  and says that it was the client.
+  answers 404 for a path it does not carry (cloud-itonami-apex owns it now;
+  its `services/mcp-edge/src/index.js` chose 404 over 405 so a scanner learns
+  nothing). But a 404 read back on a phone says \"no such thing\", which is
+  false — the command exists, this surface declines to offer it. So the client
+  refuses first, in its own words, and says that it was the client.
 
   The rule itself is ADR-0083: approving a write needs a Passkey present, and a
   phone paired by token has not presented one. Widening this set is a decision

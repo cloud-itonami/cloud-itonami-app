@@ -11,7 +11,8 @@
   Each assertion therefore pins the REASON and not only the shape. ADR-2608136000
   §6: a negative test that asserts only the result counts an execution that
   failed for another cause as a discrimination it did not make."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.commands :as commands]
             [cloud.itonami.mobile.terminal :as terminal]))
@@ -121,18 +122,36 @@
 ;; the two gates must not drift apart
 ;; ---------------------------------------------------------------------------
 
-(def ^:private ingress-source "../services/agent-edge/src/index.js")
+(def ^:private ingress-pin "cloud-itonami-apex.agent-edge-writes.edn")
 
 (defn- ingress-writes
-  "The write templates the ingress Worker carries, read out of its own table.
+  "The write templates the ingress Worker carries, read from the pinned table.
 
-  Parsed from the source rather than duplicated here: a second copy of the list
-  is a third gate that can drift from both of the first two."
+  This used to slurp `../services/agent-edge/src/index.js`. The Worker is not in
+  this repository -- cloud-itonami-apex owns agent.itonami.cloud, and the copy
+  that stayed here was retired on 2026-09-09 -- and a sibling path that resolves
+  on one machine and not on another is a check that reports a pass wherever it
+  cannot look (ADR-2608136000 §2). So the table crosses the repository boundary
+  as a pinned artifact, the seam cloud-itonami-cli already uses for the tables
+  this app generates.
+
+  A pinned copy of a generated thing is the thing that drifts, so it is checked
+  where both checkouts exist: `scripts/verify-itonami-surface-split.cljs` in the
+  superproject compares this file against the live Worker source. That check
+  cannot run here, and this suite does not pretend to make it -- what it asserts
+  is that the client and the pin agree, which is the half that is local.
+
+  The types are asserted rather than assumed. `edn/read-string` returns a list
+  for `(str \"a\" \"b\")` without throwing, so a file that reads cleanly can still
+  hand a non-string to a comparison that would then simply never match."
   []
-  (->> (re-seq (re-pattern "\\[\"POST\", \"([^\"]+)\"\\]")
-               (slurp ingress-source))
-       (map second)
-       set))
+  (let [pinned (edn/read-string (slurp (io/resource ingress-pin)))
+        writes (:writes pinned)]
+    (is (vector? writes)
+        "the pinned ingress table must carry a :writes vector")
+    (is (every? string? writes)
+        "each pinned write template must be a string")
+    (set writes)))
 
 (deftest the-client-and-the-ingress-offer-the-same-writes
   ;; Two enforcement points, one rule. They are deliberately separate -- the
@@ -140,7 +159,7 @@
   ;; sentence about WHY -- but they must not disagree about which writes exist,
   ;; or a command the phone offers is one the door refuses and the operator is
   ;; told "no such command" about something that is real.
-  (is (.exists (io/file ingress-source))
-      "the ingress Worker is not where this test looks; drift cannot be checked")
+  (is (some? (io/resource ingress-pin))
+      "the pinned ingress table is not on the classpath; drift cannot be checked")
   (is (= terminal/offered-writes (ingress-writes))
       "the client's offered writes and the ingress table have drifted apart"))
