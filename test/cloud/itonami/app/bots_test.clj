@@ -3626,6 +3626,24 @@
           (testing "an interactive hold is left for the person to decide"
             (is (= :held (status "interactive-hold")))))))))
 
+(deftest startup-preserves-migration-hold-without-an-approval-card
+  (with-store
+    (fn []
+      (let [resident (:bot/id (make-bot alice {:name "migrating resident"}))
+            job (assoc (held-resident-job resident "migration-hold")
+                       :job/controller-migration-review? true)
+            checkpoint {:id "migration-hold" :messages [{:role "assistant" :content "receipt pending"}]}
+            submitted (atom [])]
+        (store/transact! assoc-in [:bots :goal-jobs "migration-hold"] job)
+        (store/transact! assoc-in [:bots :runs resident] checkpoint)
+        (with-redefs [bots/enqueue-goal! (fn [_ id] (swap! submitted conj id))]
+          (bots/recover-interrupted! {:bots {:workforce {:recovery-max-active 1}}}))
+        (testing "migration hold and durable checkpoint survive recovery unchanged"
+          (is (= job (get-in @store/state [:bots :goal-jobs "migration-hold"])))
+          (is (= checkpoint (get-in @store/state [:bots :runs resident]))))
+        (testing "recovery does not dispatch the held job"
+          (is (empty? @submitted)))))))
+
 ;; ── the tick that had nothing to do ─────────────────────────────────────
 ;;
 ;; A resident tick that finds no actionable work has to say so through the

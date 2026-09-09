@@ -10,7 +10,7 @@ Run `run-controller.sh` with a dedicated `CLOUD_ITONAMI_DATA_DIR` and `JAVA_HOME
 
 ## Cutover requirements
 
-1. Start with a fresh staging store, `:bots {:tick {:enabled? false} :workforce {:max-active 0}}`, mail/folder synchronization disabled, and a separate port. Check the health store identity differs from production.
+1. Use `CLOUD_ITONAMI_CONTROLLER_MODE=standby` with the controller-entry launcher and a separate port. This mode does not load app state, recovery or schedulers and rejects all non-health routes. Tick=false alone is insufficient because startup recovery can enqueue work. Health fingerprints identify paths, not stored content; verify contents by digest and IDs.
 2. Inventory every Bot workspace, its required tools and secrets, pending AgentRuns, and browser/computer sessions. A local filesystem path is not a cloud mount. Do not mass-rewrite arbitrary transcript strings or copy the entire credential store.
 3. Prepare explicit workspace mappings and scoped credentials. Configure Kotobase for production persistence. Test representative model, file, and tool operations on the destination.
 4. Quiesce the source scheduler and drain/checkpoint in-flight runs. Copy a consistent snapshot plus journal and required workspace data while the source writer is stopped. Validate journal base digest and byte length.
@@ -20,3 +20,7 @@ Run `run-controller.sh` with a dedicated `CLOUD_ITONAMI_DATA_DIR` and `JAVA_HOME
 ## Observed staging, 2026-09-09
 
 Murakumo node `judah`, private loopback port 1438, successfully booted the packaged controller. Staging store fingerprint `9b153b0fc76a` differs from the local production store `5a6c4a524837`. Staging scheduling is disabled and no production Bot state or secrets were copied. The 82 distinct workspace paths of the current fleet include operator-local directories and the superproject root; their migration remains outstanding. This is infrastructure readiness, not a completed Bot migration or proof of autonomous cloud operation.
+
+## Scheduled observation
+
+A Codex thread heartbeat checks migration and outcomes every 30 minutes, reporting meaningful changes only. `scripts/controller-status.clj DATA_DIR` provides a read-only aggregate snapshot, verifies journal SHA/size and completeness, and fails rather than returning healthy on invalid state. This Codex heartbeat is separate from the cloud controller and requires the Codex scheduler to be available.
