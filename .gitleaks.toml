@@ -1,0 +1,38 @@
+# gitleaks configuration.
+#
+# `secret-scan` in .github/workflows/ci.yml runs `gitleaks git`, which scans
+# the whole reachable history — so an inline `gitleaks:allow` comment cannot
+# clear a finding in a commit that already exists. It has to be here.
+#
+# ## Why this file appeared (measured 2026-09-09)
+#
+# `secret-scan` was failing on EVERY pull request, and on main's own runs.
+# Four findings, all the same two lines of
+# `scripts/package-controller-workspaces.py`, in the two commits that
+# introduced and moved them. That script's `PRIVATE_MARKERS` tuple is the list
+# of PEM headers it greps candidate files for, so it can REFUSE to package a
+# private key. gitleaks was matching its own detection strings.
+#
+# The defect being fixed is not the findings, which were never secrets. It is
+# that a gate red on every run is a gate nobody reads.
+#
+# ## Why this allows a SHAPE and not a PATH
+#
+# The first version of this file allowlisted the path. `secret_scan_test.clj`
+# refused it: a real private key planted in that same file was NOT reported,
+# because `paths` excludes the whole file from scanning before any other
+# criterion is considered. A path allowlist is a blindfold over a file, not an
+# exemption for a line.
+#
+# So the allowlist matches what the false positive IS. A PEM header followed
+# immediately by `', b'-----BEGIN` is a Python tuple of header literals. A real
+# key is followed by base64 and can never match this, in this file or any
+# other — which is what the test asserts, in both directions.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "PEM header literals inside a private-key detector's own marker tuple"
+regexTarget = "secret"
+regexes = ['''-----BEGIN [A-Z ]*PRIVATE KEY-----',\s*b'-----BEGIN''']
