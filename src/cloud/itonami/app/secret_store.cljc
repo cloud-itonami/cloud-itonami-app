@@ -30,6 +30,11 @@
     know which item it wants has no business here.
   - **It will not return a value to a caller that did not name one.** There is
     no `all`, no `dump`, no `some-secret`.
+  - **It will not delete one.** There is no `forget!`, because there is nothing
+    that would call it: the card stores and rotates, and removal is Keychain
+    Access. An uncalled removal function reads as a removal path that exists.
+    `public-card` already recomputes from the keychain, so an item deleted out
+    of band turns the card back into a request on the next read.
   - **It will not log one.** `security` prints an item's password as part of
     its human-readable attribute dump under `-g`, and a subprocess inherits the
     caller's stderr unless told otherwise — that pair is how a B2 key once
@@ -200,14 +205,3 @@
       (throw (ex-info "macOS キーチェーンに保存できませんでした。"
                       {:type :secret/keychain-error :secret id})))
     (str "keychain://" (:secret/service r) "/" (:secret/account r))))
-
-(defn forget!
-  "Remove the stored copy for `id`. Silent about whether there was one — a
-  caller that wants to know asks `present?`, and 'there was nothing to delete'
-  is not a failure of deleting."
-  [id]
-  (when-let [r (request/requirement id)]
-    (write ["security" "delete-generic-password"
-            "-s" (:secret/service r) "-a" (:secret/account r)]
-           :timeout-seconds 5)
-    nil))

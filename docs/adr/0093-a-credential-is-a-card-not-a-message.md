@@ -200,7 +200,28 @@ reach the one class of credential that had been left outside it.
   assertion rests on `transcript-mentions?`, which is asserted **true** against
   a deliberately leaked message first, so the negative assertions are known to
   be capable of failing.
+- `secret_card_http_test.clj` — the two things only the route decides: the
+  status a refusal gets, and what the body contains. Both were wrong first
+  time. Every new refusal fell through to the default 400, so an agent session
+  refused the ACT and a malformed request were reported identically; and the
+  fixture used `binding` for the store seams, which is thread-local, so the
+  server answered on its own thread with the REAL `security` and the test
+  passed having written an item into the developer's login keychain. Both are
+  recorded in the file, because neither is visible from the namespace.
 - Discrimination, measured 2026-09-09: disabling the composer guard turns 3
   assertions red; disabling `secret-blocks` turns 4 tests red, and they fail at
   `cloudflare.cljc:24` — `Cloudflare API token is not configured`, which is the
-  behaviour this ADR replaces.
+  behaviour this ADR replaces; removing the four status mappings turns the
+  route's 404 and 500 into 400.
+- The `security` argument lists were executed once against a throwaway item
+  rather than only stubbed: add → read-back matches → delete → `find` exits 44.
+  Every assertion above runs against the seam, so without this the argv had
+  never been run at all.
+- Suite parity, measured 2026-09-09: `origin/main` b56c292f and this branch
+  fail the same 4 assertions and error on the same 4, in the same 5 test vars
+  (`kaiyu-local`, `oracle-cljs-parity`, `bundle`'s published lock,
+  `graph`'s publish CID, and `domain-tools`' cloudflare-host test, which
+  asserts an `HttpRequest` against a `*send!*` seam that has taken a map since
+  the http-client-async move). `clojure -M:test` refuses to start on either:
+  `storj_test.clj` calls a `storj/build-request` that does not exist, and
+  `workforce_classpath_test.clj` is not in the runner's list.

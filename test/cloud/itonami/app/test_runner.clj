@@ -43,6 +43,7 @@
             [cloud.itonami.app.secret-request-test]
             [cloud.itonami.app.secret-store-test]
             [cloud.itonami.app.secret-card-test]
+            [cloud.itonami.app.secret-card-http-test]
             [cloud.itonami.app.bot-import-test]
             [cloud.itonami.app.bot-test]
             [cloud.itonami.app.bot-slo-test]
@@ -478,6 +479,7 @@
     cloud.itonami.app.secret-request-test
     cloud.itonami.app.secret-store-test
     cloud.itonami.app.secret-card-test
+    cloud.itonami.app.secret-card-http-test
     cloud.itonami.app.bot-import-test
     cloud.itonami.app.did-webvh-http-test
     cloud.itonami.app.oauth-did-binding-test

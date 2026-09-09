@@ -6470,6 +6470,16 @@
                      :issue-comment/no-bot 400
                      :issue-comment/image-rejected 413
                      :issue-comment/not-found 404
+                     ;; The credential card (ADR-0093). Without these four the
+                     ;; default 400 tells a caller its REQUEST was malformed,
+                     ;; which is true of `:secret/refused` and false of every
+                     ;; one of them: an agent session was refused the act, a
+                     ;; card id did not resolve, the credential is already
+                     ;; there, and the keychain write failed on this machine.
+                     :secret/human-session-required 403
+                     :secret/no-card 404
+                     :secret/already-present 409
+                     :secret/keychain-error 500
                      400)
                    ;; `:detail` and `:missing` ride along when the thrower set
                    ;; them. Measured 2026-09-09: a workforce projection failed
