@@ -7301,7 +7301,14 @@
         max-active (max 0 (long (or (get-in configuration
                                             [:bots :workforce :max-active])
                                     1)))
-        available (max 0 (- max-active active))
+        ;; Deferred work still consumes queue capacity. Do not turn an overdue
+        ;; schedule into another pending job while the owner's backlog is full.
+        pending (count (filter #(and (:job/resident-workforce? %)
+                                     (= owner (get-in % [:job/session :user-id]))
+                                     (contains? #{:queued :checkpointed}
+                                                (get-in % [:job/run :agent.run/status])))
+                               (vals (:goal-jobs workforce-state))))
+        available (max 0 (- max-active active pending))
         starts-per-tick (max 0 (long (or (get-in configuration
                                                 [:bots :workforce
                                                  :max-starts-per-tick])
@@ -7374,6 +7381,9 @@
                                 :usable-bytes (:usable-bytes disk-pressure)
                                 :hard-floor-bytes
                                 (:hard-floor-bytes disk-pressure)}]
+
+                              (and (seq jobs) (zero? effective-available) (pos? pending))
+                              [{:reason :workforce-backlog :pending pending :limit max-active}]
 
                               (and (seq jobs) (zero? effective-available))
                               [{:reason :workforce-capacity
