@@ -38,7 +38,42 @@
               (fn [_ _ repository]
                 (is (= "example/actor" repository))
                 valid-profile)]
-      (let [result (profile-ci/audit! (.getPath inventory) nil)]
+      ;; `audit!` returns a promise now. Deref with a BOUND wait rather than
+      ;; `@`: an async call site that never resolves would otherwise hang the
+      ;; suite instead of failing it, and a suite that hangs reports nothing at
+      ;; all. The stub above still returns a plain string -- promesa's `p/let`
+      ;; takes a value or a promise, so moving the call site did not force
+      ;; every test double to become asynchronous too.
+      (let [result (deref (profile-ci/audit! (.getPath inventory) nil)
+                          10000 ::timed-out)]
+        (is (not= ::timed-out result) "audit! resolved")
         (is (:qualified? result) (pr-str result))
         (is (= 2 (:inventory-count result)))
         (is (empty? (:failed result)))))))
+
+(deftest a-repository-that-cannot-be-read-is-reported-not-thrown
+  ;; The catch had to move from `try` to `p/catch` when the fetch became
+  ;; asynchronous, and a rejection arriving after its `try` form returned is
+  ;; exactly the failure that move exists to prevent: one unreachable
+  ;; repository taking the whole audit down instead of being listed as
+  ;; unreadable. Asserted on the REASON, not just on "it did not throw".
+  (let [root (.toFile (Files/createTempDirectory
+                       "repository-profile-ci-fail-"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
+        config (java.io.File. root "app/config")
+        inventory (java.io.File. config "inventory.edn")]
+    (write! (java.io.File. root "app/storage-profile.edn") valid-profile)
+    (write! inventory
+            (pr-str [{:repository "cloud-itonami/cloud-itonami-app" :path ".."}
+                     {:repository "example/actor" :path "../../actor"}]))
+    (binding [profile-ci/*fetch-profile*
+              (fn [_ _ _]
+                (throw (ex-info "GitHub repository profile request failed"
+                                {:type :repository-storage/profile-fetch-failed
+                                 :status 403})))]
+      (let [result (deref (profile-ci/audit! (.getPath inventory) nil)
+                          10000 ::timed-out)]
+        (is (not= ::timed-out result) "a rejected fetch still resolves the audit")
+        (is (= 2 (:inventory-count result))
+            "the unreadable repository is still counted, not dropped")
+        (is (seq (:failed result)) "and it is reported as failed")))))
