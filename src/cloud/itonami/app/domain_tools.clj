@@ -68,6 +68,41 @@
        (some? (session configuration))
        (true? (get-in configuration [:authorities :domain :enabled?]))))
 
+(def credentials
+  "What this tool family must be handed: a `secret-request` id paired with the
+  function that reads it, in the order a person is asked for them.
+
+  One list, carrying the reader with the id, because the two halves are the
+  same fact. Written as a list of ids beside a hand-written `cond->` of readers
+  they would drift, and the drift would be a card offered for a coordinate that
+  is already present -- or, worse, silence about one that is missing."
+  [["cloudflare-account-id" cloudflare/account-id]
+   ["cloudflare-api-token" cloudflare/api-token]])
+
+(defn missing-credentials
+  "Which of `credentials` this deployment does not have.
+
+  Split out of `available?` because the two halves have different remedies. A
+  missing agent session or a disabled domain authority is a decision somebody
+  made in configuration; a missing Cloudflare coordinate is a value nobody has
+  been asked for yet, and it is the only half a person can answer from the
+  conversation. Everything else stays exactly as `available?` had it."
+  [configuration]
+  (into [] (comp (remove (fn [[_ read]] (read configuration)))
+                 (map first))
+        credentials))
+
+(defn answerable?
+  "Would this tool family work if it were handed the credentials it is missing?
+
+  True when everything `available?` checks EXCEPT the Cloudflare coordinates is
+  satisfied. This is the question the Bot screen needs: a family that is
+  unavailable for a reason nobody in the conversation can fix must not render a
+  field, because a field is a promise that filling it in will help."
+  [configuration]
+  (and (some? (session configuration))
+       (true? (get-in configuration [:authorities :domain :enabled?]))))
+
 (defn- session! [configuration]
   (or (session configuration)
       (throw (ex-info "Domain tools require an authenticated agent session"

@@ -1,8 +1,15 @@
 (ns cloud.itonami.app.cloudflare
-  "Credentialed HTTP host for yadori's pure Cloudflare request maps."
+  "Credentialed HTTP host for yadori's pure Cloudflare request maps.
+
+  Neither coordinate below is read from a conversation. A Bot names the tool;
+  this namespace resolves what the tool needs at the moment of the call, from
+  the environment first and then from `secret-store` — which is where a value
+  the person typed into a secret card was put. The Bot never held it, and the
+  transcript never carried it (ADR-0093)."
   (:require [clojure.data.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
+            [cloud.itonami.app.secret-store :as secret-store]
             [yadori.cloudflare :as yadori])
   (:import [java.net URLEncoder]
            [java.nio.charset StandardCharsets]))
@@ -15,15 +22,21 @@
 (defn- env-name [configuration key default]
   (or (get-in configuration [:domain-service key]) default))
 
+(defn- from-environment [configuration key default]
+  (some-> (*environment* (env-name configuration key default)) str/trim not-empty))
+
+;; The environment stays first, and the stored item is the fallback rather than
+;; the other way round: an operator who exported the variable is being explicit,
+;; and a value typed months ago must not silently outrank what this process was
+;; started with. The same order `mail-age-key` chose, for the same reason.
+
 (defn account-id [configuration]
-  (some-> (*environment* (env-name configuration :account-id-env
-                                   "CLOUDFLARE_ACCOUNT_ID"))
-          str/trim not-empty))
+  (or (from-environment configuration :account-id-env "CLOUDFLARE_ACCOUNT_ID")
+      (secret-store/value "cloudflare-account-id")))
 
 (defn api-token [configuration]
-  (some-> (*environment* (env-name configuration :api-token-env
-                                   "CLOUDFLARE_API_TOKEN"))
-          str/trim not-empty))
+  (or (from-environment configuration :api-token-env "CLOUDFLARE_API_TOKEN")
+      (secret-store/value "cloudflare-api-token")))
 
 (defn available? [configuration]
   (boolean (and (account-id configuration) (api-token configuration))))

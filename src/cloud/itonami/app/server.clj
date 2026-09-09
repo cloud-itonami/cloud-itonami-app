@@ -6268,6 +6268,44 @@
         (send! exchange 200
                (bots/label-account! session (:connection body) (:label body))))
 
+      ;; The one door a credential comes in by.
+      ;;
+      ;; Separate from `/answer` and `/decide` on purpose, even though all three
+      ;; write to a card. Those two take a value that is meaningful in the
+      ;; transcript and belongs there; this one takes a value that must never
+      ;; reach it. Sharing a route would mean one handler where the difference
+      ;; between "record this" and "never record this" is a branch — and a
+      ;; branch is something a later edit can fall through.
+      ;;
+      ;; Nothing about the body is echoed. The response is the conversation, and
+      ;; `bots/provide-secret!` returns that rather than a receipt, so there is
+      ;; no shape here a value could be reflected back in.
+      ;;
+      ;; The whole surface is already behind this handler's human-session gate,
+      ;; and `bots/provide-secret!` asks again anyway. Not redundant:
+      ;; `provide-secret!` is reachable from other entry points, and an agent
+      ;; session supplying a credential is a refusal rather than a default no
+      ;; matter which door it came through. There is deliberately no counterpart
+      ;; under `/api/agent-bots`, where ADR-0060 lets an agent decide a held
+      ;; card.
+      ;;
+      ;; (The gate is named in prose rather than spelled, because `route-scan`
+      ;; reads this clause's TEXT to classify it -- writing the function's name
+      ;; in a comment would make the generated command registry claim a gate
+      ;; this clause does not itself apply.)
+      (and (= method "POST")
+           (bot-id-from path #"/api/bots/([^/]+)/cards/[^/]+/secret"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/cards/[^/]+/secret")
+            card-id (bot-id-from path #"/api/bots/[^/]+/cards/([^/]+)/secret")
+            body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               {:messages (if (true? (:decline body))
+                            (bots/decline-secret! session bot-id card-id)
+                            (bots/provide-secret! session bot-id card-id
+                                                  (:value body)))}))
+
       (and (= method "POST")
            (bot-id-from path #"/api/bots/([^/]+)/cards/[^/]+/decide"))
       (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/cards/[^/]+/decide")
@@ -6432,6 +6470,16 @@
                      :issue-comment/no-bot 400
                      :issue-comment/image-rejected 413
                      :issue-comment/not-found 404
+                     ;; The credential card (ADR-0093). Without these four the
+                     ;; default 400 tells a caller its REQUEST was malformed,
+                     ;; which is true of `:secret/refused` and false of every
+                     ;; one of them: an agent session was refused the act, a
+                     ;; card id did not resolve, the credential is already
+                     ;; there, and the keychain write failed on this machine.
+                     :secret/human-session-required 403
+                     :secret/no-card 404
+                     :secret/already-present 409
+                     :secret/keychain-error 500
                      400)
                    ;; `:detail` and `:missing` ride along when the thrower set
                    ;; them. Measured 2026-09-09: a workforce projection failed

@@ -10603,6 +10603,152 @@
       node.append(meta);
       return node;
     };
+    // A credential the Bot needs and must never be given (ADR-0093).
+    //
+    // Referenced from the AWAI Grok Bots clean-room, whose sandbox has "no
+    // shell, filesystem, arbitrary evaluation, or secret forwarding": a bot
+    // there reaches a service through a governed tool, never by holding the
+    // service's key. This card is that boundary made visible. The field posts
+    // to one endpoint, the value is cleared from the DOM as soon as the request
+    // is issued, and nothing here ever writes it into `botsState` -- which is
+    // the object `renderBotsThread` reads and `botsThreadVersion` serialises.
+    //
+    // Everything a person reads is rendered from `card.requirement`, which the
+    // server derives from the catalogue at display time. There is no field on a
+    // secret card a value could arrive in, so this function cannot be made to
+    // print one.
+    const botsSecretSourceLabel = (card) => {
+      const requirement = card.requirement || {};
+      if (card.source === 'environment') {
+        return `環境変数 ${requirement.environment || ''} から読んでいます`;
+      }
+      return `${requirement.holder || 'この端末'}に保存済み`;
+    };
+    const botsSecretCard = (card, botId) => {
+      const node = make('div', 'bots-card');
+      const requirement = card.requirement || {};
+      node.dataset.secret = card.secret || '';
+      node.append(make('div', 'bots-card__title', requirement.title || '資格情報'));
+      if (requirement.purpose) {
+        node.append(make('div', 'bots-card__summary', requirement.purpose));
+      }
+      if (card.state === 'declined') {
+        const state = make('span', 'bots-card__state', '使わないことにしました');
+        state.dataset.state = 'declined';
+        node.append(state);
+        return node;
+      }
+      // Stored is recomputed by the server from the keychain, not replayed from
+      // what this card said when it was written -- the same treatment a
+      // connection card's 接続済み gets, and for the same reason: the item can
+      // appear or disappear without this application doing anything.
+      const stored = card.state === 'stored';
+      const row = make('div', 'bots-card__row');
+      const field = make('div', 'bots-card__field');
+      const error = make('div', 'bots-card__error');
+      error.hidden = true;
+      const input = make('input', 'bots-card__input');
+      // A concealed entry is a credential; a plain one is a coordinate the
+      // catalogue has said is not secret (an account id). Masking a value that
+      // is not secret teaches people that the mask means nothing.
+      input.type = requirement['concealed?'] === false ? 'text' : 'password';
+      input.placeholder = requirement.title || '';
+      input.autocomplete = 'off';
+      input.spellcheck = false;
+      input.setAttribute('autocapitalize', 'off');
+      input.setAttribute('autocorrect', 'off');
+      input.setAttribute('aria-label', requirement.title || '資格情報');
+      // Password managers offer to save what is typed into a masked field. This
+      // value is on its way into the machine's own keychain; a second copy in a
+      // second vault is a second expiry date and one rotation.
+      input.setAttribute('data-1p-ignore', 'true');
+      input.setAttribute('data-lpignore', 'true');
+      const save = make('button', 'primary-action', '安全に保存');
+      save.type = 'button';
+      const decline = make('button', 'tool-button', '使わない');
+      decline.type = 'button';
+      const post = async (body, button, busyLabel) => {
+        const label = button.textContent;
+        error.hidden = true;
+        save.disabled = true;
+        decline.disabled = true;
+        input.disabled = true;
+        button.textContent = busyLabel;
+        try {
+          const data = await postJSON(
+            `/api/bots/${botId}/cards/${card.id}/secret`, body, true);
+          botsState.messages = data.messages || [];
+          renderBotsThread();
+          await loadBots({keepSelection:true});
+        } catch (failure) {
+          // Shown on the card rather than in the thread status line: the
+          // refusal is about this field, and the reason a value was refused --
+          // wrong shape, stray whitespace -- is only actionable next to it.
+          error.textContent = failure.message;
+          error.hidden = false;
+          save.disabled = false;
+          decline.disabled = false;
+          input.disabled = false;
+          button.textContent = label;
+        }
+      };
+      const submit = () => {
+        const value = input.value;
+        // Cleared before the request is awaited, not after it resolves. A
+        // rejected promise, a closed window or a navigation would otherwise
+        // leave the credential sitting in the document.
+        input.value = '';
+        if (!value) {
+          error.textContent = '値が空です。';
+          error.hidden = false;
+          return;
+        }
+        post({value}, save, '保存しています…');
+      };
+      save.addEventListener('click', submit);
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') { event.preventDefault(); submit(); }
+      });
+      decline.addEventListener('click', () => post({decline:true}, decline, '記録しています…'));
+      if (stored) {
+        const state = make('span', 'bots-card__state', '✓ 保存済み');
+        state.dataset.state = 'stored';
+        node.append(make('div', 'bots-card__summary', botsSecretSourceLabel(card)));
+        // An exported variable wins over the stored item on every read, so
+        // offering 入れ直す without saying that would be a field whose only
+        // outcome is a value nothing reads.
+        if (card.source === 'environment') {
+          node.append(make('div', 'bots-card__summary',
+            'この環境変数が優先されます。入れ直しても、変数が設定されている間は使われません。'));
+        }
+        const again = make('button', 'tool-button', '入れ直す');
+        again.type = 'button';
+        again.addEventListener('click', () => {
+          again.hidden = true;
+          field.hidden = false;
+          input.focus();
+        });
+        field.hidden = true;
+        row.append(again, state);
+      } else {
+        if (requirement['issue-url']) {
+          const link = make('a', 'bots-card__summary', 'この資格情報を発行する');
+          link.href = requirement['issue-url'];
+          link.target = '_blank';
+          link.rel = 'noreferrer noopener';
+          node.append(link);
+        }
+        row.append(decline);
+      }
+      field.append(input, save);
+      node.append(field, error, row);
+      const shield = make('div', 'bots-card__shield');
+      shield.append(make('span', null, '\u{1F6E1}'),
+                    make('span', null,
+                         `${requirement.holder || 'この端末'}に保存され、Bot には渡りません。`));
+      node.append(shield);
+      return node;
+    };
     const appendBotsCards = (entry, messages, botId) => {
       // One dispatch, called from both the run path and the single-message
       // path. It was written out twice, and a third kind of card would have had
@@ -10614,6 +10760,7 @@
           else if (card.kind === 'choice') entry.append(botsChoiceCard(card, botId));
           else if (card.kind === 'approval') entry.append(botsApprovalCard(card, botId));
           else if (card.kind === 'artifact') entry.append(botsArtifactCard(card));
+          else if (card.kind === 'secret') entry.append(botsSecretCard(card, botId));
         });
       });
     };

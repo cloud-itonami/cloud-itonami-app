@@ -499,7 +499,12 @@
 (deftest workforce-domain-tools-are-isolated-and-capability-mapped
   (with-store
     (fn []
+      ;; `answerable?` is what decides whether the tools are OFFERED now, and
+      ;; `available?` whether they can run without a card (ADR-0093). Both are
+      ;; stubbed here because this fixture is about capability mapping and has
+      ;; no Cloudflare coordinates of any kind.
       (with-redefs [workspace-tools/admit-root (fn [path] path)
+                    domain-tools/answerable? (constantly true)
                     domain-tools/available? (constantly true)]
         (bots/provision-workforce! {} alice
                                    (workforce-catalog [(domain-steward-entry)]))
@@ -514,7 +519,12 @@
 (deftest resident-domain-steward-observes-and-commits-approved-without-a-model
   (with-store
     (fn []
+      ;; `answerable?` is what decides whether the tools are OFFERED now, and
+      ;; `available?` whether they can run without a card (ADR-0093). Both are
+      ;; stubbed here because this fixture is about capability mapping and has
+      ;; no Cloudflare coordinates of any kind.
       (with-redefs [workspace-tools/admit-root (fn [path] path)
+                    domain-tools/answerable? (constantly true)
                     domain-tools/available? (constantly true)]
         (bots/provision-workforce! {} alice
                                    (workforce-catalog [(domain-steward-entry)]))

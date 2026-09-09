@@ -680,7 +680,7 @@
 ;; part of a Bot's turn that is not prose because prose cannot be acted on:
 ;; a connector to authorize, a choice to make, an approval to give.
 
-(def card-kinds #{:connection :choice :approval :artifact})
+(def card-kinds #{:connection :choice :approval :artifact :secret})
 
 (def connection-states
   "`:offered` — the Bot needs it and nobody has started.
@@ -868,6 +868,57 @@
     revision (assoc :card/revision revision)
     message (assoc :card/message message)
     (seq paths) (assoc :card/paths (vec paths))))
+
+(def secret-states
+  "`:requested` -- the Bot named a credential it does not have.
+   `:stored` -- a value was accepted and written to the item.
+   `:declined` -- the person said no; the Bot must plan without the tool."
+  #{:requested :stored :declined})
+
+;; Every other card carries what it is about. This one carries what it is about
+;; and NOT the thing itself, and that separation is the whole card: the field
+;; the person types into is rendered from a catalogue entry, the value goes to
+;; one endpoint, and what comes back into the conversation is a state.
+;;
+;; So the constructor refuses a value instead of dropping one. A caller that
+;; passes `:value` has misunderstood which side of the boundary it is on, and
+;; silently discarding the key would leave it believing the credential had been
+;; recorded -- the same reason `cloud-itonami/kagi` answers a body containing a
+;; concealed field with `400 plaintext-value-received` rather than stripping it.
+
+(def ^:private forbidden-secret-keys
+  "Keys a caller would use if it had misunderstood which side of the boundary
+  it is on. `:secret` is NOT one of them -- that is the catalogue id, and it is
+  the whole content of a request."
+  #{:value :token :password :credential :secret-value
+    :card/value :card/token :card/password :card/secret-value})
+
+(defn secret-card
+  "A credential this Bot needs and cannot obtain for itself.
+
+  `:card/secret` is an id in `secret-request/catalogue`, not a description. The
+  card says nothing about the credential that the catalogue does not already
+  say, which is what lets the client render a field without this record ever
+  having been near a value.
+
+  `:card/stored-ref` is a `keychain://service/account` locator written after a
+  successful store. It is where the value is, and it is deliberately the most
+  the transcript ever learns."
+  [{:keys [id secret state stored-ref] :as options}]
+  (when-let [leaked (seq (filter #(contains? forbidden-secret-keys %)
+                                 (keys options)))]
+    (throw (ex-info "a secret card carries the request, never the credential"
+                    {:type :bot/plaintext-value-received
+                     :card id :keys (vec (sort (map str leaked)))})))
+  (let [state (or state :requested)]
+    (when-not (contains? secret-states state)
+      (throw (ex-info "unknown secret state"
+                      {:type :bot/invalid-card :card id :state state})))
+    (cond-> {:card/id (required! id :card/id)
+             :card/kind :secret
+             :card/secret (required! secret :card/secret)
+             :card/state state}
+      stored-ref (assoc :card/stored-ref (str stored-ref)))))
 
 (defn message
   "One turn. `:message/role` is `:person` or `:bot` — not `:user`/`:assistant`,

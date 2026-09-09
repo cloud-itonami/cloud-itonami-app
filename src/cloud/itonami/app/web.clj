@@ -683,6 +683,23 @@
   .bots-card__state[data-state='connected']{color:var(--color-semantic-success-1)}
   .bots-card__state[data-state='waiting']{color:var(--color-neutral-solid-gray-600)}
   .bots-card__state[data-state='superseded']{color:var(--color-neutral-solid-gray-600)}
+  /* The credential field (ADR-0093). It is inside the card frame every other
+     request uses, because it IS one of those requests -- what differs is that
+     the answer does not become part of the conversation, and the shield line
+     below is where that is said. Saying it under the field rather than in the
+     Bot's prose matters: prose is what a Bot writes, and this is a promise the
+     application keeps. */
+  .bots-card__field{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+  .bots-card__input{flex:1 1 14rem;min-width:0;min-height:2.75rem;font:inherit;
+    box-sizing:border-box;padding:.5rem .75rem;border-radius:.5rem;
+    border:1px solid var(--color-neutral-solid-gray-300);
+    background:var(--color-neutral-white);color:var(--color-neutral-solid-gray-700)}
+  .bots-card__input:focus-visible{outline:4px solid var(--color-primitive-yellow-300)}
+  .bots-card__shield{display:flex;align-items:center;gap:.375rem;font-size:.75rem;
+    color:var(--color-neutral-solid-gray-600)}
+  .bots-card__error{font-size:.8125rem;color:var(--color-semantic-error-1)}
+  .bots-card__state[data-state='stored']{color:var(--color-semantic-success-1)}
+  .bots-card__state[data-state='declined']{color:var(--color-neutral-solid-gray-600)}
   .bots-option{display:flex;align-items:center;gap:.625rem;width:100%;
     border:1px solid var(--color-neutral-solid-gray-200);border-radius:.5rem;
     background:var(--color-neutral-white);padding:.625rem .75rem;cursor:pointer;
