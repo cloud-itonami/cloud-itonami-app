@@ -7,6 +7,7 @@
     :assoc (if (seq path) (assoc-in s path value) value)
     :dissoc (if (= 1 (count path)) (dissoc s (first path)) (update-in s (pop path) dissoc (peek path)))
     :append (let [v (if (seq path) (get-in s path) s)]
+              (assert (and (vector? v) (vector? value) (integer? from) (<= 0 from)) "Invalid append")
               (cond (= (count v) from) (if (seq path) (update-in s path into value) (into s value))
                     (and (>= (count v) (+ from (count value))) (= value (subvec v from (+ from (count value))))) s
                     :else (throw (ex-info "Journal append mismatch" {:path path}))))
@@ -17,28 +18,41 @@
       _ (assert (not (.exists target)) "Destination must be new")
       raw (Files/readAllBytes (.toPath (io/file source "state.edn")))
       journal (slurp (io/file source "state.journal.edn"))
+      _ (assert (or (empty? journal) (.endsWith journal "\n")) "Incomplete journal")
       records (mapv edn/read-string (remove empty? (.split journal "\n")))
       digest (sha raw)
-      _ (doseq [r records] (assert (= (alength raw) (:base-bytes r)) "Journal size mismatch")
+      _ (doseq [r records] (assert (= "cloud.itonami.app.state-journal.v1" (:schema r)) "Journal schema mismatch")
+                    (assert (vector? (:ops r)) "Invalid operations")
+                    (doseq [op (:ops r)] (assert (vector? (:path op)) "Invalid operation path"))
+                    (assert (= (alength raw) (:base-bytes r)) "Journal size mismatch")
                     (assert (= digest (:base-sha256 r)) "Journal digest mismatch"))
       state (reduce (fn [s r] (reduce apply-op s (:ops r))) (edn/read-string (String. raw "UTF-8")) records)
       mappings (sort-by (comp - count first) (edn/read-string (slurp mappings-file)))
       rewrite (fn [v] (or (some (fn [[a b]] (when (or (= v a) (.startsWith v (str a "/"))) (str b (subs v (count a))))) mappings) v))
       changed (atom 0)
-      migrated (walk/postwalk (fn [x] (if (map? x)
-                           (reduce (fn [m k] (if-let [v (get m k)]
-                             (if (string? v) (let [n (rewrite v)] (when (not= v n) (swap! changed inc)) (assoc m k n)) m) m))
-                             x [:bot/workspace :archive-path :path]) x)) state)
+      migrated (update-in state [:bots :bots]
+                    (fn [bots] (into {} (for [[id bot] bots]
+                      [id (if-let [v (:bot/workspace bot)]
+                            (let [n (rewrite v)] (when (not= v n) (swap! changed inc))
+                              (assoc bot :bot/workspace n)) bot)]))))
       held (atom [])
       migrated (update-in migrated [:bots :goal-jobs]
                     (fn [jobs] (into {} (for [[id j] jobs]
-                        [id (if (contains? #{:leased :running} (get-in j [:job/run :agent.run/status]))
+                        [id (if (contains? #{:queued :leased :running :checkpointed} (get-in j [:job/run :agent.run/status]))
                               (do (swap! held conj id) (-> j
+                                  (assoc :job/controller-migration-review? true)
                                   (assoc-in [:job/run :agent.run/status] :held)
                                   (assoc-in [:job/run :agent.run/checkpoint-reason] :controller-migration-review))) j)]))))
+      held-bots (set (keep #(get-in migrated [:bots :goal-jobs % :job/bot]) @held))
+      migrated (update-in migrated [:bots :workforce-jobs]
+                    (fn [jobs] (into {} (for [[id j] jobs]
+                      [id (if (held-bots (:workforce.job/bot j))
+                            (assoc j :workforce.job/enabled? false :workforce.job/disabled-reason :controller-migration-review) j)]))))
       config (edn/read-string (slurp (io/file source "config.edn")))
       config (-> config (assoc-in [:server :host] "127.0.0.1") (assoc-in [:server :port] 1438)
                  (assoc-in [:updates :enabled?] false)
+                 (assoc-in [:work-governance :enabled?] false)
+                 (assoc-in [:domain-binding :recheck?] false)
                  (assoc-in [:mail-sync :enabled?] false) (assoc-in [:folder-sync :enabled?] false))]
   (.mkdirs target)
   (spit (io/file target "state.edn") (pr-str migrated))

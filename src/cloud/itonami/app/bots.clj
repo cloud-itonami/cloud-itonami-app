@@ -3675,6 +3675,10 @@
     (doseq [[run-id job] (:goal-jobs (snapshot))
             :when (and (:job/resident-workforce? job)
                        (= :held (get-in job [:job/run :agent.run/status]))
+                       ;; A migration hold awaits receipt reconciliation, not
+                       ;; an approval card. Closing it here would release the
+                       ;; Bot for a fresh run before prior effects are known.
+                       (not (true? (:job/controller-migration-review? job)))
                        (not (seq (filter #(bot/outstanding?
                                            (request-of (:job/bot job) %))
                                          (open-approval-cards (:job/bot job))))))]
