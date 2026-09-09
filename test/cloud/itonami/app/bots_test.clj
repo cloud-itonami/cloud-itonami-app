@@ -5339,3 +5339,24 @@
           (is (= :failed (:agent.run/status run)))
           (is (= :tool-not-admitted (:agent.run/error-type run)))
           (is (= "Unavailable tool" (:agent.run/error-message run))))))))
+
+(deftest new-resident-goals-respect-closed-recovery-admission
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {})) admitted (atom [])]
+        (with-redefs [bots/enqueue-goal! (fn [_ id] (swap! admitted conj id))]
+          (bots/submit-goal! {:bots {:workforce {:recovery-max-active 0}}}
+                            alice bot-id "bounded job" "new-resident"
+                            {:resident-workforce? true}))
+        (is (empty? @admitted))
+        (is (= :queued (get-in (#'bots/goal-job "new-resident")
+                              [:job/run :agent.run/status])))))))
+
+(deftest interactive-goals-retain-direct-admission
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {})) admitted (atom [])]
+        (with-redefs [bots/enqueue-goal! (fn [_ id] (swap! admitted conj id))]
+          (bots/submit-goal! {:bots {:workforce {:recovery-max-active 0}}}
+                            alice bot-id "interactive job" "interactive"))
+        (is (= ["interactive"] @admitted))))))
