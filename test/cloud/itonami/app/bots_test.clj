@@ -5305,7 +5305,9 @@
                               {:content "Corrected response" :tool-calls []})))]
           (is (= "Corrected response" (:text (last (bots/send! nil alice (:bot/id b) "help")))))
           (is (= 2 @asked))
-          (is (some #(and (= "tool" (:role %)) (str/includes? (:content %) "nothing was executed")) @feedback)))))))
+          (is (some #(and (= "tool" (:role %)) (str/includes? (:content %) "nothing was executed")
+                          (str/includes? (:content %) "Available tool names:")
+                          (not (str/includes? (:content %) "invented_tool"))) @feedback)))))))
 
 (deftest yielded-resident-slice-does-not-starve-waiting-goals
   (with-store

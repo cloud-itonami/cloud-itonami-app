@@ -5446,7 +5446,8 @@
                          (update :tool-selection-repairs (fnil inc 0))
                          (update :messages conj
                                  {:role "tool" :tool-call-id (:id call) :name name
-                                  :content "Tool not available; nothing was executed. Choose an exact supplied tool name or explain the missing capability. Do not invent tools."})))
+                                  :content (str "Tool not available; nothing was executed. Choose an exact supplied tool name or explain the missing capability. Do not invent tools. Available tool names: "
+                                                (str/join ", " (sort (:runnable run))))})))
 
               (not (contains? (:runnable run) name))
               (let [drift? (capability-drift? run name)
