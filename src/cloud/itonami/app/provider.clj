@@ -710,6 +710,23 @@
                          :served-model served})))))
   response)
 
+(defn- failure-summary [error]
+  ;; Only classified facts cross into the durable scheduler ledger. Never
+  ;; retain response bodies, headers, URLs or exception text here.
+  (let [{:keys [type status response]} (ex-data error)
+        message (get-in response [:error :message])
+        message (if (string? message) (.toLowerCase ^String message java.util.Locale/ROOT) "")]
+    (cond-> {:type type
+             :category (cond
+                         (or (str/includes? message "requires more credits")
+                             (str/includes? message "can only afford")) :credit-limit
+                         (or (str/includes? message "context length")
+                             (str/includes? message "context window")
+                             (str/includes? message "too many tokens")) :context-limit
+                         (= status 429) :rate-limit
+                         :else :unclassified)}
+      (integer? status) (assoc :status status))))
+
 (defn- with-model-fallback
   "Run `invoke` with requested model, then its explicitly configured fallback.
 
@@ -751,6 +768,8 @@
                                :requested-model requested
                                :fallback-model fallback
                                :primary-error-type error-type
+                               :provider-failures {:primary (failure-summary primary)
+                                                   :fallback (failure-summary secondary)}
                                :fallback-error-type (:type (ex-data secondary))}
                               secondary))))
           (throw primary)))))))

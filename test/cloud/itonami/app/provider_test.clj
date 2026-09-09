@@ -952,3 +952,24 @@
             (is (= 8192 (count raw))
                 "bounded: a refusal body is an error document, not a generation"))
           (finally (.stop server 0)))))))
+
+(deftest fallback-failure-preserves-both-causes-without-response-content
+  (let [primary (ex-info "private prompt" {:type :provider/http-error :status 400
+                  :response {:error {:message "maximum context length exceeded: PRIVATE"}}})
+        secondary (ex-info "secret" {:type :provider/http-error :status 402
+                    :response {:error {:message "requires more credits: SECRET"}}})
+        caught (try
+                 ((private-fn 'with-model-fallback)
+                  {:model-fallbacks {"main" "backup"}} "main"
+                  (fn [model] (throw (if (= model "main") primary secondary))))
+                 (catch Exception error error))
+        facts (:provider-failures (ex-data caught))]
+    (is (= {:primary {:type :provider/http-error :status 400 :category :context-limit}
+            :fallback {:type :provider/http-error :status 402 :category :credit-limit}}
+           facts))
+    (is (identical? secondary (.getCause caught)))
+    (is (not (re-find #"PRIVATE|SECRET|private prompt" (pr-str facts)))))
+  (is (= {:type :provider/timeout :category :unclassified}
+         ((private-fn 'failure-summary) (ex-info "timeout" {:type :provider/timeout}))))
+  (is (= :rate-limit (:category ((private-fn 'failure-summary)
+                                (ex-info "busy" {:type :provider/http-error :status 429}))))))
