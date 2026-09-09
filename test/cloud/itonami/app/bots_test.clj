@@ -5425,3 +5425,43 @@
             (is (= :bot/goal-in-progress (:type (ex-data e))))
             (is (= saved (get-in @store/state [:bots :runs bot-id])))
             (is (zero? @calls))))))))
+
+(deftest a-rate-limited-pool-checkpoints-and-retries-the-same-goal
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {}))
+            run-id "resident-provider-checkpoint-1"
+            run! (ns-resolve 'cloud.itonami.app.bots 'run-goal-job!)
+            drain! (ns-resolve 'cloud.itonami.app.bots 'drain-goal-queue!)
+            queued (agent-run/agent-run {:id run-id :goal "continue safely"} 1)
+            enqueued (atom [])
+            outage (ex-info "model capacity is busy"
+                            {:type :provider/rate-limited :status 429})]
+        (swap! store/state assoc-in [:bots :goal-jobs run-id]
+               {:job/id run-id :job/bot bot-id :job/session alice
+                :job/objective "continue safely" :job/run queued
+                :job/plan [] :job/events [] :job/attempt 0
+                :job/resident-workforce? true})
+        (with-redefs [bots/send-stream! (fn [& _] (throw outage))
+                      bots/enqueue-goal! (fn [_ id]
+                                           (swap! enqueued conj id)
+                                           id)]
+          (run! {} run-id)
+          (let [job (get-in @store/state [:bots :goal-jobs run-id])
+                checkpoint (->> (:job/events job)
+                                (filter #(= :run/checkpointed (:event/kind %)))
+                                last)]
+            (is (= :checkpointed
+                   (get-in job [:job/run :agent.run/status])))
+            (is (= :provider/rate-limited
+                   (get-in job [:job/run :agent.run/checkpoint-reason])))
+            (is (= :provider/rate-limited
+                   (get-in checkpoint [:event/data :reason])))
+            (is (string? (:job/retry-at job)))
+            (is (empty? @enqueued)
+                "the failed route yields its slot instead of hot-looping"))
+          (swap! store/state assoc-in [:bots :goal-jobs run-id :job/retry-at]
+                 "1970-01-01T00:00:00Z")
+          (drain! {})
+          (is (= [run-id] @enqueued)
+              "the periodic drain resumes the same durable Goal when due"))))))

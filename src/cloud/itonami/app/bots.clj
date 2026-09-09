@@ -6421,7 +6421,7 @@
   here because the provider layer creates it only after both explicitly
   admitted routes failed with one of its bounded fallback error types."
   #{:provider/timeout :provider/unreachable :provider/network-error
-    :provider/model-unready :provider/fallback-failed})
+    :provider/model-unready :provider/fallback-failed :provider/rate-limited})
 
 (defn- provider-retry-delay-seconds [attempt]
   (min provider-retry-max-seconds

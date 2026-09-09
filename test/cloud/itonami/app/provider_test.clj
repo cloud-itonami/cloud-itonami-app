@@ -973,3 +973,16 @@
          ((private-fn 'failure-summary) (ex-info "timeout" {:type :provider/timeout}))))
   (is (= :rate-limit (:category ((private-fn 'failure-summary)
                                 (ex-info "busy" {:type :provider/http-error :status 429}))))))
+
+(deftest saturated-pool-yields-without-cascading-to-another-model
+  (doseq [[status expected-calls expected-type] [[429 ["main"] :provider/rate-limited]
+                                               [502 ["main" "backup"] :provider/fallback-failed]]]
+    (let [calls (atom [])
+          error (try
+                  ((private-fn 'with-model-fallback)
+                   {:backoff-on-rate-limit? true :model-fallbacks {"main" "backup"}}
+                   "main" (fn [model] (swap! calls conj model)
+                            (throw (ex-info "busy" {:type :provider/http-error :status status}))))
+                  (catch Exception e e))]
+      (is (= expected-calls @calls))
+      (is (= expected-type (:type (ex-data error)))))))

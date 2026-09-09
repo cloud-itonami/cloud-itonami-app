@@ -143,6 +143,7 @@
    :reviewed? false
    :enabled? false}
   {:id "murakumo"
+   :backoff-on-rate-limit? true
    :name "Murakumo fleet"
    :kind :openai-compatible
    ;; `murakumo-main` is an ALIAS the fleet resolves, never a concrete model
