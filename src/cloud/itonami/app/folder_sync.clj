@@ -17,7 +17,7 @@
             [cloud.itonami.app.http-client :as http]
             [fileprovider.model :as sync-model])
   (:import [java.io File InputStream]
-           [java.net URLEncoder]
+           [java.net URI URLEncoder]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files LinkOption Path StandardCopyOption]
            [java.security MessageDigest]

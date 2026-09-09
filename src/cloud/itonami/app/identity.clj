@@ -26,6 +26,7 @@
             [identity.directory :as directory]
             [identity.model :as identity]
             [oauth.model :as oauth])
+  (:import [java.net URLEncoder]
            [java.nio.charset StandardCharsets]
            [java.security MessageDigest SecureRandom]
            [java.time Duration Instant]

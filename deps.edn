@@ -5,6 +5,15 @@
         ;; tools.deps takes the NEWEST sha it is shown, so without a floor here
         ;; this repo silently rides whatever a sibling happens to name.
         io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}
+        ;; kotoba.lang.http.host.jvm -- the workspace's single java.net.http
+        ;; site, which `cloud.itonami.app.http-client` delegates to. 36
+        ;; namespaces require that shim, so without this coordinate the
+        ;; application does not load at all: measured 2026-09-09, the shim had
+        ;; required `kotoba.net.jvm-host` since 2026-09-07 and no such
+        ;; namespace existed anywhere. Adds no transitive HTTP client --
+        ;; java.net.http is in the JDK; the sibling json/text deps are
+        ;; first-party and zero-dep, and text is the same sha pinned above.
+        io.github.kotoba-lang/http {:git/sha "ce0f551c369bfc060c855739bc2c934f5e2c6267"}
        org.clojure/clojure {:mvn/version "1.12.5"}
   ;; 回遊 — the shared visit-telemetry vocabulary. Used here for the LOCAL
   ;; workspace counters only: nothing this library touches is transmitted

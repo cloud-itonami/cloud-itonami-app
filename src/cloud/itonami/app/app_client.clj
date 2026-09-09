@@ -30,7 +30,7 @@
             [kotoba.lang.text :as str]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.http-client :as http])
-  (:import [java.net ConnectException]
+  (:import [java.net ConnectException URI]
            [java.time Duration]))
 
 (def ^:dynamic *environment* #(System/getenv %))
