@@ -6475,6 +6475,7 @@
                         {:reason error-type
                          :retry-at retry-at
                          :attempt attempt
+                         :provider-failures (:provider-failures (ex-data error))
                          :message (error-message error)})
     true))
 

@@ -3899,6 +3899,8 @@
                             {:type :provider/fallback-failed
                              :requested-model "murakumo-main"
                              :fallback-model "z-ai/glm-5.3-flash"
+                             :provider-failures {:primary {:type :provider/http-error :status 400 :category :context-limit}
+                                                 :fallback {:type :provider/timeout :category :unclassified}}
                              :primary-error-type :provider/http-error
                              :fallback-error-type :provider/timeout})]
         (swap! store/state assoc-in [:bots :goal-jobs run-id]
@@ -3921,6 +3923,8 @@
                    (get-in job [:job/run :agent.run/checkpoint-reason])))
             (is (= :provider/fallback-failed
                    (get-in checkpoint [:event/data :reason])))
+            (is (= (:provider-failures (ex-data outage))
+                   (get-in checkpoint [:event/data :provider-failures])))
             (is (string? (:job/retry-at job)))
             (is (empty? @enqueued)
                 "the failed route yields its slot instead of hot-looping"))
