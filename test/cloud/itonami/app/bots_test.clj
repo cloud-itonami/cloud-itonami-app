@@ -5320,3 +5320,22 @@
         (with-redefs [bots/enqueue-goal! (fn [_ id] (swap! enqueued conj id))]
           ((private-fn 'drain-goal-queue!) {:bots {:workforce {:recovery-max-active 1}}}))
         (is (= ["waiting"] @enqueued))))))
+
+(deftest visible-failure-preserves-its-reason-in-goal-ledger
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {})) run-id "visible-failure-evidence"]
+        (swap! store/state assoc-in [:bots :goal-jobs run-id]
+               (assoc (resident-run-with bot-id run-id [])
+                      :job/run (agent-run/agent-run {:id run-id :goal "tick"} 1)))
+        (with-redefs [bots/send-stream!
+                      (fn [& _]
+                        (swap! store/state assoc-in [:bots :turn-history bot-id]
+                               [{:turn/id run-id :turn/state :failed :turn/phase :failed
+                                 :turn/error-type :tool-not-admitted
+                                 :turn/error-message "Unavailable tool"}]))]
+          (#'bots/run-goal-job! {} run-id))
+        (let [run (:job/run (#'bots/goal-job run-id))]
+          (is (= :failed (:agent.run/status run)))
+          (is (= :tool-not-admitted (:agent.run/error-type run)))
+          (is (= "Unavailable tool" (:agent.run/error-message run))))))))

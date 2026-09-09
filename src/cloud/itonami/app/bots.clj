@@ -6468,6 +6468,19 @@
                          :message (error-message error)})
     true))
 
+(defn- visible-goal-result [run-id state]
+  ;; A visible failure does not throw. Preserve its reason in the run ledger
+  ;; too, using this run's turn rather than another concurrent/latest turn.
+  (let [bot (:job/bot (goal-job run-id))
+        turn (last (filter #(= run-id (:turn/id %))
+                           (get-in (snapshot) [:turn-history bot])))]
+    (cond-> {:agent.run/result state :agent.run/finished-at (now-ms)}
+      (= "failed" state)
+      (assoc :agent.run/error-type (or (:turn/error-type turn)
+                                       :bot/unclassified-visible-failure))
+      (and (= "failed" state) (:turn/error-message turn))
+      (assoc :agent.run/error-message (:turn/error-message turn)))))
+
 (defn- run-goal-job! [configuration run-id]
   (let [{:job/keys [bot session objective attempt] :as job} (goal-job run-id)
         configuration (goal-job-configuration configuration job)
@@ -6540,8 +6553,7 @@
                         {:reason :blocked
                          :detail (first (:evidence (latest-turn session bot)))}))
             (do (transition-goal-run! run-id (goal-run-status state resident?)
-                                      {:agent.run/result state
-                                       :agent.run/finished-at (now-ms)})
+                                      (visible-goal-result run-id state))
                 ;; Terminal either way: a run that changed something returns to
                 ;; the floor, one that never executed backs off only to the
                 ;; retry ceiling. The core, not this call site, knows which.
@@ -6622,8 +6634,7 @@
   (let [status (goal-run-status
                 state (:job/resident-workforce? (goal-job run-id)))]
     (transition-goal-run! run-id status
-                          {:agent.run/result state
-                           :agent.run/finished-at (now-ms)})))
+                          (visible-goal-result run-id state))))
 
 (defn enqueue-goal! [configuration run-id]
   (locking goal-workers
