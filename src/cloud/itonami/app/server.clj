@@ -6385,6 +6385,37 @@
                (bots/hand-off! config session from-bot-id (:to body)
                                {:task (:task body) :depth (:depth body)})))
 
+      ;; ── the name ──────────────────────────────────────────────────
+      ;; Its own route rather than a key on the catch-all below, because the
+      ;; agent surface needs the same verb and must not be given the whole
+      ;; attribute map to do it with. `/api/agent-bots/:id/model` is the
+      ;; precedent: the handler builds the update, so an extra request key
+      ;; cannot reach a grant.
+      (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)/name"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/name")
+            body (read-json exchange)]
+        ;; Spelled here as well as at the handler boundary, as `/api/bots/:id`
+        ;; is and for its reason: `route-scan` reads the clause, so a gate left
+        ;; only at the boundary records a protected route as UNAUTHENTICATED in
+        ;; the registry an audit reads.
+        (require-human-session! exchange)
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (bots/rename! config session bot-id (:name body)
+                      {:by :person :restore? (boolean (:restore body))})
+        (send! exchange 200 (bots/overview config session)))
+
+      ;; ── the trajectory ────────────────────────────────────────────
+      ;; A read, so no CSRF: it changes nothing and `owned!` inside is the
+      ;; whole authorization. Answerable at any stage of the run, which is
+      ;; what it is for.
+      (and (= method "GET")
+           (bot-id-from path #"/api/bots/([^/]+)/runs/[^/]+/trajectory"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/runs/[^/]+/trajectory")
+            run-id (bot-id-from path #"/api/bots/[^/]+/runs/([^/]+)/trajectory")]
+        (require-human-session! exchange)
+        (send! exchange 200 (bots/trajectory session bot-id run-id)))
+
       (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)/archive"))
       (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/archive")]
         (require-origin! exchange config)
@@ -6854,6 +6885,36 @@
         (send! exchange 200
                {:bot (some #(when (= bot-id (:id %)) %)
                            (:bots (bots/overview config session)))}))
+
+      ;; Renaming a peer, for the same reason and with the same shape as model
+      ;; selection above: the handler builds the update, so the only thing this
+      ;; route can change is the label. `:bot/role` -- the governed role from
+      ;; the reviewed registry -- is not reachable from here, so a Bot naming a
+      ;; peer "compliance reviewer" has said what it thinks that peer does and
+      ;; has granted it nothing. `by` names the Bot doing the renaming and is
+      ;; checked by `owned!`, not taken on the caller's word.
+      (and (= method "POST")
+           (bot-id-from path #"/api/agent-bots/([^/]+)/name"))
+      (let [bot-id (bot-id-from path #"/api/agent-bots/([^/]+)/name")
+            body (read-json exchange)]
+        (require-app-session! exchange)
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (bots/rename! config session bot-id (:name body)
+                      {:by :bot :by-bot-id (:by body)
+                       :restore? (boolean (:restore body))})
+        (send! exchange 200
+               {:bot (some #(when (= bot-id (:id %)) %)
+                           (:bots (bots/overview config session)))}))
+
+      ;; Reading a peer's trajectory. A read of an owned Bot's own receipt
+      ;; ledger, so it needs nothing the messages route below does not.
+      (and (= method "GET")
+           (bot-id-from path #"/api/agent-bots/([^/]+)/runs/[^/]+/trajectory"))
+      (let [bot-id (bot-id-from path #"/api/agent-bots/([^/]+)/runs/[^/]+/trajectory")
+            run-id (bot-id-from path #"/api/agent-bots/[^/]+/runs/([^/]+)/trajectory")]
+        (require-app-session! exchange)
+        (send! exchange 200 (bots/trajectory session bot-id run-id)))
 
       (and (= method "GET")
            (bot-id-from path #"/api/agent-bots/([^/]+)/messages"))

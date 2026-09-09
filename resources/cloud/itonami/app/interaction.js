@@ -10257,6 +10257,139 @@
       if (parsed.toDateString() === yesterday.toDateString()) return '昨日';
       return new Intl.DateTimeFormat('ja-JP', {month:'numeric', day:'numeric'}).format(parsed);
     };
+    // ── the trajectory ──────────────────────────────────────────────────
+    //
+    // The ordered steps of one run: each tool call joined to its own
+    // observation, at whatever stage the run has reached. The step with no
+    // observation yet is the one the Bot is on, so it is marked rather than
+    // hidden -- that row is the answer when you open this mid-run.
+    //
+    // Every row here comes from the host's own receipt ledger. Nothing a
+    // model SAID appears; a row means a call ran, and the digest is of the
+    // tool's real output.
+    const botsTrajectoryState = {open:false, runId:null, loading:false, data:null};
+    const botsTrajectoryOutcome = {
+      running:['…', '実行中'], ok:['✓', '完了'], failed:['×', '失敗']
+    };
+    const botsTrajectoryLabel = (step) => {
+      if (step.kind === 'action') return step.tool || 'tool';
+      const named = {
+        'plan/recorded':'計画を記録',
+        'run/started':'run 開始',
+        'run/submitted':'run 投入',
+        'run/checkpointed':'run 中断（継続予定）',
+        'run/cancelled':'run 中止',
+        'run/failed':'run 失敗',
+        'run/no-op-completed':'変更なしで完了',
+        'verifier/step-passed':'step を検証',
+        'verifier/goal-passed':'goal を検証',
+        'subagent/started':'子 run 開始',
+        'subagent/succeeded':'子 run 完了',
+        'subagent/failed':'子 run 失敗'
+      };
+      return named[step.event] || step.event || step.kind;
+    };
+    const renderBotsTrajectory = (data) => {
+      const list = $('#bots-trajectory-list');
+      const status = $('#bots-trajectory-status');
+      list.replaceChildren();
+      if (!data) {
+        status.textContent = botsTrajectoryState.loading ? '読み込んでいます…' : '';
+        return;
+      }
+      // Not the same answer as an empty trajectory, and it must not read as
+      // one: a run with no ledger did not do nothing, it recorded nothing.
+      if (!data['available?']) {
+        status.textContent = data.reason || 'この run の経路は取得できませんでした。';
+        return;
+      }
+      const counts = data.counts || {};
+      const usage = data.usage || {};
+      const tokens = usage.total_tokens ?? usage.totalTokens ?? 0;
+      status.textContent =
+        `${data.state}${data.phase && data.state === 'running' ? ` · ${data.phase}` : ''}` +
+        ` · ${counts.actions || 0} 手` +
+        `${counts.running ? ` · 実行中 ${counts.running}` : ''}` +
+        `${counts.failed ? ` · 失敗 ${counts.failed}` : ''}` +
+        `${counts.artifacts ? ` · 成果物 ${counts.artifacts}` : ''}` +
+        `${tokens ? ` · ${tokens} tokens` : ''}` +
+        `${data['at-cap?']
+            ? ` · 台帳上限 ${data['ledger-cap']} に達しており、古い手は失われています`
+            : ''}`;
+      if (!data.steps.length) {
+        list.append(make('li', 'bots-trajectory__detail',
+                         'この run はまだ 1 手も記録していません。'));
+        return;
+      }
+      data.steps.forEach((step, index) => {
+        const row = make('li', 'bots-trajectory__step');
+        const outcome = step.kind === 'action' ? (step.outcome || 'ok') : 'event';
+        row.dataset.outcome = outcome;
+        const [mark, word] = botsTrajectoryOutcome[outcome] || ['·', ''];
+        const marker = make('span', 'bots-trajectory__index', `${index + 1}`);
+        marker.title = word || botsTrajectoryLabel(step);
+        const copy = make('div');
+        copy.append(make('span', 'bots-trajectory__tool',
+                         `${mark} ${botsTrajectoryLabel(step)}`));
+        const detail = [];
+        if (step['step-title']) detail.push(step['step-title']);
+        if (step['start-evicted?']) detail.push('開始記録は台帳から失われています');
+        if (step['error-type']) detail.push(`${step['error-type']}${step.message ? `: ${step.message}` : ''}`);
+        else if (step.message) detail.push(step.message);
+        if (step['output-sha256']) {
+          detail.push(`出力 sha256 ${String(step['output-sha256']).slice(0, 12)}…`);
+        }
+        (step.artifacts || []).forEach((artifact) => {
+          detail.push(`書き込み: ${artifact.path || (artifact.paths || []).join(', ')}`);
+        });
+        if (step.kind !== 'action' && step.data && !detail.length) {
+          detail.push(Object.keys(step.data).length
+            ? Object.entries(step.data)
+                .map(([key, value]) => `${key}=${typeof value === 'object'
+                  ? JSON.stringify(value).slice(0, 80) : value}`)
+                .join(' · ')
+            : '');
+        }
+        detail.filter(Boolean).forEach((line) => {
+          copy.append(make('div', 'bots-trajectory__detail', line));
+        });
+        const cost = make('span', 'bots-trajectory__cost',
+          step['duration-ms'] !== undefined && step['duration-ms'] !== null
+            ? `${Math.round(step['duration-ms'] / 100) / 10}s`
+            : (step.at ? botsCompactTime(step.at) : ''));
+        row.append(marker, copy, cost);
+        list.append(row);
+      });
+    };
+    const loadBotsTrajectory = async () => {
+      const botId = botsState.selected;
+      const runId = botsTrajectoryState.runId;
+      if (!botId || !runId) return;
+      botsTrajectoryState.loading = true;
+      // Only blank the list when there is nothing to keep. A run in progress
+      // reloads this on every phase event, and clearing each time would flash
+      // the steps you were reading out of the page several times a second.
+      if (!botsTrajectoryState.data) renderBotsTrajectory(null);
+      try {
+        const request = await fetch(
+          `/api/bots/${botId}/runs/${encodeURIComponent(runId)}/trajectory`,
+          {cache:'no-store'});
+        const data = await request.json();
+        botsTrajectoryState.loading = false;
+        botsTrajectoryState.data = data;
+        renderBotsTrajectory(data);
+      } catch (error) {
+        botsTrajectoryState.loading = false;
+        $('#bots-trajectory-status').textContent = error.message;
+      }
+    };
+    const setBotsTrajectoryOpen = (open, runId) => {
+      botsTrajectoryState.open = open;
+      if (runId && runId !== botsTrajectoryState.runId) botsTrajectoryState.data = null;
+      if (runId) botsTrajectoryState.runId = runId;
+      $('#bots-trajectory-panel').hidden = !open;
+      if (open) loadBotsTrajectory();
+    };
     const renderBotsRun = (turn) => {
       const node = $('#bots-run');
       node.replaceChildren();
@@ -10272,7 +10405,29 @@
       row.append(make('span', 'bots-run__meta',
         `${turn['elapsed-seconds'] || 0}秒 · ${turn['tool-count'] || 0} tools · ${tokens} tokens`));
       if (provider) row.append(make('span', 'bots-run__meta', provider));
+      // Open the steps from the run they belong to, at whatever stage it is
+      // in. Offered for every run: a run without a ledger says so itself,
+      // and hiding the control would make "no steps recorded" and "no such
+      // question" look like the same thing.
+      const trajectoryButton = make('button', 'tool-button', '経路を見る');
+      trajectoryButton.type = 'button';
+      trajectoryButton.setAttribute('aria-expanded',
+        String(botsTrajectoryState.open && botsTrajectoryState.runId === turn.id));
+      trajectoryButton.setAttribute('aria-controls', 'bots-trajectory-panel');
+      trajectoryButton.addEventListener('click', () => {
+        const showing = botsTrajectoryState.open && botsTrajectoryState.runId === turn.id;
+        setBotsTrajectoryOpen(!showing, turn.id);
+        trajectoryButton.setAttribute('aria-expanded', String(!showing));
+      });
+      row.append(trajectoryButton);
       node.append(row);
+      // A trajectory left open follows the run it is open on. Without this it
+      // freezes at the moment it was opened while the Bot keeps working --
+      // a stale list that looks exactly like a finished one.
+      if (botsTrajectoryState.open && botsTrajectoryState.runId === turn.id
+          && !botsTrajectoryState.loading) {
+        loadBotsTrajectory();
+      }
       if (turn.objective) node.append(make('div', 'bots-run__objective', turn.objective));
       const plan = turn.job?.plan || [];
       if (plan.length) {
@@ -11110,6 +11265,70 @@
         else if (Number.isFinite(options.scrollTop)) scroll.scrollTop = options.scrollTop;
       });
     };
+    // ── the name ────────────────────────────────────────────────────────
+    //
+    // A Bot's name should say what it is FOR. It is the only thing read
+    // before deciding whether to open one, and it is the first thing to go
+    // stale: a Bot named after the errand that created it keeps that name
+    // long after the errand is done.
+    //
+    // Double-click the title to change it. Enter and F2 do the same from the
+    // keyboard, because a rename only reachable by pointer is a rename only
+    // some people have. Escape abandons; blur saves, since leaving a field
+    // you typed into means you meant it.
+    const botsRenameState = {open:false, botId:null};
+    const botsRenameCancel = () => {
+      botsRenameState.open = false;
+      botsRenameState.botId = null;
+      $('#bots-titlebar-rename').hidden = true;
+      $('#bots-titlebar-name').hidden = false;
+      renderBotsThread();
+    };
+    const botsRenameOpen = () => {
+      const bot = botsState.bots.find((candidate) => candidate.id === botsState.selected);
+      if (!bot) return;
+      const field = $('#bots-titlebar-rename');
+      botsRenameState.open = true;
+      botsRenameState.botId = bot.id;
+      field.value = bot.name || '';
+      field.hidden = false;
+      $('#bots-titlebar-name').hidden = true;
+      field.focus();
+      field.select();
+    };
+    const botsRenameCommit = async () => {
+      if (!botsRenameState.open) return;
+      const botId = botsRenameState.botId;
+      const bot = botsState.bots.find((candidate) => candidate.id === botId);
+      const next = $('#bots-titlebar-rename').value.replace(/\s+/g, ' ').trim();
+      // Unchanged and empty are the same non-event: neither is a rename, and
+      // sending either would file a `:person` name-source that stops workforce
+      // provisioning from ever refreshing this name again.
+      if (!next || (bot && next === bot.name)) {
+        botsRenameCancel();
+        return;
+      }
+      botsRenameState.open = false;
+      $('#bots-titlebar-rename').hidden = true;
+      $('#bots-titlebar-name').hidden = false;
+      try {
+        applyBotsOverview(await postJSON(`/api/bots/${botId}/name`, {name:next}, true));
+        botsSetStatus(`名前を「${next}」に変更しました。`);
+      } catch (error) {
+        botsSetStatus(error.message);
+        renderBotsThread();
+      }
+    };
+    const botsRenameRestore = async () => {
+      const botId = botsState.selected;
+      if (!botId) return;
+      try {
+        applyBotsOverview(await postJSON(`/api/bots/${botId}/name`, {restore:true}, true));
+        botsSetStatus('登録簿の名前に戻しました。');
+      } catch (error) {
+        botsSetStatus(error.message);
+      }
+    };
     const renderBotsThread = () => {
       const bot = botsState.bots.find((candidate) => candidate.id === botsState.selected);
       if (!bot) {
@@ -11131,6 +11350,29 @@
       const panel = $('#bots-thread-panel');
       panel.replaceChildren();
       panel.append(make('strong', 'bots-settings__title', 'Bot設定'));
+      // Who chose this name. Without it a projected name and a chosen one look
+      // identical, and the difference decides whether the next `bots provision`
+      // will overwrite it.
+      const nameCard = make('div', 'bots-card');
+      nameCard.append(make('strong', null, '名前（役割）'));
+      nameCard.append(make('div', null, bot.name));
+      nameCard.append(make('div', 'bots-permission__help',
+        bot['name-source'] === 'bot'
+          ? `別の Bot が付けた名前です${bot['named-by'] ? `（${bot['named-by']}）` : ''}。`
+          : bot['name-source'] === 'person'
+            ? 'あなたが付けた名前です。職務Botの照合でも上書きされません。'
+            : bot['workforce-key']
+              ? '登録簿から投影された名前です。照合のたびに更新されます。'
+              : '作成時に付けた名前です。'));
+      if (bot['projected-name']) {
+        nameCard.append(make('div', 'bots-permission__help',
+          `登録簿の名前: ${bot['projected-name']}`));
+        const restore = make('button', 'tool-button', '登録簿の名前に戻す');
+        restore.type = 'button';
+        restore.addEventListener('click', botsRenameRestore);
+        nameCard.append(restore);
+      }
+      panel.append(nameCard);
       panel.append(make('div', null,
         `届く範囲: ${bot['admitted-tools'].length} 個のツール` +
         `${bot['writes?']
@@ -11595,6 +11837,15 @@
     const selectBot = async (botId) => {
       botsState.selected = botId;
       botsState.routines = [];
+      // Both of these belong to the Bot you were just looking at. A rename
+      // field carrying one Bot's name over another Bot's title would save the
+      // wrong name onto the wrong Bot; a trajectory left open would show the
+      // previous Bot's run under this one's header.
+      if (botsRenameState.open) botsRenameCancel();
+      botsTrajectoryState.runId = null;
+      botsTrajectoryState.data = null;
+      $('#bots-trajectory-panel').hidden = true;
+      botsTrajectoryState.open = false;
       const selectedBot = botsState.bots.find((bot) => bot.id === botId);
       botsState.latestTurn = selectedBot?.['last-turn'] || null;
       renderBotsRail();
@@ -11980,6 +12231,21 @@
         button.disabled = false;
       }
     });
+    $('#bots-titlebar-name').addEventListener('dblclick', botsRenameOpen);
+    $('#bots-titlebar-name').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === 'F2') {
+        event.preventDefault();
+        botsRenameOpen();
+      }
+    });
+    $('#bots-titlebar-rename').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') { event.preventDefault(); botsRenameCommit(); }
+      if (event.key === 'Escape') { event.preventDefault(); botsRenameCancel(); }
+    });
+    $('#bots-titlebar-rename').addEventListener('blur', botsRenameCommit);
+    $('#bots-trajectory-close').addEventListener('click', () =>
+      setBotsTrajectoryOpen(false));
+    $('#bots-trajectory-refresh').addEventListener('click', loadBotsTrajectory);
     $('#bots-quality').addEventListener('click', () =>
       setBotsQualityOpen($('#bots-quality').getAttribute('aria-expanded') !== 'true'));
     $('#bots-quality-close').addEventListener('click', () => setBotsQualityOpen(false));

@@ -5041,3 +5041,249 @@
            (:reason (admit (get-in @store/state [:bots :bots bot-id])
                            [{:turn/usage {:total_tokens 999999999}}])))
         "allowed-because-unbounded must not read as allowed-because-within")))
+
+;; ── the name says the role ──────────────────────────────────────────────
+;;
+;; Two doors onto one field: a person double-clicking the title, and a peer
+;; Bot through `bot_rename`. What these tests hold is that the second door is
+;; a LABEL door -- it must not reach a grant or the governed role -- and that
+;; the name survives the thing that used to eat it, workforce provisioning.
+
+(deftest a-person-renaming-a-bot-is-recorded-as-the-person
+  (with-store
+    (fn []
+      (let [b (make-bot alice {:name "調べもの"})
+            bot-id (:bot/id b)]
+        (bots/rename! nil alice bot-id "  価格の\n見直し  " {:by :person})
+        (let [public (some #(when (= bot-id (:id %)) %)
+                           (:bots (bots/overview nil alice)))]
+          (is (= "価格の 見直し" (:name public))
+              "whitespace is collapsed to one line rather than refused")
+          (is (= "person" (:name-source public)))
+          (is (nil? (:named-by public))))))))
+
+(deftest a-bot-renaming-a-peer-changes-the-label-and-nothing-else
+  (with-store
+    (fn []
+      (let [target (make-bot alice {:name "bot-a" :writes? false})
+            namer (make-bot alice {:name "bot-b"})
+            bot-id (:bot/id target)
+            before (get-in @store/state [:bots :bots bot-id])]
+        (bots/rename! nil alice bot-id "compliance reviewer"
+                      {:by :bot :by-bot-id (:bot/id namer)})
+        (let [after (get-in @store/state [:bots :bots bot-id])
+              public (some #(when (= bot-id (:id %)) %)
+                           (:bots (bots/overview nil alice)))]
+          (is (= "compliance reviewer" (:name public)))
+          (is (= "bot" (:name-source public)))
+          (is (= (:bot/id namer) (:named-by public)))
+          ;; The point of the whole route. A name is a claim about a role; it
+          ;; must not BE one.
+          (is (= (:bot/tools before) (:bot/tools after)))
+          (is (= (:bot/accounts before) (:bot/accounts after)))
+          (is (= (:bot/writes? before) (:bot/writes? after)))
+          (is (= (:bot/omakase? before) (:bot/omakase? after)))
+          (is (= (:bot/role before) (:bot/role after))
+              "the governed role comes from the reviewed registry, never from a rename"))))))
+
+(deftest a-rename-attributed-to-a-bot-somebody-else-owns-is-refused
+  ;; And refused for the reason it names: `owned!` throws `:bot/forbidden`, so
+  ;; a run that failed some other way cannot be counted as this check working.
+  (with-store
+    (fn []
+      (let [target (make-bot alice {:name "bot-a"})
+            stranger (make-bot bob {:name "bob's bot"})
+            error (try (bots/rename! nil alice (:bot/id target) "borrowed authority"
+                                     {:by :bot :by-bot-id (:bot/id stranger)})
+                       (catch clojure.lang.ExceptionInfo e e))]
+        (is (= :bot/forbidden (:type (ex-data error))))
+        (is (= "bot-a" (:bot/name (get-in @store/state
+                                          [:bots :bots (:bot/id target)])))
+            "the refusal left the name alone")))))
+
+(deftest a-name-must-be-one-non-empty-line-within-the-bound
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {:name "keep"}))
+            blank (try (bots/rename! nil alice bot-id "   " nil)
+                       (catch clojure.lang.ExceptionInfo e e))
+            ;; Exactly at the bound passes and one over fails -- the pair that
+            ;; makes the comparison itself observable. Without the boundary
+            ;; case, flipping `>` to `>=` here would keep every test green.
+            at-bound (apply str (repeat bot/max-name "あ"))
+            over (apply str (repeat (inc bot/max-name) "あ"))]
+        (is (= :bot/invalid (:type (ex-data blank))))
+        (is (= :bot/name (:field (ex-data blank))))
+        (bots/rename! nil alice bot-id at-bound nil)
+        (is (= at-bound (:bot/name (get-in @store/state [:bots :bots bot-id]))))
+        (let [error (try (bots/rename! nil alice bot-id over nil)
+                         (catch clojure.lang.ExceptionInfo e e))]
+          (is (= :bot/invalid (:type (ex-data error))))
+          (is (= at-bound (:bot/name (get-in @store/state [:bots :bots bot-id])))
+              "the refused name did not partly land"))))))
+
+(deftest provisioning-keeps-a-chosen-name-and-refreshes-an-unchosen-one
+  ;; Both directions, because only one of them was ever broken and only the
+  ;; pair shows which. Before this, `provision!` rebuilt `:bot/name` from the
+  ;; catalog on every tick: a rename lasted until the next reconcile and then
+  ;; reverted to a plausible name, saying nothing.
+  ;;
+  ;; Driven through the real `provision-workforce!` and a real catalog. A test
+  ;; that applied the preserving expression itself would pass whether or not
+  ;; provisioning contained it.
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [path] path)
+                    workspace-tools/orientation (constantly nil)]
+        (let [catalog (workforce-catalog [(engineer-entry) (qa-entry)])
+              _ (bots/provision-workforce! {} alice catalog)
+              named (fn [key] (->> (vals (get-in (store/snapshot) [:bots :bots]))
+                                   (some #(when (= key (:bot/workforce-key %)) %))))
+              engineer (named "cloud-itonami/engineer")
+              qa (named "cloud-itonami/qa")]
+          (is (= "Cloud Itonami · Engineer" (:bot/name engineer)))
+          (is (= "Cloud Itonami · QA" (:bot/name qa)))
+          (bots/rename! {} alice (:bot/id engineer) "価格の見直し" {:by :person})
+          ;; The registry then renames BOTH roles. One Bot was renamed by a
+          ;; person and must not move; the other was not and must follow.
+          (bots/provision-workforce!
+           {} alice
+           (workforce-catalog
+            [(assoc-in (engineer-entry) [:role :name] "Platform Engineer")
+             (assoc-in (qa-entry) [:role :name] "Release QA")]))
+          (is (= "価格の見直し" (:bot/name (named "cloud-itonami/engineer")))
+              "a chosen name survives a reconcile")
+          (is (= "Cloud Itonami · Release QA" (:bot/name (named "cloud-itonami/qa")))
+              "an unchosen name still follows the registry")
+          (is (= "Cloud Itonami · Platform Engineer"
+                 (:bot/projected-name (named "cloud-itonami/engineer")))
+              "the registry's own name is kept beside the override, not lost")
+          ;; And the way back: restore drops the override, and the next
+          ;; reconcile is free to move the name again.
+          (bots/rename! {} alice (:bot/id engineer) nil {:restore? true})
+          (is (= "Cloud Itonami · Platform Engineer"
+                 (:bot/name (named "cloud-itonami/engineer"))))
+          (bots/provision-workforce!
+           {} alice
+           (workforce-catalog
+            [(assoc-in (engineer-entry) [:role :name] "Staff Engineer")
+             (qa-entry)]))
+          (is (= "Cloud Itonami · Staff Engineer"
+                 (:bot/name (named "cloud-itonami/engineer")))
+              "after a restore the registry owns the name again"))))))
+
+;; ── the trajectory ──────────────────────────────────────────────────────
+
+(defn- goal-run-with-events! [session bot-id run-id events plan]
+  (store/transact!
+   (fn [state]
+     (-> state
+         (assoc-in [:bots :goal-jobs run-id]
+                   {:job/id run-id :job/bot bot-id :job/session session
+                    :job/objective "verify the repository"
+                    :job/run (agent-run/transition
+                              (agent-run/transition
+                               (agent-run/agent-run {:id run-id :goal "verify"} 1)
+                               :leased 2 {})
+                              :running 3 {})
+                    :job/plan plan :job/events events})
+         (assoc-in [:bots :turn-history bot-id]
+                   [{:turn/id run-id :turn/bot bot-id
+                     :turn/state :running :turn/phase :tool-executed
+                     :turn/goal? true :turn/objective "verify the repository"
+                     :turn/started-at "2026-09-09T00:00:00Z"}])))))
+
+(deftest a-trajectory-joins-each-action-to-its-own-observation
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {:name "walker"}))]
+        (goal-run-with-events!
+         alice bot-id "run-traj-1"
+         [{:event/id "e1" :event/kind :plan/recorded
+           :event/at "2026-09-09T00:00:00Z" :event/data {:steps 2}}
+          {:event/id "e2" :event/kind :action/started
+           :event/at "2026-09-09T00:00:01Z"
+           :event/data {:action/id "call-1" :tool "workspace_list" :step-id "s1"}}
+          {:event/id "e3" :event/kind :action/finished
+           :event/at "2026-09-09T00:00:02Z"
+           :event/data {:action/id "call-1" :tool "workspace_list" :step-id "s1"
+                        :duration-ms 812 :output-sha256 "abc123"}}
+          {:event/id "e4" :event/kind :action/started
+           :event/at "2026-09-09T00:00:03Z"
+           :event/data {:action/id "call-2" :tool "workspace_write_file" :step-id "s2"}}]
+         [{:step/id "s1" :step/title "read the tree" :step/state :verified
+           :step/depends-on #{}}
+          {:step/id "s2" :step/title "write the note" :step/state :pending
+           :step/depends-on #{"s1"}}])
+        (let [trajectory (bots/trajectory alice bot-id "run-traj-1")
+              steps (:steps trajectory)
+              actions (filterv #(= "action" (:kind %)) steps)]
+          (is (true? (:available? trajectory)))
+          ;; Four events, three steps: the finish folded into the start it
+          ;; belongs to rather than sitting beside it.
+          (is (= 3 (count steps)))
+          (is (= 2 (count actions)))
+          (is (= ["workspace_list" "workspace_write_file"] (mapv :tool actions)))
+          (is (= "ok" (:outcome (first actions))))
+          (is (= 812 (:duration-ms (first actions))))
+          (is (= "abc123" (:output-sha256 (first actions))))
+          (is (= "read the tree" (:step-title (first actions)))
+              "the plan step's title, joined by :step-id")
+          ;; The stage the run is actually at. An action that started and has
+          ;; not finished is the answer to "what is it doing now", so it must
+          ;; not read the same as one that finished.
+          (is (= "running" (:outcome (second actions))))
+          (is (nil? (:output-sha256 (second actions))))
+          (is (= 1 (get-in trajectory [:counts :running])))
+          (is (= 0 (get-in trajectory [:counts :failed])))
+          (is (false? (:at-cap? trajectory))))))))
+
+(deftest a-failed-action-keeps-the-reason-it-failed-for
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {:name "walker"}))]
+        (goal-run-with-events!
+         alice bot-id "run-traj-2"
+         [{:event/id "e1" :event/kind :action/started
+           :event/at "2026-09-09T00:00:01Z"
+           :event/data {:action/id "call-1" :tool "git_commit"}}
+          {:event/id "e2" :event/kind :action/failed
+           :event/at "2026-09-09T00:00:02Z"
+           :event/data {:action/id "call-1" :tool "git_commit"
+                        :error-type :workspace/dirty :message "uncommitted changes"}}]
+         [])
+        (let [step (first (:steps (bots/trajectory alice bot-id "run-traj-2")))]
+          (is (= "failed" (:outcome step)))
+          (is (= ":workspace/dirty" (:error-type step)))
+          (is (= "uncommitted changes" (:message step))))))))
+
+(deftest a-run-that-kept-no-step-ledger-says-so-rather-than-answering-empty
+  ;; The failure this projection is most likely to have. A plain chat turn
+  ;; records no goal job, and `[]` here would render as a Bot that took no
+  ;; steps -- indistinguishable from one whose ledger was never written.
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {:name "walker"}))]
+        (store/transact!
+         assoc-in [:bots :turn-history bot-id]
+         [{:turn/id "run-plain-1" :turn/bot bot-id
+           :turn/state :completed :turn/phase :completed
+           :turn/goal? false :turn/started-at "2026-09-09T00:00:00Z"}])
+        (let [trajectory (bots/trajectory alice bot-id "run-plain-1")]
+          (is (false? (:available? trajectory)))
+          (is (nil? (:steps trajectory)))
+          (is (str/includes? (:reason trajectory) "Goal"))
+          (is (= "completed" (:state trajectory))))
+        (let [missing (bots/trajectory alice bot-id "run-that-never-was")]
+          (is (false? (:available? missing)))
+          (is (nil? (:state missing))
+              "an unknown run and a run without a ledger are different answers"))))))
+
+(deftest a-trajectory-belongs-to-its-owner
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {:name "walker"}))
+            _ (goal-run-with-events! alice bot-id "run-traj-3" [] [])
+            error (try (bots/trajectory bob bot-id "run-traj-3")
+                       (catch clojure.lang.ExceptionInfo e e))]
+        (is (= :bot/forbidden (:type (ex-data error))))))))

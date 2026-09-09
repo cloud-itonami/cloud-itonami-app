@@ -194,8 +194,39 @@
   .bots-titlebar__identity{display:flex;align-items:center;gap:.625rem;min-width:0}
   .bots-titlebar__copy{display:grid;min-width:0;line-height:1.35}
   .bots-titlebar__name{font-weight:700;overflow:hidden;text-overflow:ellipsis;
-    white-space:nowrap;max-width:16rem}
+    white-space:nowrap;max-width:16rem;cursor:text;border-radius:.25rem;
+    padding:0 .125rem;margin:0 -.125rem}
+  .bots-titlebar__name:hover{background:var(--color-neutral-solid-gray-100)}
+  .bots-titlebar__name:focus-visible{outline:2px solid var(--color-key-900);
+    outline-offset:1px}
+  .bots-titlebar__rename{font:inherit;font-weight:700;max-width:16rem;
+    min-height:1.75rem;padding:0 .25rem;
+    border:1px solid var(--color-key-900);border-radius:.25rem;
+    background:var(--color-neutral-white);color:inherit}
   .bots-titlebar__status{font-size:.75rem;color:var(--color-neutral-solid-gray-600)}
+  .bots-titlebar__status[data-tone='warn']{color:var(--color-semantic-error-1)}
+  /* The trajectory. One row per step, the observation folded into the row
+     that started it, and the row that has no observation yet marked rather
+     than hidden -- that row is what the run is doing right now. */
+  .bots-trajectory-panel{padding:1rem;border-top:1px solid var(--color-neutral-solid-gray-200);
+    background:var(--color-neutral-white);max-height:60vh;overflow:auto}
+  .bots-trajectory__meta{font-size:.75rem;color:var(--color-neutral-solid-gray-600);
+    margin:.25rem 0}
+  .bots-trajectory__list{list-style:none;margin:.5rem 0 0;padding:0;display:grid;gap:.25rem}
+  .bots-trajectory__step{display:grid;grid-template-columns:1.5rem 1fr auto;gap:.5rem;
+    align-items:baseline;padding:.375rem .5rem;border-radius:.375rem;
+    border-left:3px solid var(--color-neutral-solid-gray-300);
+    background:var(--color-neutral-solid-gray-50);font-size:.8125rem}
+  .bots-trajectory__step[data-outcome='running']{border-left-color:var(--color-key-900)}
+  .bots-trajectory__step[data-outcome='failed']{border-left-color:var(--color-semantic-error-1)}
+  .bots-trajectory__step[data-outcome='ok']{border-left-color:var(--color-semantic-success-1)}
+  .bots-trajectory__index{color:var(--color-neutral-solid-gray-600);
+    font-variant-numeric:tabular-nums}
+  .bots-trajectory__tool{font-weight:700;word-break:break-all}
+  .bots-trajectory__detail{color:var(--color-neutral-solid-gray-600);
+    font-size:.75rem;word-break:break-all}
+  .bots-trajectory__cost{color:var(--color-neutral-solid-gray-600);
+    font-size:.75rem;font-variant-numeric:tabular-nums;white-space:nowrap}
   .project-select{min-height:2.5rem;max-width:18rem;border:1px solid var(--color-neutral-solid-gray-300);
     border-radius:.625rem;background:var(--color-neutral-white);padding:.4rem 2rem .4rem .75rem;font:inherit}
   .view{box-sizing:border-box;width:100%;padding:clamp(1rem,4vw,3rem);max-width:78rem}
@@ -2193,10 +2224,23 @@
                    :aria-expanded "false" :aria-controls "conversation-context-panel"
                    :title "このBotにProject、フォルダ、データを追加" :disabled true}
           "参照 0"]
+         ;; The title is the rename control. Double-click is the gesture the
+         ;; owner asked for; Enter and F2 are here because a gesture nobody can
+         ;; reach from the keyboard is a control only some people have. The
+         ;; input ships in the markup rather than being built in script so the
+         ;; label, the bound and the live region exist whether or not anything
+         ;; has been rendered into the page yet.
          [:div {:class "bots-titlebar__identity" :id "bots-titlebar-identity" :hidden true}
           [:span {:class "bot-avatar" :id "bots-titlebar-avatar"}]
           [:div {:class "bots-titlebar__copy"}
-           [:span {:class "bots-titlebar__name" :id "bots-titlebar-name"}]
+           [:span {:class "bots-titlebar__name" :id "bots-titlebar-name"
+                   :tabindex "0" :aria-keyshortcuts "Enter F2"
+                   :title "ダブルクリック（またはEnter）で名前を変更。名前はこのBotの役割を表します。"}]
+           [:label {:class "visually-hidden" :for "bots-titlebar-rename"}
+            "この Bot の役割"]
+           [:input {:class "bots-titlebar__rename" :id "bots-titlebar-rename"
+                    :type "text" :maxlength "60" :autocomplete "off" :hidden true
+                    :placeholder "役割を短く（例: 価格の見直し）"}]
            [:span {:class "bots-titlebar__status" :id "bots-titlebar-status"}]]]
          [:button {:class "tool-button" :id "bots-thread-tools" :type "button"
                    :aria-expanded "false" :aria-controls "bots-thread-panel"
@@ -2425,6 +2469,21 @@
             [:div {:class "bots-thread__panel" :id "bots-thread-panel" :hidden true}]
             [:div {:class "bots-thread__scroll" :id "bots-thread-scroll"}
              [:div {:class "bots-run" :id "bots-run" :hidden true}]
+             ;; In the thread, directly under the run it belongs to, rather
+             ;; than in a side panel: the question it answers is "what is this
+             ;; run doing right now", and an answer you have to leave the
+             ;; conversation to read is an answer for afterwards.
+             [:section {:class "bots-trajectory-panel" :id "bots-trajectory-panel"
+                        :hidden true :aria-label "この run の経路（trajectory）"}
+              [:div {:class "section-heading"}
+               (dds/heading 2 "経路（trajectory）" {:size "20"})
+               [:button {:class "tool-button" :id "bots-trajectory-refresh"
+                         :type "button"} "更新"]
+               [:button {:class "tool-button" :id "bots-trajectory-close"
+                         :type "button" :aria-label "経路を閉じる"} "閉じる"]]
+              [:p {:class "bots-trajectory__meta" :id "bots-trajectory-status"
+                   :role "status" :aria-live "polite"}]
+              [:ol {:class "bots-trajectory__list" :id "bots-trajectory-list"}]]
              [:ol {:class "bots-thread__messages" :id "bots-messages"}]]
             [:form {:class "bots-composer" :id "bots-form"}
              [:label {:class "bots-composer__label" :for "bots-input"} "何を頼みますか？"]
