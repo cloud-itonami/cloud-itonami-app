@@ -94,6 +94,43 @@
       (check! "connectors with no enabled tool are shown disabled, not dropped"
               (and (pos? usable) (< usable tiles))))
 
+    ;; The same set, by job (ADR-0094). The check that matters is not that the
+    ;; rows render — it is that the two views share ONE selection: a slot chip
+    ;; appearing because a tile was clicked is the only evidence that
+    ;; `botsState.picked` is the single answer both of them read.
+    (println "\n── apps are also chosen by the job they do ──")
+    (p/let [rows (.count (.locator page ".bots-slot"))
+            titles (.allTextContents (.locator page ".bots-slot__title"))
+            selects (.count (.locator page ".bots-slot__select"))
+            chips-before (.count (.locator page ".bots-slot__chip"))
+            ;; Read out of the DOM rather than named here. Which connectors are
+            ;; offerable depends on the OAuth clients THIS machine has
+            ;; configured, so a hard-coded id would make this test pass or fail
+            ;; on a fact about the developer's environment rather than about
+            ;; the picker.
+            offerable (.evaluate
+                       page
+                       "() => { const o = document.querySelector(
+                          '.bots-slot__select option:not([disabled]):not([value=\"\"])');
+                        return o ? o.value : null; }")
+            _ (when offerable
+                (.selectOption (.locator page ".bots-slot__select >> nth=0") offerable))
+            _ (.waitForTimeout page 300)
+            chips-after (.count (.locator page ".bots-slot__chip"))
+            pressed (.count (.locator page ".bots-tile[aria-pressed='true']"))]
+      (check! (str "the picker offers " rows " job rows") (pos? rows))
+      (check! "the rows are named by job, not by vendor"
+              (some #(= "カレンダー" %) titles))
+      (check! "each row offers a select" (= rows selects))
+      ;; A FAILED check rather than a skip when nothing is offerable: the grid
+      ;; assertions above already require at least one usable connector, so an
+      ;; environment with none is one this suite cannot measure — and saying so
+      ;; is not the same as saying the picker works.
+      (check! "at least one app is offerable, so the next two mean something"
+              (some? offerable))
+      (check! "choosing in a slot adds a chip" (= (inc chips-before) chips-after))
+      (check! "and the grid below shows the same app selected" (= 1 pressed)))
+
     (println "\n── the avatar picker ──")
     (p/let [_ (.fill page "#bots-service-search" "gmail")
             _ (.waitForTimeout page 300)
@@ -108,6 +145,8 @@
             suggestions (.count (.locator page ".bots-suggestion"))]
       (check! "search narrows the grid" (= 1 filtered))
       (check! "Next is enabled once something is picked" (not next-disabled))
+      (check! "clicking a tile is the same selection the slot rows read"
+              (= 2 (.count (.locator page ".bots-slot__chip"))))
       (check! "ten colours" (= 10 colors))
       (check! "eight glyphs" (= 8 glyphs))
       (check! "a suggestion is offered for the picked connector" (pos? suggestions))

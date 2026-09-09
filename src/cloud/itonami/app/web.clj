@@ -565,6 +565,43 @@
   .bots-tile__name{font-weight:600}
   .bots-tile__meta{font-size:.75rem;color:var(--color-neutral-solid-gray-600)}
   .bots-tile__check{color:var(--color-key-600);font-weight:700}
+  /* One row per job an outside app can do (ADR-0094). A label and a select,
+     because the question is 「which app is this Bot's calendar」 and a select
+     is what that question looks like -- the grid below answers 「what is
+     available」, which is a different question about the same set.
+     (Quoted with 「」 on purpose: a raw double quote here would end this
+     Clojure string, which is the hazard base-css names at the top of this
+     file. Written the wrong way first, caught by the compiler.) */
+  .bots-slots{display:grid;gap:.5rem;margin:0 0 .75rem}
+  /* Wraps on its own content, with no media query. The row lives inside a
+     panel, so the viewport width is the wrong thing to ask: at 880px the
+     workspace's 56rem shell break had already stacked the label above the
+     select while there was still room for both. `flex-wrap` puts the control
+     beside the label when it fits and under it when it does not, whatever the
+     panel happens to be. This also keeps app-css to the ONE breakpoint
+     core-test allows. */
+  .bots-slot{display:flex;flex-wrap:wrap;gap:.375rem .75rem;align-items:center}
+  .bots-slot__copy{display:grid;gap:.125rem;flex:0 1 13rem;min-width:0}
+  .bots-slot__title{font-weight:600}
+  .bots-slot__detail{font-size:.75rem;color:var(--color-neutral-solid-gray-600)}
+  .bots-slot__control{display:flex;flex-wrap:wrap;gap:.375rem;align-items:center;
+    flex:1 1 16rem;min-width:0}
+  .bots-slot__select{min-height:2.75rem;font:inherit;box-sizing:border-box;
+    flex:1 1 12rem;min-width:0;padding:.5rem .75rem;border-radius:.5rem;
+    border:1px solid var(--color-neutral-solid-gray-300);
+    background:var(--color-neutral-white);color:var(--color-neutral-solid-gray-700)}
+  .bots-slot__select:focus-visible{outline:4px solid var(--color-primitive-yellow-300)}
+  /* A chosen app is a chip with a remove control, not a second select. The
+     slot takes more than one app -- Microsoft 365 can be both the mail and the
+     calendar -- so a single-value control would be lying about the model. */
+  .bots-slot__chip{display:inline-flex;align-items:center;gap:.375rem;
+    padding:.25rem .5rem;border-radius:999px;font-size:.8125rem;
+    border:1px solid var(--color-key-600);background:var(--color-key-50)}
+  .bots-slot__remove{border:0;background:none;cursor:pointer;font:inherit;
+    line-height:1;padding:0 .125rem;color:var(--color-neutral-solid-gray-700)}
+  .bots-slot__remove:focus-visible{outline:4px solid var(--color-primitive-yellow-300)}
+  .bots-onboard__subhead{margin:1.25rem 0 .5rem;font-size:.875rem;
+    color:var(--color-neutral-solid-gray-700)}
   .bots-swatches{display:flex;flex-wrap:wrap;gap:.5rem;justify-content:center}
   .bots-swatch{border:2px solid transparent;border-radius:50%;padding:.1875rem;
     background:transparent;cursor:pointer;line-height:0}
@@ -2311,8 +2348,16 @@
              (dds/heading 2 "必要なら外部サービスを追加" {:size "28"})
              [:p {:class "view-lead"}
               "Bot は Cloud Itonami 専用workspaceを持ちます。Gmailなどは、その Bot の仕事に必要な場合だけ追加してください。何も選ばず進められます。"]
+             ;; Chosen by JOB first (ADR-0094). The grid below is the same set
+             ;; and the same selection, listed flat for searching; this answers
+             ;; the question somebody creating a Bot is actually holding.
+             [:div {:class "bots-slots" :id "bots-slots"}]
+             [:p {:class "form-help" :id "bots-slot-note" :role "status"
+                  :aria-live "polite"}]
+             [:h3 {:class "bots-onboard__subhead"} "すべてのアプリ"]
              [:input {:class "bots-search" :id "bots-service-search" :type "search"
-                      :placeholder "探す" :autocomplete "off"}]
+                      :placeholder "探す" :autocomplete "off"
+                      :aria-label "アプリを探す"}]
              [:div {:class "bots-grid" :id "bots-service-grid"}]
              [:p {:class "form-help" :id "bots-service-note"}]
              [:button {:class "primary-action" :id "bots-services-next" :type "button"}
