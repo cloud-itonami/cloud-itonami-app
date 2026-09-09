@@ -5406,3 +5406,18 @@
                                                      [alice alice-in-etzhayyim] "2026-08-16T00:00:00Z")]
                   (is (empty? (:started result)))
                   (is (empty? @submitted)))))))))))
+
+(deftest fresh-message-does-not-overwrite-yielded-goal-checkpoint
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {})) saved {:id "durable-goal" :goal? true :messages []}
+            calls (atom 0)]
+        (swap! store/state assoc-in [:bots :runs bot-id] saved)
+        (swap! store/state assoc-in [:bots :goal-jobs "durable-goal"]
+               {:job/bot bot-id :job/run {:agent.run/status :checkpointed}})
+        (with-redefs [provider/agent-turn (fn [& _] (swap! calls inc) {:content "answer" :tool-calls []})]
+          (let [e (try (bots/send! nil alice bot-id "new message") nil
+                       (catch clojure.lang.ExceptionInfo e e))]
+            (is (= :bot/goal-in-progress (:type (ex-data e))))
+            (is (= saved (get-in @store/state [:bots :runs bot-id])))
+            (is (zero? @calls))))))))
