@@ -30,7 +30,7 @@
 ;; failure CLAUDE.md's second question is about.
 
 (ns itonami-skills
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def ^:private fence "---")
 
@@ -77,7 +77,7 @@
   "The slash name. Only what a person can type without quoting: anything else
   becomes `-`, and a name that reduces to nothing is refused by `discover`."
   [n]
-  (-> (str n) str/trim str/lower-case (str/replace #"[^a-z0-9_-]+" "-")
+  (-> (str n) str/trim str/lower (str/replace #"[^a-z0-9_-]+" "-")
       (str/replace #"^-+|-+$" "")))
 
 (defn discover

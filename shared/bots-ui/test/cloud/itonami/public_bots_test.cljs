@@ -1,5 +1,5 @@
 (ns cloud.itonami.public-bots-test
- (:require [cljs.test :refer [deftest is run-tests]] [clojure.string :as str] [cloud.itonami.public-bots :as ui]))
+ (:require [cljs.test :refer [deftest is run-tests]] [kotoba.lang.text :as str] [cloud.itonami.public-bots :as ui]))
 (def directory {:personalized true :pool {:status "complete" :totals {:pooled "12000000"}}
  :items [{:id "org/lent" :name "Lent Bot" :funding {:status "not-accepting" :lending true :position "10000000"}}
          {:id "org/other" :name "Other Bot" :funding {:status "accepting" :lending false}}]})

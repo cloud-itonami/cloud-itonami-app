@@ -1,4 +1,4 @@
-(ns cloud.itonami.funding-role-test (:require [cljs.test :refer [deftest is run-tests]] [clojure.string :as str] [cloud.itonami.capital-ui :as ui]))
+(ns cloud.itonami.funding-role-test (:require [cljs.test :refer [deftest is run-tests]] [kotoba.lang.text :as str] [cloud.itonami.capital-ui :as ui]))
 (deftest investor-never-sees-launch-or-grant-forms
  (let [render #(pr-str (ui/panel (merge {:locale :ja :capital {:status "no-vault"} :funding {:terms {:fundingPolicy "yield-budget-v1"}}} %) {}))
        investor (render {}) operator (render {:funding-operator? true})]

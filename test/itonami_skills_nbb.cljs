@@ -9,7 +9,7 @@
 
 (ns itonami-skills-nbb
   (:require ["node:path" :as path]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :as t :refer [deftest is run-tests]]
             [nbb.classpath :as classpath]
             [nbb.core :refer [*file*]]))

@@ -12,7 +12,7 @@
 ;; locale draws.
 
 (ns itonami-text
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 ;; ---------------------------------------------------------------------------
 ;; colour

@@ -1,4 +1,4 @@
-(ns cloud.itonami.capital-client (:require [clojure.string :as str] [re-frame.core :as rf]))
+(ns cloud.itonami.capital-client (:require [kotoba.lang.text :as str] [re-frame.core :as rf]))
 (defonce transport (atom nil))
 (defn link-params [] (js/URLSearchParams. (subs (.-hash js/location) (min 1 (count (.-hash js/location))))))
 (defn link-project [] (.get (link-params) "capital"))

@@ -1,6 +1,6 @@
 (ns cloud.itonami.my-bots-ui-test
   (:require [cljs.test :refer [deftest is run-tests]]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.my-bots-ui :as ui]))
 
 (deftest signed-out-view-never-shows-private-state
