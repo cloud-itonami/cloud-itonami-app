@@ -40,6 +40,15 @@
                               :decision {:type "string" :enum ["approved" "rejected"]}}}}
    {:name "bot_cancel" :description "Cancel one active owned Bot run by its run id."
     :parameters {:type "object" :required ["bot_id" "run_id"]
+                 :properties {:bot_id {:type "string"} :run_id {:type "string"}}}}
+   {:name "bot_rename" :description "Rename one owned Bot so its name states the ROLE it plays -- what it is for, not the errand that created it. Write a short role noun phrase (\"経理の締め\", \"pricing reviewer\"), not a sentence and not a task. This changes the display label only: it cannot grant a tool, an account, a workspace, or an approval, and it does not touch the governed role a reviewed registry assigned. Pass `by` as your own bot id when one Bot renames another, so the record says who chose the name. `restore: true` drops the override and goes back to the name workforce provisioning projects from the registry."
+    :parameters {:type "object" :required ["bot_id"]
+                 :properties {:bot_id {:type "string"}
+                              :name {:type "string"}
+                              :by {:type "string"}
+                              :restore {:type "boolean"}}}}
+   {:name "bot_trajectory" :description "Read the ordered steps of one owned Bot run -- each tool call joined to its own observation (duration, output digest, artifacts, error), plus the plan and which steps a verifier passed. Answerable at any stage: an action that started and has not finished reads `running`, which is what the run is doing right now. `available? false` names why a run kept no step ledger; it is not the same as a run that did nothing. Host-observed receipts only -- a step here is a call that RAN, never a model sentence claiming one did."
+    :parameters {:type "object" :required ["bot_id" "run_id"]
                  :properties {:bot_id {:type "string"} :run_id {:type "string"}}}}])
 
 (def ^:private tool-names (into #{} (map :name) tools))
@@ -47,7 +56,9 @@
 (defn available? [configuration] (client/available? configuration))
 
 (defn call-tool [configuration name {:keys [bot_id text card_id decision run_id
-                                             from_bot_id to_bot_id task depth]}]
+                                             from_bot_id to_bot_id task depth
+                                             by restore]
+                                      :as input}]
   (case name
     "bots_list" (client/request! configuration :get "/api/agent-bots")
     "bot_messages" (client/request! configuration :get
@@ -74,5 +85,15 @@
     "bot_cancel" (client/request! configuration :post
                                    (str "/api/agent-bots/" bot_id
                                         "/messages/" run_id "/cancel") {})
+    ;; `(:name input)`, not the destructured `name`: that one is this
+    ;; function's first parameter and holds the TOOL's name. Reading it here
+    ;; would rename every Bot to "bot_rename".
+    "bot_rename" (client/request! configuration :post
+                                   (str "/api/agent-bots/" bot_id "/name")
+                                   {:name (:name input) :by by
+                                    :restore (boolean restore)})
+    "bot_trajectory" (client/request! configuration :get
+                                       (str "/api/agent-bots/" bot_id
+                                            "/runs/" run_id "/trajectory"))
     (throw (ex-info (str "unknown Bot tool: " name)
                     {:type :bot-tools/unknown-tool}))))

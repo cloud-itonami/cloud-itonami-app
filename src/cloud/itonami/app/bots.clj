@@ -1225,7 +1225,17 @@
         _ (when (or (contains? attrs :provider-id) (contains? attrs :model))
             (validate-provider-choice! configuration next-provider next-model))
         merged (cond-> existing
-                 (contains? attrs :name) (assoc :bot/name (:name attrs))
+                 ;; A name change carries WHO made it. Provisioning reads this
+                 ;; to tell a projected name from a chosen one; without it a
+                 ;; rename survives until the next workforce tick and then
+                 ;; reverts with nothing said. `:name-source` defaults to
+                 ;; `:person` because this function is only reachable from the
+                 ;; human surface; `rename!` is what passes `:bot`.
+                 (contains? attrs :name)
+                 (assoc :bot/name (:name attrs)
+                        :bot/name-source (or (:name-source attrs) :person)
+                        :bot/named-by (:named-by attrs)
+                        :bot/named-at (store/now))
                  (contains? attrs :avatar) (assoc :bot/avatar (:avatar attrs))
                  (contains? attrs :brief) (assoc :bot/brief (:brief attrs))
                  (contains? attrs :provider-id) (assoc :bot/provider-id (:provider-id attrs))
@@ -1262,6 +1272,78 @@
                  (contains? attrs :enabled?) (assoc :bot/enabled? (:enabled? attrs)))]
      (when replacing-managed-workspace? (bot-workspace/detach! existing))
      (store-bot! (bot/bot (assoc merged :bot/updated-at (store/now)))))))
+
+;; ── the name ───────────────────────────────────────────────────────────
+;;
+;; A Bot's name is what it is FOR, and it is the only part of a Bot that a
+;; person reads before deciding whether to open it. It is also the part most
+;; likely to go stale: a Bot named for the task that created it keeps that
+;; name after the task changes, and the sidebar then lists nine Bots by
+;; nine obsolete errands.
+;;
+;; So two doors, both narrow. A person renames by double-clicking the title.
+;; A peer Bot renames through `bot_rename`, which is why this is its own
+;; function rather than a key on `update!`: an agent-facing route that took
+;; the whole attribute map could widen a grant, and the one at
+;; `/api/agent-bots/:id/model` is the precedent for building the update here
+;; instead of forwarding the caller's body.
+;;
+;; What a rename CANNOT do is the point. `:bot/role` is the governed role
+;; from the reviewed registry; it is not touched here. A Bot that renames a
+;; peer changes a label, not what that peer is allowed to do, and a name
+;; claiming a role the registry did not grant grants nothing.
+
+(defn- clean-name
+  "One line, trimmed, within the Bot name bound.
+
+  Collapsing whitespace rather than rejecting it: a model asked for a name
+  will sometimes produce one with a newline in it, and a rename that fails on
+  that teaches nothing. Length is refused rather than truncated, because a
+  truncated role name reads as a different role."
+  [value]
+  (let [text (some-> value str (str/replace #"\s+" " ") str/trim not-empty)]
+    (when-not text
+      (throw (ex-info "名前が空です。この Bot の役割を短く言い切ってください。"
+                      {:type :bot/invalid :field :bot/name})))
+    (when (> (count text) bot/max-name)
+      (throw (ex-info (str "名前は " bot/max-name " 文字までです。")
+                      {:type :bot/invalid :field :bot/name :limit bot/max-name})))
+    text))
+
+(defn rename!
+  "Give one owned Bot a name that says what it does.
+
+  `by` is `:person` or `:bot`; `by-bot-id` names the peer when a Bot did it.
+  `restore?` drops the override and goes back to the name workforce
+  provisioning projects from the registry — the only way back once a rename
+  has told provisioning to stop overwriting this field."
+  ([configuration session bot-id name] (rename! configuration session bot-id name nil))
+  ([configuration session bot-id name {:keys [by by-bot-id restore?]}]
+   (let [existing (owned! session bot-id)
+         projected (:bot/projected-name existing)]
+     (cond
+       (and restore? projected)
+       (store-bot! (bot/bot (assoc existing
+                                   :bot/name projected
+                                   :bot/name-source nil
+                                   :bot/named-by nil
+                                   :bot/named-at nil
+                                   :bot/updated-at (store/now))))
+
+       restore?
+       (throw (ex-info "この Bot に登録簿の名前はありません。"
+                       {:type :bot/invalid :field :bot/projected-name}))
+
+       :else
+       (let [by (if (= :bot (some-> by clojure.core/name keyword)) :bot :person)
+             ;; A Bot naming a peer is named itself, and it must be one of
+             ;; this owner's Bots. `owned!` is the check, not the caller's
+             ;; word for it.
+             by-bot (when (and (= :bot by) by-bot-id) (owned! session by-bot-id))]
+         (update! configuration session bot-id
+                  {:name (clean-name name)
+                   :name-source by
+                   :named-by (or (:bot/id by-bot) (when (= :bot by) by-bot-id))}))))))
 
 (defn archive!
   "Disable a Bot without deleting its conversation. Deleting would take the
@@ -1413,12 +1495,29 @@
                  job-role (get-in entry [:role :job])
                  cadence (long (or (:cadence-minutes entry)
                                    (get-in entry [:profile :profile/cadence-minutes])))
+                 projected-name (str (get-in entry [:business :name]) " · "
+                                     (get-in entry [:role :name]))
                  b (bot/bot
                     {:bot/id id
                      :bot/organization (:organization-id session)
                      :bot/owner (:user-id session)
-                     :bot/name (str (get-in entry [:business :name]) " · "
-                                    (get-in entry [:role :name]))
+                     ;; Same contract as `:bot/omakase?` above, for the same
+                     ;; reason: a name somebody chose survives a registry
+                     ;; refresh. Without this a rename lasted until the next
+                     ;; `bots provision` and then reverted -- and reverting is
+                     ;; the failure that says nothing, because the projected
+                     ;; name is a plausible name.
+                     ;;
+                     ;; The registry's own name is kept beside it rather than
+                     ;; discarded, so `rename! :restore? true` has somewhere to
+                     ;; go back to and a reader can see the two disagree.
+                     :bot/name (if (:bot/name-source existing)
+                                 (:bot/name existing)
+                                 projected-name)
+                     :bot/name-source (:bot/name-source existing)
+                     :bot/named-by (:bot/named-by existing)
+                     :bot/named-at (:bot/named-at existing)
+                     :bot/projected-name projected-name
                      :bot/avatar (get workforce-avatar job-role bot/default-avatar)
                      :bot/brief (:objective entry)
                      ;; From the registry's profile, not a literal. These
@@ -1972,6 +2071,16 @@
      ;; the same did rather than renaming the Bot.
      :did (bot-identity/bot-did (:bot/id b))
      :name (:bot/name b)
+     ;; Where the name came from, so a screen can say it. Absent means nobody
+     ;; renamed it: for a workforce Bot that is the registry's projection, and
+     ;; for a hand-made one it is what its creator typed. `:projected-name` is
+     ;; present only when the two can differ, and it is what the revert goes
+     ;; back to.
+     :name-source (some-> (:bot/name-source b) name)
+     :named-by (:bot/named-by b)
+     :named-at (:bot/named-at b)
+     :projected-name (when (not= (:bot/projected-name b) (:bot/name b))
+                       (:bot/projected-name b))
      :avatar {:color (name (:avatar/color display-avatar))
               :glyph (name (:avatar/glyph display-avatar))
               :variant (:variant derived-face)}
@@ -3963,6 +4072,182 @@
                    :pending-followups (count (queued-followups (:turn/id stored))))
       (:turn/goal? stored)
       (assoc :job (public-goal-job (goal-job (:turn/id stored)))))))
+
+;; ── the trajectory ──────────────────────────────────────────────────────
+;;
+;; What the Bot ACTUALLY DID, in order, one entry per step, at whatever stage
+;; the run is in when you ask.
+;;
+;; Every part of this was already being recorded. `:job/events` has carried
+;; `plan/recorded`, `action/started`, `action/finished`, `action/failed`,
+;; `verifier/step-passed`, `verifier/goal-passed`, `subagent/*` and the
+;; `run/*` lifecycle since the goal machinery landed, and the only surface
+;; that read them counted one kind of them and printed "N execution
+;; receipts". A number is not a trajectory: it cannot say which tool ran
+;; third, what it cost, whether its output was ever verified, or which of two
+;; failures came first.
+;;
+;; The shape follows the agent harnesses that publish trajectories -- DeepSeek
+;; being the reference the owner named -- in the one respect that matters:
+;; an action and its observation are ONE entry. The ledger stores them as two
+;; events joined by `:action/id`, which is right for an append-only ledger and
+;; wrong for a reader, who has to hold the started event in their head until
+;; the matching finish scrolls past. Joining them here is the whole projection.
+;;
+;; An action that started and has not finished is reported `running` rather
+;; than dropped. That case IS the necessary stage: a person opening this while
+;; a Bot works is asking what it is doing now, and the answer is the entry
+;; with no observation yet.
+;;
+;; Model prose is deliberately absent. The ledger is host-observed
+;; (`append-goal-event!`: "provider prose never enters it"), so a step here is
+;; a call that ran, never a sentence claiming one did. `:output-sha256` is the
+;; digest of the tool's own output, which is what makes this a receipt.
+
+(def ^:private trajectory-ledger-cap
+  "The bound `append-goal-event!` keeps. A run at the cap has lost its oldest
+  steps, and a reader must be told that rather than shown a short list."
+  200)
+
+(defn- trajectory-steps
+  "Join the ledger's started/finished pairs into one ordered list of steps."
+  [events plan]
+  (let [titles (into {} (map (juxt :step/id :step/title)) plan)
+        observations
+        (into {}
+              (keep (fn [event]
+                      (when (#{:action/finished :action/failed} (:event/kind event))
+                        [(get-in event [:event/data :action/id]) event])))
+              events)]
+    (->> events
+         (keep-indexed
+          (fn [index event]
+            (let [kind (:event/kind event)
+                  data (:event/data event)
+                  action-id (:action/id data)
+                  done (when action-id (get observations action-id))
+                  done-data (:event/data done)
+                  step-id (:step-id data)]
+              ;; One entry per action, anchored at the START -- that is where
+              ;; the step belongs in time. The finish is folded in, and then
+              ;; skipped when the loop reaches it, so a completed action is
+              ;; not counted twice.
+              (cond
+                (= :action/started kind)
+                {:index index
+                 :kind "action"
+                 :at (:event/at event)
+                 :tool (:tool data)
+                 :step-id step-id
+                 :step-title (get titles step-id)
+                 :child-run-id (:child-run-id data)
+                 :outcome (cond (nil? done) "running"
+                                (= :action/failed (:event/kind done)) "failed"
+                                :else "ok")
+                 :finished-at (:event/at done)
+                 :duration-ms (:duration-ms done-data)
+                 :output-sha256 (:output-sha256 done-data)
+                 :artifacts (vec (:artifacts done-data))
+                 :error-type (some-> (:error-type done-data) str)
+                 :message (:message done-data)}
+
+                (#{:action/finished :action/failed} kind)
+                ;; Only when its `action/started` fell off the bounded ledger.
+                ;; Reported, not dropped: a receipt whose start was evicted is
+                ;; still evidence that the tool ran.
+                (when-not (some #(and (= :action/started (:event/kind %))
+                                      (= action-id (get-in % [:event/data :action/id])))
+                                events)
+                  {:index index
+                   :kind "action"
+                   :at (:event/at event)
+                   :tool (:tool data)
+                   :step-id step-id
+                   :step-title (get titles step-id)
+                   :outcome (if (= :action/failed kind) "failed" "ok")
+                   :start-evicted? true
+                   :duration-ms (:duration-ms data)
+                   :output-sha256 (:output-sha256 data)
+                   :artifacts (vec (:artifacts data))
+                   :error-type (some-> (:error-type data) str)
+                   :message (:message data)})
+
+                :else
+                {:index index
+                 :kind (namespace kind)
+                 :event (str (namespace kind) "/" (name kind))
+                 :at (:event/at event)
+                 :step-id step-id
+                 :step-title (get titles step-id)
+                 :tool (:tool data)
+                 ;; The event's own payload, kept whole. These kinds are few
+                 ;; and each carries a different set of keys; selecting fields
+                 ;; per kind here would drop whichever one is added next and
+                 ;; say nothing about having dropped it.
+                 :data data})))
+          )
+         (remove nil?)
+         vec)))
+
+(defn trajectory
+  "The ordered steps of one run, at whatever stage it has reached.
+
+  `:available? false` when this run kept no step ledger, with the reason
+  named. That is not the same answer as an empty trajectory and must not
+  render as one: only a Goal run records steps, and a plain chat turn
+  producing `[]` here would read as a Bot that did nothing."
+  [session bot-id run-id]
+  (owned! session bot-id)
+  (let [stored (some #(when (= (str run-id) (:turn/id %)) %)
+                     (get-in (snapshot) [:turn-history bot-id]))
+        job (goal-job (str run-id))
+        events (vec (:job/events job))
+        plan (vec (:job/plan job))
+        steps (trajectory-steps events plan)
+        actions (filterv #(= "action" (:kind %)) steps)]
+    (cond
+      (nil? stored)
+      {:run-id (str run-id) :bot-id bot-id :available? false
+       :reason "この run は turn 履歴にありません。"}
+
+      (nil? job)
+      {:run-id (str run-id) :bot-id bot-id :available? false
+       :state (name (:turn/state stored))
+       :reason (if (:turn/goal? stored)
+                 "この Goal の step 台帳は残っていません。"
+                 "この run は Goal ではないため step 台帳がありません。1 往復の依頼は台帳を持ちません。")}
+
+      :else
+      {:run-id (str run-id)
+       :bot-id bot-id
+       :available? true
+       :state (name (:turn/state stored))
+       :phase (name (:turn/phase stored))
+       :objective (or (:turn/objective stored) (:job/objective job))
+       :provider (:turn/provider stored)
+       :model (:turn/model stored)
+       :usage (:turn/usage stored)
+       :started-at (:turn/started-at stored)
+       :finished-at (:turn/finished-at stored)
+       :plan (mapv (fn [step]
+                     {:id (:step/id step) :title (:step/title step)
+                      :state (name (:step/state step))
+                      :summary (:step/summary step)
+                      :depends-on (vec (:step/depends-on step))})
+                   plan)
+       :steps steps
+       ;; Counted from the joined steps, not from the raw events, so these
+       ;; agree with what the list above shows.
+       :counts {:steps (count steps)
+                :actions (count actions)
+                :running (count (filterv #(= "running" (:outcome %)) actions))
+                :failed (count (filterv #(= "failed" (:outcome %)) actions))
+                :artifacts (reduce + 0 (map (comp count :artifacts) actions))}
+       ;; The ledger is bounded. A run sitting at the cap has lost its oldest
+       ;; steps, and a trajectory that quietly begins in the middle is worse
+       ;; than one that says where it begins.
+       :ledger-cap trajectory-ledger-cap
+       :at-cap? (>= (count events) trajectory-ledger-cap)})))
 
 ;; ── the demonstration ───────────────────────────────────────────────────
 

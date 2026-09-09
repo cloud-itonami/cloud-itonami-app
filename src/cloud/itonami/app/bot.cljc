@@ -282,6 +282,26 @@
      :bot/organization organization
      :bot/owner owner
      :bot/name (str/trim name)
+     ;; WHO last named this Bot, and what the registry would call it.
+     ;;
+     ;; A name is a label, never authority: none of these three is consulted by
+     ;; tool admission, account selection, workspace reach, or approval. They
+     ;; exist because a name can now be set from two places — a person
+     ;; double-clicking the title, and a peer Bot through `bot_rename` — and a
+     ;; reader who cannot tell which one named it cannot tell a role somebody
+     ;; chose from a role a projection asserted.
+     ;;
+     ;; `:bot/projected-name` is what workforce provisioning WOULD write. It is
+     ;; kept beside an override rather than replaced by it, because otherwise
+     ;; the registry name is unrecoverable: provisioning rebuilds every field
+     ;; from the catalog, and the moment it stops overwriting a renamed Bot
+     ;; (which it must, or a rename lasts until the next tick and then silently
+     ;; reverts) the original name has nowhere left to live.
+     :bot/name-source (some-> (:bot/name-source value) clojure.core/name keyword)
+     :bot/named-by (optional-name (:bot/named-by value) :bot/named-by 200)
+     :bot/named-at (:bot/named-at value)
+     :bot/projected-name (optional-name (:bot/projected-name value)
+                                        :bot/projected-name max-name)
      :bot/avatar (avatar (:bot/avatar value))
      :bot/brief (some-> brief str/trim)
      ;; The model provider is capability routing, not part of the Bot's

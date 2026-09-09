@@ -556,3 +556,28 @@
     (is (not (str/includes? js "info.icon"))
         "self-attested provider icons are not injected into the page")
     (is (str/includes? js "legacyInjectedWallet"))))
+
+(deftest every-element-the-script-binds-at-load-exists-in-the-page
+  ;; `$` is `querySelector`, so `$('#absent').addEventListener(...)` throws at
+  ;; load -- and one throw at load takes the WHOLE interaction layer with it.
+  ;; The page still renders, every button is inert, and nothing says why. That
+  ;; is the loudest possible failure with the quietest possible symptom, and it
+  ;; is one typo away at every one of these bindings.
+  ;;
+  ;; Only the `$('#id').addEventListener(` form: elements the script builds
+  ;; itself (`#bots-rail-menu`) legitimately do not exist in the served page,
+  ;; and this must not report them. Measured 2026-09-09: 98 bindings, none of
+  ;; them dynamic, so the narrow form has no false positives to explain away.
+  (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))
+        script (slurp (io/resource "cloud/itonami/app/interaction.js"))
+        ids (->> (re-seq #"\$\('#([a-z0-9-]+)'\)\.addEventListener" script)
+                 (map second) distinct sort)
+        missing (remove #(str/includes? html (str "id=\"" % "\"")) ids)]
+    ;; The evidence floor. A regex that matched nothing would report a clean
+    ;; page, and clean-because-unchecked is the failure this whole namespace
+    ;; exists to refuse.
+    (is (< 50 (count ids))
+        "the binding scan found almost nothing -- the pattern has stopped matching")
+    (is (empty? missing)
+        (str "the script binds ids the page does not render: " (pr-str (vec missing))))))

@@ -205,6 +205,22 @@
    :params [{:name "id" :flag :id :required? true}
             {:name "run" :flag :run :required? true}]}
 
+  {:command ["bots" "rename"]
+   :method :post
+   :template "/api/agent-bots/{id}/name"
+   :params [{:name "id" :flag :id :required? true}]
+   :body {:name {:flag :name}
+          :by {:flag :by}
+          :restore {:flag :restore :parse :boolish}}
+   :note "Name states the ROLE, not the errand. Label only: grants nothing."}
+
+  {:command ["bots" "trajectory"]
+   :method :get
+   :template "/api/agent-bots/{id}/runs/{run}/trajectory"
+   :params [{:name "id" :flag :id :required? true}
+            {:name "run" :flag :run :required? true}]
+   :note "Ordered steps of one run, each action joined to its observation."}
+
   ;; ---- itonami (ex-hermes) -----------------------------------------------------------
   {:command ["itonami" "profile" "list"] :method :get :template "/api/profiles"}
 
