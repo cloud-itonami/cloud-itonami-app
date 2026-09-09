@@ -46,27 +46,27 @@
       (let [form (str "token="
                       (URLEncoder/encode token StandardCharsets/UTF_8)
                       "&token_type_hint=access_token")
-            (let [basic-auth (when (and client-id client-secret)
-                               (str "Basic "
-                                    (.encodeToString
-                                     (Base64/getEncoder)
-                                     (.getBytes (str client-id ":" client-secret)
-                                                StandardCharsets/UTF_8))))
-                  response (http/request
-                            {:url endpoint
-                             :method :post
-                             :timeout-seconds 10
-                             :headers (cond-> {"Content-Type"
-                                               "application/x-www-form-urlencoded"
-                                               "Accept" "application/json"}
-                                        basic-auth
-                                        (assoc "Authorization" basic-auth))
-                             :body form})]
-              (when-not (<= 200 (:status response) 299)
-                (throw (ex-info "OAuth introspection failed"
-                                {:type :oauth-resource/introspection-failed
-                                 :status (:status response)})))
-              (json/read-str (:body response) :key-fn keyword))))))
+            basic-auth (when (and client-id client-secret)
+                         (str "Basic "
+                              (.encodeToString
+                               (Base64/getEncoder)
+                               (.getBytes (str client-id ":" client-secret)
+                                          StandardCharsets/UTF_8))))
+            response (http/request
+                      {:url endpoint
+                       :method :post
+                       :timeout-seconds 10
+                       :headers (cond-> {"Content-Type"
+                                         "application/x-www-form-urlencoded"
+                                         "Accept" "application/json"}
+                                  basic-auth
+                                  (assoc "Authorization" basic-auth))
+                       :body form})]
+        (when-not (<= 200 (:status response) 299)
+          (throw (ex-info "OAuth introspection failed"
+                          {:type :oauth-resource/introspection-failed
+                           :status (:status response)})))
+        (json/read-str (:body response) :key-fn keyword)))))
 
 (defn- resource-origin [configuration service]
   (or (get-in configuration [service :resource-origin])
