@@ -30,6 +30,7 @@
             [cloud.itonami.app.cli-aliases-test]
             [cloud.itonami.app.commands-test]
             [cloud.itonami.app.connectors-test]
+            [cloud.itonami.app.app-directory-test]
             [cloud.itonami.app.connectors-kotoba-parity-test]
             [cloud.itonami.app.appearance-kotoba-parity-test]
             [cloud.itonami.app.desktop-test]
@@ -275,6 +276,7 @@
     cloud.itonami.app.cli-aliases-test
     cloud.itonami.app.commands-test
     cloud.itonami.app.connectors-test
+    cloud.itonami.app.app-directory-test
     cloud.itonami.app.connectors-kotoba-parity-test
     cloud.itonami.app.appearance-kotoba-parity-test
     cloud.itonami.app.desktop-test

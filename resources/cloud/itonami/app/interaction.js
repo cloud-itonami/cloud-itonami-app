@@ -9817,7 +9817,8 @@
     // what is outstanding, and a second derivation in the client is how a
     // sidebar starts showing "working" for a Bot that is actually waiting.
     const botsState = {
-      bots:[], catalog:[], modelProviders:[], providerReadiness:[],
+      bots:[], catalog:[], appSlots:[], appNote:'',
+      modelProviders:[], providerReadiness:[],
       palette:{colors:[], glyphs:[]},
       selected:null, messages:[], picked:new Set(),
       draft:{color:'blue', glyph:'circle'}, loaded:false, busy:false,
@@ -10364,28 +10365,97 @@
         badge.dataset.tone = needing ? 'warn' : 'ok';
       }
     };
+    // One row per job an outside app can do (ADR-0094). The same set as the
+    // grid below and the same selection: both read and write `botsState.picked`,
+    // so there is one selected set and nothing for the two to disagree about.
+    // The server sends the STRUCTURE — which apps can fill which job, and
+    // whether each can be picked at all — and never which are selected, because
+    // that would be a second answer, right when the page loaded and wrong from
+    // the first click.
+    const renderBotsSlots = () => {
+      const holder = $('#bots-slots');
+      if (!holder) return;
+      holder.replaceChildren();
+      (botsState.appSlots || []).forEach((slot) => {
+        const row = make('div', 'bots-slot');
+        const copy = make('div', 'bots-slot__copy');
+        copy.append(make('span', 'bots-slot__title', slot.title));
+        if (slot.detail) copy.append(make('span', 'bots-slot__detail', slot.detail));
+        const control = make('div', 'bots-slot__control');
+        const chosen = (slot.candidates || []).filter((c) => botsState.picked.has(c.id));
+        chosen.forEach((candidate) => {
+          const chip = make('span', 'bots-slot__chip');
+          chip.append(make('span', null, candidate.name));
+          const remove = make('button', 'bots-slot__remove', '×');
+          remove.type = 'button';
+          remove.setAttribute('aria-label', `${candidate.name} を外す`);
+          remove.addEventListener('click', () => {
+            botsState.picked.delete(candidate.id);
+            renderBotsPicks();
+          });
+          chip.append(remove);
+          control.append(chip);
+        });
+        // Only what is not already chosen, so the select is a list of things
+        // that would CHANGE something. A candidate that cannot be picked stays
+        // in the list, disabled and carrying its reason — dropping it would
+        // answer "this app does not exist here", which is not what is true.
+        const select = make('select', 'bots-slot__select');
+        select.setAttribute('aria-label', `${slot.title}に追加するアプリ`);
+        const placeholder = make('option', null, 'アプリを追加');
+        placeholder.value = '';
+        select.append(placeholder);
+        let offerable = 0;
+        (slot.candidates || []).forEach((candidate) => {
+          if (botsState.picked.has(candidate.id)) return;
+          const option = make('option', null,
+                              candidate.note ? `${candidate.name} — ${candidate.note}`
+                                             : candidate.name);
+          option.value = candidate.id;
+          option.disabled = candidate.availability !== 'usable';
+          if (!option.disabled) offerable += 1;
+          select.append(option);
+        });
+        // Nothing left to add: every app this slot names is already on. A
+        // select whose only entry is its own placeholder is a control that
+        // cannot do anything, and this says so instead.
+        if (select.options.length === 1) {
+          control.append(make('span', 'bots-slot__detail', 'このアプリはすべて追加済みです。'));
+        } else {
+          select.disabled = offerable === 0;
+          select.addEventListener('change', () => {
+            if (!select.value) return;
+            botsState.picked.add(select.value);
+            select.value = '';
+            renderBotsPicks();
+          });
+          control.append(select);
+        }
+        row.append(copy, control);
+        holder.append(row);
+      });
+      $('#bots-slot-note').textContent =
+        botsState.picked.size
+          ? `${botsState.picked.size} 個のアプリを追加します。あとから変えられます。`
+          : 'まだアプリを追加していません。何も選ばずに進められます。';
+    };
+    // Both renderings, in one call. They are two views of one set, so they are
+    // never redrawn apart: a click in the grid that left the slot rows stale
+    // would show a person two different answers to the same question.
+    const renderBotsPicks = () => { renderBotsSlots(); renderBotsServiceGrid(); };
     const renderBotsServiceGrid = () => {
       const query = $('#bots-service-search').value.trim().toLowerCase();
       const grid = $('#bots-service-grid');
       grid.replaceChildren();
-      let noTools = 0;
-      let noClient = 0;
       botsState.catalog.forEach((service) => {
         if (query && !service.name.toLowerCase().includes(query)) return;
-        // A connector with no enabled tool cannot do anything for a Bot, and
-        // offering it would be an invitation to authorize an account for
-        // nothing. Shown, disabled, and labelled — not silently dropped.
-        //
-        // The same holds one step earlier: a connector whose OAuth client is
-        // not configured on this machine has nothing to authorize AGAINST, so
-        // picking it produces a Bot that can only ever answer 'connect first'
-        // with a button that fails. Two reasons, reported apart, because they
-        // are fixed in different places.
-        const hasTools = service['enabled-tool-count'] > 0 && service['configurable?'];
-        const authable = service['authable?'] !== false;
-        const usable = hasTools && authable;
-        if (!hasTools) noTools += 1;
-        else if (!authable) noClient += 1;
+        // Why a row can or cannot be picked is decided once, on the server, by
+        // `app-directory/availability` — it used to be recomputed here, and the
+        // slot rows above ask the same question. Two copies of a decision whose
+        // halves send a person to different places (one is something an
+        // operator turns on in this build, the other is something they
+        // configure for this machine) is how the two come to disagree.
+        const usable = service.availability === 'usable';
         const tile = make('button', 'bots-tile');
         tile.type = 'button';
         tile.disabled = !usable;
@@ -10395,9 +10465,7 @@
                     make('span', 'bots-tile__meta',
                          usable
                            ? `${service['enabled-tool-count']} 個のツール${service['connected?'] ? '・接続済み' : ''}`
-                           : hasTools
-                             ? 'OAuth クライアント設定が必要です'
-                             : 'このビルドでは有効なツールがありません'));
+                           : (service['availability-note'] || '')));
         tile.append(copy);
         if (botsState.picked.has(service.id)) {
           tile.append(make('span', 'bots-tile__check', '✓'));
@@ -10405,16 +10473,12 @@
         tile.addEventListener('click', () => {
           if (botsState.picked.has(service.id)) botsState.picked.delete(service.id);
           else botsState.picked.add(service.id);
-          renderBotsServiceGrid();
+          renderBotsPicks();
         });
         grid.append(tile);
       });
-      $('#bots-service-note').textContent = [
-        noTools ? `${noTools} 件はこのビルドに有効なツールが無いので選べません。` : '',
-        noClient
-          ? `${noClient} 件は OAuth クライアントが未設定なので選べません（Settings の接続に同じ表示が出ます）。`
-          : '',
-      ].filter(Boolean).join(' ');
+      // Counted on the server now, for the same reason `availability` is.
+      $('#bots-service-note').textContent = botsState.appNote || '';
       $('#bots-services-next').disabled = false;
     };
     const renderBotsPalette = () => {
@@ -11585,6 +11649,8 @@
     const applyBotsOverview = (data) => {
       botsState.bots = data.bots || [];
       if (data.catalog) botsState.catalog = data.catalog;
+      if (data['app-slots']) botsState.appSlots = data['app-slots'];
+      if (data['app-note'] !== undefined) botsState.appNote = data['app-note'];
       renderBotsRail();
       renderBotsThread();
     };
@@ -11834,6 +11900,8 @@
         if (!request.ok) throw new Error(data?.error?.message || 'Bots を読めませんでした。');
         botsState.bots = data.bots || [];
         botsState.catalog = data.catalog || [];
+        botsState.appSlots = data['app-slots'] || [];
+        botsState.appNote = data['app-note'] || '';
         botsState.modelProviders = data['model-providers'] || [];
         botsState.providerReadiness = data['model-provider-readiness'] || [];
         botsState.palette = data.palette || botsState.palette;
@@ -11852,7 +11920,7 @@
           return;
         }
         renderBotsRail();
-        renderBotsServiceGrid();
+        renderBotsPicks();
         renderBotsPalette();
         if (!botsState.bots.length) {
           $('#bots-step-services').hidden = true;
@@ -11863,6 +11931,9 @@
       } catch (error) { botsSetStatus(error.message); }
     };
     $('#bots-filter').addEventListener('input', renderBotsRail);
+    // The one place the grid is redrawn alone, and it is not an exception to
+    // the rule above: a search narrows what the GRID lists and changes nothing
+    // about what is selected, so the slot rows have no new answer to give.
     $('#bots-service-search').addEventListener('input', renderBotsServiceGrid);
     $('#bots-services-next').addEventListener('click', () => {
       $('#bots-step-services').hidden = true;
@@ -11885,13 +11956,13 @@
         renderBotsPalette();
       }
       renderBotsRail();
-      renderBotsServiceGrid();
+      renderBotsPicks();
       showBotsPane();
     });
     $('#bots-pick-services').addEventListener('click', () => {
       $('#bots-step-create').hidden = true;
       $('#bots-step-services').hidden = false;
-      renderBotsServiceGrid();
+      renderBotsPicks();
     });
     $('#bots-workforce').addEventListener('click', async () => {
       const button = $('#bots-workforce');
@@ -11964,6 +12035,8 @@
         }, true);
         botsState.bots = data.bots || [];
         botsState.catalog = data.catalog || [];
+        botsState.appSlots = data['app-slots'] || [];
+        botsState.appNote = data['app-note'] || '';
         $('#bots-create-status').textContent = '';
         $('#bots-name').value = '';
         $('#bots-brief').value = '';

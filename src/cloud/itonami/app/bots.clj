@@ -57,6 +57,7 @@
             [clojure.java.shell :as shell]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.agent-control :as agent-control]
+            [cloud.itonami.app.app-directory :as app-directory]
             [cloud.itonami.app.bot :as bot]
             [cloud.itonami.app.bot-authority :as bot-authority]
             [cloud.itonami.app.bot-dispatcher :as bot-dispatcher]
@@ -851,6 +852,22 @@
                :tools (mapv #(select-keys % [:name :effect :enabled? :description])
                             tools)}))
           (connectors/catalog-rows configuration))))
+
+(defn- catalog-with-availability
+  "The catalog, each row carrying WHY it can or cannot be picked.
+
+  Computed once, on the server, from `app-directory/availability`. It used to
+  be recomputed in the browser inside the grid renderer, which was fine while
+  the grid was the only picker; the slot rows ask the same question, and a
+  second copy of it in the same file is how the two would come to disagree
+  about a connector nobody looks at twice."
+  [configuration did]
+  (mapv (fn [row]
+          (let [state (app-directory/availability row)]
+            (cond-> (assoc row :availability (name state))
+              (app-directory/availability-notes state)
+              (assoc :availability-note (app-directory/availability-notes state)))))
+        (catalog configuration did)))
 
 (defn- default-tools
   "The tools a Bot starts with for the connectors somebody picked: every
@@ -2416,7 +2433,11 @@
                                               (concat [(:default-model candidate)]
                                                       (:models candidate)))))}
                        (policy/provider-readiness configuration candidate)))
-              (:providers configuration))]
+              (:providers configuration))
+        ;; Once. Both the grid and the slot rows are projections of this, and
+        ;; building it twice would run the registry walk and the connection
+        ;; lookup twice for one screen.
+        rows (catalog-with-availability configuration did)]
     {:bots (mapv #(public-bot configuration did %) mine)
      :slo (bot-slo/evaluate {:bots partition} session)
      :cache (bot-cache/evaluate {:bots partition} session)
@@ -2425,7 +2446,14 @@
            (filter :allowed? provider-readiness))
      :model-provider-readiness provider-readiness
      :model-routing (model-routing session)
-     :catalog (catalog configuration did)
+     ;; One catalog, two renderings. `:catalog` is the searchable grid of
+     ;; everything this build carries; `:app-slots` is the same rows grouped by
+     ;; the job they do, which is the question somebody creating a Bot actually
+     ;; has (ADR-0094). `:chosen` inside a slot is derived from the picked set
+     ;; on the client, so there is nothing here for the two to disagree about.
+     :catalog rows
+     :app-slots (app-directory/rows rows)
+     :app-note (app-directory/summary rows)
      :palette {:colors (mapv name bot/avatar-colors)
                :glyphs (mapv name bot/avatar-glyphs)}
      :default-workspace (default-local-workspace configuration)
