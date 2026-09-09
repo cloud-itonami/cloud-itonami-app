@@ -6736,7 +6736,11 @@
                     {:turn/state :running :turn/phase :queued :turn/goal? true
                      :turn/objective text})
       (append-goal-event! run-id :run/submitted {:goal text})
-      (enqueue-goal! configuration run-id)
+      ;; New resident work must share admission and ordering with resumed work.
+      ;; Direct submission otherwise jumps the durable queue and its cap.
+      (if resident-workforce?
+        (drain-goal-queue! configuration)
+        (enqueue-goal! configuration run-id))
       (public-goal-job (goal-job run-id))))))
 
 (defn- workforce-job-due? [job now]
