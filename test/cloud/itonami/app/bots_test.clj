@@ -5442,7 +5442,12 @@
                 :job/objective "continue safely" :job/run queued
                 :job/plan [] :job/events [] :job/attempt 0
                 :job/resident-workforce? true})
-        (with-redefs [bots/send-stream! (fn [& _] (throw outage))
+        (with-redefs [store/now (constantly "2026-09-09T00:00:00Z")
+                      bots/send-stream! (fn [& _]
+                                          (swap! store/state update-in [:bots :goal-jobs run-id]
+                                                 #(-> % (assoc :job/attempt 10)
+                                                      (update :job/events conj {:event/kind :action/finished})))
+                                          (throw outage))
                       bots/enqueue-goal! (fn [_ id]
                                            (swap! enqueued conj id)
                                            id)]
@@ -5457,7 +5462,8 @@
                    (get-in job [:job/run :agent.run/checkpoint-reason])))
             (is (= :provider/rate-limited
                    (get-in checkpoint [:event/data :reason])))
-            (is (string? (:job/retry-at job)))
+            (is (= "2026-09-09T00:01:00Z" (:job/retry-at job)))
+            (is (= 1 (get-in checkpoint [:event/data :provider-failure-streak])))
             (is (empty? @enqueued)
                 "the failed route yields its slot instead of hot-looping"))
           (swap! store/state assoc-in [:bots :goal-jobs run-id :job/retry-at]
@@ -5465,3 +5471,14 @@
           (drain! {})
           (is (= [run-id] @enqueued)
               "the periodic drain resumes the same durable Goal when due"))))))
+
+(deftest provider-backoff-counts-failures-since-progress-not-lifetime-attempts
+  (let [streak (ns-resolve 'cloud.itonami.app.bots 'provider-failure-streak)
+        failure {:event/kind :run/checkpointed :event/data {:reason :provider/rate-limited}}
+        start {:event/kind :run/started}
+        progress {:event/kind :action/finished}]
+    (is (= 1 (streak {:job/attempt 100 :job/events [failure start progress start]})))
+    (is (= 3 (streak {:job/attempt 100 :job/events [progress failure start failure start]})))
+    (is (= 1 (streak {:job/attempt 100 :job/events [{:event/kind :run/checkpointed
+                                                  :event/data {:reason :server-restarted}} start]})))
+    (is (= 1 (streak {:job/attempt 100 :job/events []})))))

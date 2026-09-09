@@ -6444,6 +6444,17 @@
       (catch Exception _ true))
     true))
 
+(defn- provider-failure-streak [job]
+  ;; Job attempts include successful execution slices and process recovery.
+  ;; Only consecutive provider failures since actual tool progress should
+  ;; increase provider backoff; lifetime attempts otherwise pin every old
+  ;; Goal to the maximum delay even after it has recovered.
+  (inc (count (filter #(and (= :run/checkpointed (:event/kind %))
+                           (contains? checkpointable-provider-errors
+                                      (get-in % [:event/data :reason])))
+                      (take-while #(not= :action/finished (:event/kind %))
+                                  (reverse (:job/events job)))))))
+
 (defn- checkpoint-provider-error!
   "Persist one transient provider boundary and yield the inference slot.
 
@@ -6455,7 +6466,8 @@
         attempt (long (or (:job/attempt job) 0))
         error-type (:type (ex-data error))
         at (store/now)
-        retry-at (provider-retry-at attempt)
+        failure-streak (provider-failure-streak job)
+        retry-at (provider-retry-at failure-streak)
         summary (str "モデル実行先が一時的に利用できないため、進捗を保存しました。"
                      "再開予定: " retry-at)]
     (transition-goal-run! run-id :checkpointed
@@ -6475,6 +6487,7 @@
                         {:reason error-type
                          :retry-at retry-at
                          :attempt attempt
+                         :provider-failure-streak failure-streak
                          :provider-failures (:provider-failures (ex-data error))
                          :message (error-message error)})
     true))
