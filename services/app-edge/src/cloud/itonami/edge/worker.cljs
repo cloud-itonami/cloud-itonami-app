@@ -12,7 +12,7 @@
   two surfaces cannot disagree about what `?execution=resident` selects,
   because there is one implementation of it."
   (:require [cljs.reader :as reader]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.fleet-core :as fleet]
             [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.edge.view :as view]))

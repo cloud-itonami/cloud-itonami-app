@@ -11,7 +11,7 @@
   JVM server the desktop app carries: there is no JVM on either platform, which
   is the whole reason the server moved to the edge (ADR-2608081500) and the
   whole reason this bundle exists (ADR-2608311000)."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [reagent.core :as r]
             [reagent.dom :as rdom]
             [shadow.resource :as resource]
@@ -199,7 +199,7 @@
         url (str base path)]
     (swap! state assoc :busy? true)
     (-> (js/fetch url
-                  (clj->js (cond-> {:method (str/upper-case (name method))
+                  (clj->js (cond-> {:method (str/upper (name method))
                                     :headers (cond-> {"accept" "application/json"}
                                                token (assoc "authorization"
                                                             (str "Bearer " token))

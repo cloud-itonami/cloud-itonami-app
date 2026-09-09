@@ -26,7 +26,7 @@
 ;; and click, because that is where the defect lived.
 
 (require '["playwright$default" :as pw]
-         '[clojure.string :as str]
+         '[kotoba.lang.text :as str]
          '[promesa.core :as p])
 
 ;; Must be the server's `:server :public-origin` verbatim — that is what

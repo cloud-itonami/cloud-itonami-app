@@ -64,7 +64,7 @@
             ["node:fs" :as fs]
             ["node:path" :as path]
             [clojure.edn :as edn]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (def app-directory
   (fs/realpathSync (path/resolve (path/dirname *file*) "..")))

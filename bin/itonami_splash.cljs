@@ -29,7 +29,7 @@
 ;; glyph whose width a terminal disagrees about cannot push a border off.
 
 (ns itonami-splash
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [itonami-text :as text]))
 
 ;; ---------------------------------------------------------------------------
@@ -75,7 +75,7 @@
   degrades to a shorter wordmark instead of a broken one."
   ([word color?] (wordmark word color? wordmark-ramp))
   ([word color? ramp]
-   (let [cells (keep glyphs (str/upper-case (str word)))
+   (let [cells (keep glyphs (str/upper (str word)))
          ramp (or (seq ramp) wordmark-ramp)]
      (when (seq cells)
        (vec (map-indexed

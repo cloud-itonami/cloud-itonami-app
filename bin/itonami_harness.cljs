@@ -31,7 +31,7 @@
 ;;   reading this file.
 
 (ns itonami-harness
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.edn :as edn]
             ["node:fs" :as fs]
             ["node:path" :as path]

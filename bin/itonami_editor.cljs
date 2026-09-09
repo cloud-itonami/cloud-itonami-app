@@ -32,7 +32,7 @@
 ;; width of a glyph is asked of `itonami-text`.
 
 (ns itonami-editor
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [itonami-text :as text]))
 
 (def ^:private esc (js/String.fromCharCode 27))
@@ -197,8 +197,8 @@
   middle and is not what anyone reaching for `st` means."
   [{:keys [commands] :as state}]
   (if-let [q (menu-query state)]
-    (let [q (str/lower-case q)
-          named (fn [c] (str/lower-case (str (:name c))))
+    (let [q (str/lower q)
+          named (fn [c] (str/lower (str (:name c))))
           starts (filter #(str/starts-with? (named %) q) commands)
           contains* (remove #(str/starts-with? (named %) q)
                             (filter #(str/includes? (named %) (subs q 1)) commands))]
@@ -220,7 +220,7 @@
   twice for the commonest case is a menu getting in the way."
   [state]
   (when-let [q (menu-query state)]
-    (boolean (some #(= (str/lower-case (str (:name %))) (str/lower-case q))
+    (boolean (some #(= (str/lower (str (:name %))) (str/lower q))
                    (:commands state)))))
 
 (defn- complete

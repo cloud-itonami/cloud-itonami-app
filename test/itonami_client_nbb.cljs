@@ -38,7 +38,7 @@
   (:require ["node:child_process" :as cp]
             ["node:fs" :as fs]
             ["node:path" :as path]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [nbb.classpath :as classpath]
             [nbb.core :refer [*file*]]))
 

@@ -1,6 +1,6 @@
 (ns cloud.itonami.bots-ui-test
   (:require [cljs.test :refer [deftest is run-tests]]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [cloud.itonami.bots-ui :as ui]))
 
 (deftest actions-require-explicit-capability-and-local-route

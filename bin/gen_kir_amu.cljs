@@ -42,7 +42,7 @@
             ["node:fs" :as fs]
             ["node:path" :as path]
             [clojure.edn :as edn]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (def oracle-ns-path
   "Single source of truth for the core list: the `cores` map in the oracle

@@ -39,7 +39,7 @@
   (:require ["node:fs" :as fs]
             ["node:path" :as path]
             [clojure.set :as set]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (def interop-pattern
   ;; Host access that has no ClojureScript meaning. `Math/` and `String/` are

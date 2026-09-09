@@ -28,7 +28,7 @@
 ;; a return value.
 
 (require '["playwright$default" :as pw]
-         '[clojure.string :as str]
+         '[kotoba.lang.text :as str]
          '[promesa.core :as p])
 
 (def base "http://localhost:1338")

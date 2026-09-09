@@ -23,7 +23,7 @@
 ;; file is worth a browser.
 
 (require '["playwright$default" :as pw]
-         '[clojure.string :as str]
+         '[kotoba.lang.text :as str]
          '[promesa.core :as p])
 
 (def base (or (aget js/process.env "ITONAMI_BASE") "http://localhost:1338"))

@@ -35,7 +35,7 @@
   (:require ["node:fs" :as fs]
             ["node:process" :as process]
             ["playwright-core$default" :as pw]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [promesa.core :as p]))
 
 (def url (or (not-empty (.. process -env -MOBILE_URL))
