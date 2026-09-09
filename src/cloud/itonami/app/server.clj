@@ -6433,8 +6433,22 @@
                      :issue-comment/image-rejected 413
                      :issue-comment/not-found 404
                      400)
-                   {:error {:type (name (or (:type (ex-data error)) :bot/error))
-                            :message (.getMessage error)}}))
+                   ;; `:detail` and `:missing` ride along when the thrower set
+                   ;; them. Measured 2026-09-09: a workforce projection failed
+                   ;; for sixteen hours with "Could not find namespace:
+                   ;; kotoba.lang.text" recorded in `:detail`, and every caller
+                   ;; -- CLI, MCP and the browser -- was told only "workforce
+                   ;; projection failed". The reason was in ex-data and was
+                   ;; dropped one frame from the wire, so diagnosing it meant
+                   ;; re-running the subprocess by hand. Nothing else is
+                   ;; forwarded: this is the two keys a failure already puts
+                   ;; there, not ex-data in general.
+                   (let [{:keys [detail missing]} (ex-data error)]
+                     {:error (cond-> {:type (name (or (:type (ex-data error))
+                                                      :bot/error))
+                                      :message (.getMessage error)}
+                               detail (assoc :detail detail)
+                               (seq missing) (assoc :missing (vec missing)))})))
           (catch Exception error
             (send! exchange 500 {:error {:type "internal_error"
                                          :message (.getMessage error)}})))))))
