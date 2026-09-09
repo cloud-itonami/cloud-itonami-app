@@ -5437,6 +5437,17 @@
               ;; the offer and the call. `invoke/call` would fail somewhere
               ;; deeper with a message about a registry; refusing here says the
               ;; true thing in the Bot's own transcript.
+              ;; Correct at most two fabricated names without invoking them.
+              ;; An advertised/grant mismatch remains a hard stop.
+              (and (not (contains? (:runnable run) name))
+                   (not (capability-drift? run name))
+                   (< (:tool-selection-repairs run 0) 2))
+              (recur (-> run
+                         (update :tool-selection-repairs (fnil inc 0))
+                         (update :messages conj
+                                 {:role "tool" :tool-call-id (:id call) :name name
+                                  :content "Tool not available; nothing was executed. Choose an exact supplied tool name or explain the missing capability. Do not invent tools."})))
+
               (not (contains? (:runnable run) name))
               (let [drift? (capability-drift? run name)
                     report (when drift?
@@ -6623,6 +6634,12 @@
                       (fn [] (run-goal-job! configuration run-id))))))
   run-id)
 
+(defn- resident-queue-order [job]
+  ;; A yielded slice joins the back instead of monopolizing recovery slots.
+  [(if (= :checkpointed (get-in job [:job/run :agent.run/status]))
+     (or (:job/updated-at job) (:job/created-at job))
+     (:job/created-at job)) (:job/id job)])
+
 (defn- drain-goal-queue!
   "Enqueue only the resident Goals that fit the configured inference budget.
 
@@ -6653,7 +6670,7 @@
                                           (get-in % [:job/run :agent.run/status])))
                       (filter #(provider-retry-due? % now))
                       (remove #(contains? @goal-workers (:job/id %)))
-                      (sort-by (juxt :job/created-at :job/id))
+                      (sort-by resident-queue-order)
                       (take available)
                       (mapv :job/id))]
       (doseq [run-id queued]

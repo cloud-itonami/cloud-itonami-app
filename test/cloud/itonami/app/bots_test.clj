@@ -2242,14 +2242,18 @@
 (deftest a-tool-the-model-invented-is-refused-rather-than-invoked
   (with-store
     (fn []
-      (connect! "conn-1" :google "sub-1" "jun@example.com")
-      (let [b (make-bot alice {})]
+      (let [b (make-bot alice {}) asked (atom 0)]
         (with-redefs [policy/select-provider (fn [_ _] {:id :local})
-                      provider/agent-turn (reaches-for "gmail_delete_everything")]
+                      provider/agent-turn (fn [& _]
+                        (swap! asked inc)
+                        {:content "" :tool-calls [{:id (str "bad-" @asked)
+                          :name (str "gmail_delete_everything_" @asked) :input {}}]})]
           (let [last-message (last (bots/send! nil alice (:bot/id b) "消して"))]
+            (is (= 3 @asked) "two corrections, then a bounded stop")
             (is (empty? (:cards last-message)))
             (is (str/includes? (:text last-message) "gmail_delete_everything"))
-            (is (str/includes? (:text last-message) "使えるツールではありません"))))))))
+            (is (str/includes? (:text last-message) "使えるツールではありません"))
+            (is (empty? ((private-fn 'trace-of) (:bot/id b))) "no tool executed")))))))
 
 (deftest an-offered-commerce-tool-is-runnable-in-the-same-turn
   ;; Regression for the live 2026-08-25 result card: Commerce was appended to
@@ -5287,3 +5291,32 @@
             error (try (bots/trajectory bob bot-id "run-traj-3")
                        (catch clojure.lang.ExceptionInfo e e))]
         (is (= :bot/forbidden (:type (ex-data error))))))))
+
+(deftest invented-tool-can-be-corrected-without-execution
+  (with-store
+    (fn []
+      (let [b (make-bot alice {}) asked (atom 0) feedback (atom nil)]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn
+                      (fn [_ request]
+                        (if (= 1 (swap! asked inc))
+                          {:content "" :tool-calls [{:id "bad" :name "invented_tool" :input {}}]}
+                          (do (reset! feedback (:messages request))
+                              {:content "Corrected response" :tool-calls []})))]
+          (is (= "Corrected response" (:text (last (bots/send! nil alice (:bot/id b) "help")))))
+          (is (= 2 @asked))
+          (is (some #(and (= "tool" (:role %)) (str/includes? (:content %) "nothing was executed")) @feedback)))))))
+
+(deftest yielded-resident-slice-does-not-starve-waiting-goals
+  (with-store
+    (fn []
+      (let [enqueued (atom [])
+            mk (fn [id created updated status]
+                 {:job/id id :job/resident-workforce? true :job/created-at created
+                  :job/updated-at updated :job/run {:agent.run/status status}})]
+        (swap! store/state assoc-in [:bots :goal-jobs]
+               {"old" (mk "old" "2026-01-01T00:00:00Z" "2026-01-01T03:00:00Z" :checkpointed)
+                "waiting" (mk "waiting" "2026-01-01T01:00:00Z" "2026-01-01T01:00:00Z" :queued)})
+        (with-redefs [bots/enqueue-goal! (fn [_ id] (swap! enqueued conj id))]
+          ((private-fn 'drain-goal-queue!) {:bots {:workforce {:recovery-max-active 1}}}))
+        (is (= ["waiting"] @enqueued))))))
