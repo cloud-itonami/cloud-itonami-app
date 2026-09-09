@@ -24,6 +24,14 @@ The policy is fail-closed throughout: nothing is admitted by default, and a
 provider that fails any condition denies rather than falling back to another.
 See ADR-2608130100 for why this replaced "local-first".
 
+A service credential a Bot needs but cannot obtain for itself — a Cloudflare
+API token, an account id — is asked for as a **card in the thread with a field
+on it**, never in prose. The value goes to one endpoint, is stored in the macOS
+Keychain, and is resolved at the moment of the call; the Bot names it and never
+holds it, and the conversation records that it was stored rather than what was
+stored. Pasting one into the composer while a request is open is refused rather
+than recorded. See [ADR-0093](docs/adr/0093-a-credential-is-a-card-not-a-message.md).
+
 The repository is the tenant-neutral application. `gftd.ai` is represented by
 the optional [`profiles/gftd.edn`](profiles/gftd.edn) distribution profile, not
 by a fork of the application.

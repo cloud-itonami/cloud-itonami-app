@@ -86,6 +86,8 @@
             [cloud.itonami.app.mail-account :as mail-account]
             [cloud.itonami.app.mail-sync :as mail-sync]
             [cloud.itonami.app.policy :as policy]
+            [cloud.itonami.app.secret-request :as secret-request]
+            [cloud.itonami.app.secret-store :as secret-store]
             [cloud.itonami.app.wallet :as wallet]
             [cloud.itonami.app.provider :as provider]
             [cloud.itonami.app.provider-retry :as retry]
@@ -1762,6 +1764,21 @@
         :when (and (= kind (:card/kind c)) (pred c))]
     c))
 
+(defn- open-secret-cards
+  "Secret cards this Bot has asked for and nobody has answered.
+
+  Undecided AND unmet: a card is open only while the credential is still
+  absent, so a person who exported the variable instead of using the field
+  closes the card by doing so. Same recomputation as `met?`, one card over."
+  [bot-id]
+  ;; Memoised for the length of this call. `present?` runs a subprocess, a
+  ;; thread accumulates one card per attempt, and every attempt for the same
+  ;; credential has the same answer -- so without this a Bot asked three times
+  ;; for one token pays for three keychain lookups on every status read.
+  (let [present? (memoize secret-store/present?)]
+    (into [] (remove #(present? (:card/secret %)))
+          (open-cards bot-id :secret #(= :requested (:card/state %))))))
+
 (defn- connected-providers
   "The provider names this person now holds at least one account for — the
   vocabulary a connection card's `:card/connector` is written in, which is the
@@ -1804,6 +1821,10 @@
    :unmet-connection? (boolean (seq (open-cards bot-id :connection
                                                 #(and (#{:offered :waiting} (:card/state %))
                                                       (not (met? providers %))))))
+   ;; Reported separately from `:unmet-connection?` because a person reading a
+   ;; Bot's status has to know WHICH kind of thing it is stuck on: one is a
+   ;; button that opens a browser, the other is a field on this screen.
+   :unmet-secret? (boolean (seq (open-secret-cards bot-id)))
    :active-run? (boolean (get-in (snapshot) [:runs bot-id :pending-call]))})
 
 (declare public-turn peer-tools coding-tools local-tool-definitions send!)
@@ -1910,10 +1931,19 @@
               (update :outcome #(some-> % name))
               (select-keys [:outcome :context-id :summary :run-id])))
         import-binding (get-in partition [:hermes-import-bindings (:bot/id b)])
-        base-status (bot/status b (presence (:bot/id b)
-                                            (connected-providers did)))
+        bot-presence (presence (:bot/id b) (connected-providers did))
+        base-status (bot/status b bot-presence)
+        ;; The core's status vocabulary has no code for "waiting for a
+        ;; credential", and this does not invent one -- adding a status is the
+        ;; core's decision and would need `bot_core.kotoba`, a regenerated KIR
+        ;; artifact and the parity gate. What it does is the refinement this
+        ;; line already made for a blocked continuation: a Bot the core calls
+        ;; idle, which is in fact waiting for an unanswered field, is reported
+        ;; as blocked rather than idle. Narrowing `:idle` only, so a Bot that
+        ;; is working or waiting on an approval keeps the truer word.
         public-status (if (and (= :idle base-status)
-                               (= :blocked (:outcome continuation)))
+                               (or (= :blocked (:outcome continuation))
+                                   (:unmet-secret? bot-presence)))
                         :blocked
                         base-status)]
     {:id (:bot/id b)
@@ -2112,6 +2142,15 @@
                          :else v)]))
         m))
 
+(def ^:private ^:dynamic *secret-source*
+  "How `public-card` learns where a credential is.
+
+  A var so that `public-conversation` can rebind it to a memoised copy for the
+  length of one read. The answer is a subprocess; a thread carries one card per
+  attempt; the screen polls. Once per credential per read is the measurement,
+  and once per card per read is the same answer bought repeatedly."
+  secret-store/source)
+
 (defn- public-card
   "A stored card, as the client should see it NOW.
 
@@ -2148,7 +2187,26 @@
      ;; reaches `decide!` and comes back as a refusal, which is the failure
      ;; `:authable?` exists to prevent, one card over.
      (and (= :approval (:card/kind c)) (some? bot-id))
-     (assoc :standing (name (bot/request-standing (request-of bot-id c)))))))
+     (assoc :standing (name (bot/request-standing (request-of bot-id c))))
+
+     ;; The third recomputation, for the same reason as the first two, plus one
+     ;; that is specific to this card: the state is a fact about the KEYCHAIN,
+     ;; and the keychain can change without this application doing anything —
+     ;; a person can delete the item in Keychain Access, and an operator can
+     ;; export the variable in the shell that starts the app. Replaying
+     ;; `:requested` would leave a field on screen for a credential that is
+     ;; already there; replaying `:stored` would put 保存済み next to a call
+     ;; that is failing because nothing is stored.
+     ;;
+     ;; A DECLINED card is left alone. That one is a fact about what the person
+     ;; said, not about the keychain, and recomputing it would erase an answer.
+     (= :secret (:card/kind c))
+     (as-> card
+       (let [requirement (secret-request/requirement (:card/secret c))
+             source (when requirement (*secret-source* (:card/secret c)))]
+         (cond-> (assoc card :requirement (secret-request/public requirement))
+           (and source (not= :declined (:card/state c)))
+           (assoc :state "stored" :source (name source))))))))
 
 (defn- public-message
   ([m] (public-message m #{} nil))
@@ -2184,8 +2242,11 @@
   ended up correct on the Bots screen and stale everywhere else."
   [did bot-id]
   (let [providers (connected-providers did)]
-    (mapv #(public-message % providers bot-id)
-          (classify-resident-messages (conversation bot-id)))))
+    ;; `mapv` is eager, so the memo is spent inside this binding rather than
+    ;; escaping in a lazy sequence that would resolve after it was gone.
+    (binding [*secret-source* (memoize secret-store/source)]
+      (mapv #(public-message % providers bot-id)
+            (classify-resident-messages (conversation bot-id))))))
 
 (defn- default-local-workspace
   "The exact local Git root offered when a person creates a Bot.
@@ -2548,9 +2609,25 @@
       (autonomous-capability? b :domain.proposal.create)
       (autonomous-capability? b :domain.approved-proposal.commit)))
 
-(defn- domain-tool-definitions [configuration b]
+(defn- domain-tool-definitions
+  "The domain tools, when this Bot is a domain steward and the family could
+  work.
+
+  `answerable?` rather than `available?`, and the difference is one card. A
+  deployment missing the Cloudflare coordinates used to offer NO tools, so the
+  model never reached for one, so nothing ever said what was missing -- the Bot
+  answered in prose that the token was not in its environment, and a person
+  pasted one into the conversation, where it could not possibly be read
+  (measured 2026-09-09, ADR-0093). The tools are offered now, and the call is
+  stopped by `secret-blocks` below with a card that can actually be answered.
+
+  The other half of `available?` is unchanged: no agent session, or a disabled
+  domain authority, still yields no tools. Those are configuration decisions
+  and no field in a conversation resolves them, so offering one would be a
+  promise this screen cannot keep."
+  [configuration b]
   (if (and (domain-steward-bot? b)
-           (domain-tools/available? configuration))
+           (domain-tools/answerable? configuration))
     (vec domain-tools/tools)
     []))
 
@@ -4869,7 +4946,12 @@
                 ;; is the moment the connection question becomes NECESSARY:
                 ;; the Bot has reached for the tool. Asking earlier meant
                 ;; asking on turns that never touched a connector.
-                blocked (get (:blocked run) (get (:tool-provider run) name))]
+                blocked (get (:blocked run) (get (:tool-provider run) name))
+                ;; Same moment, different missing thing. Read here rather than
+                ;; before the turn for the reason the comment above gives: a
+                ;; Bot that never reaches for a domain tool should not be asked
+                ;; for a Cloudflare token.
+                secret-blocked (get (:secret-blocked run) name)]
             (cond
               (= "goal_plan" name)
               (if (:goal? run)
@@ -5009,6 +5091,30 @@
                               " を認証すると、この続きができます。")
                          (:card/prompt blocked))
                        [blocked]))
+
+              ;; The tool exists, the Bot may call it, and this deployment has
+              ;; never been given the coordinate it needs. Cleared rather than
+              ;; held, for the same reason as an authorization: the answer
+              ;; arrives out of band and the transcript this run would resume
+              ;; from was written before it.
+              ;;
+              ;; The sentence names the credential and says where the value
+              ;; goes. It does NOT ask for the value, because the Bot cannot
+              ;; receive one -- a person who reads "send me the token" and
+              ;; sends it has done what the screen asked and lost the token
+              ;; into a transcript.
+              secret-blocked
+              (let [requirement (secret-request/requirement
+                                 (:card/secret secret-blocked))]
+                (clear-run! (:bot/id b))
+                (finish-visible! on-finish run :blocked
+                                 {:turn/result "credential required"})
+                (say (:bot/id b)
+                     (str (:secret/title requirement)
+                          "がこの端末にありません。下の欄に入れてください（"
+                          (:secret/holder requirement)
+                          "に保存し、この会話には残しません）。")
+                     [secret-blocked]))
 
               ;; A name the model invented, or one that left the grant between
               ;; the offer and the call. `invoke/call` would fail somewhere
@@ -5199,6 +5305,36 @@
       ;; whose only outcome is 'OAuth クライアントが未設定です'.
       :authable? (provider-authable? provider)})))
 
+(defn- secret-card-for
+  "A card asking for one catalogue credential.
+
+  Carries the id and nothing else. Everything a person reads -- what it is,
+  what it is for, where it will be kept, where to get one -- is rendered from
+  `secret-request/catalogue` at display time, so this record cannot go stale
+  against the catalogue and cannot be made to describe something the catalogue
+  does not admit."
+  [secret-id]
+  (bot/secret-card {:id (new-id "card") :secret secret-id :state :requested}))
+
+(defn- secret-blocks
+  "Which tools cannot run because a credential is missing, and the card for it.
+
+  Keyed by TOOL NAME rather than by credential, because the caller's question
+  at the moment of a call is 'the Bot reached for this, is it resolved' -- the
+  same shape and the same reason as `resolve-accounts`' `:blocked`.
+
+  One card at a time. Two coordinates are missing on a fresh install, and
+  rendering two fields at once asks somebody to go and find two things before
+  either does anything; the second is offered on the next attempt, once the
+  first has been answered."
+  [configuration b]
+  (if-let [missing (and (domain-steward-bot? b)
+                        (domain-tools/answerable? configuration)
+                        (seq (domain-tools/missing-credentials configuration)))]
+    (let [card (secret-card-for (first missing))]
+      (into {} (map (fn [tool] [(:name tool) card])) domain-tools/tools))
+    {}))
+
 (defn- selections [bot-id]
   (get-in (snapshot) [:selections bot-id] {}))
 
@@ -5276,6 +5412,11 @@
         {:keys [selection blocked]} (resolve-accounts configuration b did)]
     {:selection selection
      :blocked blocked
+     ;; Beside `:blocked` rather than merged into it: both stop a call, and the
+     ;; remedies are different enough that one map would have to be unpacked by
+     ;; card kind at every read. An authorization is a round trip through a
+     ;; browser; a credential is a field on this screen.
+     :secret-blocked (secret-blocks configuration b)
      :tool-provider (tool->provider configuration)
      ;; The capability policy decides here, not only in the prompt. It used to
      ;; reach exactly one place -- the system prompt, which tells the Bot
@@ -5515,6 +5656,24 @@
       (throw (ex-info "メッセージが長すぎます。" {:type :bot/message-too-long})))
     (when-not (:bot/enabled? b)
       (throw (ex-info "この Bot は停止しています。" {:type :bot/disabled})))
+    ;; Refused before anything is written, and that placement is the whole
+    ;; value: the direction has not been incremented, no message has been
+    ;; appended, and no context has been stored, so a credential pasted into
+    ;; the composer while a request is open leaves nothing behind anywhere.
+    ;;
+    ;; Only while a card is open, and only against the shape that card asked
+    ;; for. This is not a scanner over the conversation -- a shape is a weak
+    ;; signal, and running one over every message would refuse ordinary text
+    ;; for a credential nobody had asked for. `secret-request/carries-value?`
+    ;; states the asymmetry this trade rests on.
+    (when-let [open (seq (open-secret-cards bot-id))]
+      (let [requirements (keep #(secret-request/requirement (:card/secret %)) open)]
+        (when (secret-request/carries-value? requirements text)
+          (throw (ex-info
+                  (str "資格情報はチャットに貼らないでください。上の欄に入れると"
+                       "この端末に保存され、会話には残りません。このメッセージは"
+                       "記録していません。")
+                  {:type :secret/plaintext-in-message :bot bot-id})))))
     ;; A new instruction is a new direction, and it starts BEFORE the message is
     ;; recorded — everything from here belongs to it, including the request the
     ;; Bot may raise on this turn. Whatever the previous direction left waiting
@@ -6997,6 +7156,112 @@
                       "そのアカウント")
                   " を使います。")
              nil)))
+    (public-conversation (identity/session-did session) bot-id)))
+
+(defn- set-secret-state!
+  "Write a state onto one secret card, wherever it is in the conversation.
+
+  The value never reaches here. Nothing this function writes could hold one:
+  the arguments are a card id, a state and a `keychain://` locator, and
+  `bot/secret-card` refuses a map that carries a credential at all."
+  [bot-id card-id state stored-ref]
+  (transact! update-in [:conversations bot-id]
+             (fn [messages]
+               (mapv (fn [m]
+                       (update m :message/cards
+                               (fn [cards]
+                                 (mapv #(if (and (= card-id (:card/id %))
+                                                 (= :secret (:card/kind %)))
+                                          (cond-> (assoc % :card/state state
+                                                           :card/answered-at (store/now))
+                                            stored-ref (assoc :card/stored-ref stored-ref))
+                                          %)
+                                       cards))))
+                     messages))))
+
+(defn- human-session!
+  "Refuse an agent session.
+
+  `decide!` admits one, under an owner's standing delegation, because approving
+  a write the Bot proposed is a decision a person can delegate. Supplying a
+  credential is not the same act: a delegation says 'do this on my behalf', and
+  no delegation can produce a value the owner never typed. An agent session
+  reaching this endpoint is either carrying a credential it should not be
+  holding or answering a question that was asked of a person, and both of those
+  are refusals rather than defaults."
+  [session]
+  (when (= :agent (:kind session))
+    (throw (ex-info "資格情報は人が入力します。このセッションでは行えません。"
+                    {:type :secret/human-session-required})))
+  session)
+
+(defn- secret-card-by-id [bot-id card-id]
+  (or (some #(when (= card-id (:card/id %)) %)
+            (open-cards bot-id :secret (constantly true)))
+      (throw (ex-info "その資格情報の依頼が見つかりません。"
+                      {:type :secret/no-card :bot bot-id :card card-id}))))
+
+(defn provide-secret!
+  "Store the credential a secret card asked for.
+
+  This is the ONLY path a credential enters this application by, and it is
+  deliberately not the path a message takes. The value is an argument here and
+  is gone when this returns: it is handed to `secret-store/put!`, which puts it
+  in the keychain item the catalogue names, and what is written back into the
+  conversation is a state and a `keychain://` locator.
+
+  The return value is the conversation, so the caller has no way to accidentally
+  hand a credential back to a client that just sent one."
+  [session bot-id card-id value]
+  (let [_ (human-session! session)
+        _ (owned! session bot-id)
+        card (secret-card-by-id bot-id card-id)
+        secret-id (:card/secret card)
+        requirement (secret-request/requirement! secret-id)
+        {:keys [admitted? reason]} (secret-request/admit requirement value)]
+    (when-not admitted?
+      (throw (ex-info (secret-request/refusal reason)
+                      {:type :secret/refused :secret secret-id :reason reason})))
+    (let [stored-ref (secret-store/put! secret-id value)]
+      (set-secret-state! bot-id card-id :stored stored-ref)
+      ;; Said by the Bot, because the person needs the thread to show that the
+      ;; request was met -- and said WITHOUT the value, which is the whole
+      ;; point. `:secret/holder` rather than the locator: where it is matters to
+      ;; a person, the exact item name matters to nobody reading a chat.
+      (say bot-id
+           (str (:secret/title requirement) "を" (:secret/holder requirement)
+                "に保存しました。もう一度頼んでください。")
+           nil)
+      (public-conversation (identity/session-did session) bot-id))))
+
+(defn decline-secret!
+  "Record that the person will not supply this credential.
+
+  Kept as an answer rather than dropped, because the Bot's next turn has to
+  plan without the tool and 'never asked' and 'asked and refused' are different
+  situations. Nothing is stored and nothing is deleted -- declining a request is
+  not a way to remove a credential somebody else set up.
+
+  Which is why it is refused once the credential is present. Declining does not
+  make a stored value stop resolving, so a card reading 使わないことにしました
+  next to a tool that is happily using the credential would be a state this
+  screen invented. The screen does not offer the button then; this is the same
+  answer at the route, for a caller that is not the screen."
+  [session bot-id card-id]
+  (let [_ (human-session! session)
+        _ (owned! session bot-id)
+        card (secret-card-by-id bot-id card-id)
+        requirement (secret-request/requirement (:card/secret card))]
+    (when (secret-store/present? (:card/secret card))
+      (throw (ex-info (str (:secret/title requirement)
+                           "はこの端末にあります。使わないことにはできません。")
+                      {:type :secret/already-present
+                       :secret (:card/secret card)})))
+    (set-secret-state! bot-id card-id :declined nil)
+    (say bot-id
+         (str (:secret/title requirement)
+              "は使わないことにしました。これが要る操作は行いません。")
+         nil)
     (public-conversation (identity/session-did session) bot-id)))
 
 (defn accounts

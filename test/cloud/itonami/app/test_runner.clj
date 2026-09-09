@@ -40,6 +40,9 @@
             [cloud.itonami.app.media-tools-test]
             [cloud.itonami.app.git-hygiene-test]
             [cloud.itonami.app.domain-tools-test]
+            [cloud.itonami.app.secret-request-test]
+            [cloud.itonami.app.secret-store-test]
+            [cloud.itonami.app.secret-card-test]
             [cloud.itonami.app.bot-import-test]
             [cloud.itonami.app.bot-test]
             [cloud.itonami.app.bot-slo-test]
@@ -472,6 +475,9 @@
     cloud.itonami.app.oauth-resource-test
     cloud.itonami.app.org-root-did-test
     cloud.itonami.app.domain-tools-test
+    cloud.itonami.app.secret-request-test
+    cloud.itonami.app.secret-store-test
+    cloud.itonami.app.secret-card-test
     cloud.itonami.app.bot-import-test
     cloud.itonami.app.did-webvh-http-test
     cloud.itonami.app.oauth-did-binding-test

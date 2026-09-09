@@ -50,7 +50,8 @@
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
-            [cloud.itonami.app.http-client :as http]))
+            [cloud.itonami.app.http-client :as http]
+            [cloud.itonami.app.secret-store :as secret-store]))
 
 (def ^:private default-grok-base "https://itonami.cloud")
 (def ^:private http-timeout-seconds 20)
@@ -191,7 +192,17 @@
                       {:type :bot-import/credential-required
                        :source "grok"}))))
 
-(defn- grok-token [] (require-token (System/getenv "MURAKUMO_SERVICE_TOKEN")))
+(defn- grok-token
+  "The bearer for the Grok Bots management surface.
+
+  Environment first, then the credential store -- the same ladder every other
+  typed credential in this application resolves through (ADR-0093). A desktop
+  app started by a double-click has no exported environment, so reading only
+  the variable meant this import could not be run from the app at all: the
+  refusal above was correct and unanswerable."
+  []
+  (require-token (or (System/getenv "MURAKUMO_SERVICE_TOKEN")
+                     (secret-store/value "murakumo-service-token"))))
 
 (defn- grok-bots
   "Every bot the management surface lists.
