@@ -7373,7 +7373,13 @@
                               1
                               available)
         limit (min starts-per-tick effective-available)]
-    (loop [remaining jobs
+    (loop [remaining (if (zero? available)
+                       ;; A reserved identity being busy/disabled must not lend
+                       ;; its exceptional slot to an ordinary job later in jobs.
+                       (filter #(or (and maintenance-reserve? (disk-pressure-relief-job? %))
+                                    (and domain-steward-reserve? (domain-steward-job? %)))
+                               jobs)
+                       jobs)
            result {:started []
                    :skipped (cond
                               (and disk-pressure (empty? jobs))
