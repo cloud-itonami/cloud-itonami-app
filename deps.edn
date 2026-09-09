@@ -13,7 +13,19 @@
         ;; namespace existed anywhere. Adds no transitive HTTP client --
         ;; java.net.http is in the JDK; the sibling json/text deps are
         ;; first-party and zero-dep, and text is the same sha pinned above.
-        io.github.kotoba-lang/http {:git/sha "ce0f551c369bfc060c855739bc2c934f5e2c6267"}
+        io.github.kotoba-lang/http {:git/sha "4ce7e385c0c7f4bc892df414ddca9a29aaddb914"}
+        ;; One promise type across both runtimes, for the move off the JVM.
+        ;; host/jvm's async transport returns a CompletableFuture and
+        ;; host/node's returns a js/Promise; promesa treats them as the same
+        ;; thing, which is what lets `http-client-async` be one .cljc file
+        ;; rather than two implementations under one name.
+        ;;
+        ;; Not a new idea in this repository: mobile/scripts/verify-browser.cljs
+        ;; already requires promesa.core, and nbb bundles it -- so this
+        ;; coordinate only completes on the JVM what the ClojureScript side
+        ;; already had. kotoba-lang/async is channels, a different model, and
+        ;; not a substitute.
+        funcool/promesa {:mvn/version "12.0.1"}
        org.clojure/clojure {:mvn/version "1.12.5"}
   ;; 回遊 — the shared visit-telemetry vocabulary. Used here for the LOCAL
   ;; workspace counters only: nothing this library touches is transmitted
