@@ -385,12 +385,19 @@
        (Files/delete dir)
        FileVisitResult/CONTINUE))))
 
+(defn- native-uv-executable
+  ([] (native-uv-executable (System/getProperty "user.home")
+                            ["/opt/homebrew/bin/uv" "/usr/local/bin/uv"]))
+  ([home system-paths]
+   (some #(when (.canExecute ^java.io.File %) %)
+         (concat (map io/file system-paths)
+                 [(io/file home ".local" "bin" "uv")]))))
+
 (defn run-native-cache-clean! [kind]
   (when-not (= :uv-cache kind)
     (throw (ex-info "unsupported native cache manager"
                     {:type :disk-space/invalid-native-manager :kind kind})))
-  (if-let [uv (some #(when (.canExecute ^java.io.File %) %)
-                    [(io/file "/opt/homebrew/bin/uv") (io/file "/usr/local/bin/uv")])]
+  (if-let [uv (native-uv-executable)]
     (let [process (-> (ProcessBuilder. [(str uv) "cache" "clean"])
                       (.redirectErrorStream true) .start)]
       (when-not (.waitFor process helper-timeout-seconds TimeUnit/SECONDS)
