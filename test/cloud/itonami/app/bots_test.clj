@@ -5482,3 +5482,20 @@
     (is (= 1 (streak {:job/attempt 100 :job/events [{:event/kind :run/checkpointed
                                                   :event/data {:reason :server-restarted}} start]})))
     (is (= 1 (streak {:job/attempt 100 :job/events []})))))
+
+(deftest blocked-goal-preserves-matching-turn-prerequisites
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {})) run-id "blocked-evidence"]
+        (swap! store/state assoc-in [:bots :goal-jobs run-id]
+               (resident-run-with bot-id run-id []))
+        (swap! store/state assoc-in [:bots :turn-history bot-id]
+               [{:turn/id run-id :turn/state :blocked
+                 :turn/result "Required source unavailable"
+                 :turn/evidence ["Restore source asset"]}
+                {:turn/id "other-run" :turn/result "Unrelated"}])
+        (let [result (#'bots/visible-goal-result run-id "blocked")]
+          (is (= :bot/goal-blocked (:agent.run/error-type result)))
+          (is (= "Required source unavailable" (:agent.run/error-message result)))
+          (is (= ["Restore source asset"] (:agent.run/blocking-prerequisites result)))
+          (is (= "blocked" (:agent.run/result result))))))))
