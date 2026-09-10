@@ -323,9 +323,29 @@ does not falsely mark it configured.
 JVM: it is an nbb client that resolves a command to a method and a path, carries
 the agent session, and prints what the server said.
 
-It does **not** start a server. The resident is launchd's
-(`dev.cloud-itonami.app`), and `up` / `down` say so rather than pretending to
-supervise it.
+It does **not** start a server. `up` / `down` do not supervise the controller.
+
+### Production controller ownership
+
+Production runs on Murakumo host `judah`, LaunchDaemon
+`system/cloud.itonami.controller`, port 1438. The local Mac's former
+`dev.cloud-itonami.app` is retired. Do not install, enable, bootstrap, or
+kickstart that local label when deploying UI or server changes: it starts a
+second scheduler against the old local state, even if the cloud service is healthy.
+A failed local port 1338 check does not mean the production controller is down;
+check the remote service and the tunnel separately.
+
+Deploy a tested, clean controller package to `judah` under
+`~/.cloud-itonami/releases/`, verify its manifest and file checksums, then stop
+`system/cloud.itonami.controller` before changing `~/.cloud-itonami/current`
+and bootstrapping the same system service. Verify readiness and actual resumed
+jobs. Keep the local label disabled and unloaded. Changing ownership requires
+an explicit migration; never restore the local scheduler as a connection repair.
+
+Operational handoff: on `judah`, `~/.cloud-itonami/MIGRATION.md`; on the operator
+Mac, `~/Documents/Itonami/controller-migration-2026-09-09/STATUS.md`.
+The native launcher may start a local development server, so it is not a
+production recovery command.
 
 Two name sources, one resolver (`cloud.itonami.app.commands`, `.cljc`, shared
 with the JVM side): the generated registry in
