@@ -38,9 +38,19 @@
 
 ;; One `:string` name in, `[:option :string]` out: some of the canonical mode
 ;; that names it, none otherwise. `if` / `string=?` are the admitted scalar
-;; vocabulary, and all thirteen spellings are written out as a total function
+;; vocabulary, and all fifteen spellings are written out as a total function
 ;; so the table needs no map. The host already trimmed and lower-cased.
+;;
+;; `dark` is the DADS palette inverted (`jp-go-dds.dark`), not a hand-drawn
+;; theme, so it belongs to the same appearance axis as `light` rather than to
+;; the two authored appearances. Note that `dark-chat` names `grok`, not
+;; `dark` — that spelling predates this mode and points at the authored
+;; chat-dark appearance, which is a different thing from the inverted palette.
 (defn mode-of [name :string] [:option :string]
+  (if (string=? name "dark")
+    (option-some-of [:option :string] "dark")
+    (if (string=? name "night")
+      (option-some-of [:option :string] "dark")
   (if (string=? name "8bit")
     (option-some-of [:option :string] "8bit")
     (if (string=? name "8-bit")
@@ -67,19 +77,26 @@
                           (option-some-of [:option :string] "light")
                           (if (string=? name "dads")
                             (option-some-of [:option :string] "light")
-                            (option-none-of [:option :string])))))))))))))))
+                            (option-none-of [:option :string])))))))))))))))))
 
 ;; The toggle cycle as a total function: the mode AFTER the given canonical
-;; mode, with the unknown-name fallback answering 8bit (host feeds
-;; `(or (normalize mode) default-mode)` = "light", whose successor is "8bit").
+;; mode, with the unknown-name fallback answering dark (host feeds
+;; `(or (normalize mode) default-mode)` = "light", whose successor is "dark").
+;;
+;; `dark` sits directly after `light` because the two are one palette and its
+;; inversion: one press answers the question a person actually has at night,
+;; and the two authored appearances stay further along the cycle where they
+;; were. Moving them would change what an existing press does.
 (defn next-of [mode :string] :string
   (if (string=? mode "light")
-    "8bit"
-    (if (string=? mode "8bit")
-      "grok"
-      (if (string=? mode "grok")
-        "light"
-        "8bit"))))
+    "dark"
+    (if (string=? mode "dark")
+      "8bit"
+      (if (string=? mode "8bit")
+        "grok"
+        (if (string=? mode "grok")
+          "light"
+          "dark")))))
 
 ;; The residency-plane judgement: a (trimmed, lower-cased) plane name is the
 ;; cloud plane exactly when it is "cloud". Anything else — absent, a typo,

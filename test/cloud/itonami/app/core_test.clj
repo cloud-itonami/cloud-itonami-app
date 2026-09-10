@@ -5,6 +5,7 @@
             [clojure.set :as set]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config-loader]
+            [cloud.itonami.app.appearance :as appearance]
             [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.did :as did]
             [cloud.itonami.app.documents :as documents]
@@ -520,6 +521,30 @@
     (is (empty? missing)
         (str "app-css references design tokens that jp-go-dds does not define: "
              (pr-str (sort missing))))))
+
+(deftest dark-css-only-references-design-system-tokens-that-exist
+  ;; The same hazard as the test above, on the string that test cannot see:
+  ;; `appearance/dark-css` is DERIVED from the vendored css at request time, so
+  ;; `web/app-css` -- a load-time def -- does not contain it and the guard
+  ;; above never reads it. An undefined custom property here would take the
+  ;; whole `:root:has(...)` block's declarations with it and leave dark mode
+  ;; rendering light primitives, with nothing failing anywhere.
+  ;;
+  ;; It also pins the two halves together: every `--dds-light-*` the dark block
+  ;; reads has to be one the snapshot block writes. They are generated from the
+  ;; same ramp, so they agree today; the assertion is what keeps a later change
+  ;; to one of them from silently emptying the other.
+  (let [dds (slurp (io/resource "jp_go_dds/dds.css"))
+        dark (appearance/dark-css dds)
+        defined (into (set (map second (re-seq #"(--[a-z0-9-]+)\s*:" dds)))
+                      (map second (re-seq #"(--[a-z0-9-]+)\s*:" dark)))
+        referenced (set (map second (re-seq #"var\((--[a-z0-9-]+)\)" dark)))
+        missing (set/difference referenced defined)]
+    (is (seq referenced))
+    (is (empty? missing)
+        (str "dark-css references tokens nothing defines: " (pr-str (sort missing))))
+    (is (str/includes? dark ":root:has(.workspace[data-appearance=\"dark\"])")
+        "the dark block has to outrank the plain :root that a11y-css writes")))
 
 (deftest chat-session-ids-are-isolated-by-organization-user-and-project
   (let [scope (ns-resolve 'cloud.itonami.app.server 'scoped-chat-session-id)

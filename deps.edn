@@ -574,9 +574,16 @@
   io.github.kotoba-lang/hil
   {:git/url "https://github.com/kotoba-lang/hil.git"
    :git/sha "75f5b9ed3ed00161f331f868a224d3a71e5db00e"}
+  ;; FLOOR, with the reason next to it: `jp-go-dds.dark` landed upstream in
+  ;; 794ec5c (2026-08-04) and the previous pin here was 277e8c3 (2026-07-26),
+  ;; so `appearance/dark-css` would not compile against it -- the namespace is
+  ;; simply absent. tools.deps picks the newest sha it is SHOWN, and nothing
+  ;; else in this closure names this library, so a fix upstream never arrives
+  ;; until this line moves. `manifest/west.yml` pins the same sha, so the
+  ;; checkout and this coordinate agree; west pins are gated, this one is not.
   io.github.kotoba-lang/jp-go-digital-design-system
   {:git/url "https://github.com/kotoba-lang/jp-go-digital-design-system.git"
-   :git/sha "277e8c38648a3030014637d11fcbefc4f5535ae7"}
+   :git/sha "581b68cb7699e4017d3532bc17e134a41be00fef"}
 
   ;; Filecoin: PieceCID v2 addressing + the on-chain read surface + the
   ;; provider transfer surface. Deliberately NOT a storage backend — see
