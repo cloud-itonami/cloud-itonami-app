@@ -44,12 +44,16 @@
   (case s
     ("8bit" "8-bit" "eightbit" "eight-bit" "pixel" "retro") "8bit"
     ("grok" "grob" "dark-chat" "chat-dark") "grok"
+    ;; `dark-chat` above names the AUTHORED chat-dark appearance and keeps
+    ;; doing so; `dark` below names the inverted DADS palette. Two different
+    ;; things whose spellings look alike, which is why both rows stay here.
+    ("dark" "night") "dark"
     ("light" "default" "dads") "light"
     nil))
 
 ;; The ORIGINAL toggle cycle, independent of the oracle — the cljc's
 ;; keep-indexed/nth/mod formula over the `modes` vector.
-(def ^:private original-modes ["light" "8bit" "grok"])
+(def ^:private original-modes ["light" "dark" "8bit" "grok"])
 
 (defn- original-next-mode [current]
   (nth original-modes
@@ -92,7 +96,8 @@
   ["8bit" "8-bit" "eightbit" "eight-bit" "pixel" "retro"
    "grok" "grob" "dark-chat" "chat-dark"
    "light" "default" "dads"
-   "dark" "neon" "" " " "orbit"])
+   "dark" "night"
+   "neon" "" " " "orbit"])
 
 (deftest mode-of-agrees-with-the-original-case-table
   (let [actual (run-probes "mode-of" "[:option :string]" mode-spellings)]
@@ -106,12 +111,12 @@
   ;; The contract row: a name the table does not contain answers none on the
   ;; core, so the host's `(or (normalize ...) default-mode)` reduces to the
   ;; default — and the oracle call must not throw on an unknown name.
-  (doseq [pl ["dark" "neon" "" " " "midnight" "8" "pixelated"]]
+  (doseq [pl ["neon" "" " " "midnight" "8" "pixelated"]]
     (is (nil? (option-value (get (run-probes "mode-of" "[:option :string]" [pl]) "p0")))
         (str "unknown mode must answer none: " (pr-str pl)))))
 
 (deftest next-of-agrees-with-the-original-cycle
-  (let [cases ["light" "8bit" "grok" "nonsense" "" "retro"]]
+  (let [cases ["light" "dark" "8bit" "grok" "nonsense" "" "retro"]]
     (doseq [[i current] (map-indexed vector cases)]
       (testing (pr-str current)
         ;; The host feeds `(or (normalize mode) default-mode)` — a canonical
@@ -139,7 +144,7 @@
     (doseq [v [:8bit "8bit" "8-bit" "EIGHTBIT" " pixel " :retro
                :grok "grok" "GROK" " chat-dark "
                :light "light" "default" "dads"
-               "dark" :neon 8 nil "" ; 8 -> "8" -> none -> light
+               "dark" "night" :neon 8 nil "" ; 8 -> "8" -> none -> light
                ]]
       (is (= (or (original-mode (some-> v (cond-> (keyword? v) name)
                                         str str/trim str/lower))
@@ -147,7 +152,7 @@
              (appearance/resolve-mode {:ui {:appearance v}}))
           (str "resolve-mode disagrees on " (pr-str v)))))
   (testing "next-mode"
-    (doseq [m ["light" "8bit" "grok" "nonsense" "" "retro" :8bit]]
+    (doseq [m ["light" "dark" "8bit" "grok" "nonsense" "" "retro" :8bit]]
       (let [current (or (original-mode (if (keyword? m) (name m) (str/trim (str/lower (str m)))))
                         "light")]
         (is (= (original-next-mode current)

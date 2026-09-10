@@ -11,8 +11,11 @@
       (is (= "8bit" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v)))
     (doseq [v [:grok "grok" "GROK" " chat-dark "]]
       (is (= "grok" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v))))
+  (testing "the inverted-DADS appearance"
+    (doseq [v [:dark "dark" "DARK" " night "]]
+      (is (= "dark" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v))))
   (testing "a value that names nothing is not an appearance, so light"
-    (doseq [v ["dark" :neon 8 nil ""]]
+    (doseq [v [:neon 8 nil ""]]
       (is (= "light" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v)))))
 
 (deftest residency-is-cloud-only-when-the-configuration-says-so
@@ -33,10 +36,11 @@
   (is (str/includes? appearance/css ".tool-button:not([disabled]):hover")))
 
 (deftest the-toggle-cycles-through-every-mode-and-comes-back
-  (is (= "8bit" (appearance/next-mode "light")))
+  (is (= "dark" (appearance/next-mode "light")))
+  (is (= "8bit" (appearance/next-mode "dark")))
   (is (= "grok" (appearance/next-mode "8bit")))
   (is (= "light" (appearance/next-mode "grok")))
-  (is (= "8bit" (appearance/next-mode "nonsense"))
+  (is (= "dark" (appearance/next-mode "nonsense"))
       "unknown input restarts the cycle from light")
   (is (= (set appearance/modes)
          (set (take (count appearance/modes) (iterate appearance/next-mode "light"))))))
@@ -91,8 +95,13 @@
   (let [[tag attrs label] (appearance/toggle-button "light")]
     (is (= :button tag))
     (is (= "appearance-toggle" (:id attrs)))
-    (is (= "8bit" (:data-next attrs)))
+    (is (= "dark" (:data-next attrs)))
     (is (= "false" (:aria-pressed attrs)))
+    (is (= "DARK" label)))
+  (let [[_ attrs label] (appearance/toggle-button "dark")]
+    (is (= "8bit" (:data-next attrs)))
+    (is (= "true" (:aria-pressed attrs))
+        "dark is not the default, so the control reads as pressed")
     (is (= "8-BIT" label)))
   (let [[_ attrs label] (appearance/toggle-button "8bit")]
     (is (= "grok" (:data-next attrs)))

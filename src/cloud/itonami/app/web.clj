@@ -2193,7 +2193,12 @@
     (page/->page
      {:title (str "Bots | " brand)
       :description "安全第一（緑十字）のAIワークスペース"
-      :css css :app-css app-css
+      ;; The dark layer is appended here rather than folded into `app-css`
+      ;; because it is DERIVED from `css` — it inverts the vendored ramps, so
+      ;; it cannot be a load-time `def` the way the authored appearances are.
+      ;; Last, so its `:root:has(…)` block sits after everything that declares
+      ;; a `--color-*`.
+      :css css :app-css (str app-css "\n" (appearance/dark-css css))
       :head [[:link {:rel "icon" :type "image/png" :href "/icon.png"}]
              [:link {:rel "apple-touch-icon" :href "/icon.png"}]
              [:script signal-js] [:script interaction-js]]}

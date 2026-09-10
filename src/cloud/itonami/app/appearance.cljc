@@ -1,6 +1,25 @@
 (ns cloud.itonami.app.appearance
-  "Appearance modes of the loopback workspace — today `light` (DADS as shipped)
-  and `8bit`.
+  "Appearance modes of the loopback workspace — today `light` (DADS as
+  shipped), `dark` (DADS inverted), `8bit` and `grok`.
+
+  ## `dark` is not a fourth palette
+
+  The other two appearances are DRAWN: `8bit` and `grok` each carry a palette
+  written out entry by entry, and each needs a per-component rule for every
+  surface it changes. `dark` carries none. `jp-go-dds.dark` inverts the
+  upstream ramps at the PRIMITIVE layer, so `--color-key-*`,
+  `--color-semantic-*`, the `--hig-*` bridge and every `dads-*` component
+  follow with no rule of their own — which is why the dark layer below is a
+  scope and two declaration blocks rather than the two hundred lines the
+  authored appearances need.
+
+  It is worth saying why this mode did not exist until now. This namespace
+  said DADS had no dark palette, and that was true of upstream and is still
+  true of upstream; `jp-go-dds.dark` is this workspace's extension, derived
+  from the upstream ramps rather than approved by them. What had gone stale
+  was not the fact but the CONSEQUENCE drawn from it — that a DADS-based app
+  therefore cannot offer dark. It can, and the library could before this
+  namespace noticed.
 
   8-bit mode is an APPEARANCE of the one workspace, not a second UI: the
   document, its views, its ids and its information architecture are identical
@@ -19,11 +38,16 @@
   Portable on purpose: the resolution and the stylesheet are data, and the
   ClojureScript half of the test suite executes them (`test/portable_nbb.cljs`)."
   (:require [kotoba.lang.text :as str]
+            [jp-go-dds.dark :as dark]
             [cloud.itonami.app.kotoba-oracle :as oracle]))
 
 (def modes
-  "Every appearance the workspace can render. Order is the toggle order."
-  ["light" "8bit" "grok"])
+  "Every appearance the workspace can render. Order is the toggle order.
+
+  `dark` sits next to `light` because they are one palette and its inversion.
+  The authored appearances keep the positions they had, so an existing press
+  still lands where it did."
+  ["light" "dark" "8bit" "grok"])
 
 (def default-mode "light")
 
@@ -308,6 +332,72 @@
    ;; document, same ids, same reading order — colour and shape only.
    grok-css))
 
+(defn- declarations->css [decls]
+  (str/join "" (for [[k v] decls] (str k ":" v ";"))))
+
+(defn dark-css
+  "The `dark` appearance: DADS with its primitive ramps inverted.
+
+  Takes the vendored `dds.css` rather than reading it, so this stays portable
+  — `test/portable_nbb.cljs` executes this namespace and cannot slurp a
+  resource. `web/page-html` already holds the string for `->page`.
+
+  ## Why the scope is `:root:has(…)` and not `.workspace[…]`
+
+  The other appearances scope to `.workspace`, and for them that is right:
+  every rule they write targets something inside it. This one writes no rules
+  — it redefines custom properties and lets inheritance carry them. Two things
+  follow.
+
+  `body` is the first. `base-css` paints the page ground with
+  `background:var(--color-neutral-solid-gray-50)`, and `body` is NOT inside
+  `.workspace`. Declared on `.workspace`, the inverted tokens would leave the
+  ground light while everything on it went dark, and no rule would be wrong
+  anywhere — the failure would be a white margin around a dark workspace.
+
+  Specificity is the second. `jp-go-dds.tokens/a11y-css` declares
+  `:root{color-scheme:light}`, and `dark-declarations` carries
+  `color-scheme:dark`; a plain `:root` here would tie and lose on order.
+  `:root:has(…)` is (0,2,0) against (0,1,0), so it wins without depending on
+  where this string lands in the concatenation.
+
+  ## The snapshot block is not optional
+
+  Inversion is an involution, so writing `--color-primitive-red-800:
+  var(--color-primitive-red-400)` beside its mirror is a custom-property
+  CYCLE, and CSS answers a cycle by making both invalid. `jp-go-dds.dark`
+  avoids it by first copying the light literals to `--dds-light-*`, which the
+  dark block alone references. That copy has to be emitted, and emitted
+  unconditionally — it is what light mode is restored FROM."
+  [dds-css]
+  (str
+   ":root{" (declarations->css (dark/snapshot-declarations dds-css)) "}\n"
+   ":root:has(.workspace[data-appearance=\"dark\"]){"
+   (declarations->css (dark/dark-declarations dds-css)) "}\n"
+   ".appearance-toggle[data-next=\"dark\"]::before{content:\"◐ \"}\n"))
+
+;; Measured 2026-09-10, because the obvious next rule here is a mistake:
+;;
+;;   --color-neutral-solid-gray-50   (the page ground in `base-css`)  #1a1a1a
+;;   --color-neutral-white           (every card, rail and topbar)     #1a1a1a
+;;
+;; The ground and the raised surfaces land on the SAME value in dark, and no
+;; darker one exists to move the ground to — `jp-go-dds.dark` deliberately
+;; keeps pure black out (`--color-neutral-black` inverts to white), so the
+;; darkest grey step is the floor and the surfaces already stand on it.
+;;
+;; This is flat rather than broken: `base-css` gives cards and the sidebar
+;; `1px solid var(--color-neutral-solid-gray-200)`, which inverts to #4d4d4d,
+;; so every edge is still drawn. Separation is carried by the borders, not by
+;; a fill difference.
+;;
+;; An override was written here first and it set `body` to
+;; `var(--dds-light-neutral-solid-gray-900)` — which is #1a1a1a, the value it
+;; already had. It changed nothing while reading as though it fixed the
+;; collision. Lifting the surfaces instead is a design decision (it means
+;; per-component rules, which is exactly what this layer does not have), so it
+;; is left to be asked for rather than made here.
+
 (defn toggle-button
   "The topbar control. `data-next` is what one press moves to, so the label and
   the glyph are derived from the same fact the script flips."
@@ -317,12 +407,14 @@
               :data-mode (or (normalize mode) default-mode)
               :data-next next
               :aria-pressed (if (not= "light" (normalize mode)) "true" "false")
-              :aria-label "表示モードを切り替え（light / 8-bit / grok）"
+              :aria-label "表示モードを切り替え（light / dark / 8-bit / grok）"
               :title (case next
+                       "dark" "ダークにする"
                        "8bit" "8-BIT MODE にする"
                        "grok" "grokモードにする"
                        "標準表示に戻す")}
      (case next
+       "dark" "DARK"
        "8bit" "8-BIT"
        "grok" "GROK"
        "DADS")]))

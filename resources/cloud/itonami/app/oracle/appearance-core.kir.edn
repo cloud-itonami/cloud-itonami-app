@@ -7,45 +7,51 @@
    :effects #{},
    :body
    (if
-    (string=? name "8bit")
-    (option-some-of [:option :string] "8bit")
+    (string=? name "dark")
+    (option-some-of [:option :string] "dark")
     (if
-     (string=? name "8-bit")
-     (option-some-of [:option :string] "8bit")
+     (string=? name "night")
+     (option-some-of [:option :string] "dark")
      (if
-      (string=? name "eightbit")
+      (string=? name "8bit")
       (option-some-of [:option :string] "8bit")
       (if
-       (string=? name "eight-bit")
+       (string=? name "8-bit")
        (option-some-of [:option :string] "8bit")
        (if
-        (string=? name "pixel")
+        (string=? name "eightbit")
         (option-some-of [:option :string] "8bit")
         (if
-         (string=? name "retro")
+         (string=? name "eight-bit")
          (option-some-of [:option :string] "8bit")
          (if
-          (string=? name "grok")
-          (option-some-of [:option :string] "grok")
+          (string=? name "pixel")
+          (option-some-of [:option :string] "8bit")
           (if
-           (string=? name "grob")
-           (option-some-of [:option :string] "grok")
+           (string=? name "retro")
+           (option-some-of [:option :string] "8bit")
            (if
-            (string=? name "dark-chat")
+            (string=? name "grok")
             (option-some-of [:option :string] "grok")
             (if
-             (string=? name "chat-dark")
+             (string=? name "grob")
              (option-some-of [:option :string] "grok")
              (if
-              (string=? name "light")
-              (option-some-of [:option :string] "light")
+              (string=? name "dark-chat")
+              (option-some-of [:option :string] "grok")
               (if
-               (string=? name "default")
-               (option-some-of [:option :string] "light")
+               (string=? name "chat-dark")
+               (option-some-of [:option :string] "grok")
                (if
-                (string=? name "dads")
+                (string=? name "light")
                 (option-some-of [:option :string] "light")
-                (option-none-of [:option :string])))))))))))))),
+                (if
+                 (string=? name "default")
+                 (option-some-of [:option :string] "light")
+                 (if
+                  (string=? name "dads")
+                  (option-some-of [:option :string] "light")
+                  (option-none-of [:option :string])))))))))))))))),
    :param-types [:string]}
   {:name next-of,
    :params [mode],
@@ -54,11 +60,14 @@
    :body
    (if
     (string=? mode "light")
-    "8bit"
+    "dark"
     (if
-     (string=? mode "8bit")
-     "grok"
-     (if (string=? mode "grok") "light" "8bit"))),
+     (string=? mode "dark")
+     "8bit"
+     (if
+      (string=? mode "8bit")
+      "grok"
+      (if (string=? mode "grok") "light" "dark")))),
    :param-types [:string]}
   {:name plane-cloud?,
    :params [name],
