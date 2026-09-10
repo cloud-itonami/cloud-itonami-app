@@ -6503,7 +6503,11 @@
       (assoc :agent.run/error-type (or (:turn/error-type turn)
                                        :bot/unclassified-visible-failure))
       (and (= "failed" state) (:turn/error-message turn))
-      (assoc :agent.run/error-message (:turn/error-message turn)))))
+      (assoc :agent.run/error-message (:turn/error-message turn))
+      (= "blocked" state)
+      (assoc :agent.run/error-type :bot/goal-blocked
+             :agent.run/error-message (:turn/result turn)
+             :agent.run/blocking-prerequisites (:turn/evidence turn)))))
 
 (defn- run-goal-job! [configuration run-id]
   (let [{:job/keys [bot session objective attempt] :as job} (goal-job run-id)
