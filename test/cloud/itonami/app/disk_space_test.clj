@@ -229,3 +229,12 @@
         (is (true? (get-in result [:stable-observation :stable?])))
         (is (true? (get-in result [:after :pressure?]))
             "a completed cycle does not falsely claim that pressure was relieved")))))
+
+(deftest uv-user-install-is-resolved-without-path-or-system-install
+  (let [home (temp-root)
+        uv (io/file home ".local/bin/uv")
+        _ (fixture-file! home ".local/bin/uv" "#!/bin/sh\nexit 0\n")]
+    (is (nil? (#'disk-space/native-uv-executable (.getPath home) [])))
+    (.setExecutable uv true)
+    (is (= uv (#'disk-space/native-uv-executable (.getPath home) [])))
+    (is (nil? (#'disk-space/native-uv-executable (.getPath (temp-root)) [])))))
