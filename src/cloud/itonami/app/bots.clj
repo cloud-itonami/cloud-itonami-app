@@ -5433,6 +5433,20 @@
                           "に保存し、この会話には残しません）。")
                      [secret-blocked]))
 
+              ;; Known repository tools outside this run's grant cannot be
+              ;; repaired by spelling them differently. Stop without invoking
+              ;; them and preserve the exact missing capability for operators.
+              (and (not (contains? (:runnable run) name))
+                   (not (capability-drift? run name))
+                   (some #(= name (:name %)) workspace-tools/tool-definitions))
+              (let [message (str "Required workspace capability is unavailable: " name
+                                 ". Configure the Bot's repository access before retrying; nothing was executed.")]
+                (clear-run! (:bot/id b))
+                (finish-visible! on-finish run :failed
+                                 {:turn/error-type :workspace/capability-unavailable
+                                  :turn/error-message message})
+                (say (:bot/id b) message nil))
+
               ;; A name the model invented, or one that left the grant between
               ;; the offer and the call. `invoke/call` would fail somewhere
               ;; deeper with a message about a registry; refusing here says the
