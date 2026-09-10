@@ -22,7 +22,7 @@
                  :properties {:path {:type "string"
                                      :description "Relative to the repository root, e.g. \"src\" or \".\" for the root. An absolute path is refused."}}}}
    {:name "workspace_read"
-    :description "Read one UTF-8 text file inside the selected local Git repository."
+    :description "Read one UTF-8 text file inside the selected local Git repository. For directories, first use workspace_list and then read a returned file path."
     :parameters {:type "object"
                  :properties {:path {:type "string"
                                      :description "Relative to the repository root, e.g. \"src/core.clj\". An absolute path is refused."}}
@@ -131,7 +131,9 @@
 
 (defn- regular-text! [^Path path]
   (when-not (Files/isRegularFile path no-links)
-    (throw (ex-info "Workspace target is not a regular file."
+    (throw (ex-info (if (Files/isDirectory path no-links)
+                      "Workspace target is a directory. Use workspace_list with this path, then workspace_read with a returned file path."
+                      "Workspace target is not a regular file. Use workspace_list on its parent directory to find an existing file.")
                     {:type :workspace/not-a-file})))
   (let [size (Files/size path)]
     (when (> size max-file-bytes)

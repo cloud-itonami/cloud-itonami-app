@@ -165,3 +165,14 @@
           (is (str/includes? out "oversize-skipped=1"))))
       (finally
         (doseq [f (reverse (file-seq (io/file root)))] (io/delete-file f true))))))
+
+(deftest directory-read-gives-a-recoverable-tool-path
+  (let [root (temp-dir)]
+    (git! root "init" "-q" "--initial-branch=main")
+    (.mkdir (io/file root "src"))
+    (spit (io/file root "src" "note.txt") "ready")
+    (let [error (try (workspace/call! (.getPath root) "workspace_read" {:path "src"})
+                     (catch clojure.lang.ExceptionInfo e e))]
+      (is (= :workspace/not-a-file (:type (ex-data error))))
+      (is (re-find #"directory.*workspace_list.*workspace_read" (.getMessage error))))
+    (is (= "ready" (workspace/call! (.getPath root) "workspace_read" {:path "src/note.txt"})))))
