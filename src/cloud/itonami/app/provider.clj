@@ -634,6 +634,23 @@
               "モデルが回答本文を返しませんでした。もう一度送ってください。"
               {:type :provider/empty-response
                :finish-reason finish-reason})))
+    ;; A partial report is not a completed deliverable, even when it contains
+    ;; valid text. Never admit it for automatic delivery as a successful turn.
+    ;;
+    ;; AFTER the empty check, not before. A turn that is BOTH empty and
+    ;; length-terminated is an empty response first: nothing arrived, and the
+    ;; budget is why, which `:finish-reason` already carries. Ordering this
+    ;; first reclassified that case and turned
+    ;; `an-empty-finished-turn-is-not-a-silent-answer` red -- the two errors
+    ;; are not interchangeable, because the caller that retries an empty turn
+    ;; is not the caller that raises a budget.
+    (when (and (empty? (:tool-calls result))
+               (contains? #{"length" "max_tokens"} finish-reason))
+      (throw (ex-info "Model output ended before the answer was complete"
+                      {:type :provider/output-budget-exhausted
+                       :finish-reason finish-reason
+                       :max-output-tokens max-output-tokens
+                       :completion-tokens (:completion_tokens usage)})))
     result)))
 
 (defn- ollama-agent-options [provider request]
