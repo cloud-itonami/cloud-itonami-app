@@ -5499,3 +5499,18 @@
           (is (= "Required source unavailable" (:agent.run/error-message result)))
           (is (= ["Restore source asset"] (:agent.run/blocking-prerequisites result)))
           (is (= "blocked" (:agent.run/result result))))))))
+
+(deftest known-unavailable-workspace-tool-is-not-retried-as-a-typo
+  (with-store
+    (fn []
+      (let [b (make-bot alice {}) asked (atom 0)]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn (fn [& _]
+                        (swap! asked inc)
+                        {:content "" :tool-calls [{:id "unavailable-write"
+                          :name "workspace_write_file" :input {:path "note.txt" :content "no"}}]})]
+          (let [message (last (bots/send! nil alice (:bot/id b) "write note"))]
+            (is (= 1 @asked))
+            (is (str/includes? (:text message) "workspace_write_file"))
+            (is (str/includes? (:text message) "repository access"))
+            (is (empty? ((private-fn 'trace-of) (:bot/id b))))))))))
