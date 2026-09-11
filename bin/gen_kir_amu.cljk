@@ -2,8 +2,8 @@
 ;; JVM-free decision-core build path (opt-in): compile every shipped decision
 ;; core with the Amu compiler and prove KIR identity with the shipped artifacts.
 ;;
-;;     nbb --classpath bin bin/gen_kir_amu.cljs          (from the repository root)
-;;     AMU=/path/to/amu nbb --classpath bin bin/gen_kir_amu.cljs
+;;     nbb --classpath bin bin/gen_kir_amu.cljk          (from the repository root)
+;;     AMU=/path/to/amu nbb --classpath bin bin/gen_kir_amu.cljk
 ;;
 ;; ## What this is
 ;;
@@ -48,7 +48,7 @@
   "Single source of truth for the core list: the `cores` map in the oracle
   namespace itself, read as EDN. If a core is added there, this picks it up
   with no second edit."
-  "src/cloud/itonami/app/kotoba_oracle.cljc")
+  "src/cloud/itonami/app/kotoba_oracle.cljk")
 
 (def out-dir "target/kir-amu")
 

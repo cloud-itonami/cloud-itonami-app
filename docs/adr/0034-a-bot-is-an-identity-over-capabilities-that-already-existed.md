@@ -178,7 +178,7 @@ status dot, and `prefers-reduced-motion` stops every Bot animation.
 
 ## The JVM suite cannot see the client, measured
 
-`test/browser/bots_view.cljs` drives the view in a real browser. On its first
+`test/browser/bots_view.cljk` drives the view in a real browser. On its first
 run it found two defects that 1343 passing tests did not, both the same shape —
 a value crossing the JSON boundary and quietly becoming something else:
 

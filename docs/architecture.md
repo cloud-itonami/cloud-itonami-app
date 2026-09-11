@@ -1477,5 +1477,5 @@ relevance queries. Writes replace the state file atomically.
 4. Add memory distillation and relevance retrieval over kgraph.
 5. Add schedules/watchers after tool isolation is available.
 6. Add a function-call compatibility suite. (Streaming has one:
-   `test/cloud/itonami/app/openai_compat_test.clj` reads the SSE frames over
+   `test/cloud/itonami/app/openai_compat_test.cljk` reads the SSE frames over
    real HTTP, in both modes.)

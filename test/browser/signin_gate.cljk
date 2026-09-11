@@ -1,7 +1,7 @@
 ;; Drive the real sign-in screen in a real browser.
 ;;
 ;;     NODE_PATH=<superproject>/node_modules ITONAMI_BASE=http://localhost:1347 \
-;;       nbb test/browser/signin_gate.cljs
+;;       nbb test/browser/signin_gate.cljk
 ;;
 ;; Point it at a server with an EMPTY store. It then produces the state it is
 ;; about to assert on, the same way a person does: POST /api/identity/register

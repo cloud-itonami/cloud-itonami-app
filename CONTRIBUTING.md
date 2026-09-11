@@ -21,13 +21,13 @@ is written only by the JVM oracle: `clojure -M:test:gen`
 An opt-in JVM-free route compiles the same cores with the Amu compiler and
 proves KIR identity against the shipped artifacts:
 
-    AMU=<amu launcher> nbb --classpath bin bin/gen_kir_amu.cljs
-    AMU=<amu launcher> nbb --classpath bin:test test/kir_amu_parity_nbb.cljs
+    AMU=<amu launcher> nbb --classpath bin bin/gen_kir_amu.cljk
+    AMU=<amu launcher> nbb --classpath bin:test test/kir_amu_parity_nbb.cljk
 
 Both run `amu compile` (Amu's nbb Wasm path — no JVM, no `clojure -Spath`)
 on every entry of `kotoba-oracle/cores` and compare the provenance's
 `:kir-sha256` against the canonical SHA-256 of the shipped KIR
-(`kotoba.artifact.core/sha256` semantics; see `bin/gen_kir_amu.cljs`). The
+(`kotoba.artifact.core/sha256` semantics; see `bin/gen_kir_amu.cljk`). The
 route writes only under `target/kir-amu/` — nothing under `resources/`.
 
 Rollback is one step: stop running the two commands. `clojure -M:test:gen`

@@ -21,7 +21,7 @@
 ;; refuse typed :f64 values — this core is likewise wasm-crossable, not
 ;; native-crossable).
 ;;
-;; Parity: test/cloud/itonami/app/bot_slo_recovery_kotoba_parity_test.clj
+;; Parity: test/cloud/itonami/app/bot_slo_recovery_kotoba_parity_test.cljk
 
 (ns bot-slo-recovery-core
   (:export [recovery-points]))

@@ -27,7 +27,7 @@
 ;; refuse typed :f64. So this core — like its latency/recovery siblings — is
 ;; wasm-crossable, deliberately not native-crossable.
 ;;
-;; Parity: test/cloud/itonami/app/bot_slo_parts_kotoba_parity_test.clj
+;; Parity: test/cloud/itonami/app/bot_slo_parts_kotoba_parity_test.cljk
 
 (ns bot-slo-stability-parts-core
   (:export [availability-points completion-points observability-points]))

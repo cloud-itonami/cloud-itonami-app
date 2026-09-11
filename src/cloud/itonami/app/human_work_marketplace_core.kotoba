@@ -24,7 +24,7 @@
 ;; as `[:option :string]`; `option-some?` gates both answers, so a binding
 ;; is never handed an operator that expects a value.
 ;;
-;; Parity: test/cloud/itonami/app/human_work_marketplace_kotoba_parity_test.clj
+;; Parity: test/cloud/itonami/app/human_work_marketplace_kotoba_parity_test.cljk
 ;; and ADR-2609081200.
 
 (ns cloud.itonami.app.human-work-marketplace-core

@@ -5,7 +5,7 @@
   ## Why this is separate
 
   `cloud.itonami.app.store` is the namespace the most other namespaces wait on:
-  measured 2026-08-27 by `scripts/jvm-exit-report.cljs`, it is what blocks the
+  measured 2026-08-27 by `scripts/jvm-exit-report.cljk`, it is what blocks the
   largest group of otherwise-portable files. It cannot become `.cljc` itself
   yet, and the reason is worth writing down rather than rediscovering — it
   requires `langchain.edn-persist`, which is `.clj` in an EXTERNAL library.

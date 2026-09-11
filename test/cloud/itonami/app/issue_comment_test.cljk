@@ -97,7 +97,7 @@
     (is (str/includes? text "section[data-view-panel=\"bots\"] > div.bot-row"))
     (is (str/includes? text "実行に失敗しました"))
     (is (str/includes? text "x=412 y=288 w=340 h=96"))
-    (is (str/includes? text "src/cloud/itonami/app/web.clj")
+    (is (str/includes? text "src/cloud/itonami/app/web.cljk")
         "the Bot is told where in this repository the screen is rendered")
     (is (< (count text) 8000)
         "stays inside bots/max-message-chars with the descriptor beside it")))

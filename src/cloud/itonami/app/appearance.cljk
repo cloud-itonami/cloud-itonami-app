@@ -36,7 +36,7 @@
   docs/adr/0091-8bit-mode-is-an-appearance-of-one-workspace.md.
 
   Portable on purpose: the resolution and the stylesheet are data, and the
-  ClojureScript half of the test suite executes them (`test/portable_nbb.cljs`)."
+  ClojureScript half of the test suite executes them (`test/portable_nbb.cljk`)."
   (:require [kotoba.lang.text :as str]
             [jp-go-dds.dark :as dark]
             [cloud.itonami.app.kotoba-oracle :as oracle]))
@@ -339,7 +339,7 @@
   "The `dark` appearance: DADS with its primitive ramps inverted.
 
   Takes the vendored `dds.css` rather than reading it, so this stays portable
-  — `test/portable_nbb.cljs` executes this namespace and cannot slurp a
+  — `test/portable_nbb.cljk` executes this namespace and cannot slurp a
   resource. `web/page-html` already holds the string for `->page`.
 
   ## Why the scope is `:root:has(…)` and not `.workspace[…]`

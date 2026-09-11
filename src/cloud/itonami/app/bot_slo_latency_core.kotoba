@@ -30,7 +30,7 @@
 ;; native-crossable — a deliberate difference from the :i64/:bool/:string
 ;; sibling cores, and recorded here so nobody claims native f64.
 ;;
-;; Parity: test/cloud/itonami/app/bot_slo_latency_kotoba_parity_test.clj
+;; Parity: test/cloud/itonami/app/bot_slo_latency_kotoba_parity_test.cljk
 
 (ns bot-slo-latency-core
   (:export [latency-points]))

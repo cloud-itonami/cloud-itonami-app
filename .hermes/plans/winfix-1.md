@@ -13,15 +13,15 @@ Windows起動障害の報告2件を検出。両方とも修正は既に `fix/win
   initial attribute` (`sun.nio.fs.WindowsSecurityDescriptor`)
 - 発生源: `agent-session/ensure-key!` (agent-enrollment.key) 他、以下9箇所すべて
   `PosixFilePermissions` を直接使用しWindows(NTFS)で非対応:
-  - `src/cloud/itonami/app/agent_session.clj`
-  - `src/cloud/itonami/app/chronicle.clj`
-  - `src/cloud/itonami/app/bot_authority.clj`
-  - `src/cloud/itonami/app/bot_identity.clj`
-  - `src/cloud/itonami/app/drive_crypto.clj`
-  - `src/cloud/itonami/app/drive_delivery.clj`
-  - `src/cloud/itonami/app/drive_store_migration.clj`
-  - `src/cloud/itonami/app/work_partition_store.clj`
-  - `src/cloud/itonami/app/organism_messenger_transport.clj`
+  - `src/cloud/itonami/app/agent_session.cljk`
+  - `src/cloud/itonami/app/chronicle.cljk`
+  - `src/cloud/itonami/app/bot_authority.cljk`
+  - `src/cloud/itonami/app/bot_identity.cljk`
+  - `src/cloud/itonami/app/drive_crypto.cljk`
+  - `src/cloud/itonami/app/drive_delivery.cljk`
+  - `src/cloud/itonami/app/drive_store_migration.cljk`
+  - `src/cloud/itonami/app/work_partition_store.cljk`
+  - `src/cloud/itonami/app/organism_messenger_transport.cljk`
 - 結果: `http://127.0.0.1:1338/health` が一度も200を返さず起動失敗。
 
 ### 2. ランチャーダイアログ — 起動失敗が無表示
@@ -33,7 +33,7 @@ Windows起動障害の報告2件を検出。両方とも修正は既に `fix/win
 
 ## 修正内容 (PR #274, ブランチ `fix/windows-posix-acl`)
 
-1. 新規 `src/cloud/itonami/app/secure_file.clj`:
+1. 新規 `src/cloud/itonami/app/secure_file.cljk`:
    - `FileStore` の capability 検出 (`os.name` 判定ではない) — POSIX対応なら
      従来の `rw-------`/`rwx------` セマンティクスを維持、非対応なら
      `AclFileAttributeView` で制限的ACL (owner full control、SYSTEM/Administrators

@@ -47,7 +47,7 @@
 ;; arrive as records because a bare `:bool` parameter is a backend gap
 ;; (compiler ADR-0219). `and` / `not` / `>=` are `:bool`.
 ;;
-;; Parity: test/cloud/itonami/app/handoff_kotoba_parity_test.clj
+;; Parity: test/cloud/itonami/app/handoff_kotoba_parity_test.cljk
 
 (ns handoff-core
   (:schemas {;; What the host has established about one attempted handoff.

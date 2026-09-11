@@ -24,7 +24,7 @@
 ;; the native import set is a strict SUBSET of amu's (it does not ask for
 ;; vector-alloc-i64 / vector-assoc-in-place-i64); both load through this app's
 ;; own runtime/load-guest.mjs and agree on main and health-route?.
-;; `test/emit_parity_nbb.cljs` is that measurement, and it refuses to report a
+;; `test/emit_parity_nbb.cljk` is that measurement, and it refuses to report a
 ;; pass when either emitter is missing.
 ;;
 ;; :command/planned is not emit. The native CLI answers :command/planned with

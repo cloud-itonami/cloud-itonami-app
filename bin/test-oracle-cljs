@@ -3,7 +3,7 @@
 ;;
 ;;   bin/test-oracle-cljs          (from the repository root)
 ;;
-;; ## Why this is not just `nbb test/oracle_cases_nbb.cljs`
+;; ## Why this is not just `nbb test/oracle_cases_nbb.cljk`
 ;;
 ;; The interpreter is a pinned dependency, and a gate that ran against a
 ;; DIFFERENT `kotoba-kir` than production would be worse than no gate — the
@@ -49,5 +49,5 @@
     (set! (.-exitCode js/process) 1))
   (when (seq kir)
     (sh "nbb" ["--classpath" (str/join ":" (concat ["src" "test"] kir))
-               "test/oracle_cases_nbb.cljs"]
+               "test/oracle_cases_nbb.cljk"]
         {:stdio "inherit"})))

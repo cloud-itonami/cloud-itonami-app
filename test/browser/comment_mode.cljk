@@ -1,7 +1,7 @@
 ;; Drive comment mode in a real browser.
 ;;
 ;;     NODE_PATH=<superproject>/node_modules ITONAMI_BASE=http://localhost:1338 \
-;;       nbb test/browser/comment_mode.cljs
+;;       nbb test/browser/comment_mode.cljk
 ;;
 ;; Point it at any running server. Unlike `bots_view.cljs` this needs NO
 ;; session: comment mode's markup is in the page whatever the identity is —

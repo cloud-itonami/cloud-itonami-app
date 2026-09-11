@@ -23,7 +23,7 @@ before this was understood:
 
 ## Decision
 
-**Measure the require graph, not the extensions.** `scripts/jvm-exit-report.cljs`
+**Measure the require graph, not the extensions.** `scripts/jvm-exit-report.cljk`
 (nbb, no JVM) walks it and reports three sets: portable today, blocked by an
 in-repo namespace *with what is blocking it*, and **unmeasured** because a
 dependency lives outside this repository. The third set exists because the

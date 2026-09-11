@@ -122,7 +122,7 @@ is rebuilt.
 - A person calling bare `itonami` gets the REPL, and pays one `/health`
   request (a few milliseconds against a live resident, and a refused connect
   when there is none) before the prompt.
-- `bin/itonami_splash.cljs` is a new sibling of the launcher. The single-file
+- `bin/itonami_splash.cljk` is a new sibling of the launcher. The single-file
   resident copy is unaffected: `--print-data-dir` still answers before any
   sibling is required, which is the property `launcher_test` measures, and it
   was re-measured by hand here.

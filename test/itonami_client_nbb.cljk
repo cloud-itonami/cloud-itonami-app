@@ -1,7 +1,7 @@
 ;; The front end's dispatch, and whether the paths it names exist.
 ;;
-;;     nbb test/itonami_client_nbb.cljs           # resolution only, no server
-;;     nbb test/itonami_client_nbb.cljs --probe   # also ask a live server
+;;     nbb test/itonami_client_nbb.cljk           # resolution only, no server
+;;     nbb test/itonami_client_nbb.cljk --probe   # also ask a live server
 ;;
 ;;   0  checks passed
 ;;   1  a check failed

@@ -45,7 +45,7 @@
 ;; never mentioned. `:requires-one-of` is that command's own floor.
 
 {:schema "cloud.itonami.app.cli-aliases.v1"
- :source "src/cloud/itonami/app/cli.clj"
+ :source "src/cloud/itonami/app/cli.cljk"
 
  :host-side
  [{:command ["bots" "hygiene"]

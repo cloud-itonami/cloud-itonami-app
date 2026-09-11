@@ -15,7 +15,7 @@
 
   ## Why `.cljc`
 
-  Two callers in two runtimes: `dev/gen_commands.cljs` writes the registry under
+  Two callers in two runtimes: `dev/gen_commands.cljk` writes the registry under
   nbb, and `commands-test` checks it under the JVM. Written twice they would
   disagree eventually, and the disagreement would read as drift in the routes
   rather than in the two scanners.

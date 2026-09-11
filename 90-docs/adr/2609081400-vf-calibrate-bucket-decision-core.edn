@@ -40,7 +40,7 @@ Landed this tick:
 - `vf_calibrate.clj` `calibrated-model` and `calibration` now route on the
   core verdict through `kotoba-oracle`; the doubles (`:from`/`:to`/rebase
   value), the `assoc-in` write, and the report assembly stay host
-- parity test `test/cloud/itonami/app/vf_calibrate_kotoba_parity_test.clj`
+- parity test `test/cloud/itonami/app/vf_calibrate_kotoba_parity_test.cljk`
   + KIR regeneration + JVM-free gen_kir_amu identity
 
 ## The split is byte-faithful, not just behavior-preserving

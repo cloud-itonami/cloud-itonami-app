@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.oracle-cljs-parity-test
   "The JVM half of the two-runtime gate over `oracle-cases`.
 
-  The ClojureScript half is `test/oracle_cases_nbb.cljs`, run by
+  The ClojureScript half is `test/oracle_cases_nbb.cljk`, run by
   `bin/test-oracle-cljs`. Both halves execute the SAME table, so a case cannot
   be answered on one runtime and quietly skipped on the other, and neither can
   drift into testing a different thing than the other one does.

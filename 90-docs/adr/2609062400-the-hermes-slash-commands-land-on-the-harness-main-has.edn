@@ -26,7 +26,7 @@ onto the harness `main` mounts, and the second harness is not.
 ## The routes were checked, not assumed
 
 Every command below names a route that was found in
-`src/cloud/itonami/app/server.clj` before it was written.
+`src/cloud/itonami/app/server.cljk` before it was written.
 
 The generated command table (`resources/cloud-itonami-app.commands.edn`, 198
 routes) was the wrong place to look and said so by answering `0` for routes

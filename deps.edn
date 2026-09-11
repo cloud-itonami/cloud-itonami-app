@@ -20,7 +20,7 @@
         ;; thing, which is what lets `http-client-async` be one .cljc file
         ;; rather than two implementations under one name.
         ;;
-        ;; Not a new idea in this repository: mobile/scripts/verify-browser.cljs
+        ;; Not a new idea in this repository: mobile/scripts/verify-browser.cljk
         ;; already requires promesa.core, and nbb bundles it -- so this
         ;; coordinate only completes on the JVM what the ClojureScript side
         ;; already had. kotoba-lang/async is channels, a different model, and

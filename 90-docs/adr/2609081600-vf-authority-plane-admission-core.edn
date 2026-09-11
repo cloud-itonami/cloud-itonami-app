@@ -41,7 +41,7 @@ Landed this tick:
 - `vf_authority.clj` `vf-scope` routes on the core verdict through
   `kotoba-oracle`; the `planes` map is gone (the core owns the table) and
   the keyword/name/str/scope machinery stays host
-- parity test `test/cloud/itonami/app/vf_authority_kotoba_parity_test.clj`
+- parity test `test/cloud/itonami/app/vf_authority_kotoba_parity_test.cljk`
   + KIR regeneration + JVM-free gen_kir_amu identity
 
 ## The split is byte-faithful, not just behavior-preserving

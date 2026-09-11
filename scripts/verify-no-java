@@ -4,7 +4,7 @@
 ;;   nbb --classpath bin scripts/verify-no-java
 ;;   PATH="$(scripts/path-without-jvm)" nbb --classpath bin scripts/verify-no-java
 ;;
-;; This is the process-tree proof. `nbb scripts/jvm-exit-report.cljs` is not.
+;; This is the process-tree proof. `nbb scripts/jvm-exit-report.cljk` is not.
 
 (ns verify-no-java
   (:require ["node:child_process" :as cp]

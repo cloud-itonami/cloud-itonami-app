@@ -37,7 +37,7 @@ directions, silently. Exactly one process may own the store.
 
 `cloud.itonami.app.route-scan` reads `handler`'s own `cond` — method, path, which
 session gate the clause applies, which keys its body reads — and produces a
-registry. `dev/gen_commands.cljs` writes it to
+registry. `dev/gen_commands.cljk` writes it to
 `resources/cloud-itonami-app.commands.edn`, `cloud.itonami.app.commands` loads
 it, and `cli` dispatches over it.
 
