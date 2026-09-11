@@ -1,0 +1,100 @@
+fd9aa86502c3419ced67f1f6b3e88fb0b63918a9
+---unused-main---
+unused . (checking for unused data...) 
+  Some partially transferred data exists in temporary files:
+    NUMBER  KEY
+    1       MD5E-s451878-S52428800-C1--0f07f3e0ba37fa4bf27289be7c698c27.edn
+    2       MD5E-s16813345-S52428800-C1--474e87d94a3d55e735c57a3ccb5c2206.edn
+    3       MD5E-s12869555-S52428800-C1--4e13ea1207d8d00642a00a33835282b8.edn
+    4       MD5E-s15382923-S52428800-C1--5563d2c683750887b31bc1907373a957.edn
+    5       MD5E-s12217300-S52428800-C1--7e5aca2307e5bbb5d64a2581d7e3196a.edn
+    6       MD5E-s12661163-S52428800-C1--82d861c35ca80807744197a31b52a834.edn
+    7       MD5E-s16418785-S52428800-C1--8a866d46023c1a7f65f7c177d0d66d80.edn
+    8       MD5E-s16264158-S52428800-C1--a1b1c6f3b3c05513a447e2940538d248.edn
+    9       MD5E-s15629559-S52428800-C1--bbad9851591622c47aac3d459ac00601.edn
+    10      MD5E-s7973027-S52428800-C1--bfc0d6ff7e9a3a99f528876c640db216.edn
+    11      MD5E-s16333505-S52428800-C1--c30c9d355dc2ccd03464059de433b89c.edn
+    12      MD5E-s14646768-S52428800-C1--ca63f5b460602874fbec5cd47c6524d2.edn
+    13      MD5E-s15583865-S52428800-C1--e68451d9dbab739c236dd258fc5349de.edn
+    14      MD5E-s13731264-S52428800-C1--f7947f35c162499f47ab5368feb0c1ad.edn
+  
+  To remove unwanted data: git-annex dropunused NUMBER
+  
+ok
+---unused-all---
+unused . (checking for unused data...) 
+  Some partially transferred data exists in temporary files:
+    NUMBER  KEY
+    1       MD5E-s451878-S52428800-C1--0f07f3e0ba37fa4bf27289be7c698c27.edn
+    2       MD5E-s16813345-S52428800-C1--474e87d94a3d55e735c57a3ccb5c2206.edn
+    3       MD5E-s12869555-S52428800-C1--4e13ea1207d8d00642a00a33835282b8.edn
+    4       MD5E-s15382923-S52428800-C1--5563d2c683750887b31bc1907373a957.edn
+    5       MD5E-s12217300-S52428800-C1--7e5aca2307e5bbb5d64a2581d7e3196a.edn
+    6       MD5E-s12661163-S52428800-C1--82d861c35ca80807744197a31b52a834.edn
+    7       MD5E-s16418785-S52428800-C1--8a866d46023c1a7f65f7c177d0d66d80.edn
+    8       MD5E-s16264158-S52428800-C1--a1b1c6f3b3c05513a447e2940538d248.edn
+    9       MD5E-s15629559-S52428800-C1--bbad9851591622c47aac3d459ac00601.edn
+    10      MD5E-s7973027-S52428800-C1--bfc0d6ff7e9a3a99f528876c640db216.edn
+    11      MD5E-s16333505-S52428800-C1--c30c9d355dc2ccd03464059de433b89c.edn
+    12      MD5E-s14646768-S52428800-C1--ca63f5b460602874fbec5cd47c6524d2.edn
+    13      MD5E-s15583865-S52428800-C1--e68451d9dbab739c236dd258fc5349de.edn
+    14      MD5E-s13731264-S52428800-C1--f7947f35c162499f47ab5368feb0c1ad.edn
+  
+  To remove unwanted data: git-annex dropunused NUMBER
+  
+ok
+---unused-resident---
+unused . (checking for unused data...) 
+  Some partially transferred data exists in temporary files:
+    NUMBER  KEY
+    1       MD5E-s451878-S52428800-C1--0f07f3e0ba37fa4bf27289be7c698c27.edn
+    2       MD5E-s16813345-S52428800-C1--474e87d94a3d55e735c57a3ccb5c2206.edn
+    3       MD5E-s12869555-S52428800-C1--4e13ea1207d8d00642a00a33835282b8.edn
+    4       MD5E-s15382923-S52428800-C1--5563d2c683750887b31bc1907373a957.edn
+    5       MD5E-s12217300-S52428800-C1--7e5aca2307e5bbb5d64a2581d7e3196a.edn
+    6       MD5E-s12661163-S52428800-C1--82d861c35ca80807744197a31b52a834.edn
+    7       MD5E-s16418785-S52428800-C1--8a866d46023c1a7f65f7c177d0d66d80.edn
+    8       MD5E-s16264158-S52428800-C1--a1b1c6f3b3c05513a447e2940538d248.edn
+    9       MD5E-s15629559-S52428800-C1--bbad9851591622c47aac3d459ac00601.edn
+    10      MD5E-s7973027-S52428800-C1--bfc0d6ff7e9a3a99f528876c640db216.edn
+    11      MD5E-s16333505-S52428800-C1--c30c9d355dc2ccd03464059de433b89c.edn
+    12      MD5E-s14646768-S52428800-C1--ca63f5b460602874fbec5cd47c6524d2.edn
+    13      MD5E-s15583865-S52428800-C1--e68451d9dbab739c236dd258fc5349de.edn
+    14      MD5E-s13731264-S52428800-C1--f7947f35c162499f47ab5368feb0c1ad.edn
+  
+  To remove unwanted data: git-annex dropunused NUMBER
+  
+ok
+---info---
+trusted repositories: 0
+semitrusted repositories: 5
+	00000000-0000-0000-0000-000000000001 -- web
+	00000000-0000-0000-0000-000000000002 -- bittorrent
+	7d3c59ed-6f30-4ad0-abf1-d8d46bb1cbb9 -- junkawasaki@main-2.local:~/.gftd/worktrees/dns-resolver-resident [here]
+	e7e222ac-3112-4453-ac21-67f344924c0c -- [kotobase]
+	e8e6ad0a-a481-4859-824f-af4c73789a5f -- [b2]
+untrusted repositories: 0
+transfers in progress: none
+available local disk space: 191.86 gigabytes (+100 megabytes reserved)
+temporary object directory size: 186.98 megabytes (clean up with git-annex unused)
+local annex keys: 786
+local annex size: 11.68 gigabytes
+annexed files in working tree: 7143
+size of annexed files in working tree: 93.02 gigabytes
+combined annex size of all repositories: 111.12 gigabytes
+annex sizes of repositories: 
+	93.02 GB: e8e6ad0a-a481-4859-824f-af4c73789a5f -- [b2]
+	11.68 GB: 7d3c59ed-6f30-4ad0-abf1-d8d46bb1cbb9 -- junkawasaki@main-2.local:~/.gftd/worktrees/dns-resolver-resident [here]
+	 6.42 GB: e7e222ac-3112-4453-ac21-67f344924c0c -- [kotobase]
+backend usage: 
+	MD5E: 7143
+bloom filter size: 32 mebibytes (0.2% full)
+---df---
+Filesystem     1M-blocks   Used Available Capacity iused      ifree %iused  Mounted on
+/dev/disk3s1s1    948584  16455    183066     9%  458115 1874598920    0%   /
+---ps---
+junkawasaki      61573   0.0  0.0 443520768   7584   ??  S<   12:42PM   0:00.25 node /opt/homebrew/bin/nbb /Users/junkawasaki/.gftd/bin/itonami-app-resident.cljs
+---app-origin---
+5b2ae3de531a4ab84470631b759fccd3ca27a314
+       0
+rc=0
