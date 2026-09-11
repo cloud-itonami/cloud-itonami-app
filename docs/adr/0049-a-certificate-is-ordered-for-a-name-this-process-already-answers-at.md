@@ -163,12 +163,12 @@ account keys. ES256 is not a preference here.
 
 ## Verified
 
-`clojure -M:test` — 1491 tests, 8925 assertions, 0 failures on the branch, and
+`kbb -M:test` — 1491 tests, 8925 assertions, 0 failures on the branch, and
 **1507 tests, 9041 assertions, 0 failures on the merged default branch at
 closing**, which is the number that counts: several other branches landed alongside this one and touched
 `server.clj`, `oracle_cases.cljc`, `core_test.clj` and `interaction.js`.
 `bin/test-oracle-cljs` — 172 cases over 13 shipped cores.
-`clojure -M:lint` — unchanged from this branch's base.
+`kbb -M:lint` — unchanged from this branch's base.
 
 **The merged tip was RED the first time it was measured, and the defect was
 this file's.** `verify-es256` rebuilt the DER signature from

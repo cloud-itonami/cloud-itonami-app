@@ -34,7 +34,7 @@
     (is (= {:clj 1 :cljc 1 :cljs 0 :kotoba 1} (:counts result)))
     (is (= 2 (:candidate-count result)))
     (is (= 1 (count (:candidates result))))
-    (is (= ["clojure -M:test"] (:verification result)))))
+    (is (= ["kbb -M:test"] (:verification result)))))
 
 (deftest task-contract-demands-a-real-parity-checked-slice
   (let [[root _] (fixture)

@@ -21,7 +21,7 @@ repositories and a split, not a re-registration.
     services    33 files    6,501 lines   (5 Cloudflare Workers)
     bin         19 files    6,356 lines
 
-with a resident on this machine running `clojure -M:server` from a release of
+with a resident on this machine running `kbb -M:server` from a release of
 it, a launchd job, an MCP server, and four pointers that have to stay in step
 (main, west pin, `~/.cloud-itonami/current`, the running process).
 

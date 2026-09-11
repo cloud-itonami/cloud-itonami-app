@@ -3,7 +3,7 @@
 ## Status
 
 Accepted. 2026-07-31. 2026-09-02: `deps.edn` alias `:cli` is gone. Do not
-run `clojure -M:cli`.
+run `kbb -M:cli`.
 
 ## Context
 
@@ -75,7 +75,7 @@ acts as the token it presented.
 `store/state` is `(defonce state (atom (load-state)))` — read once per process,
 never re-read. A CLI writing `state.edn` beside a running server has its write
 silently reverted by the server's next `transact!`. So enrollment is a route on
-the running server and `clojure -M:cli` is an HTTP client of it.
+the running server and `kbb -M:cli` is an HTTP client of it.
 
 ### One login serves both clients
 

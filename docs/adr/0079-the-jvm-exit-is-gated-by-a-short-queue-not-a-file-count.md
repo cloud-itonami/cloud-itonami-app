@@ -93,7 +93,7 @@ binding the var a real caller binds. The fix is not a better alias:
 `host-bounds/require-cap!` takes the grant set as an **argument**, so the failure
 cannot be expressed.
 
-**A suite that does not compile reports success.** Twice, `clojure -M:test`
+**A suite that does not compile reports success.** Twice, `kbb -M:test`
 exited 0 having run zero tests — once on `*print-fn*` (ClojureScript-only) and
 once on a patch that deleted two helpers along with the function between them.
 The exit code is not the signal; the absence of a `Ran N tests` line is. Check

@@ -89,9 +89,9 @@ effect of adding a preview. If deck images should render, that is its own ADR.
 The suite and the linter, and then the surfaces in a real browser, because a
 passing suite says nothing about whether a page looks like a page.
 
-- `clojure -M:test` — 479 tests, 2033 assertions, 0 failures, 0 errors (at
+- `kbb -M:test` — 479 tests, 2033 assertions, 0 failures, 0 errors (at
   `516e092`, the revision that added the floor above).
-- `clojure -M:lint` — 0 errors. The 11 warnings are all pre-existing and none is
+- `kbb -M:lint` — 0 errors. The 11 warnings are all pre-existing and none is
   in a file this touched.
 - Chrome, against a real server over real stored documents: all four surfaces
   render; each of the four create buttons lands on that kind's surface in

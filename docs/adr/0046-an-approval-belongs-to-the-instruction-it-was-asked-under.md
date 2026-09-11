@@ -116,7 +116,7 @@ against that ADR.
 
 ## Verification
 
-`clojure -M:test` on this branch — **1467 tests, 8814 assertions, 0 failures,
+`kbb -M:test` on this branch — **1467 tests, 8814 assertions, 0 failures,
 0 errors.**
 
 The parent `96fc44e` was not run separately, and the number to compare against
@@ -149,4 +149,4 @@ not make approvals unanswerable — it asserts the write actually ran).
 Ten cases were added to the oracle parity corpus, covering both orderings, the
 `>` boundary at `asked-at == current`, and the direction-0 legacy card.
 `resources/cloud/itonami/app/oracle/bot.kir.edn` was regenerated with
-`clojure -M:test:gen`; it was the only KIR that changed.
+`kbb -M:test:gen`; it was the only KIR that changed.

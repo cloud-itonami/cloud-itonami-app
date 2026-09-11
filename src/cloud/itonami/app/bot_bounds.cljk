@@ -18,7 +18,7 @@
 
   Twenty-nine million tokens in one recorded turn, with nothing in the system
   that could have stopped it. Re-derive rather than quote:
-  `nbb scripts/measure-bot-usage.cljs` — these numbers are what the machine
+  `kbb --backend sci scripts/measure-bot-usage.cljk` — these numbers are what the machine
   looked like on one day, and this docstring is not where the current ones live.
 
   ## A bound is not an authorisation, and they default differently

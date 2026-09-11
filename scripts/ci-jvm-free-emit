@@ -56,7 +56,7 @@ if command -v java >/dev/null 2>&1 || command -v clojure >/dev/null 2>&1; then
   exit 1
 fi
 
-nbb --classpath bin bin/compile-amu
+kbb --backend sci --classpath bin bin/compile-amu
 
 for artifact in server_main.wasm mcp_main.wasm server_main.kexe mcp_main.kexe; do
   path="$root/target/amu/$artifact"
@@ -82,7 +82,7 @@ measure() {
   local entry="$1"
   local out="$2"
   local json
-  json="$(nbb --classpath bin bin/kotoba compile "$entry" --target wasm --output "$out" --json)"
+  json="$(kbb --backend sci --classpath bin bin/kotoba compile "$entry" --target wasm --output "$out" --json)"
   echo "$json"
   echo "$json" | grep -q '"ok?":true\|"kotoba.cli/ok?":true' || {
     # nbb clj->js keywordizes :kotoba.cli/ok? to "ok?" or "kotoba.cli/ok?"
@@ -120,7 +120,7 @@ measure src/cloud/itonami/app/mcp_main.kotoba "$root/target/amu/mcp_main.wasm"
 
 CLOUD_ITONAMI_PORT="${CLOUD_ITONAMI_PORT:-17338}"
 export CLOUD_ITONAMI_PORT
-nbb --classpath bin scripts/verify-no-java
+kbb --backend sci --classpath bin scripts/verify-no-java
 
 echo "ci-jvm-free-emit: ok (kexe verify Linux remains HOLD; not faked)"
 echo "ci-jvm-free-emit: bin/kotoba adapter :compile/emitted is not production kotoba v0.6.29"

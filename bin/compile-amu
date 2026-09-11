@@ -1,8 +1,8 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Amu JVM-free emit for the app entries.
 ;;
-;;   AMU=<amu launcher> nbb --classpath bin bin/compile-amu
-;;   AMU=<amu launcher> PATH="$(scripts/path-without-jvm)" nbb --classpath bin bin/compile-amu
+;;   AMU=<amu launcher> kbb --backend sci --classpath bin bin/compile-amu
+;;   AMU=<amu launcher> PATH="$(scripts/path-without-jvm)" kbb --backend sci --classpath bin bin/compile-amu
 ;;
 ;; This is the compile kotoba-clj will review. Success is artifact bytes on
 ;; disk plus provenance. `:command/planned` / `:kotoba.cli/code` other than

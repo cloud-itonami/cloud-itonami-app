@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.kotoba-oracle-gen
   "Regenerate the shipped KIR from `src/cloud/itonami/app/*.kotoba`.
 
-      clojure -M:test:gen
+      kbb -M:test:gen
 
   Runs under :test because the compiler lives there and must not reach the
   application. What it writes IS what production loads, so nothing here

@@ -47,7 +47,7 @@
 
   NOTE on reachability, current as of 2026-07-30: all three of
   `cloud-itonami-esim`, `cloud-itonami-card-issuing` and `denwaban` now serve
-  `POST /commit` (`clojure -M:serve`, loopback), so each is reachable once an
+  `POST /commit` (`kbb -M:serve`, loopback), so each is reachable once an
   endpoint is configured. denwaban's surface answers `held` at its G7 gate for every
   outward op and never `pending` -- being told \"no\" is different from
   :endpoint-not-configured, which is what it answered while it had no surface at

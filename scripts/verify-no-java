@@ -1,10 +1,10 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Prove the replacement run path starts no java / clojure process.
 ;;
-;;   nbb --classpath bin scripts/verify-no-java
-;;   PATH="$(scripts/path-without-jvm)" nbb --classpath bin scripts/verify-no-java
+;;   kbb --backend sci --classpath bin scripts/verify-no-java
+;;   PATH="$(scripts/path-without-jvm)" kbb --backend sci --classpath bin scripts/verify-no-java
 ;;
-;; This is the process-tree proof. `nbb scripts/jvm-exit-report.cljk` is not.
+;; This is the process-tree proof. `kbb --backend sci scripts/jvm-exit-report.cljk` is not.
 
 (ns verify-no-java
   (:require ["node:child_process" :as cp]

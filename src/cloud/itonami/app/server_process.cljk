@@ -48,7 +48,7 @@
 (def ^:private startup-budget
   "How long to wait for a cold server before reporting rather than blocking.
 
-  Measured on this app, 2026-08-05: a first `clojure -M:server` — classpath
+  Measured on this app, 2026-08-05: a first `kbb -M:server` — classpath
   resolution, then loading ninety namespaces and their git dependencies — takes a
   little over a minute before `/health` answers, and longer when the classpath
   cache is cold. A budget under that turns a normal first run into a failure."
@@ -188,7 +188,7 @@
                  :server-data-dir directory})))))
 
 (defn app-directory
-  "Where leftover CLI code used to run `clojure -M:server` from.
+  "Where leftover CLI code used to run `kbb -M:server` from.
   That alias is gone from deps.edn. This leftover still names it.
 
   The current directory when it holds this app's `deps.edn`, otherwise
@@ -275,13 +275,13 @@
 (defn- spawn!
   "A detached headless server, its output in the data directory.
 
-  Leftover: this still names `clojure -M:server`. That alias is gone from
+  Leftover: this still names `kbb -M:server`. That alias is gone from
   deps.edn. Do not treat this spawn as the run path. `bin/cloud-itonami-app`
   starts the nbb host, not this leftover."
   [configuration]
   (let [directory (app-directory)
         log (data-file "server.log")
-        builder (doto (ProcessBuilder. ^java.util.List ["clojure" "-M:server"])
+        builder (doto (ProcessBuilder. ^java.util.List ["kbb" "-M:server"])
                   (.directory directory)
                   (.redirectErrorStream true)
                   (.redirectOutput (ProcessBuilder$Redirect/appendTo log)))

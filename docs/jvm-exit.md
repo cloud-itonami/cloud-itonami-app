@@ -1,9 +1,9 @@
 # JVM-exit run path
 
-The shipped server and MCP do not start with `clojure -M:server` or
-`clojure -M:mcp`. Those aliases, and `:cli`, are **gone** from
+The shipped server and MCP do not start with `kbb -M:server` or
+`kbb -M:mcp`. Those aliases, and `:cli`, are **gone** from
 `deps.edn` — not stubbed, not exit-2. `bin/itonami` no longer
-`spawnSync`s `clojure -M:cli`. A bare `-M:server` / `-M:mcp` / `-M:cli`
+`spawnSync`s `kbb -M:cli`. A bare `-M:server` / `-M:mcp` / `-M:cli`
 is an unknown alias.
 
 ## HOLDs (not done-when)
@@ -42,8 +42,8 @@ AMU=<path-to-amu> bin/kotoba compile src/cloud/itonami/app/mcp_main.kotoba --tar
 Amu canary with provenance (CI `--jvm-free`):
 
 ```bash
-AMU=<path-to-amu> nbb --classpath bin bin/compile-amu
-AMU=<path-to-amu> PATH="$(scripts/path-without-jvm)" nbb --classpath bin bin/compile-amu
+AMU=<path-to-amu> kbb --backend sci --classpath bin bin/compile-amu
+AMU=<path-to-amu> PATH="$(scripts/path-without-jvm)" kbb --backend sci --classpath bin bin/compile-amu
 ```
 
 Artifacts (gitignored under `target/`):
@@ -68,8 +68,8 @@ amu, not `kotoba compile --target native`.
 ## Run (guest actually runs)
 
 ```bash
-nbb --classpath bin bin/cloud-itonami-server
-nbb --classpath bin bin/itonami-mcp
+kbb --backend sci --classpath bin bin/cloud-itonami-server
+kbb --backend sci --classpath bin bin/itonami-mcp
 ```
 
 The nbb process owns the socket / stdio. It **loads** `target/amu/*.wasm`
@@ -96,12 +96,12 @@ gone.
   socket; `:http/accept` / `:http/reply` stay kotoba-lang HOLD.
 - `:gen` `:repository` `:ao-messenger` `:test` `:lint` `:build` still use
   the JVM. Default CI is `amu-jvm-free-emit` (java/clojure off PATH).
-  `clojure -M:test` remains as leftover
+  `kbb -M:test` remains as leftover
   (`.github/workflows/leftover-jvm-tests.yml`, workflow_dispatch only) —
   not the required check, and not gone by renaming.
 - ADAPTER-EMIT HOLD: `bin/kotoba` after amu `--jvm-free` is not the
   Release/v0.6.29 kotoba CLI. Production pin stays `:git/tag v0.6.29`.
-- `:gen` (`clojure -M:test:gen`) is the JVM KIR-EDN writer. Amu has no
+- `:gen` (`kbb -M:test:gen`) is the JVM KIR-EDN writer. Amu has no
   KIR-EDN emit. `bin/gen_kir_amu.cljk` proves `:kir-sha256` and does not
   write `resources/`
 - Production oracle stays KIR (`kotoba-kir` interpreter) for
@@ -110,9 +110,9 @@ gone.
 - `server.clj` / `mcp.clj` / `cli.clj` / Passkey / store / web page /
   connectors remain leftover source
 - `scripts/build-macos-release` / `scripts/build-windows-release` still
-  build an uberjar (`clojure -T:build`) — leftover packaging
+  build an uberjar (`kbb -T:build`) — leftover packaging
 - `cloud.itonami.app.server-process` still knows how to spawn leftover
-  `clojure -M:server` from leftover CLI code
+  `kbb -M:server` from leftover CLI code
 
 ## Host capabilities (kotoba-lang HOLD)
 
@@ -131,7 +131,7 @@ http-ingress remains host-listen / guest-poll; `:native-aot` is pending
 
 This PR does not tell an HttpClient-deletion story. Repo search for
 `java.net.http.HttpClient` is not the live offender. The live offender
-was `clojure -M:mcp` / `:server` and `bin/itonami-mcp` `spawnSync clojure`.
+was `kbb -M:mcp` / `:server` and `bin/itonami-mcp` `spawnSync clojure`.
 `fleet_call` is not published on the nbb MCP host.
 
 ## Overlay

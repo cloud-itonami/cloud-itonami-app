@@ -6,11 +6,11 @@
   "description": "cloud-itonami-app's mobile web bundle, carried by a kotoba-shell iOS/Android app. ADR-2608311000.",
   "type": "module",
   "scripts": {
-    "index": "nbb --classpath \"$(clojure -A:cljs -Spath)\" scripts/gen_index.cljs",
-    "index:check": "nbb --classpath \"$(clojure -A:cljs -Spath)\" scripts/gen_index.cljs --check",
+    "index": "kbb --backend sci --classpath \"$(kbb -A:cljs -Spath)\" scripts/gen_index.cljs",
+    "index:check": "kbb --backend sci --classpath \"$(kbb -A:cljs -Spath)\" scripts/gen_index.cljs --check",
     "assets": "mkdir -p dist && cp ../../../kotoba-lang/jp-go-digital-design-system/resources/jp_go_dds/dds.css dist/",
-    "build": "npm run index:check && npm run assets && node ../../../../scripts/resource-guard.mjs run build -- npx shadow-cljs release app",
-    "watch": "npm run assets && npx shadow-cljs watch app",
+    "build": "npm run index:check && npm run assets && node ../../../../scripts/resource-guard.mjs run build -- amu compile --target wasm32-browser app",
+    "watch": "npm run assets && amu compile --target wasm32-browser app",
     "serve": "npx http-server dist -p 8099 -c-1"
   },
   "devDependencies": {

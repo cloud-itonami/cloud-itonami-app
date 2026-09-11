@@ -6533,7 +6533,7 @@
         ;; Measured 2026-09-06 across the resident's own 3,117 recorded turns:
         ;; p50 43,299 tokens, p90 250,926, and one turn of 29,231,364 with
         ;; nothing in the system that could have stopped it. Re-derive with
-        ;; `nbb scripts/measure-bot-usage.cljs` rather than quoting these.
+        ;; `kbb --backend sci scripts/measure-bot-usage.cljk` rather than quoting these.
         spend (bounds/admit-spend (bot-by-id bot)
                                   (get-in (snapshot) [:turn-history bot]))]
     (if-not (:allowed? spend)

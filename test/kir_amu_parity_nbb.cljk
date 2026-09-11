@@ -1,7 +1,7 @@
 ;; KIR parity, JVM compiler vs the Amu nbb compiler, over the same fixtures.
 ;;
 ;;     bin/test-oracle-cljs's problem, inverted: the JVM route
-;;     (`clojure -M:test:gen`, the oracle that WRITES `resources/`) and this
+;;     (`kbb -M:test:gen`, the oracle that WRITES `resources/`) and this
 ;;     JVM-free route (`amu compile`) must lower the SAME KIR from the SAME
 ;;     decision cores, or one of them is not compiling what ships.
 ;;
@@ -10,7 +10,7 @@
 ;; both runtimes). The shipped artifact's digest is compared against the
 ;; `:kir-sha256` the Amu provenance recorded for a fresh JVM-free compile.
 ;;
-;; Run:  AMU=<amu launcher> nbb --classpath bin:test test/kir_amu_parity_nbb.cljk
+;; Run:  AMU=<amu launcher> kbb --backend sci --classpath bin:test test/kir_amu_parity_nbb.cljk
 ;;       (writes only under target/kir-amu/; `resources/` is never touched)
 
 (ns kir-amu-parity-nbb

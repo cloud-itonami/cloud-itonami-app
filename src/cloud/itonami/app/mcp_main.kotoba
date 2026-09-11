@@ -2,7 +2,7 @@
 ;;
 ;; The nbb host in `bin/itonami-mcp` owns stdin/stdout and LOADS this wasm.
 ;; This file decides whether a protocol version is one this server names.
-;; It does not spawn `clojure -M:mcp`, and it does not call Java.
+;; It does not spawn `kbb -M:mcp`, and it does not call Java.
 ;;
 ;; Guest grammar is not Clojure. `mcp.clj` stays a leftover JVM namespace;
 ;; it is not admitted by rename.

@@ -67,7 +67,7 @@ wall を上げるべきか、1 turn の仕事を減らすべきか、throughput 
 
 ## Verification
 
-- `clojure -M:test`: 1,994 tests / 11,734 assertions / 0 failures
+- `kbb -M:test`: 1,994 tests / 11,734 assertions / 0 failures
   （この変更前は 1,992 / 11,716 / 0）。
 - attribution の merge を外すと両方のテストが赤くなることを確認した。
 "}]

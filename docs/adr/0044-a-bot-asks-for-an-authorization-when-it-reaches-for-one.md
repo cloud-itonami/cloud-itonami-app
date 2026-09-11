@@ -102,7 +102,7 @@ it was offered.
 
 ## Verification
 
-`clojure -M:test` — 1447 tests, 8656 assertions, 0 failures, 0 errors.
+`kbb -M:test` — 1447 tests, 8656 assertions, 0 failures, 0 errors.
 Baseline on the parent commit `e073007` was 1443 / 8642, also clean.
 
 Four tests were added and six changed. The changed ones are the evidence:

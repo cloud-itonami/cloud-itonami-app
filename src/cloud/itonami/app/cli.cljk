@@ -173,7 +173,7 @@
   does, not something dispatching a command does — and the difference is not
   bookkeeping: `cli-test` drives `run` directly with a stub transport and a
   configuration that names no server, so an `ensure-server!` inside `run` made
-  the suite spawn `clojure -M:server` and block for the full startup budget.
+  the suite spawn `kbb -M:server` and block for the full startup budget.
   Measured, on the first run after this landed."
   [configuration]
   (server-process/ensure-running! configuration))

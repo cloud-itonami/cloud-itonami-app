@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Loopback HTTP host. Does not spawn java or clojure.
 ;;
 ;; Listen is Node `http`. Admission for `/health` is the guest export

@@ -1,9 +1,9 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Run the shipped decision cores under ClojureScript.
 ;;
 ;;   bin/test-oracle-cljs          (from the repository root)
 ;;
-;; ## Why this is not just `nbb test/oracle_cases_nbb.cljk`
+;; ## Why this is not just `kbb --backend sci test/oracle_cases_nbb.cljk`
 ;;
 ;; The interpreter is a pinned dependency, and a gate that ran against a
 ;; DIFFERENT `kotoba-kir` than production would be worse than no gate — the
@@ -35,7 +35,7 @@
 (defn- kir-entries
   "The kotoba-kir source roots on this project's resolved classpath.
 
-  `clojure -Spath` is the authority: it is the same resolution the JVM half of
+  `kbb -Spath` is the authority: it is the same resolution the JVM half of
   this gate runs under, so the two halves cannot read the artifact with
   different readers."
   []

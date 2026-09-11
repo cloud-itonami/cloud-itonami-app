@@ -91,7 +91,7 @@ left to be asked for rather than made here.
 
 ## Consequences
 
-- The KIR artifact was regenerated (`clojure -M:test:gen`). Only
+- The KIR artifact was regenerated (`kbb -M:test:gen`). Only
   `appearance-core.kir.edn` changed; the other 23 are byte-identical.
 - `dark-css-only-references-design-system-tokens-that-exist` guards the new
   string, because `web/app-css` is a load-time def and cannot contain a value

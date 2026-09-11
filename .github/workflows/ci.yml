@@ -8,7 +8,7 @@ on:
 permissions:
   contents: read
 
-# Default required path is JVM-free emit. It does not run clojure -M:test.
+# Default required path is JVM-free emit. It does not run kbb -M:test.
 # Leftover JVM suite lives in leftover-jvm-tests.yml (workflow_dispatch only).
 # Do not rename that leftover into this file and pretend it is gone.
 
@@ -65,7 +65,7 @@ jobs:
           go-version: "1.24"
           cache: false
       - name: Build the app jar
-        run: clojure -T:build uber
+        run: kbb -T:build uber
       - name: Assemble the packaged layout
         shell: bash
         run: |

@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; itonami_text — what a terminal cell is, and how wide a string is in them.
 ;;
 ;; Split out of `itonami_splash` when the line editor needed the same answers

@@ -14,7 +14,7 @@ notarization_zip="$release_dir/Cloud-Itonami-${version}-notarization.zip"
 
 shell_dir="${KOTOBA_SHELL_DIR:-}"
 if [[ -z "$shell_dir" ]]; then
-  shell_src="$(clojure -Spath | tr ':' '\n' | /usr/bin/grep '/io.github.kotoba-lang/shell/' | /usr/bin/grep '/src$' | /usr/bin/head -n 1)"
+  shell_src="$(kbb -Spath | tr ':' '\n' | /usr/bin/grep '/io.github.kotoba-lang/shell/' | /usr/bin/grep '/src$' | /usr/bin/head -n 1)"
   shell_dir="${shell_src%/src}"
 fi
 if [[ ! -x "$shell_dir/bin/kotoba-shell-build-macos-window" ]]; then
@@ -23,7 +23,7 @@ if [[ ! -x "$shell_dir/bin/kotoba-shell-build-macos-window" ]]; then
 fi
 
 cd "$repo_dir"
-clojure -T:build uber
+kbb -T:build uber
 
 rm -rf "$app_bundle" "$stage_dir" "$release_dir/CloudItonami.iconset"
 mkdir -p "$contents_dir/MacOS" "$contents_dir/Resources"

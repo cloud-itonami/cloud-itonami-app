@@ -6,7 +6,7 @@ mode="${1:---once}"
 
 run_audit() {
   printf '\n[%s] Recalculating Settings UI/UX score\n' "$(date '+%H:%M:%S')"
-  (cd "$app_dir" && clojure -M:ux-score)
+  (cd "$app_dir" && kbb -M:ux-score)
   (cd "$app_dir" && node --check resources/cloud/itonami/app/interaction.js)
 }
 

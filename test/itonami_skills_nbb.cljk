@@ -2,7 +2,7 @@
 ;; The repository's own slash commands: what is found, what is refused, and
 ;; what is sent when one is invoked.
 ;;
-;;   nbb test/itonami_skills_nbb.cljk
+;;   kbb --backend sci test/itonami_skills_nbb.cljk
 ;;
 ;;   0  all checks passed
 ;;   1  a check failed

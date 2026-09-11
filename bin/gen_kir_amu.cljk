@@ -1,18 +1,18 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; JVM-free decision-core build path (opt-in): compile every shipped decision
 ;; core with the Amu compiler and prove KIR identity with the shipped artifacts.
 ;;
-;;     nbb --classpath bin bin/gen_kir_amu.cljk          (from the repository root)
-;;     AMU=/path/to/amu nbb --classpath bin bin/gen_kir_amu.cljk
+;;     kbb --backend sci --classpath bin bin/gen_kir_amu.cljk          (from the repository root)
+;;     AMU=/path/to/amu kbb --backend sci --classpath bin bin/gen_kir_amu.cljk
 ;;
 ;; ## What this is
 ;;
 ;; The shipped decision cores (`src/cloud/itonami/app/*.kotoba` ->
 ;; `resources/cloud/itonami/app/oracle/*.kir.edn`) are regenerated today by the
-;; JVM compiler pin under `clojure -M:test:gen`
+;; JVM compiler pin under `kbb -M:test:gen`
 ;; (`cloud.itonami.app.kotoba-oracle-gen`). That route stays the ORACLE and the
 ;; only writer of `resources/`. This command is the JVM-free route: it runs
-;; `amu compile` (the Amu nbb Wasm path — no JVM, no `clojure -Spath`) on the
+;; `amu compile` (the Amu nbb Wasm path — no JVM, no `kbb -Spath`) on the
 ;; same sources, and proves that the KIR it lowered is the KIR that shipped.
 ;;
 ;; ## How identity is proven without a KIR emitter
@@ -28,7 +28,7 @@
 ;; ## What this is not
 ;;
 ;; It does not write `resources/` — Amu has no KIR-EDN emit, so regeneration
-;; remains the JVM oracle's job (`clojure -M:test:gen`). Rollback is therefore
+;; remains the JVM oracle's job (`kbb -M:test:gen`). Rollback is therefore
 ;; the status quo: stop running this command. Artifacts land under
 ;; `target/kir-amu/` (gitignored build output) and nothing else changes.
 ;;

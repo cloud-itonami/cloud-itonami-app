@@ -19,7 +19,7 @@
   it. Reading `:count` and `:callable-count` keeps the claim that was actually
   wanted: the API and the generator agree about the same catalog.
 
-  Usage: nbb test/worker_routes_smoke.cljs <base-url>"
+  Usage: kbb --backend sci test/worker_routes_smoke.cljk <base-url>"
   (:require [clojure.edn :as edn]))
 
 (def ^:private base

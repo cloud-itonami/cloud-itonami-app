@@ -106,7 +106,7 @@ The run path is the nbb hosts that load the guest wasm
 `:server`, `:mcp`, or `:cli` aliases. Java and the Clojure CLI remain
 leftover for `:test`, `:gen`, `:repository`, `:ao-messenger`, `:lint`,
 and `:build`. Default CI is `amu-jvm-free-emit` (java/clojure off PATH).
-`clojure -M:test` is leftover (`.github/workflows/leftover-jvm-tests.yml`,
+`kbb -M:test` is leftover (`.github/workflows/leftover-jvm-tests.yml`,
 workflow_dispatch only).
 
 Pure tests and the loopback web surface also run on Linux.
@@ -183,7 +183,7 @@ and the signer certificate SHA-256 matches the current installation.
 ## Run
 
 ```bash
-nbb --classpath bin bin/cloud-itonami-server
+kbb --backend sci --classpath bin bin/cloud-itonami-server
 open http://localhost:1338
 ```
 
@@ -198,7 +198,7 @@ AMU=<amu launcher> bin/kotoba compile src/cloud/itonami/app/mcp_main.kotoba --ta
 ADAPTER-EMIT HOLD: the file on disk plus the **app-local** adapter
 envelope (`cloud-itonami-app/bin/kotoba`). That is not `:compile/emitted`
 from the Release/v0.6.29 kotoba CLI. Production pin stays
-`:git/tag v0.6.29`. The amu canary (`nbb --classpath bin bin/compile-amu`)
+`:git/tag v0.6.29`. The amu canary (`kbb --backend sci --classpath bin bin/compile-amu`)
 also writes sealed `.kexe` plus provenance. KEXE is not a Mach-O executable.
 
 `bin/cloud-itonami-app` opens the web surface as an application window — no tab
@@ -221,7 +221,7 @@ Until that is fixed, use the launcher's own documented fallback, which is the
 same surface in an application window:
 
 ```bash
-nbb --classpath bin bin/cloud-itonami-server &
+kbb --backend sci --classpath bin bin/cloud-itonami-server &
 open -na "Google Chrome" --args --app="http://localhost:1338/" \
   --window-size=430,860 --window-position=140,60
 ```
@@ -390,7 +390,7 @@ fallen behind, so `itonami commands` reports real coverage rather than a claim.
 Regenerate after adding a route:
 
 ```bash
-nbb --classpath src dev/gen_commands.cljk
+kbb --backend sci --classpath src dev/gen_commands.cljk
 ```
 
 Flags the registry does not know about are passed through; `--json '{…}'` sends a
@@ -791,7 +791,7 @@ set the sandbox IDs from `.env.example`. The explicit confirmation is mandatory:
 
 ```sh
 CLOUD_ITONAMI_GITHUB_SANDBOX_CONFIRM=1 \
-clojure -M -m cloud.itonami.app.github-projects-sandbox
+kbb -M -m cloud.itonami.app.github-projects-sandbox
 ```
 
 The probe reads the current basis, writes the configured sandbox Status option,
@@ -1299,7 +1299,7 @@ The stdio MCP server publishes these as tools — but only when it can resolve a
 ```bash
 security add-generic-password -s cloud-itonami-app.mcp -a session-token -w
 export CLOUD_ITONAMI_MCP_SESSION=…   # takes precedence over the Keychain
-nbb --classpath bin bin/itonami-mcp
+kbb --backend sci --classpath bin bin/itonami-mcp
 ```
 
 | tool | |
@@ -1400,8 +1400,8 @@ and every test drives an injected transport. See
 Set a named profile or an EDN file path:
 
 ```bash
-CLOUD_ITONAMI_PROFILE=gftd nbb --classpath bin bin/cloud-itonami-server
-CLOUD_ITONAMI_PROFILE=/secure/path/company.edn nbb --classpath bin bin/cloud-itonami-server
+CLOUD_ITONAMI_PROFILE=gftd kbb --backend sci --classpath bin bin/cloud-itonami-server
+CLOUD_ITONAMI_PROFILE=/secure/path/company.edn kbb --backend sci --classpath bin bin/cloud-itonami-server
 ```
 
 Profiles contain branding and non-secret service coordinates. Secrets remain
@@ -1420,7 +1420,7 @@ The included itonami profile turns email sign-in on and points it at
 
 ```bash
 CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN=<bearer> CLOUD_ITONAMI_PROFILE=itonami \
-  nbb --classpath bin bin/cloud-itonami-server
+  kbb --backend sci --classpath bin bin/cloud-itonami-server
 ```
 
 Email sign-in stays off in the shipped defaults, and that is not an oversight.
@@ -1441,7 +1441,7 @@ alias overrides them with sibling `kotoba-lang` checkouts for the west
 workspace:
 
 ```bash
-clojure -M:dev:test
+kbb -M:dev:test
 ```
 
 Do not commit `:local/root` dependencies to the release dependency map.
@@ -1466,8 +1466,8 @@ Repository-backed private state follows
 Operator flow:
 
 ```bash
-clojure -M:repository preflight
-clojure -M:repository migrate data/state.edn
+kbb -M:repository preflight
+kbb -M:repository migrate data/state.edn
 - DataLad receives only CID-named ciphertext blocks and verifies the configured
   remote before the Kotobase head advances;
 - `repository-storage/commit-workspace!` and `hydrate-workspace!` are the host
@@ -1480,20 +1480,20 @@ After initializing Kagi, creating/configuring the DataLad dataset and placing
 the Kotobase token in the process credential environment, the operator flow is:
 
 ```bash
-clojure -M:repository migrate data/state.edn
+kbb -M:repository migrate data/state.edn
 # edit data/workspace/<opaque-user-storage-id>/state.edn
-clojure -M:repository publish
-clojure -M:repository hydrate
-clojure -M:repository rotate-vmk
-clojure -M:repository measure 20
-clojure -M:repository drill 20 config/repository-production-evidence.edn
-clojure -M:repository usage
-clojure -M:repository qualify config/repository-production-evidence.edn
-clojure -M:repository audit secret-fixture-marker
-clojure -M:repository profiles
+kbb -M:repository publish
+kbb -M:repository hydrate
+kbb -M:repository rotate-vmk
+kbb -M:repository measure 20
+kbb -M:repository drill 20 config/repository-production-evidence.edn
+kbb -M:repository usage
+kbb -M:repository qualify config/repository-production-evidence.edn
+kbb -M:repository audit secret-fixture-marker
+kbb -M:repository profiles
 # Registered actors receive this owner's state path and their fixed stream.
-clojure -M:repository actor swachh ../swachh-actor \
-  clojure -M:dev:run-repository z-001 25
+kbb -M:repository actor swachh ../swachh-actor \
+  kbb -M:dev:run-repository z-001 25
 ```
 
 `publish` fails closed for missing/unfinished DataLad transport, locked Kagi,
@@ -1546,7 +1546,7 @@ and [the tenant model](docs/tenant-model.md).
 
 ## Verify
 
-Default CI gate (no `clojure -M`):
+Default CI gate (no `kbb -M`):
 
 ```bash
 AMU=<amu launcher> bash scripts/ci-jvm-free-emit
@@ -1555,8 +1555,8 @@ AMU=<amu launcher> bash scripts/ci-jvm-free-emit
 Leftover JVM suite (not the required path):
 
 ```bash
-clojure -M:test
-clojure -M:lint
+kbb -M:test
+kbb -M:lint
 ```
 
 ## License

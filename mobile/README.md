@@ -81,7 +81,7 @@ them to.
 ```bash
 cd mobile
 npm install
-npm run build          # index:check → dds.css → shadow-cljs release
+npm run build          # index:check → dds.css → amu compile --target wasm32-browser
 ```
 
 Then scaffold and build the native apps, **from this repository's root**:
@@ -96,13 +96,13 @@ rm -rf target/kotoba-shell/app
 
 SHELL_ROOT=../../kotoba-lang/shell   # the west checkout of kotoba-lang/shell
 
-clojure -Sdeps "{:deps {io.github.kotoba-lang/shell {:local/root \"$SHELL_ROOT\"}}}" \
+kbb -Sdeps "{:deps {io.github.kotoba-lang/shell {:local/root \"$SHELL_ROOT\"}}}" \
   -M -m kotoba.shell.launcher app scaffold \
   --target ios --target android \
   --manifest app.mobile.kotoba.edn --policy mobile/shell-policy.edn \
   --output-dir target/kotoba-shell/app
 
-clojure -Sdeps "{:deps {io.github.kotoba-lang/shell {:local/root \"$SHELL_ROOT\"}}}" \
+kbb -Sdeps "{:deps {io.github.kotoba-lang/shell {:local/root \"$SHELL_ROOT\"}}}" \
   -M -m kotoba.shell.launcher app build --target ios --execute \
   --manifest app.mobile.kotoba.edn --policy mobile/shell-policy.edn \
   --output-dir target/kotoba-shell/app
@@ -110,7 +110,7 @@ clojure -Sdeps "{:deps {io.github.kotoba-lang/shell {:local/root \"$SHELL_ROOT\"
 # Android needs JDK 17: AGP 8.5.0's androidJdkImage transform picks the newest
 # JDK on the machine, not the one on PATH, and fails on a too-new one.
 JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home \
-clojure -Sdeps "{:deps {io.github.kotoba-lang/shell {:local/root \"$SHELL_ROOT\"}}}" \
+kbb -Sdeps "{:deps {io.github.kotoba-lang/shell {:local/root \"$SHELL_ROOT\"}}}" \
   -M -m kotoba.shell.launcher app build --target android --execute \
   --manifest app.mobile.kotoba.edn --policy mobile/shell-policy.edn \
   --output-dir target/kotoba-shell/app
@@ -156,9 +156,9 @@ Gradle keystore, neither of which this manifest carries yet.
 ## Verify
 
 ```bash
-clojure -M:test                                   # the view, every phase, on the JVM
+kbb -M:test                                   # the view, every phase, on the JVM
 npm run build && npx http-server dist -p 8099     # or python3 -m http.server
-MOBILE_URL=http://127.0.0.1:8099/index.html npx nbb scripts/verify-browser.cljs
+MOBILE_URL=http://127.0.0.1:8099/index.html kbb --backend sci scripts/verify-browser.cljk
 ```
 
 The browser check is the one that matters: it mounts the real bundle in a real

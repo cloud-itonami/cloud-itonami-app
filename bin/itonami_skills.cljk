@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; itonami_skills — the repository's own slash commands (ADR-2609072600).
 ;;
 ;; Claude Code and hermes both read a repository's `.claude/` and offer what
