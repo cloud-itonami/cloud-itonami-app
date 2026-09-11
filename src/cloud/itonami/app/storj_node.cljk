@@ -66,7 +66,7 @@
   defaulted and deliberately not minted on demand: an identity is the node's
   name on the network and its payout address's twin, and one generated
   silently at first boot is one nobody backed up. Mint with
-  `clojure -M:mint <dir> <difficulty>` in `io-storj-node`."
+  `kbb -M:mint <dir> <difficulty>` in `io-storj-node`."
   []
   (env "STORJ_NODE_IDENTITY_DIR"))
 

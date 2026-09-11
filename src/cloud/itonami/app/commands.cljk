@@ -71,7 +71,7 @@
 
 (defonce ^:private registry
   (delay (load-table resource-name
-                     "Run `nbb --classpath src dev/gen_commands.cljk`, or call install-sources!.")))
+                     "Run `kbb --backend sci --classpath src dev/gen_commands.cljk`, or call install-sources!.")))
 
 (defonce ^:private aliases
   (delay (load-table alias-resource-name

@@ -6,7 +6,7 @@
 ;; production path (`cloud.itonami.app.kotoba-oracle/call`) still answers
 ;; through the KIR interpreter on the JVM. This canary is the first time a
 ;; decision in this application actually runs as machine code, and it has to
-;; live in `clojure -M:test` or it will not run — murakumo measured that an
+;; live in `kbb -M:test` or it will not run — murakumo measured that an
 ;; opt-in `:native` alias is never invoked.
 ;;
 ;; It does NOT make a full sweep unnecessary, and it does NOT flip the

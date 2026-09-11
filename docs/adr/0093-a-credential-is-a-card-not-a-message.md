@@ -222,6 +222,6 @@ reach the one class of credential that had been left outside it.
   (`kaiyu-local`, `oracle-cljs-parity`, `bundle`'s published lock,
   `graph`'s publish CID, and `domain-tools`' cloudflare-host test, which
   asserts an `HttpRequest` against a `*send!*` seam that has taken a map since
-  the http-client-async move). `clojure -M:test` refuses to start on either:
+  the http-client-async move). `kbb -M:test` refuses to start on either:
   `storj_test.clj` calls a `storj/build-request` that does not exist, and
   `workforce_classpath_test.clj` is not in the runner's list.

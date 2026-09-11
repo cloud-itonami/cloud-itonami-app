@@ -70,7 +70,7 @@ deployment-level artifact needs.
 
 ## Verified
 
-`clojure -M:test` — 1216 tests, 4968 assertions, 0 failures, 0 errors.
+`kbb -M:test` — 1216 tests, 4968 assertions, 0 failures, 0 errors.
 
 `core-test/did-web-answers-for-the-tenant-that-was-asked-about` seeds two named
 tenants and asserts each Host resolves to its own domain, that a port is

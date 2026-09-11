@@ -1,4 +1,4 @@
-#!/usr/bin/env bb
+#!/usr/bin/env kbb
 ;; Read-only monitoring: never require app/store or display stored content.
 (require '[clojure.edn :as edn] '[kotoba.lang.text :as str])
 

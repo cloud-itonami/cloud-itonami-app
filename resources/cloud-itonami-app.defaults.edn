@@ -617,7 +617,7 @@
  ;; this app must not be given its address: holding both would mean holding both
  ;; gates.
  ;;
- ;; The consent surfaces, as the actors ship them (all loopback, `clojure -M:serve`):
+ ;; The consent surfaces, as the actors ship them (all loopback, `kbb -M:serve`):
  ;;
  ;;   esim   http://127.0.0.1:1339   cloud-itonami-esim          (operator :1340)
  ;;   card   http://127.0.0.1:1341   cloud-itonami-card-issuing  (operator :1342)

@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; The `itonami` command: a front end for the operations this app serves.
 ;;
 ;;   itonami commands [term …]        what can be named, and how many routes exist

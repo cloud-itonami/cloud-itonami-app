@@ -85,7 +85,7 @@
 (defn -main [& [command worker-id & args]]
   (when (or (str/blank? command) (str/blank? worker-id))
     (binding [*out* *err*]
-      (println "usage: clojure -M:ao-messenger <poll|reply|ack|trust> <worker-id> [args]"))
+      (println "usage: kbb -M:ao-messenger <poll|reply|ack|trust> <worker-id> [args]"))
     (System/exit 2))
   (let [result
         (case command

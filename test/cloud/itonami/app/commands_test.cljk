@@ -8,7 +8,7 @@
 
   So the routes are re-scanned here, from the same `.cljc` the generator uses, and
   compared against the checked-in resource. Adding a route without running
-  `nbb --classpath src dev/gen_commands.cljk` fails the suite."
+  `kbb --backend sci --classpath src dev/gen_commands.cljk` fails the suite."
   (:require [clojure.java.io :as io]
             [clojure.set :as set]
             [kotoba.lang.text :as str]
@@ -41,7 +41,7 @@
     (let [fresh (scan/registry (source) server-file)]
       (is (= (:commands fresh) (commands/all))
           (str "resources/" commands/resource-name
-               " is stale. Run `nbb --classpath src dev/gen_commands.cljk`."))
+               " is stale. Run `kbb --backend sci --classpath src dev/gen_commands.cljk`."))
       (is (= (:counts fresh) (commands/counts))))))
 
 (deftest every-agent-reachable-route-has-a-command
@@ -161,7 +161,7 @@
             This is a regression test with a date. When `ensure-server!` was
             first written it sat inside `run`, and `cli-test` — which calls
             `run` directly with a stub transport and a configuration naming no
-            server — made the suite try to spawn `clojure -M:server` and block
+            server — made the suite try to spawn `kbb -M:server` and block
             for the whole 300s startup budget. The suite did not fail; it hung,
             which is worse, because a hang reads as a slow machine."
     (is (false? (cli/needs-server? ["up"])))

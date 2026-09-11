@@ -17,7 +17,7 @@
   `IHttp`.
 
   So the two coexist and call sites move one at a time. Each move is visible in
-  `nbb scripts/jvm-exit-report.cljk`. When the last one has moved,
+  `kbb --backend sci scripts/jvm-exit-report.cljk`. When the last one has moved,
   `http_client.clj` is deleted and this becomes the only client. Until then,
   **the presence of `http_client.clj` is the honest measure of how far this
   has got** -- not the existence of this file.

@@ -1,7 +1,7 @@
 ;; Emit parity: the native kotoba CLI against the amu --jvm-free adapter, over
 ;; this app's own guests.
 ;;
-;;     AMU=<amu launcher> nbb --classpath bin:test test/emit_parity_nbb.cljk
+;;     AMU=<amu launcher> kbb --backend sci --classpath bin:test test/emit_parity_nbb.cljk
 ;;     KOTOBA_CLI=<kotoba binary>   # otherwise `kotoba` on PATH
 ;;
 ;;   0  both emitters ran and agree

@@ -30,7 +30,7 @@ Android), reading over HTTPS from `services/app-edge`.
 2. **`mobile/` is its own project**, as `services/app-edge` is. The 100+ `.clj`
    files of the JVM application never reach a ClojureScript classpath.
 3. **The view is `.cljc` and pure**, rendered by reagent in the browser and by
-   `clojure -M:test` on the JVM. It is a list of cards and not the edge's
+   `kbb -M:test` on the JVM. It is a list of cards and not the edge's
    four-column table: those are different screens over the same data, and the
    data cannot drift because both read `cloud.itonami.app.fleet-core` through
    one API.

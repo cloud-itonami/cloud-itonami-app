@@ -1,8 +1,8 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; How far this application still is from running without a JVM, measured.
 ;;
-;;     nbb scripts/jvm-exit-report.cljk            (from the repository root)
-;;     nbb scripts/jvm-exit-report.cljk --movable  (just the names to rename)
+;;     kbb --backend sci scripts/jvm-exit-report.cljk            (from the repository root)
+;;     kbb --backend sci scripts/jvm-exit-report.cljk --movable  (just the names to rename)
 ;;
 ;; ## Why this exists
 ;;

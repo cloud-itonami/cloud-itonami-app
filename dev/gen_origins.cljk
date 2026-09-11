@@ -5,7 +5,7 @@
   curated fields from the existing file, so running this after somebody has said
   what a domain is does not erase them — only the counts and dates move.
 
-    clojure -M -e \"(require 'gen-origins)(gen-origins/-main)\"
+    kbb -M -e \"(require 'gen-origins)(gen-origins/-main)\"
 
   Writes `resources/cloud-itonami-app.origins.edn`, which is also the file
   published to yabai. Nothing here reads a message body."

@@ -24,7 +24,7 @@ journal の `:base-bytes` と snapshot のバイト長が一致。
 
 ## Verification, fixed
 
-- `clojure -M:test`: **1,998 tests / 11,768 assertions / 0 failures**
+- `kbb -M:test`: **1,998 tests / 11,768 assertions / 0 failures**
   （このセッション開始時のベースラインは 1,970 / 11,661 / 0）。
 - `bin/test-portable-cljs`: 57 tests / 230 assertions / 0 failures
   （retry の判断は JVM と ClojureScript の両方で実行される）。

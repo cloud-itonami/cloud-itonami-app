@@ -3,7 +3,7 @@
 ## Status
 
 Accepted. 2026-08-05. 2026-09-02: `deps.edn` aliases `:server` and `:cli`
-are gone. Do not run `clojure -M:server` or `clojure -M:cli`. The loopback
+are gone. Do not run `kbb -M:server` or `kbb -M:cli`. The loopback
 host is `bin/cloud-itonami-server`. `bin/itonami` is closed as a CLI.
 
 ## Context
@@ -69,7 +69,7 @@ validating against them would refuse calls the server would have accepted.
 ### The CLI starts a headless server when there is not one
 
 `cloud.itonami.app.server-process` probes `/health`; if nothing answers it runs
-`clojure -M:server` — not `bin/cloud-itonami-app`, which is the script that opens
+`kbb -M:server` — not `bin/cloud-itonami-app`, which is the script that opens
 the window — waits for the health check, and records the pid. Every command that
 makes a request goes through one `ensure-server!` call site, so a command added
 later cannot forget it. `up`, `down` and `status` drive the lifecycle explicitly.
@@ -84,7 +84,7 @@ Three details are load-bearing:
   directory — the thing this is meant to prevent. `CREATE_NEW` is atomic, so one
   caller spawns and the rest wait. A lock older than the startup budget is a
   crash, not a competitor, and is cleared.
-- **A slow start is not a failed start.** Measured: a cold `clojure -M:server`
+- **A slow start is not a failed start.** Measured: a cold `kbb -M:server`
   takes over a minute to answer `/health`, longer with a cold classpath cache.
   The budget is 300s, and on expiry a child that is still alive is *left running*
   and reported as starting. Killing it would throw away the minutes it had spent
@@ -100,7 +100,7 @@ reported for a CLI pointed at a hosted control plane.
 
 ### `bin/itonami` resolves the app directory
 
-`clojure -M:cli` only works from the app's own directory. The launcher resolves
+`kbb -M:cli` only works from the app's own directory. The launcher resolves
 that directory from its own path and runs the CLI there, so the command works
 from anywhere. It parses no flags and interprets no results — a launcher that
 understood the commands would be a second place for them to be wrong. Written in

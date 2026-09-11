@@ -35,7 +35,7 @@ esac
 cd "$repo_dir"
 scripts/build-macos-release
 scripts/build-windows-release
-CLOUD_ITONAMI_SOURCE_COMMIT="$source_commit" clojure -M:release-sign
+CLOUD_ITONAMI_SOURCE_COMMIT="$source_commit" kbb -M:release-sign
 
 version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' packaging/macos/Info.plist)"
 cd target/release

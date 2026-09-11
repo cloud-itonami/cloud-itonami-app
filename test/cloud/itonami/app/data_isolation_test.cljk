@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.data-isolation-test
   "The suite must not be able to write the real store.
 
-  This test exists because the suite DID. On 2026-07-30, `clojure -M:test` run
+  This test exists because the suite DID. On 2026-07-30, `kbb -M:test` run
   from the repository root persisted through `cloud.itonami.app.store`, whose
   data directory defaulted to `./data` -- the developer's real one. A fixture in
   `payment_tools_test` replaces the entire `:identity` partition, so it

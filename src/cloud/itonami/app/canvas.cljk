@@ -222,7 +222,7 @@
                :canvas/add-item "add"
                :canvas/retract-item "retract"
                :canvas/note "note")]
-    (str "nbb 70-tools/bmc/bin/gftd.cljs canvas " verb
+    (str "kbb --backend sci 70-tools/bmc/bin/gftd.cljk canvas " verb
          " " canvas-id " " (pr-str value))))
 
 (defn proposals
@@ -298,7 +298,7 @@
         (if-not (.isFile f)
           {:state :missing :source maturity-path
            :detail (str maturity-path " が workspace にありません。superproject で "
-                        "`nbb 70-tools/bmc/bin/gftd.cljs score datoms` を実行すると生成されます")}
+                        "`kbb --backend sci 70-tools/bmc/bin/gftd.cljk score datoms` を実行すると生成されます")}
           (let [tx (try (filterv map? (edn/read-string (slurp f)))
                         (catch Exception _ unreadable))]
             (cond

@@ -608,7 +608,7 @@
   ;; RESTORED 2026-09-03 (PR #270 deleted them; measured same day the guest-wasm
   ;; path they point at cannot run: browser-host.mjs exists in no checkout and
   ;; no release, and the nbb host has never started). The launchd plist on the
-  ;; operator workstation runs `clojure -M:server` against ~/.cloud-itonami/current
+  ;; operator workstation runs `kbb -M:server` against ~/.cloud-itonami/current
   ;; and the running resident was started from an alias-bearing release — a
   ;; restart against current would brick under KeepAlive (run-path verifier,
   ;; scripts/verify-itonami-run-path.cljs: configured-launch-alias-absent).
@@ -634,7 +634,7 @@
   ;; Regenerate the shipped decision-core KIR. Combine with :test, which
   ;; carries the compiler; a later alias's :main-opts wins:
   ;;
-  ;;   clojure -M:test:gen
+  ;;   kbb -M:test:gen
   :gen {:main-opts ["-m" "cloud.itonami.app.kotoba-oracle-gen"]}
   :test {:extra-paths ["test"]
          :extra-deps {datascript/datascript {:mvn/version "1.7.8"}
@@ -692,7 +692,7 @@
          ;; the `dc520032` this app already resolves — which removed
          ;; `mf/sha384` and made `org-w3-rdf-canon` fail to LOAD, so the entire
          ;; test suite died before a single assertion ran. Measured 2026-08-08:
-         ;; `clojure -M:test -e "(println :ok)"` → `No such var: mf/sha384`.
+         ;; `kbb -M:test -e "(println :ok)"` → `No such var: mf/sha384`.
          ;; Holding it at the app's own pin keeps the parity gate from changing
          ;; what every other test in this repo is compiled against. amu `78cdc2e`
          ;; names `561fe7df` (newer); the app's own `e7ae323d` is still held so

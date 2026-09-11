@@ -31,7 +31,7 @@
   answers.
 
   Run (with the bundle built and dist/ served):
-    MOBILE_URL=http://127.0.0.1:8099/index.html npx nbb scripts/verify-browser.cljs"
+    MOBILE_URL=http://127.0.0.1:8099/index.html kbb --backend sci scripts/verify-browser.cljk"
   (:require ["node:fs" :as fs]
             ["node:process" :as process]
             ["playwright-core$default" :as pw]

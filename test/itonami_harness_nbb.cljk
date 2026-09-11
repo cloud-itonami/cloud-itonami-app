@@ -1,7 +1,7 @@
 ;; Harness contract checks: the five dispatch modes, mount/unmount
 ;; reversibility, inject refusal, and the profile layer composition.
 ;;
-;;   nbb test/itonami_harness_nbb.cljk
+;;   kbb --backend sci test/itonami_harness_nbb.cljk
 ;;
 ;;   0  all checks passed
 ;;   1  a check failed

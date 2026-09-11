@@ -1,7 +1,7 @@
 
 ;; The input area's contract: what a key means, and where the caret lands.
 ;;
-;;   nbb test/itonami_editor_nbb.cljk
+;;   kbb --backend sci test/itonami_editor_nbb.cljk
 ;;
 ;;   0  all checks passed
 ;;   1  a check failed

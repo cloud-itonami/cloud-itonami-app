@@ -113,7 +113,7 @@
 (deftest west-refactor-start-requires-the-exact-admitted-repository
   (let [inspection {:project {:name "example" :checkout "/tmp/example"}
                     :candidates [{:path "src/core.clj" :bytes 20}]
-                    :verification ["clojure -M:test"]}]
+                    :verification ["kbb -M:test"]}]
     (with-redefs [west-refactor/inspect-project (fn [& _] inspection)
                   cli/bot-list (fn [_] {:bots [{:id "bot-1" :coding? true
                                                 :workspace "/tmp/another"
@@ -127,7 +127,7 @@
   (let [seen (atom nil)
         inspection {:project {:name "example" :checkout "/tmp/example"}
                     :candidates [{:path "src/core.clj" :bytes 20}]
-                    :verification ["clojure -M:test"]}]
+                    :verification ["kbb -M:test"]}]
     (with-redefs [west-refactor/inspect-project (fn [& _] inspection)
                   cli/bot-list (fn [_] {:bots [{:id "bot-1" :coding? true
                                                 :workspace "/tmp/example"

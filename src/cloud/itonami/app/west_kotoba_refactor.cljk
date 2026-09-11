@@ -71,7 +71,7 @@
 (defn- verification-commands [checkout-files]
   (cond-> []
     (some #(= "deps.edn" (:path %)) checkout-files)
-    (conj "clojure -M:test")
+    (conj "kbb -M:test")
 
     (some #(= "package.json" (:path %)) checkout-files)
     (conj "npm test")

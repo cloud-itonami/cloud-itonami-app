@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; itonami_editor — the input area: a multi-line editor, a frame, a status bar
 ;; (ADR-2609062800).
 ;;

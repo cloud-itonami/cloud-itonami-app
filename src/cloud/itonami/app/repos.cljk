@@ -177,7 +177,7 @@
     {:state :missing
      :detail (str "workspace に " taxonomy-path " または " maturity-path
                   " がありません。superproject で "
-                  "`nbb scripts/repo-taxonomy.cljs` / `nbb scripts/repo-maturity.cljs` "
+                  "`kbb --backend sci scripts/repo-taxonomy.cljk` / `kbb --backend sci scripts/repo-maturity.cljk` "
                   "を実行すると生成されます")}
 
     :else {:state :resolved}))

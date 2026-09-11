@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Public-language compile launcher (lang/cli.edn compile surface).
 ;;
 ;;   bin/kotoba compile <entry.kotoba> --target wasm --json

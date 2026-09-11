@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; itonami_harness — the Cordis configuration contract on nbb ClojureScript
 ;; (ADR-2609042200).
 ;;
