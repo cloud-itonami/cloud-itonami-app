@@ -578,6 +578,89 @@
                   (is (str/includes? (:result turn) "renewal-risk.example"))
                   (is (str/includes? (:result turn) "proposal-approved")))))))))))
 
+(deftest a-recorded-steward-failure-advances-its-schedule-instead-of-starving-the-tick
+  ;; Measured 2026-09-11 on the live resident: Domain Steward threw
+  ;; `account-id is required` 42 times in one hour. Each run was recorded
+  ;; (a failed turn, a :goal-jobs entry) but the catch in
+  ;; `fire-due-workforce!` left `next-run-at` alone, so the job was due
+  ;; again next tick and sorted first (reserved class, never submitted,
+  ;; oldest). With one start per tick the other 146 jobs never fired.
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [path] path)
+                    domain-tools/answerable? (constantly true)
+                    domain-tools/available? (constantly true)]
+        (bots/provision-workforce! {} alice
+                                   (workforce-catalog [(domain-steward-entry)
+                                                       (engineer-entry)]))
+        (let [due "2026-08-15T00:00:00Z"
+              tick-1 "2026-08-16T00:00:00Z"
+              tick-2 "2026-08-16T00:01:00Z"
+              submitted (atom [])
+              job-by-key (fn [k]
+                           (first (filter #(= k (:workforce.job/key %))
+                                          (vals (get-in @store/state
+                                                        [:bots :workforce-jobs])))))
+              configuration {:bots {:workforce {:max-starts-per-tick 1
+                                                :max-active 1}}}]
+          (swap! store/state update-in [:bots :workforce-jobs]
+                 (fn [jobs]
+                   (into {} (map (fn [[id job]]
+                                   [id (assoc job :workforce.job/next-run-at due)]))
+                         jobs)))
+          (with-redefs [gc/refuse-admission? (constantly nil)
+                        domain-tools/call-tool
+                        (fn [_configuration _tool _input]
+                          (throw (ex-info "account-id is required"
+                                          {:type :yadori/invalid-input})))
+                        bots/submit-goal!
+                        (fn [_ _session bot-id _ run-id _]
+                          (swap! submitted conj bot-id)
+                          {:id run-id})]
+            (testing "tick 1: the steward runs, fails, and is recorded as a failed start"
+              (let [result (bots/fire-due-workforce! configuration alice tick-1)
+                    job (job-by-key "cloud-itonami/domain-steward")
+                    turn (bots/latest-turn alice (:workforce.job/bot job))]
+                (is (= ["cloud-itonami/domain-steward"] (:started result)))
+                (is (= [{:job "cloud-itonami/domain-steward"
+                         :reason :yadori/invalid-input}]
+                       (mapv #(dissoc % :run-id) (:failed result)))
+                    "a recorded failure is reported as :failed, not hidden in :skipped")
+                (is (= [] (:skipped result)))
+                (is (= "failed" (:state turn)))
+                (is (= "account-id is required" (:error-message turn)))
+                (is (= tick-1 (:workforce.job/last-submitted-at job))
+                    "the run happened, so the job has been submitted")
+                (is (= (:workforce.job/last-run-id job) (:run-id (first (:failed result)))))
+                (is (= "2026-08-16T00:15:00Z" (:workforce.job/next-run-at job))
+                    "the schedule advances by one cadence exactly as on success")
+                (is (= [] @submitted) "the single start went to the steward")))
+            (testing "tick 2: the steward is no longer due, so the next Bot gets the start"
+              (let [result (bots/fire-due-workforce! configuration alice tick-2)
+                    engineer (job-by-key "cloud-itonami/engineer")]
+                (is (= ["cloud-itonami/engineer"] (:started result)))
+                (is (nil? (:failed result)))
+                (is (= [(:workforce.job/bot engineer)] @submitted))))
+            (testing "a job that never got a run stays due and is only :skipped"
+              (let [engineer (job-by-key "cloud-itonami/engineer")
+                    before (:workforce.job/next-run-at engineer)]
+                (swap! store/state assoc-in
+                       [:bots :workforce-jobs (:workforce.job/bot engineer)
+                        :workforce.job/next-run-at] due)
+                (with-redefs [bots/submit-goal!
+                              (fn [& _]
+                                (throw (ex-info "queue full"
+                                                {:type :workforce/queue-full})))]
+                  (let [result (bots/fire-due-workforce! configuration alice
+                                                         "2026-08-16T00:02:00Z")
+                        after (job-by-key "cloud-itonami/engineer")]
+                    (is (= [] (:started result)))
+                    (is (= [{:job "cloud-itonami/engineer" :reason :workforce/queue-full}]
+                           (:skipped result)))
+                    (is (= due (:workforce.job/next-run-at after))
+                        "no run was recorded, so the job is still due")
+                    (is (not= before (:workforce.job/next-run-at after)))))))))))))
+
 (deftest workforce-disk-tools-exist-only-behind-the-four-disk-capabilities
   (with-store
     (fn []
