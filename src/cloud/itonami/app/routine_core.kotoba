@@ -42,7 +42,7 @@
 ;; holds, which was decided in `bot_core.kotoba` before a step ever reached
 ;; this file.
 ;;
-;; Parity: test/cloud/itonami/app/routine_kotoba_parity_test.clj
+;; Parity: test/cloud/itonami/app/routine_kotoba_parity_test.cljk
 
 (ns routine-core
   (:schemas {;; What the host has established about one routine, now.

@@ -62,7 +62,7 @@ invents nothing (ADR-2609081000).
 - `appearance.cljc` `normalize` / `next-mode` / `residency-plane` route
   through `kotoba-oracle`; the case table and the cycle formula are gone;
   prep, palettes, CSS, hiccup and `:cloud`/:local mapping stay host
-- parity test `test/cloud/itonami/app/appearance_kotoba_parity_test.clj`
+- parity test `test/cloud/itonami/app/appearance_kotoba_parity_test.cljk`
   + KIR regeneration + JVM-free gen_kir_amu identity
 
 ## Measured bounds on the pinned verifier (amu bin, jvm-free)

@@ -133,6 +133,6 @@
 
 (deftest this-slice-does-not-move-the-auth-host
   (is (re-find #"auth\.itonami\.cloud" (bundle/document-html)))
-  (let [src (slurp "src/cloud/itonami/app/latest.clj")]
+  (let [src (slurp "src/cloud/itonami/app/latest.cljk")]
     (is (not (re-find #"auth\.itonami\.cloud" src)))
     (is (re-find #"Does not talk to kotobase.net `/ipns/`" src))))

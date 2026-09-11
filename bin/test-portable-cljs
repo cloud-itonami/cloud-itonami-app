@@ -19,7 +19,7 @@
 
 (let [{:keys [status]}
       (js->clj (cp/spawnSync "nbb" #js ["--classpath" "src:test"
-                                        "test/portable_nbb.cljs"]
+                                        "test/portable_nbb.cljk"]
                              #js {:stdio "inherit" :encoding "utf8"})
                :keywordize-keys true)]
   (set! (.-exitCode js/process) (or status 1)))

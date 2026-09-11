@@ -22,7 +22,7 @@ The third could not: readline binds Up to history unconditionally. In a buffer
 holding more than one line, Up has to mean the line above first, and the
 previous thing I sent only when there is no line above. That is one keystroke
 readline will not give up, so the input area is now an editor of this
-repository's own: `bin/itonami_editor.cljs`.
+repository's own: `bin/itonami_editor.cljk`.
 
 ## The split, and why the keys are testable
 

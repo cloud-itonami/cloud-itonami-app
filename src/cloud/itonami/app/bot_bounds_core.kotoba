@@ -29,7 +29,7 @@
 ;; (:i64/:bool) slice as the sibling decision cores — native-crossable, no
 ;; f64 needed.
 ;;
-;; Parity: test/cloud/itonami/app/bot_bounds_kotoba_parity_test.clj
+;; Parity: test/cloud/itonami/app/bot_bounds_kotoba_parity_test.cljk
 
 (ns bot-bounds-core
   (:schemas {;; What the host has established about one admission request.

@@ -2465,7 +2465,7 @@
                                "commerce_store_overview")
                 "the repair run receives the exact incident, not only its ordinary role")
             (is (str/includes? (:objective (first @submitted))
-                               "src/cloud/itonami/app/bots.clj")
+                               "src/cloud/itonami/app/bots.cljk")
                 "the repair starts at the host projection instead of a broad search")
             (is (= ["cloud-itonami/qa"] (:started result)))
             (is (nil? (get-in @store/state

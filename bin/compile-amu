@@ -16,7 +16,7 @@
 ;; amu --jvm-free canary with provenance on disk.
 ;;
 ;; Inputs are absolute because the nbb Wasm path rejects relative ones
-;; (same measurement as `bin/gen_kir_amu.cljs`).
+;; (same measurement as `bin/gen_kir_amu.cljk`).
 
 (ns compile-amu
   (:require ["node:child_process" :as cp]

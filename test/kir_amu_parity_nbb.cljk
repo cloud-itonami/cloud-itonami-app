@@ -10,7 +10,7 @@
 ;; both runtimes). The shipped artifact's digest is compared against the
 ;; `:kir-sha256` the Amu provenance recorded for a fresh JVM-free compile.
 ;;
-;; Run:  AMU=<amu launcher> nbb --classpath bin:test test/kir_amu_parity_nbb.cljs
+;; Run:  AMU=<amu launcher> nbb --classpath bin:test test/kir_amu_parity_nbb.cljk
 ;;       (writes only under target/kir-amu/; `resources/` is never touched)
 
 (ns kir-amu-parity-nbb

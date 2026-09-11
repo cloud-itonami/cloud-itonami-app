@@ -1,7 +1,7 @@
 ;; The start screen's contract: it is square, it is honest about what it cut,
 ;; and the layer it says it depends on is one it actually reads.
 ;;
-;;   nbb test/itonami_splash_nbb.cljs
+;;   nbb test/itonami_splash_nbb.cljk
 ;;
 ;;   0  all checks passed
 ;;   1  a check failed

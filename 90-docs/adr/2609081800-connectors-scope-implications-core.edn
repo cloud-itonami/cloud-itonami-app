@@ -50,7 +50,7 @@ Landed this tick:
 - `connectors.clj` `covered?` routes through `kotoba-oracle`; the
   `scope-implications` map is gone (the core owns the table) and set
   membership / registry / catalogue machinery stays host
-- parity test `test/cloud/itonami/app/connectors_kotoba_parity_test.clj`
+- parity test `test/cloud/itonami/app/connectors_kotoba_parity_test.cljk`
   + KIR regeneration + JVM-free gen_kir_amu identity
 
 ## The split is byte-faithful, not just behavior-preserving

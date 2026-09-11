@@ -38,7 +38,7 @@
 ;; exactly this decision (the cljc's `(nil? measure)` / `leaf-constant?`
 ;; cond IS this table).
 ;;
-;; Parity: test/cloud/itonami/app/vf_calibrate_kotoba_parity_test.clj
+;; Parity: test/cloud/itonami/app/vf_calibrate_kotoba_parity_test.cljk
 (ns cloud.itonami.app.vf-calibrate-core
   (:export [calibration-kind]))
 

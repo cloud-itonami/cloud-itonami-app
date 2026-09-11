@@ -102,7 +102,7 @@ gone.
 - ADAPTER-EMIT HOLD: `bin/kotoba` after amu `--jvm-free` is not the
   Release/v0.6.29 kotoba CLI. Production pin stays `:git/tag v0.6.29`.
 - `:gen` (`clojure -M:test:gen`) is the JVM KIR-EDN writer. Amu has no
-  KIR-EDN emit. `bin/gen_kir_amu.cljs` proves `:kir-sha256` and does not
+  KIR-EDN emit. `bin/gen_kir_amu.cljk` proves `:kir-sha256` and does not
   write `resources/`
 - Production oracle stays KIR (`kotoba-kir` interpreter) for
   `resources/cloud/itonami/app/oracle/*.kir.edn` (ADR-0065)

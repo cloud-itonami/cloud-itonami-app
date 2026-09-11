@@ -1,6 +1,6 @@
 ;; Drive the real Bots view in a real browser.
 ;;
-;;     NODE_PATH=<superproject>/node_modules nbb test/browser/bots_view.cljs
+;;     NODE_PATH=<superproject>/node_modules nbb test/browser/bots_view.cljk
 ;;
 ;; Needs a server on :1338 whose store already holds a human session. It is not
 ;; in `test-runner`: that suite is pure JVM and this needs a browser and a

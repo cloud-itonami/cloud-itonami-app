@@ -176,7 +176,7 @@
        "- 画像: ありません（切り抜きに失敗したか、送られませんでした）")
      ""
      (str "この画面は Cloud Itonami 自身の UI です。描画元は "
-          "`src/cloud/itonami/app/web.clj`（hiccup と CSS）と "
+          "`src/cloud/itonami/app/web.cljk`（hiccup と CSS）と "
           "`resources/cloud/itonami/app/interaction.js`（操作層）にあります。"
           "上の selector・class・要素テキストは、どれもその2つのファイルの中の"
           "文字列として検索できます。")

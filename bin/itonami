@@ -936,7 +936,7 @@
 ;; land. The commands are the part worth having; they are rewritten here
 ;; against the harness `main` actually mounts, so the fleet keeps one.
 ;;
-;; Every route below was checked against `src/cloud/itonami/app/server.clj`
+;; Every route below was checked against `src/cloud/itonami/app/server.cljk`
 ;; before it was written down. Several of them (`/v1/runs/…/steer`, `/stop`,
 ;; `/p/<profile>/api/sessions`) are hermes-compat contexts that the generated
 ;; command table does not carry, so "not in commands.edn" was not evidence of

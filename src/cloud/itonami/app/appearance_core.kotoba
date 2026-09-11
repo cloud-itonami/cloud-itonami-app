@@ -31,7 +31,7 @@
 ;; never a guessed mode. A guessed appearance would render a mode the
 ;; stylesheet does not define; the core invents nothing.
 ;;
-;; Parity: test/cloud/itonami/app/appearance_kotoba_parity_test.clj
+;; Parity: test/cloud/itonami/app/appearance_kotoba_parity_test.cljk
 ;; and ADR-2609082000.
 (ns cloud.itonami.app.appearance-core
   (:export [mode-of next-of plane-cloud?]))

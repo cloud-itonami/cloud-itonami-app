@@ -4,7 +4,7 @@
   ## One list, generated from the routes
 
   The registry is `resources/cloud-itonami-app.commands.edn`, produced by
-  `dev/gen_commands.cljs` from `server.clj`'s own `cond`. Nothing here is hand
+  `dev/gen_commands.cljk` from `server.clj`'s own `cond`. Nothing here is hand
   maintained, because a hand-maintained list of what an app can do drifts in
   exactly one direction: a route lands, the command is never added, and the CLI
   covers less than it says it does while nothing anywhere reports the gap.
@@ -71,7 +71,7 @@
 
 (defonce ^:private registry
   (delay (load-table resource-name
-                     "Run `nbb --classpath src dev/gen_commands.cljs`, or call install-sources!.")))
+                     "Run `nbb --classpath src dev/gen_commands.cljk`, or call install-sources!.")))
 
 (defonce ^:private aliases
   (delay (load-table alias-resource-name

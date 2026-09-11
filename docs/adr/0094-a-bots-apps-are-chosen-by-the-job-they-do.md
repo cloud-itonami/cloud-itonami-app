@@ -100,7 +100,7 @@ can fill it, and a control per row.
   the two expressions the grid used to decide availability with. Without that
   last pair a later edit could put the second copy back and nothing would say
   so.
-- `test/browser/bots_view.cljs` covers the property that only a browser can
+- `test/browser/bots_view.cljk` covers the property that only a browser can
   show: choosing in a slot marks the same app selected in the grid. The
   connector it selects is read out of the DOM rather than named, so the test
   measures the picker and not which OAuth clients the developer has configured;

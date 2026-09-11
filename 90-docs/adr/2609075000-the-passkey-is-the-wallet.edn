@@ -9,7 +9,7 @@
 The instruction was to follow it. Measured, it is already followed, and that
 answers the question the last three exchanges were circling.
 
-`src/cloud/itonami/app/smart_account.cljc` reproduces the Coinbase Smart Wallet
+`src/cloud/itonami/app/smart_account.cljk` reproduces the Coinbase Smart Wallet
 1.1 factory's `getAddress(bytes[],uint256)` locally, for an account whose owner
 is a raw 64-byte P-256 public key. `GET /api/wallet` on this install returns:
 

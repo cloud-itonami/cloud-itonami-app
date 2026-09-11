@@ -23,4 +23,4 @@ Murakumo node `judah`, private loopback port 1438, successfully booted the packa
 
 ## Scheduled observation
 
-A Codex thread heartbeat checks migration and outcomes every 30 minutes, reporting meaningful changes only. `scripts/controller-status.clj DATA_DIR` provides a read-only aggregate snapshot, verifies journal SHA/size and completeness, and fails rather than returning healthy on invalid state. This Codex heartbeat is separate from the cloud controller and requires the Codex scheduler to be available.
+A Codex thread heartbeat checks migration and outcomes every 30 minutes, reporting meaningful changes only. `scripts/controller-status.cljk DATA_DIR` provides a read-only aggregate snapshot, verifies journal SHA/size and completeness, and fails rather than returning healthy on invalid state. This Codex heartbeat is separate from the cloud controller and requires the Codex scheduler to be available.

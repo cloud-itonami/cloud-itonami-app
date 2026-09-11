@@ -12,9 +12,9 @@
 # red scan. A fingerprint silences exactly one finding at one line of one commit
 # and nothing else, and a new DID has to be added here by somebody who looked.
 
-# test/cloud/itonami/app/credential_http_test.clj:29
-a6b86ad192e4fbfaac43ebd89dd7545340f05b6f:test/cloud/itonami/app/credential_http_test.clj:generic-api-key:29
-# test/cloud/itonami/app/credential_sd_jwt_test.clj:11
-fd00122126c26eb51f705d9b42cb518759e580e1:test/cloud/itonami/app/credential_sd_jwt_test.clj:generic-api-key:11
-# test/cloud/itonami/app/credential_test.clj:21
-8b1dc9f15ce5b5fb8e8a59701152a0927bc41687:test/cloud/itonami/app/credential_test.clj:generic-api-key:21
+# test/cloud/itonami/app/credential_http_test.cljk:29
+a6b86ad192e4fbfaac43ebd89dd7545340f05b6f:test/cloud/itonami/app/credential_http_test.cljk:generic-api-key:29
+# test/cloud/itonami/app/credential_sd_jwt_test.cljk:11
+fd00122126c26eb51f705d9b42cb518759e580e1:test/cloud/itonami/app/credential_sd_jwt_test.cljk:generic-api-key:11
+# test/cloud/itonami/app/credential_test.cljk:21
+8b1dc9f15ce5b5fb8e8a59701152a0927bc41687:test/cloud/itonami/app/credential_test.cljk:generic-api-key:21

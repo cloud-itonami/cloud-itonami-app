@@ -107,7 +107,7 @@ honest interim, and it says so rather than moving bytes that will not decrypt.
 ## Verified
 
 `clojure -M:test` — 1216 tests, 4968 assertions, 0 failures, 0 errors.
-`clojure -M:lint` — 0 errors. `dev/gen_commands.cljs` regenerated: 242 routes,
+`clojure -M:lint` — 0 errors. `dev/gen_commands.cljk` regenerated: 242 routes,
 174 commands, 19 human-passkey-only (the transfer is the nineteenth), 49
 unauthenticated — `commands-test` fails if that drifts.
 

@@ -110,8 +110,8 @@
         score (get-in after [:score :total])
         baseline (get-in before [:score :total])
         metrics (:metrics after)
-        web-source (source-text "src/cloud/itonami/app/web.clj")
-        server-source (source-text "src/cloud/itonami/app/server.clj")
+        web-source (source-text "src/cloud/itonami/app/web.cljk")
+        server-source (source-text "src/cloud/itonami/app/server.cljk")
         interaction (source-text "resources/cloud/itonami/app/interaction.js")
         xmile (source-text "docs/ux/settings-information-architecture.xmile")
         targets (set (map second

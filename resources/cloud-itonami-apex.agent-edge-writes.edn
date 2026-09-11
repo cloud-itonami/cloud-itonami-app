@@ -6,7 +6,7 @@
 ;; stayed behind here until 2026-09-09, carrying the same Worker name and the
 ;; same custom domain, so a deploy from this tree could overwrite the live one.
 ;;
-;; `mobile/test/cloud/itonami/mobile/terminal_test.clj` compares this table with
+;; `mobile/test/cloud/itonami/mobile/terminal_test.cljk` compares this table with
 ;; `cloud.itonami.mobile.terminal/offered-writes`. It used to slurp the Worker's
 ;; source through `../services/agent-edge/src/index.js`. A sibling path that
 ;; resolves on one machine and not on another is a check that reports a pass

@@ -218,7 +218,7 @@
     (is (str/includes? signer "--storepass \"file:$password_file\""))))
 
 (deftest desktop-update-is-one-visible-action
-  (let [html (slurp "src/cloud/itonami/app/web.clj")
+  (let [html (slurp "src/cloud/itonami/app/web.cljk")
         javascript (slurp "resources/cloud/itonami/app/interaction.js")]
     (is (str/includes? html ":id \"desktop-update-action\""))
     (is (not (str/includes? html "desktop-update-download")))

@@ -31,7 +31,7 @@
 ;; state as one that has never answered: the first has to be taken away from the
 ;; tenant, and saying so is the whole point of the state.
 ;;
-;; Parity: test/cloud/itonami/app/domain_binding_kotoba_parity_test.clj
+;; Parity: test/cloud/itonami/app/domain_binding_kotoba_parity_test.cljk
 
 (ns cloud.itonami.app.domain-binding
   (:schemas {;; What the host establishes before asking. Booleans only, and a

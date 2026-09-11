@@ -390,7 +390,7 @@ fallen behind, so `itonami commands` reports real coverage rather than a claim.
 Regenerate after adding a route:
 
 ```bash
-nbb --classpath src dev/gen_commands.cljs
+nbb --classpath src dev/gen_commands.cljk
 ```
 
 Flags the registry does not know about are passed through; `--json '{…}'` sends a
@@ -933,7 +933,7 @@ MCP exposes `workforce_status` as read-only operational evidence. Provisioning
 is human-only because it creates durable Bots and jobs; an agent session cannot
 use MCP to widen or install its own workforce.
 
-The view is covered by `test/browser/bots_view.cljs`, which drives it in a real
+The view is covered by `test/browser/bots_view.cljk`, which drives it in a real
 browser against a running server; the JVM suite cannot see the client.
 
 ## Background worker runs

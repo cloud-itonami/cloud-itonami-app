@@ -39,7 +39,7 @@
 ;; cores. `:i64` codes are assigned so the host can map them to the `.cljc`
 ;; gap keywords without re-deriving the decision.
 ;;
-;; Parity: test/cloud/itonami/app/esign_retention_kotoba_parity_test.clj
+;; Parity: test/cloud/itonami/app/esign_retention_kotoba_parity_test.cljk
 
 (ns esign-retention-core
   (:schemas {;; What the host has established about one envelope's attestation

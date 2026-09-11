@@ -28,7 +28,7 @@
 ;;   - `json-ended-early?` is a plain `:bool` (the cljc's `true?` coercion
 ;;     already ran).
 ;;
-;; Parity: test/cloud/itonami/app/provider_retry_kotoba_parity_test.clj
+;; Parity: test/cloud/itonami/app/provider_retry_kotoba_parity_test.cljk
 
 (ns cloud.itonami.app.provider-retry-core
   (:export [output-budget-exhausted?]))

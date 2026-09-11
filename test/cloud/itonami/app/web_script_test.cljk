@@ -352,7 +352,7 @@
   ;; on a real store 2026-08-12 — the copy named Passkey, Email and SSO while
   ;; the Email card was hidden and every SSO button was disabled.
   ;;
-  ;; What the browser can prove lives in test/browser/signin_gate.cljs. What
+  ;; What the browser can prove lives in test/browser/signin_gate.cljk. What
   ;; this asks is narrower and cheaper: that the copy is addressable at all, and
   ;; that the client derives it from `auth-methods` rather than asserting it.
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
@@ -406,7 +406,7 @@
 
 (deftest bots-rail-right-click-opens-the-same-bot-menu
   (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))
-        css (slurp (io/file "src/cloud/itonami/app/web.clj"))]
+        css (slurp (io/file "src/cloud/itonami/app/web.cljk"))]
     (is (str/includes? js "item.addEventListener('contextmenu'")
         "the rail face is what opens the menu")
     (is (str/includes? js "item.addEventListener('click', () => selectBot(bot.id))")

@@ -35,7 +35,7 @@
 ;; throw and never a guessed implier. A guessed implier would silently widen
 ;; a grant; the core invents nothing.
 ;;
-;; Parity: test/cloud/itonami/app/connectors_kotoba_parity_test.clj and
+;; Parity: test/cloud/itonami/app/connectors_kotoba_parity_test.cljk and
 ;; ADR-2609081800.
 (ns cloud.itonami.app.connectors-core
   (:export [implier-of]))

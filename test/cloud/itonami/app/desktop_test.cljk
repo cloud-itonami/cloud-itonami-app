@@ -60,7 +60,7 @@
 
 (deftest permission-prompts-are-opt-in-not-diagnostics
   (let [source (slurp helper-source)
-        desktop-source (slurp (io/file "src/cloud/itonami/app/desktop.clj"))]
+        desktop-source (slurp (io/file "src/cloud/itonami/app/desktop.cljk"))]
     (is (str/includes? source "option(\"prompt\") == \"true\""))
     (is (str/includes? source "CGRequestScreenCaptureAccess"))
     (is (str/includes? desktop-source "[helper \"permissions\" \"--prompt\" \"true\"]"))
@@ -69,7 +69,7 @@
     (is (str/includes? desktop-source "\"check_permissions\" {:prompt false}"))))
 
 (deftest cua-driver-is-narrowed-before-it-reaches-a-bot
-  (let [source (slurp (io/file "src/cloud/itonami/app/desktop.clj"))]
+  (let [source (slurp (io/file "src/cloud/itonami/app/desktop.cljk"))]
     (doseq [allowed ["\"get_window_state\"" "\"click\"" "\"set_value\""
                      "\"scroll\"" "\"invoke_menu\""]]
       (is (str/includes? source allowed) (str allowed " is not wired")))

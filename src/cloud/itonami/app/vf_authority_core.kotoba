@@ -29,7 +29,7 @@
 ;; (when (contains? acts a) ...))` IS this table. A guessed scope would be
 ;; invented authority; the core invents nothing.
 ;;
-;; Parity: test/cloud/itonami/app/vf_authority_kotoba_parity_test.clj
+;; Parity: test/cloud/itonami/app/vf_authority_kotoba_parity_test.cljk
 (ns cloud.itonami.app.vf-authority-core
   (:export [scope-admitted?]))
 

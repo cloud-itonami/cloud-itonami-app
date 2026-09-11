@@ -46,12 +46,12 @@
     (is (java.util.Arrays/equals ^bytes (:bytes a) ^bytes (:bytes b)))))
 
 (deftest overlay-does-not-publish-session-datoms
-  (let [src (slurp "src/cloud/itonami/app/graph.clj")]
+  (let [src (slurp "src/cloud/itonami/app/graph.cljk")]
     (is (not (re-find #":datoms" src)))
     (is (re-find #"Session kgraph datoms stay local" src))))
 
 (deftest this-slice-does-not-move-auth-or-ipns
-  (let [src (slurp "src/cloud/itonami/app/graph.clj")]
+  (let [src (slurp "src/cloud/itonami/app/graph.cljk")]
     (is (not (re-find #"auth\.itonami\.cloud" src)))
     (is (not (re-find #"routing/publish" src)))
     (is (re-find #"Does not republish IPNS" src))))
