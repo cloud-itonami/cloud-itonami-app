@@ -7456,11 +7456,27 @@
                            :reason :bot-active})
 
                   :else
+                  ;; `run-id` and the schedule advance are bound OUTSIDE the
+                  ;; try: a deterministic job that records its run and then
+                  ;; throws has still consumed this tick's start, and the
+                  ;; catch needs both to say so.
+                  (let [run-id (new-id "workforce-run")
+                        cadence (:workforce.job/cadence-minutes job)
+                        next-at (str (.plusSeconds (java.time.Instant/parse now)
+                                                   (* 60 cadence)))
+                        advance-schedule!
+                        (fn []
+                          (transact! update-in [:workforce-jobs bot-id]
+                                     (fn [stored-job]
+                                       (-> stored-job
+                                           (merge {:workforce.job/last-submitted-at now
+                                                   :workforce.job/last-run-id run-id
+                                                   :workforce.job/next-run-at next-at
+                                                   :workforce.job/updated-at now})
+                                           (dissoc :workforce.job/trigger
+                                                   :workforce.job/triggered-at)))))]
                   (try
-                    (let [run-id (new-id "workforce-run")
-                          cadence (:workforce.job/cadence-minutes job)
-                          next-at (str (.plusSeconds (java.time.Instant/parse now)
-                                                     (* 60 cadence)))]
+                    (do
                       (if (git-hygiene-relief-job? job)
                         (run-git-hygiene!
                          (get by-organization
@@ -7496,21 +7512,37 @@
                             (get-in job [:workforce.job/continuation :context-id])
                             :continuation-summary
                             (get-in job [:workforce.job/continuation :summary])}))))
-                      (transact! update-in [:workforce-jobs bot-id]
-                                 (fn [stored-job]
-                                   (-> stored-job
-                                       (merge {:workforce.job/last-submitted-at now
-                                               :workforce.job/last-run-id run-id
-                                               :workforce.job/next-run-at next-at
-                                               :workforce.job/updated-at now})
-                                       (dissoc :workforce.job/trigger
-                                               :workforce.job/triggered-at))))
+                      (advance-schedule!)
                       (update result :started conj (:workforce.job/key job)))
                     (catch Exception error
-                      (update result :skipped conj
-                              {:job (:workforce.job/key job)
-                               :reason (or (:type (ex-data error))
-                                           :internal-error)})))))]
+                      (let [reason (or (:type (ex-data error)) :internal-error)]
+                        ;; Did the job durably record a run before it threw?
+                        ;; The deterministic residents (Domain Steward, disk,
+                        ;; git hygiene) write `:goal-jobs run-id` and a failed
+                        ;; turn, then rethrow.  That run happened: it took this
+                        ;; tick's single start and the Bot's last-turn shows
+                        ;; it.  Leaving `next-run-at` untouched made the job
+                        ;; due again next tick, and the sort above (reserved
+                        ;; class first, never-submitted first, oldest first)
+                        ;; put it at the head of every tick.  Measured
+                        ;; 2026-09-11: Domain Steward failed `account-id is
+                        ;; required` 42 times in one hour while 116 of 147
+                        ;; jobs sat two cadences overdue -- one missing card
+                        ;; had starved the whole workforce.  A recorded
+                        ;; failure advances the schedule exactly as a success
+                        ;; does; only a job that never got a run stays due.
+                        (if (get-in (snapshot) [:goal-jobs run-id])
+                          (do
+                            (advance-schedule!)
+                            (-> result
+                                (update :started conj (:workforce.job/key job))
+                                (update :failed (fnil conj [])
+                                        {:job (:workforce.job/key job)
+                                         :run-id run-id
+                                         :reason reason})))
+                          (update result :skipped conj
+                                  {:job (:workforce.job/key job)
+                                   :reason reason}))))))))]
           (recur (rest remaining) result))))))
 
 (defn cancel!
