@@ -535,7 +535,9 @@
   body.group-chat-open #bots-titlebar-context>.bot-actions-menu,body.group-chat-open #bots-new{display:none!important}
   .group-chat-avatars{display:flex;padding-right:.5rem}
   .group-chat-avatars .bot-avatar{width:2rem;height:2rem;margin-right:-.5rem;border:2px solid white;border-radius:50%}
-  #group-chat-details{margin-left:auto;white-space:nowrap}
+  #group-chat-header .bots-titlebar__copy{flex:1;overflow:hidden}
+  #group-chat-header .bots-titlebar__status{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #group-chat-details{margin-left:auto;white-space:nowrap;flex:none}
   body.group-chat-open .bots-conversations>.section-heading,
   body.group-chat-open .bots-conversations>.form-help:not(#room-status),
   body.group-chat-open #room-create,body.group-chat-open #room-list{display:none}
@@ -2592,7 +2594,7 @@
            [:span {:id "room-title" :class "bots-titlebar__name"} "グループチャット"]
            [:span {:id "room-members-summary" :class "bots-titlebar__status"}]]
           [:button {:id "group-chat-details" :class "tool-button" :type "button"
-                    :aria-expanded "false" :aria-controls "room-details"} "参加者・詳細"]]
+                    :aria-expanded "false" :aria-controls "room-details" :aria-label "参加者・詳細"} "詳細"]]
          [:details {:class "bot-actions-menu"}
           [:summary {:aria-label "Bot の操作"} "操作"]
           [:div {:class "bot-actions-menu__items"}
