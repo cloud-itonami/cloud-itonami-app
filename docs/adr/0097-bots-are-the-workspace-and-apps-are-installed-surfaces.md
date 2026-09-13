@@ -19,3 +19,9 @@ Verification: App catalog coverage and isolated user/organization installation t
 App, marketplace, and account views open in a native modal dialog above the existing Bot workspace. Moving the existing view node preserves its state; closing with Escape, the close button, or the backdrop returns to the same conversation and restores focus. The fragment still addresses the opened surface, including direct links. Bot updates continue while the overlay is open.
 
 Pinned and priority Bots occupy large tiles at the top of the rail. The remaining conversation list scrolls independently. The account selector and organization switcher live in the bottom-left account menu, below App and marketplace launchers.
+
+## Two width layouts (2026-09-13)
+
+There is one viewport-width boundary: 48rem (768 CSS pixels at the standard browser font size). Below it, the iPhone layout switches between the Bot list and conversation and uses the bottom navigation. At and above it, the iPad layout keeps the full named Bot rail beside the conversation, including desktop windows. There is no intermediate avatar-only rail. App surfaces retain their compact tablet layout at larger widths.
+
+The host adapts known width queries in the pinned shared styles to this boundary without duplicating their component rules. The rendered-page regression test covers both the host and dependency styles and rejects additional width thresholds. Reduced-motion, forced-color, pointer and height accessibility rules remain intact.
