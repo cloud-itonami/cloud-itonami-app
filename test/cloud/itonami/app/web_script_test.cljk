@@ -232,17 +232,9 @@
 
 (deftest bots-pass-server-status-to-decorative-living-faces
   (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
-    (is (str/includes? js "const botMood = (avatar, status) =>"))
-    (is (str/includes? js "node.dataset.mood = botMood(avatar, status)"))
-    (doseq [mood ["'hurry'" "'focus'" "'nervous'" "'upset'" "'sleep'" "'joy'" "'nap'"]]
-      (is (str/includes? js mood)))
-    (is (str/includes? js "const botAvatar = (node, avatar, status = null) =>"))
-    (is (str/includes? js "node.dataset.status = status"))
-    (is (str/includes? js "node.setAttribute('aria-hidden', 'true')"))
-    (is (str/includes? js
-                       "botAvatar(make('span', 'bot-avatar'), bot.avatar, bot.status)"))
-    (is (str/includes? js
-                       "botAvatar($('#bots-titlebar-avatar'), bot.avatar, bot.status)"))))
+    (is (str/includes? js "window.cloudKotobaBot.update(node, {id, avatar, status})"))
+    (is (str/includes? js "bot.avatar, bot.status, bot.id)"))
+    (is (not (str/includes? js "const botMood =")))))
 
 (deftest bots-picker-is-a-recent-searchable-conversation-list
   (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
@@ -251,7 +243,7 @@
     (is (str/includes? js "bot['last-message']?.text"))
     (is (str/includes? js "bots-rail__time"))
     (is (str/includes? js "$('#bots-input').placeholder = `${bot.name} に頼む`"))
-    (is (str/includes? js "botAvatar($('#bots-mobile-avatar'), bot.avatar, bot.status)"))))
+    (is (str/includes? js "botAvatar($('#bots-mobile-avatar'), bot.avatar, bot.status, bot.id)"))))
 
 (deftest bots-expose-one-approved-virtual-shell-per-bot
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]

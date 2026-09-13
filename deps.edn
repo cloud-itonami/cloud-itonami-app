@@ -2,7 +2,7 @@
  :deps
  {io.github.kotoba-lang/cloud-kotoba-dds
   {:git/url "https://github.com/kotoba-lang/cloud-kotoba-dds.git"
-   :git/sha "f48ca5c3bf6363feeae9c736e6b3d4dbf67c1af2"}
+   :git/sha "323b1b9a4dea3299c19189a1c7916804f9d85a39"}
 
         ;; kotoba.lang.text, not clojure.string. Pinned as an explicit floor:
         ;; tools.deps takes the NEWEST sha it is shown, so without a floor here

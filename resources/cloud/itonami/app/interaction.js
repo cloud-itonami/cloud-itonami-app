@@ -9967,24 +9967,8 @@
       } catch (error) { $('#context-status').textContent = error.message; }
       finally { button.disabled = false; }
     });
-    const botMood = (avatar, status) => {
-      const variant = Number.parseInt(avatar?.variant || 0, 10) || 0;
-      if (status === 'working') return variant % 3 === 0 ? 'hurry' : 'focus';
-      if (status === 'waiting-approval' || status === 'waiting-connection') return 'nervous';
-      if (status === 'blocked') return 'upset';
-      if (status === 'disabled') return 'sleep';
-      if (status === 'idle') return variant % 2 === 0 ? 'joy' : 'nap';
-      return 'focus';
-    };
-    const botAvatar = (node, avatar, status = null) => {
-      node.dataset.color = avatar?.color || 'blue';
-      node.dataset.glyph = avatar?.glyph || 'circle';
-      node.dataset.variant = String(avatar?.variant || 0);
-      node.dataset.mood = botMood(avatar, status);
-      if (status) node.dataset.status = status;
-      else delete node.dataset.status;
-      node.setAttribute('aria-hidden', 'true');
-      return node;
+    const botAvatar = (node, avatar, status = null, id = null) => {
+      return window.cloudKotobaBot.update(node, {id, avatar, status});
     };
     const botsStatusText = {
       'idle':'待機中', 'working':'作業中',
@@ -10535,7 +10519,7 @@
           `${bot.name}、${statusSummary}、${preview}`);
         item.setAttribute('aria-haspopup', 'menu');
         if (bot['unread?']) item.dataset.unread = 'true';
-        const avatar = botAvatar(make('span', 'bot-avatar'), bot.avatar, bot.status);
+        const avatar = botAvatar(make('span', 'bot-avatar'), bot.avatar, bot.status, bot.id);
         const copy = make('div', 'bots-rail__copy');
         const headline = make('span', 'bots-rail__headline');
         headline.append(make('span', 'bots-rail__name', bot.name));
@@ -11390,10 +11374,10 @@
       }
       if (!botsState.latestTurn) botsState.latestTurn = bot['last-turn'] || null;
       renderBotsRun(botsState.latestTurn);
-      botAvatar($('#bots-titlebar-avatar'), bot.avatar, bot.status);
+      botAvatar($('#bots-titlebar-avatar'), bot.avatar, bot.status, bot.id);
       $('#bots-titlebar-name').textContent = bot.name;
       $('#bots-titlebar-status').textContent = botsStatusSummary(bot);
-      botAvatar($('#bots-mobile-avatar'), bot.avatar, bot.status);
+      botAvatar($('#bots-mobile-avatar'), bot.avatar, bot.status, bot.id);
       $('#bots-mobile-name').textContent = bot.name;
       $('#bots-mobile-status').textContent = botsStatusSummary(bot);
       $('#bots-mobile-context').hidden = false;
@@ -12176,7 +12160,8 @@
           const bot = botsState.bots.find((candidate) => candidate.id === botId);
           renderBotsRun(botsState.latestTurn);
           if (bot) {
-            botAvatar($('#bots-titlebar-avatar'), bot.avatar, bot.status);
+            botAvatar($('#bots-titlebar-avatar'), bot.avatar, bot.status, bot.id);
+            botAvatar($('#bots-mobile-avatar'), bot.avatar, bot.status, bot.id);
             $('#bots-titlebar-status').textContent = botsStatusSummary(bot);
             $('#bots-mobile-status').textContent = botsStatusSummary(bot);
           }
@@ -12889,7 +12874,7 @@
       $('#wallet-account-state').textContent = connected ? 'Passkey Wallet' : 'Passkeyが必要';
       $('#wallet-account-state').dataset.state = connected ? 'ready' : 'waiting';
       $('#wallet-bot-name').textContent = selected?.name || 'Passkey Wallet';
-      botAvatar($('#wallet-bot-avatar'), selected?.avatar || {});
+      botAvatar($('#wallet-bot-avatar'), selected?.avatar || {}, selected?.status, selected?.id);
       $('#wallet-network').textContent = connected
         ? `Chain ${selected.wallet['chain-id']} · ${selected.wallet['deployment-state'] === 'not-yet-deployed' ? '未展開' : '展開済み'}`
         : 'Ethereum';

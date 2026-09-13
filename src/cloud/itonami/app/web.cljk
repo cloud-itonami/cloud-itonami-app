@@ -438,103 +438,9 @@
     color:var(--color-neutral-solid-gray-600)}
   .bots-rail__last{font-size:.8125rem;color:var(--color-neutral-solid-gray-600);
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  /* The avatar. One element, two custom properties, so the same markup is a
-     swatch in the picker and a face in the rail. Eyes are pseudo-elements:
-     decorative life never becomes extra DOM or an accessible-name fragment. */
-  .bot-avatar{display:inline-flex;align-items:center;justify-content:center;
-    width:2rem;height:2rem;flex:0 0 auto;background:var(--bot-color,#4a6fd4);
-    color:var(--color-neutral-white);font-size:.875rem;position:relative;
-    animation:bot-breathe var(--bot-breathe-time,4.8s) ease-in-out var(--bot-phase,0s) infinite;
-    transform-origin:50% 80%}
-  .bot-avatar::before,.bot-avatar::after{content:'';position:absolute;z-index:1;
-    pointer-events:none}
-  /* Two white eyes from one box and its shadow. */
-  .bot-avatar::before{width:.42em;height:.5em;left:calc(50% - .52em);top:38%;
-    border-radius:50%;background:var(--color-neutral-white);
-    box-shadow:.62em 0 0 var(--color-neutral-white);transform-origin:50% 55%;
-    animation:bot-blink 6.4s ease-in-out var(--bot-phase,0s) infinite}
-  /* Two pupils move together, giving a readable wandering gaze without JS. */
-  .bot-avatar::after{width:.18em;height:.24em;left:calc(50% - .4em);top:44%;
-    border-radius:50%;background:var(--color-neutral-solid-gray-900);
-    box-shadow:.62em 0 0 var(--color-neutral-solid-gray-900);
-    animation:bot-look var(--bot-look-time,7.2s) ease-in-out var(--bot-phase,0s) infinite}
-  .bot-avatar[data-glyph='bean'],.bot-avatar[data-glyph='wave']{--bot-phase:-1.3s}
-  .bot-avatar[data-glyph='block'],.bot-avatar[data-glyph='drop']{--bot-phase:-2.6s}
-  .bot-avatar[data-glyph='wide'],.bot-avatar[data-glyph='cloud']{--bot-phase:-3.9s}
-  .bot-avatar[data-glyph='wedge']{--bot-phase:-5.2s}
-  .bot-avatar[data-status='working']{--bot-breathe-time:2.4s;--bot-look-time:4.2s}
-  .bot-avatar[data-status='waiting-approval'],
-  .bot-avatar[data-status='waiting-connection']{--bot-look-time:4.8s}
-  /* Mood is a deterministic projection of operational state plus the avatar
-     variant. It adds character without replacing the readable status text. */
-  .bot-avatar[data-mood='hurry']{animation:bot-hurry .42s steps(2,end) infinite}
-  .bot-avatar[data-mood='hurry']::after{box-shadow:.62em 0 0 var(--color-neutral-solid-gray-900),
-    1.18em -.72em 0 .08em #73eff7}
-  .bot-avatar[data-mood='nap'],.bot-avatar[data-mood='sleep']{
-    animation:bot-nap 2.8s steps(2,end) infinite}
-  .bot-avatar[data-mood='nap']::before,.bot-avatar[data-mood='sleep']::before{
-    height:.12em;top:48%;border-radius:999px;background:var(--color-neutral-solid-gray-800);
-    box-shadow:.62em 0 0 var(--color-neutral-solid-gray-800);animation:none}
-  .bot-avatar[data-mood='nap']::after,.bot-avatar[data-mood='sleep']::after{
-    content:'z';width:auto;height:auto;left:auto;right:-.35em;top:-.45em;
-    color:var(--color-neutral-solid-gray-700);background:transparent;box-shadow:none;
-    font-size:.72em;font-weight:800;animation:bot-dream 2.8s steps(2,end) infinite}
-  .bot-avatar[data-mood='joy']{animation:bot-joy .8s steps(2,end) infinite}
-  .bot-avatar[data-mood='joy']::before{height:.2em;top:40%;transform:scaleY(.6);
-    animation:none}
-  .bot-avatar[data-mood='joy']::after{width:.58em;height:.3em;left:calc(50% - .29em);top:58%;
-    border-radius:0 0 999px 999px;border-bottom:.12em solid var(--color-neutral-solid-gray-900);
-    background:transparent;box-shadow:none;animation:none}
-  .bot-avatar[data-mood='nervous']{animation:bot-nervous .32s steps(2,end) infinite}
-  .bot-avatar[data-mood='nervous']::before{transform:scale(1.15);animation:none}
-  .bot-avatar[data-mood='nervous']::after{animation:bot-nervous-look .64s steps(2,end) infinite}
-  .bot-avatar[data-mood='upset']::before{height:.22em;top:42%;border-radius:999px;
-    transform:rotate(-8deg);animation:none}
-  .bot-avatar[data-mood='upset']::after{width:.55em;height:.22em;left:calc(50% - .275em);top:66%;
-    border-radius:999px 999px 0 0;border-top:.1em solid var(--color-neutral-solid-gray-900);
-    background:transparent;box-shadow:none;animation:none}
-  /* Disabled remains still even though its projected mood is sleep. */
-  .bot-avatar[data-status='disabled']{animation:none;filter:saturate(.35)}
-  .bot-avatar[data-status='disabled']::before{animation:none;transform:scaleY(.22)}
-  .bot-avatar[data-status='disabled']::after{animation:none}
-  @keyframes bot-breathe{0%,100%{transform:translateY(0) scale(1)}
-    50%{transform:translateY(-.08rem) scale(1.025)}}
-  @keyframes bot-blink{0%,42%,46%,100%{transform:scaleY(1)}
-    43%,45%{transform:scaleY(.08)}}
-  @keyframes bot-look{0%,18%,82%,100%{transform:translateX(0)}
-    28%,42%{transform:translateX(.1em)}
-    58%,72%{transform:translateX(-.08em)}}
-  @keyframes bot-hurry{0%,100%{transform:translateX(-.08rem) rotate(-2deg)}
-    50%{transform:translateX(.08rem) rotate(2deg)}}
-  @keyframes bot-nap{0%,100%{transform:translateY(0)}50%{transform:translateY(.08rem)}}
-  @keyframes bot-dream{0%,100%{transform:translateY(0);opacity:.55}
-    50%{transform:translateY(-.18rem);opacity:1}}
-  @keyframes bot-joy{0%,100%{transform:translateY(0) rotate(-2deg)}
-    50%{transform:translateY(-.16rem) rotate(3deg)}}
-  @keyframes bot-nervous{0%,100%{transform:rotate(-2deg)}50%{transform:rotate(2deg)}}
-  @keyframes bot-nervous-look{0%,100%{transform:translateX(-.08em)}
-    50%{transform:translateX(.1em)}}
-  .bot-avatar--xl{width:4.5rem;height:4.5rem;font-size:1.75rem}
-  .bot-avatar[data-glyph='circle']{border-radius:50%}
-  .bot-avatar[data-glyph='bean']{border-radius:50% 50% 45% 55% / 55% 45% 55% 45%}
-  .bot-avatar[data-glyph='block']{border-radius:.375rem}
-  .bot-avatar[data-glyph='wide']{border-radius:999px;width:2.75rem}
-  .bot-avatar--xl[data-glyph='wide']{width:6rem}
-  .bot-avatar[data-glyph='wedge']{border-radius:.25rem;
-    clip-path:polygon(50% 0,100% 100%,0 100%)}
-  .bot-avatar[data-glyph='cloud']{border-radius:60% 60% 40% 40% / 70% 70% 30% 30%}
-  .bot-avatar[data-glyph='wave']{border-radius:40% 60% 60% 40% / 60% 40% 60% 40%}
-  .bot-avatar[data-glyph='drop']{border-radius:50% 50% 50% 0}
-  .bot-avatar[data-color='clay']{--bot-color:#8a6552}
-  .bot-avatar[data-color='red']{--bot-color:var(--color-semantic-error-1)}
-  .bot-avatar[data-color='orange']{--bot-color:#e07a26}
-  .bot-avatar[data-color='amber']{--bot-color:#c9930b}
-  .bot-avatar[data-color='green']{--bot-color:var(--color-semantic-success-1)}
-  .bot-avatar[data-color='teal']{--bot-color:#12817c}
-  .bot-avatar[data-color='blue']{--bot-color:var(--color-key-600)}
-  .bot-avatar[data-color='violet']{--bot-color:#6b4cc4}
-  .bot-avatar[data-color='pink']{--bot-color:#c2418a}
-  .bot-avatar[data-color='slate']{--bot-color:var(--color-neutral-solid-gray-600)}
+  /* Identity and motion come from cloud-kotoba-dds; the host owns sizes. */
+  .bot-avatar{width:2rem;height:2rem}
+  .bot-avatar--xl{width:4.5rem;height:4.5rem}
   /* The status dot. Named states rather than a colour, because 'waiting for
      you' and 'working' must not be told apart by hue alone. */
   .bots-dot{width:.625rem;height:.625rem;border-radius:50%;flex:0 0 auto;
@@ -1711,7 +1617,6 @@
   @media (prefers-reduced-motion: reduce){
     .typing span{animation:none;opacity:1}
     .skeleton{animation:none;background:var(--color-neutral-solid-gray-100)}
-    .bot-avatar,.bot-avatar::before,.bot-avatar::after{animation:none}
   }
   ")
 
@@ -1846,6 +1751,9 @@
   (str/replace (page/->page options body) #"(?s)<style>(.*?)</style>"
                (fn [[_ css]] (str "<style>" (two-size-css css) "</style>"))))
 
+(def bot-component-css (slurp (io/resource "cloud_kotoba_dds/bot.css")))
+(def bot-component-js (slurp (io/resource "cloud_kotoba_dds/bot.js")))
+
 (def app-css
   "The app's own rules, plus the ones `hanmen` needs for a rendered page to
   look like a page.
@@ -1859,7 +1767,7 @@
   The 8-bit appearance layer (`cloud.itonami.app.appearance/css`) is
   concatenated LAST so that its overrides win, and so that the same token
   guard covers it: every `--eightbit-*` it references it also declares."
-  (str tokens/bridge-css "\n" (two-size-css chat-styles/css) "\n" base-css "\n" bot-workspace-css "\n  " hanmen-svg/stylesheet "\n" appearance/css "\n"))
+  (str tokens/bridge-css "\n" bot-component-css "\n" (two-size-css chat-styles/css) "\n" base-css "\n" bot-workspace-css "\n  " hanmen-svg/stylesheet "\n" appearance/css "\n"))
 
 (def interaction-js
   "The page's interaction layer, which is JavaScript and now lives in a
@@ -2583,7 +2491,7 @@
       :css css :app-css (str app-css "\n" (appearance/dark-css css))
       :head [[:link {:rel "icon" :type "image/png" :href "/icon.png"}]
              [:link {:rel "apple-touch-icon" :href "/icon.png"}]
-             [:script signal-js] [:script interaction-js]]}
+             [:script signal-js] [:script bot-component-js] [:script interaction-js]]}
      ;; `data-appearance` is the whole of a mode (ADR-0091): the server renders
      ;; the configured default, `interaction.js` flips it to the device's
      ;; remembered choice, and the stylesheet reads it. Nothing else differs.
