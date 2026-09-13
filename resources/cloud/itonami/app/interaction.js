@@ -8716,6 +8716,7 @@
         $('#signin-gate-note').textContent =
           ' サインインはブラウザ（auth.itonami.cloud）で行います。完了するとこの画面に自動で戻ります。';
       }
+      $('#passkey-gate-notice').hidden = Boolean(data['authenticated?'] && data['may-act?']) || (supported && !resuming);
       // A control that cannot work is disabled with its reason on the screen,
       // not left live to fail on click.
       [$('#passkey-signin'), $('#registration-submit')].forEach((button) => {
@@ -8755,7 +8756,13 @@
         loadChronicle().catch((error) => {
           $('#memory-status').textContent = error.message;
         });
-        showView(requestedView === 'signin' ? 'settings' : requestedView);
+        if ($('#identity-status').dataset.authResult) {
+          $('#identity-status').textContent = '';
+          $('#identity-status').classList.remove('settings-notice--error');
+          $('#identity-status').setAttribute('role', 'status');
+          delete $('#identity-status').dataset.authResult;
+        }
+        showView(requestedView === 'signin' ? 'bots' : requestedView);
       }
       const onboarding = $('#identity-onboarding');
       const workspace = $('#identity-workspace');
@@ -8779,7 +8786,7 @@
           : 'サインイン';
         $('#registration-lead').textContent = pendingPasskey
           ? '仮登録は完了しています。Passkey を作成するとアプリを利用できます。'
-          : 'Passkeyで続行できます。';
+          : nativeSurface() ? 'ブラウザで認証すると、自動で戻ります。' : 'パスキーを使って続ける';
         $('#passkey-signin').textContent = pendingPasskey
           ? 'Passkey 登録を再開'
           : 'Passkey でサインイン';
@@ -13659,9 +13666,14 @@
       // callback is surfaced, and its one-shot result is removed so a reload
       // cannot repeat yesterday's notification forever.
       if (provider === 'itonami-cloud') {
-        $('#identity-status').textContent = authResult === 'itonami-cloud'
-          ? 'パスキーでサインインしました。'
-          : 'パスキーのサインインを完了できませんでした。もう一度お試しください。';
+        const notice = $('#identity-status');
+        const failed = !(authResult === 'itonami-cloud');
+        notice.dataset.authResult = authResult;
+        notice.classList.toggle('settings-notice--error', failed);
+        notice.setAttribute('role', failed ? 'alert' : 'status');
+        notice.textContent = appUnlocked ? '' : failed
+          ? 'サインインを完了できませんでした。下のボタンから再試行してください。'
+          : 'サインインを確認しています…';
       }
       const cleaned = new URL(location.href);
       cleaned.searchParams.delete('auth');
