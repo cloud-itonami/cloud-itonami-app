@@ -6160,24 +6160,40 @@
         (require-human-session! exchange)
         (require-origin! exchange config)
         (require-csrf! exchange session)
-        (bots/create-group! session body)
-        (send! exchange 200 {:groups (bots/groups session)}))
+        (let [created (bots/create-group! session body)]
+          (send! exchange 200 {:created (:group/id created)
+                               :groups (bots/groups session)})))
 
       (and (= method "GET") (bot-id-from path #"/api/bots/groups/([^/]+)/messages"))
       (do (require-human-session! exchange)
           (send! exchange 200
                  {:messages (bots/group-messages
-                             session (bot-id-from path #"/api/bots/groups/([^/]+)/messages"))}))
+                             session (bot-id-from path #"/api/bots/groups/([^/]+)/messages"))
+                  :run (bots/group-run session (bot-id-from path #"/api/bots/groups/([^/]+)/messages"))}))
 
       (and (= method "POST") (bot-id-from path #"/api/bots/groups/([^/]+)/send"))
       (let [body (read-json exchange)]
         (require-human-session! exchange)
         (require-origin! exchange config)
         (require-csrf! exchange session)
-        (send! exchange 200
-               (bots/group-send! config session
-                                 (bot-id-from path #"/api/bots/groups/([^/]+)/send")
-                                 (:text body))))
+        (let [id (bot-id-from path #"/api/bots/groups/([^/]+)/send")]
+          (if (:request-id body)
+            (send! exchange 202 {:run (bots/start-group-turn! config session id
+                                      (:text body) (:request-id body) :person)})
+            (send! exchange 200 (bots/group-send! config session id (:text body))))))
+
+      (and (= method "POST") (bot-id-from path #"/api/bots/groups/([^/]+)/schedule"))
+      (let [body (read-json exchange)]
+        (require-human-session! exchange)
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200 {:schedule (bots/configure-group-schedule! session
+                     (bot-id-from path #"/api/bots/groups/([^/]+)/schedule") body)}))
+
+      (and (= method "GET") (bot-id-from path #"/api/bots/([^/]+)/skills"))
+      (do (require-human-session! exchange)
+          (send! exchange 200 {:skills (bots/learned-skills session
+                     (bot-id-from path #"/api/bots/([^/]+)/skills"))}))
 
       (and (= method "POST") (= path "/api/bots/suggestions"))
       (let [body (read-json exchange)]

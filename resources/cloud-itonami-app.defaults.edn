@@ -432,7 +432,9 @@
         ;; Resident startup jobs share the inference plane with interactive
         ;; conversations. One start per tick controls bursts; max-active also
         ;; prevents a slow run from overlapping the next tick.
-        :workforce {:max-starts-per-tick 1
+        :workforce {:queue-capacity 8
+                    :slice-turns 3
+                    :max-starts-per-tick 1
                     :max-active 1
                     ;; Restart recovery is deliberately narrower than the
                     ;; steady-state workforce budget. A deployment may raise
