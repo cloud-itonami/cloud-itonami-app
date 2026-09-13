@@ -28,6 +28,17 @@ jobs:
         # kexe verify on Linux is HOLD and must not be faked as :ok.
         # bin/kotoba is this app's compile adapter, not production kotoba v0.6.29.
 
+
+      - name: Publish guest artifacts for the windows smoke
+        uses: actions/upload-artifact@v4
+        with:
+          name: amu-guest
+          path: |
+            target/amu/server_main.wasm
+            target/amu/mcp_main.wasm
+            target/amu/browser-host.mjs
+          if-no-files-found: error
+
   secret-scan:
     runs-on: ubuntu-latest
     steps:
@@ -51,6 +62,7 @@ jobs:
   # separately, not masked by pointing this smoke at the kbb path it has
   # always exercised on Linux.
   windows-launch-smoke:
+    needs: amu-jvm-free-emit
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -68,27 +80,11 @@ jobs:
           git clone --depth 5 https://github.com/kotoba-lang/org-babashka-nbb.git target/engine
           echo "KBB_ENGINE=$PWD/target/engine/cli.js" >> "$GITHUB_ENV"
           echo "$PWD/target/kbb/bin" >> "$GITHUB_PATH"
-      - name: Install amu + emit the guest wasm
-        shell: bash
-        run: |
-          set -euo pipefail
-          AMU_SHA=8435eafb7dada2d3a85cee2c278ca6d38deb7588
-          git clone --depth 5 https://github.com/kotoba-lang/amu.git target/amu-rt
-          git -C target/amu-rt fetch --depth 20 origin "$AMU_SHA"
-          git -C target/amu-rt checkout --detach "$AMU_SHA"
-          # spawnSync cannot exec a shebang script on Windows; a .cmd shim is
-          # how node launchers are made spawnable there. The shell that runs
-          # it is cmd.exe, which cannot read git-bash's /d/a/... style paths,
-          # so convert (measured 2026-09-13: bare $PWD path → amu died with
-          # empty output; cygpath -w path → works).
-          printf '@node "%%~dp0amu" %%*\n' > target/amu-rt/bin/amu.cmd
-          export AMU="$(cygpath -w "$PWD/target/amu-rt/bin/amu.cmd")"
-          export AMU_HOME="$(cygpath -w "$PWD/target/amu-rt")"
-          export KOTOBA_EMITTER=amu
-          echo "AMU=$AMU"
-          "$AMU" check src/cloud/itonami/app/server_main.kotoba --jvm-free || true
-          echo "--- direct amu check exit=$? (above, if any output) ---"
-          kbb --backend sci --classpath bin bin/compile-amu
+      - name: Download the guest wasm emitted by the linux job
+        uses: actions/download-artifact@v4
+        with:
+          name: amu-guest
+          path: target/amu
       - name: Launch and wait for /health
         shell: bash
         run: |
