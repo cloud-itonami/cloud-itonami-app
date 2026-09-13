@@ -191,7 +191,6 @@
 (def workspace-apps
   [{:id "plugins" :name "サービス接続" :icon "▤" :description "Bot が使う Plugin の接続を管理" :category "基本"}
    {:id "wallet" :name "ウォレット" :icon "◈" :description "残高・履歴・承認が必要な取引" :category "基本"}
-   {:id "messenger" :name "Messenger" :icon "◇" :description "人やチームとのメッセージ" :category "基本"}
    {:id "projects" :name "Projects" :icon "▦" :description "仕事と資料をプロジェクトにまとめる" :category "仕事"}
    {:id "drive" :name "Drive" :icon "◇" :description "ファイルを探して共有する" :category "仕事"}
    {:id "sites" :name "Sites" :icon "▦" :description "サイトを管理する" :category "仕事"}
@@ -214,7 +213,7 @@
    {:id "credentials" :name "Credentials" :icon "▣" :description "証明書を確認する" :category "記録"}
    {:id "storage" :name "Storage" :icon "◈" :description "保存先と容量を確認する" :category "記録"}])
 
-(def default-workspace-apps #{"plugins" "wallet" "messenger"})
+(def default-workspace-apps #{"plugins" "wallet"})
 
 (defn- installation-path [session]
   (when-not (and (:organization-id session) (:user-id session))

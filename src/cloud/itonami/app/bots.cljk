@@ -6074,7 +6074,11 @@
                      (= (:organization-id session) (:group/organization %))))
        (sort-by :group/created-at)
        (mapv (fn [g]
-               {:id (:group/id g)
+               (let [latest (last (remove #(= :schedule (:message/source %))
+                                          (dialogue-messages :group (:group/id g) (:user-id session))))]
+               {:activity-at (or (:message/at latest) (:group/created-at g))
+                :last-message (when latest {:text (:message/text latest) :at (:message/at latest)})
+                :id (:group/id g)
                 :name (:group/name g)
                 :messenger-conversation-id (:id (ensure-dialogue! :group (:group/id g)))
                 :schedule (:group/schedule g)
@@ -6083,7 +6087,7 @@
                                  (let [b (bot-by-id id)]
                                    {:id id :name (:bot/name b)
                                     :enabled? (boolean (:bot/enabled? b))}))
-                               (:group/members g))}))))
+                               (:group/members g))})))))
 
 (defn- group-conversation
   ([group-id] (dialogue-messages :group group-id nil))

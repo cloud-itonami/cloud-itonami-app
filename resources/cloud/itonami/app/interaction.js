@@ -10494,7 +10494,7 @@
       const pinnedList = $('#bots-pinned');
       pinnedList.replaceChildren();
       const query = $('#bots-filter').value.trim().toLocaleLowerCase('ja');
-      const visibleBots = botsRecentFirst(botsState.bots)
+      const visibleBots = botsRecentFirst([...botsState.bots, ...roomsState.rooms.map(room => ({...room, conversationKind: 'group'}))])
         .filter((bot) => {
           if (bot['enabled?'] === false) return false;
           if (bot['hidden?'] && !query) return false;
@@ -10512,6 +10512,9 @@
         heading.setAttribute('aria-hidden', 'true');
         if (!pinnedGroup) list.append(heading);
         group.bots.forEach((bot) => {
+        if (bot.conversationKind === 'group') {
+          const entry = make('li'); entry.append(roomRailItem(bot)); list.append(entry); return;
+        }
         const item = make('button', 'bots-rail__item');
         item.type = 'button';
         item.setAttribute('aria-current', String(bot.id === botsState.selected && !document.body.classList.contains('group-chat-open')));
@@ -12650,10 +12653,34 @@
       source:m.source, at:m['created-at'], sender:m.sender
     }));
     const roomStatus = (text) => { $('#room-status').textContent = text || ''; };
+    const roomRailItem = (room) => {
+        const open = make('button', 'bots-rail__item');
+        open.setAttribute('aria-label', `${room.name}、あなたと${room.members.length}体の Bot`);
+        open.setAttribute('aria-current', String(roomsState.selected === room.id && !$('#bots-conversations-panel').hidden));
+        const faces = make('span', 'group-chat-avatars');
+        room.members.slice(0, 2).forEach(member => {
+          const b = roomsState.bots.find(x => x.id === member.id) || member;
+          faces.append(botAvatar(make('span', 'bot-avatar'), b.avatar, b.status, b.id));
+        });
+        const copy = make('div', 'bots-rail__copy');
+        const headline = make('span', 'bots-rail__headline');
+        headline.append(make('span', 'bots-rail__name', room.name));
+        const time = botsCompactTime(room['activity-at']);
+        if (time) headline.append(make('span', 'bots-rail__time', time));
+        copy.append(headline, make('span', 'bots-rail__last', room['last-message']?.text || `あなたと${room.members.length}体の Bot`));
+        open.append(faces, copy);
+        open.type = 'button';
+        open.addEventListener('click', () => {
+          $('#bots-shell').classList.remove('show-bot-list');
+          setBotConversationsOpen(true); selectRoom(room.id);
+        });
+        return open;
+    };
     const renderRoomList = () => {
       const list = $('#room-list'), shortcuts = $('#bots-room-shortcuts');
-      list.replaceChildren(); shortcuts.replaceChildren(); shortcuts.hidden = !roomsState.rooms.length;
+      list.replaceChildren(); shortcuts.replaceChildren(); shortcuts.hidden = true;
       $('#rooms-count').textContent = String(roomsState.rooms.length);
+      renderBotsRail();
       if (!roomsState.rooms.length) {
         list.append(make('li', 'empty-state', 'まだBot同士の会話はありません。'));
         return;
@@ -12668,24 +12695,7 @@
         button.addEventListener('click', () => selectRoom(room.id));
         row.append(button);
         list.append(row);
-        const shortcut = make('li');
-        const open = make('button', 'bots-rail__item');
-        open.setAttribute('aria-label', `${room.name}、あなたと${room.members.length}体の Bot`);
-        open.setAttribute('aria-current', String(roomsState.selected === room.id && !$('#bots-conversations-panel').hidden));
-        const faces = make('span', 'group-chat-avatars');
-        room.members.slice(0, 2).forEach(member => {
-          const b = roomsState.bots.find(x => x.id === member.id) || member;
-          faces.append(botAvatar(make('span', 'bot-avatar'), b.avatar, b.status, b.id));
-        });
-        const copy = make('div', 'bots-rail__copy');
-        copy.append(make('span', 'bots-rail__name', room.name), make('span', 'bots-rail__last', `あなたと${room.members.length}体の Bot`));
-        open.append(faces, copy);
-        open.type = 'button';
-        open.addEventListener('click', () => {
-          $('#bots-shell').classList.remove('show-bot-list');
-          setBotConversationsOpen(true); selectRoom(room.id);
-        });
-        shortcut.append(open); shortcuts.append(shortcut);
+
       });
     };
     const renderRoomThread = (messages) => {
@@ -12771,15 +12781,13 @@
     };
     const loadRooms = async () => {
       try {
-        const [roomsRequest, botsRequest] =
-          await Promise.all([fetch('/api/bots/groups'), fetch('/api/bots')]);
+        const roomsRequest = await fetch('/api/bots/groups');
         const roomsData = await roomsRequest.json();
-        const botsData = await botsRequest.json();
         if (!roomsRequest.ok) {
           throw new Error(roomsData?.error?.message || 'ルームを読めませんでした。');
         }
         roomsState.rooms = roomsData.groups || [];
-        roomsState.bots = botsRequest.ok ? (botsData.bots || []) : [];
+        roomsState.bots = botsState.bots;
         const options = $('#room-bot-options');
         const checked = new Set(Array.from(options.querySelectorAll('input:checked')).map(x => x.value));
         options.replaceChildren(make('legend', '', '参加する Bot'));
@@ -12883,6 +12891,7 @@
       }
     });
     setInterval(async () => {
+      if (!document.hidden) await loadRooms();
       const roomId = roomsState.selected;
       if (document.hidden || $('#bots-conversations-panel').hidden || !roomId) return;
       try {
