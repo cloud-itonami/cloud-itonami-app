@@ -12666,7 +12666,7 @@
     };
     const renderRoomThread = (messages) => {
       const thread = $('#room-thread');
-      const version = `${roomsState.selected}:${JSON.stringify(messages)}`;
+      const version = `${roomsState.selected}:${roomsState.bots.length}:${JSON.stringify(messages)}`;
       if (roomsState.threadVersion === version) return;
       const follow = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
       roomsState.threadVersion = version;
