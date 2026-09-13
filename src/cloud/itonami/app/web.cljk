@@ -795,16 +795,6 @@
   .bots-composer textarea{flex:1;resize:none;padding:.625rem .75rem;
     border-radius:.75rem;border:1px solid var(--color-neutral-solid-gray-300);
     max-height:12rem;font:inherit}
-  @media (max-width:60rem){
-    /* Keep Bot identity and waiting state reachable at every desktop width.
-       The compact rail spends width on recognition, not repeated labels. */
-    .bots-shell{grid-template-columns:4rem minmax(0,1fr)}
-    .bots-rail{display:flex;padding:.5rem .375rem}
-    .bots-rail__search{display:none}
-    .bots-rail__item{position:relative;justify-content:center;padding:.5rem .25rem}
-    .bots-rail__copy,.bots-rail__empty,.bots-rail__group{display:none}
-    .bots-rail__item .bots-dot{position:absolute;right:.3rem;bottom:.3rem}
-  }
   .chat-shell{position:relative;display:flex;flex-direction:column;
     height:calc(100vh - 5rem);min-height:32rem;background:var(--color-neutral-white)}
   .chat-header{display:flex;align-items:center;justify-content:space-between;gap:1rem;
@@ -1452,13 +1442,14 @@
     background:linear-gradient(90deg,var(--color-neutral-solid-gray-50),var(--color-neutral-solid-gray-100),var(--color-neutral-solid-gray-50));
     background-size:200% 100%;animation:pulse 1.4s infinite}
   @keyframes pulse{to{background-position:-200% 0}}
-  @media(max-width:64rem){.local-grid,.settings-grid,.organization-studio__grid,.site-layout{
+  /* App surfaces use the same compact layout on every tablet/desktop. */
+  .local-grid,.settings-grid,.organization-studio__grid,.site-layout{
     grid-template-columns:1fr}.organization-studio__summary{grid-template-columns:1fr 1fr}
     .storefront-shell{grid-template-columns:1fr}.storefront-cart{position:static}
     .governance-row{grid-template-columns:1fr 1fr}.governance-row>*:last-child{justify-self:start}
-    .messenger-shell{grid-template-columns:minmax(13rem,.65fr) minmax(22rem,1.35fr)}
-    .messenger-context{grid-column:1/-1;border-left:0;border-top:1px solid var(--color-neutral-solid-gray-200)}}
-  @media(max-width:56rem){
+    .messenger-shell{grid-template-columns:minmax(0,.65fr) minmax(0,1.35fr)}
+    .messenger-context{grid-column:1/-1;border-left:0;border-top:1px solid var(--color-neutral-solid-gray-200)}
+  @media(width < 48rem){
     .workspace{grid-template-columns:13rem minmax(0,1fr)}
     .sidebar{padding:1rem .75rem;gap:.75rem}
     .brand__eyebrow,.brand__note,.brand__mark,.sidebar__status{display:none}
@@ -1492,10 +1483,8 @@
     .connector-card .tool-button{grid-column:1/-1;width:100%}
     .local-actions{justify-content:stretch}.local-actions .dads-button{width:100%}
   }
-  /* Keep the phone navigation for genuinely narrow windows. The installed
-     desktop now opens as a workspace, where a recent-conversation rail is
-     materially faster than the former face-only strip. */
-  @media (max-width:56rem){
+  /* Exactly two layouts: phone below 48rem, tablet/desktop from 48rem. */
+  @media (width < 48rem){
     :root{--mobile-nav-height:calc(4.5rem + env(safe-area-inset-bottom))}
     body[data-identity-gate='required'] .workspace{padding-bottom:0}
     body[data-identity-gate='required'] .sidebar{display:none}
@@ -1594,27 +1583,12 @@
       clip-path:inset(50%);width:1px;height:1px;overflow:hidden;white-space:nowrap}
     .view{padding:1rem}.view-header h1{font-size:1.75rem;line-height:1.3}.view-lead{line-height:1.7}
     .bots-view{height:calc(100dvh - 4rem - env(safe-area-inset-top) - var(--mobile-nav-height));padding:0}
-    /* Keep the Bot picker a vertical column at phone width. A horizontal
-       strip was the exception that appeared only after shrinking; the rest
-       of the layout already stacks faces. Search stays hidden in the 4rem
-       column (same as the tablet rail). The selected Bot's name remains in
-       the titlebar; every avatar button carries its full accessible name. */
-    .bots-shell{display:grid;grid-template-columns:4rem minmax(0,1fr)}
+    .bots-shell{display:grid;grid-template-columns:minmax(0,1fr)}
     .bots-main{min-width:0;min-height:0}
-    .bots-conversations{width:100%;border-left:0}
-    .bots-quality-panel{width:100%;border-left:0}
-    .bots-routines-panel{width:100%;border-left:0}
+    .bots-conversations,.bots-quality-panel,.bots-routines-panel{width:100%;border-left:0}
     .bots-conversations__layout{grid-template-columns:1fr}
-    .bots-rail{display:flex;flex-direction:column;min-height:0;padding:.5rem .375rem;
-      border-right:1px solid var(--color-neutral-solid-gray-200);border-bottom:0;
-      overflow:hidden}
-    .bots-rail__search{display:none}
-    .bots-rail__list{display:flex;flex-direction:column;align-items:stretch;gap:.375rem;
-      overflow-x:hidden;overflow-y:auto;scrollbar-width:thin}
-    .bots-rail__list>li{flex:0 0 auto;width:100%}
-    .bots-rail__item{position:relative;justify-content:center;width:100%;padding:.5rem .25rem}
-    .bots-rail__copy,.bots-rail__empty,.bots-rail__group{display:none}
-    .bots-rail__item .bots-dot{position:absolute;right:.3rem;bottom:.3rem}
+    .bots-rail{min-height:0;overflow:hidden}
+    .bots-rail__list{overflow-x:hidden;overflow-y:auto;scrollbar-width:thin}
     .bots-mobile-context{display:flex}
     .global-status{top:calc(4.5rem + env(safe-area-inset-top));left:1rem;right:1rem}
     .permission-request-bar{bottom:calc(var(--mobile-nav-height) + .75rem);
@@ -1747,7 +1721,7 @@
   .bots-list-toggle{display:none}
   [data-view-panel='marketplace']>.view-header,[data-view-panel='apps']>.view-header{padding-top:0}
   [data-view-panel='marketplace'] .view-header h1,[data-view-panel='apps'] .view-header h1{display:none}
-  @media(max-width:56rem){
+  @media(width < 48rem){
     .bots-list-toggle{display:block}.topbar #bots-list-toggle{width:auto;min-width:4.5rem;flex-shrink:0}.topbar #bots-new{min-width:2.75rem;width:2.75rem;font-size:0}.topbar #bots-new::after{content:'＋';font-size:1rem}.bots-shell{grid-template-columns:minmax(0,1fr)}
     .bots-shell>.bots-rail{display:none}.bots-shell.show-bot-list>.bots-rail{display:flex;width:100%;min-width:0}
     .bots-shell.show-bot-list>.bots-main{display:none}.bots-shell.show-bot-list .bots-rail__item{grid-template-columns:2.5rem minmax(0,1fr);width:100%}
@@ -1779,9 +1753,9 @@
   body[data-current-view='bots'] #current-view{display:none}body[data-current-view='bots'] #bots-titlebar-context{flex:1;min-width:0}
   .topbar{min-width:0}.topbar__title{white-space:nowrap}.topbar>button{flex-shrink:0}
   .bots-composer.go-composer{max-width:52rem;width:100%;margin-inline:auto;box-sizing:border-box}.bots-composer__label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
-  @media(max-width:56rem){.market-grid{grid-template-columns:minmax(0,1fr)}.market-card{gap:.75rem;padding:.75rem}.bots-launcher{padding:.25rem;font-size:.75rem}.bots-launcher>a{overflow-wrap:anywhere}.bots-titlebar__status{font-size:.75rem}.topbar #bots-new{font-size:.75rem;padding:.25rem}.topbar #bots-context-button{font-size:.75rem;padding:.25rem}.topbar>.appearance-toggle,.topbar>.comment-mode-toggle{display:none}}
+  @media(width < 48rem){.market-grid{grid-template-columns:minmax(0,1fr)}.market-card{gap:.75rem;padding:.75rem}.bots-launcher{padding:.25rem;font-size:.75rem}.bots-launcher>a{overflow-wrap:anywhere}.bots-titlebar__status{font-size:.75rem}.topbar #bots-new{font-size:.75rem;padding:.25rem}.topbar #bots-context-button{font-size:.75rem;padding:.25rem}.topbar>.appearance-toggle,.topbar>.comment-mode-toggle{display:none}}
 
-  @media(min-width:56.01rem){
+  @media(width >= 48rem){
     .workspace{grid-template-columns:14rem minmax(0,1fr)}
     .sidebar{overflow-y:auto}
     .bots-shell{grid-template-columns:19rem minmax(0,1fr)}
@@ -1795,7 +1769,7 @@
     body[data-current-view='bots'] .topbar{padding-left:20rem}
     .bots-plugin-link{padding:1rem .75rem;margin-top:auto}
   }
-  @media(max-width:56rem){
+  @media(width < 48rem){
     .bots-view{height:calc(100dvh - var(--workspace-header-height,4rem) - var(--mobile-nav-height))}
     .bots-plugin-link{display:none}
     .account-entry{position:fixed;top:.5rem;left:.5rem;z-index:50;padding:.25rem}
@@ -1825,14 +1799,14 @@
   .bots-account>summary::-webkit-details-marker{display:none}.bots-account>summary .identity-summary__avatar{width:2rem;height:2rem;font-size:.875rem}
   .bots-account>summary>span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.875rem}.bots-account small{display:none}
   .bots-account__menu{position:absolute;bottom:100%;left:0;width:100%;box-sizing:border-box;padding:.5rem;background:var(--color-neutral-white);border:1px solid var(--color-neutral-solid-gray-200);border-radius:.75rem;box-shadow:0 .5rem 1.5rem var(--color-neutral-solid-gray-200);z-index:55}
-  .bots-account__menu .account-entry{position:static;padding:.5rem}.bots-account__menu .workspace-switcher{margin:0}.bots-account__menu .account-entry>span{display:none}.bots-account__menu .workspace-switcher{display:block}
-  @media(min-width:56.01rem){
+  .bots-account__menu .account-entry{position:static;padding:.5rem}.bots-account__menu .workspace-switcher{margin:0}.bots-account__menu .account-entry>span{display:none}.bots-account .bots-account__menu .workspace-switcher{display:block;position:static;width:auto}.bots-account__menu .workspace-switcher__label{position:static;width:auto;height:auto;clip:auto;white-space:normal}
+  @media(width >= 48rem){
     body[data-current-view='bots'] .sidebar{display:none}
     body[data-current-view='bots'] .bots-rail{position:fixed;inset:0 auto 0 0;width:19rem;box-sizing:border-box;z-index:41;padding:2.5rem .75rem .5rem}
     body[data-current-view='bots'] .bots-main{grid-column:2}
     body[data-current-view='bots'] .topbar{padding-left:20rem}
   }
-  @media(max-width:56rem){
+  @media(width < 48rem){
     #workspace-overlay{width:calc(100vw - 1rem);height:calc(100dvh - 1rem);border-radius:1rem}
     .workspace-overlay__header{padding:1rem}.workspace-overlay__header h2{font-size:1.125rem}
     #workspace-overlay-content{padding:0 1rem 1rem}
@@ -1841,6 +1815,21 @@
     .topbar{padding-left:.75rem}.topbar #bots-new{font-size:0}
   }
   ")
+
+(defn two-size-css
+  "Align the pinned shared styles with this host's single 48rem boundary.
+   This changes only known width queries, retaining shared declarations and
+   accessibility queries. The rendered-page test rejects new width thresholds."
+  [css]
+  (-> css
+      (str/replace #"\(max-width:\s*(?:600px|767px|48rem)\)" "(width < 48rem)")
+      (str/replace #"\(min-width:\s*48rem\)" "(width >= 48rem)")))
+
+(defn- page-with-two-size-styles [options body]
+  ;; page/->page also inserts DADS extension CSS. Adapt only style blocks,
+  ;; including that layer; never rewrite message text or scripts.
+  (str/replace (page/->page options body) #"(?s)<style>(.*?)</style>"
+               (fn [[_ css]] (str "<style>" (two-size-css css) "</style>"))))
 
 (def app-css
   "The app's own rules, plus the ones `hanmen` needs for a rendered page to
@@ -1855,7 +1844,7 @@
   The 8-bit appearance layer (`cloud.itonami.app.appearance/css`) is
   concatenated LAST so that its overrides win, and so that the same token
   guard covers it: every `--eightbit-*` it references it also declares."
-  (str tokens/bridge-css "\n" chat-styles/css "\n" base-css "\n" bot-workspace-css "\n  " hanmen-svg/stylesheet "\n" appearance/css "\n"))
+  (str tokens/bridge-css "\n" (two-size-css chat-styles/css) "\n" base-css "\n" bot-workspace-css "\n  " hanmen-svg/stylesheet "\n" appearance/css "\n"))
 
 (def interaction-js
   "The page's interaction layer, which is JavaScript and now lives in a
@@ -2567,8 +2556,8 @@
         brand (get-in configuration [:brand :name] "Cloud Itonami")
         mode (appearance/resolve-mode configuration)
         residency (appearance/residency-plane configuration)
-        css (slurp (io/resource "jp_go_dds/dds.css"))]
-    (page/->page
+        css (two-size-css (slurp (io/resource "jp_go_dds/dds.css")))]
+    (page-with-two-size-styles
      {:title (str "Bots | " brand)
       :description "安全第一（緑十字）のAIワークスペース"
       ;; The dark layer is appended here rather than folded into `app-css`

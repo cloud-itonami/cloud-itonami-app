@@ -473,13 +473,13 @@
   (is (str/includes? web/app-css
                      ".bots-view{max-width:none;padding:0;height:calc(100dvh - 5rem);overflow:hidden}"))
   (is (str/includes? web/app-css
-                     ".bots-shell{grid-template-columns:4rem minmax(0,1fr)}"))
+                     ".bots-shell{grid-template-columns:minmax(0,1fr)}"))
   (is (not (str/includes? web/app-css
                           ".bots-shell{display:flex;flex-direction:column}"))
       "shrinking the window must not lay the rail above the thread")
   (is (str/includes? web/app-css ".bots-main{min-width:0;min-height:0}"))
   (is (str/includes? web/app-css
-                     ".bots-rail__list{display:flex;flex-direction:column"))
+                     ".bots-rail__list{overflow-x:hidden;overflow-y:auto"))
   (is (not (str/includes? web/app-css
                           ".bots-rail__list{display:flex;gap:.375rem;overflow-x:auto"))
       "the phone picker must not become a sideways strip")
@@ -1597,3 +1597,12 @@
     (is (re-find #"id=\"context-capture-settings\"" html))
     (is (str/includes? html "新しいUserでは既定でON"))
     (is (str/includes? web/interaction-js "chat:'bots', rooms:'bots', capture:'bots', memory:'settings'"))))
+
+(deftest the-workspace-has-only-phone-and-tablet-width-layouts
+  (let [html (web/page-html {})
+        queries (->> (re-seq #"@media\s*([^\{]+)" html)
+                     (map (comp str/trim second))
+                     (filter #(str/includes? % "width")) set)]
+    (is (= #{"(width < 48rem)" "(width >= 48rem)"} queries))
+    (is (not (str/includes? web/app-css "grid-template-columns:4rem")))
+    (is (str/includes? html "prefers-reduced-motion"))))
