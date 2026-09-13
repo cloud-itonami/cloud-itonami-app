@@ -28,8 +28,37 @@ pin_sha() {
 
 amu_sha="$(pin_sha :amu)"
 lang_sha="$(pin_sha :kotoba-lang)"
+kbb_sha="$(pin_sha :kbb)"
 echo "compiler freeze kotoba-lang@${lang_sha}"
 echo "amu emit frontend @${amu_sha}"
+
+# kbb: the launcher this cutover runs everything through (kotoba-lang/kotoba
+# bin/kbb) plus its engine (kotoba-lang/org-babashka-nbb — nbb with .cljk
+# classpath resolution). Pinned to the :kbb entry in compiler-pin.edn (the kbb
+# cutover merge); kbb is a launcher here, not a runtime bump.
+kbb_home="${KBB_CHECKOUT:-$root/target/kbb-checkout}"
+if [[ ! -x "$kbb_home/bin/kbb" ]]; then
+  rm -rf "$kbb_home"
+  git clone --depth 5 https://github.com/kotoba-lang/kotoba.git "$kbb_home"
+  git -C "$kbb_home" fetch --depth 20 origin "$kbb_sha"
+  git -C "$kbb_home" checkout --detach "$kbb_sha"
+fi
+engine="${KBB_ENGINE:-$kbb_home/../org-babashka-nbb/cli.js}"
+if [[ ! -f "$engine" ]]; then
+  engine_dir="$root/target/kbb-engine-checkout"
+  if [[ ! -f "$engine_dir/cli.js" ]]; then
+    rm -rf "$engine_dir"
+    git clone --depth 5 https://github.com/kotoba-lang/org-babashka-nbb.git "$engine_dir"
+  fi
+  engine="$engine_dir/cli.js"
+fi
+export KBB_ENGINE="$engine"
+PATH="$kbb_home/bin:$PATH"
+export PATH
+if [[ ! -f "$KBB_ENGINE" ]]; then
+  echo "kbb engine missing: $KBB_ENGINE" >&2
+  exit 1
+fi
 
 checkout="${AMU_CHECKOUT:-$root/target/amu-checkout}"
 if [[ ! -x "$checkout/bin/amu" ]]; then

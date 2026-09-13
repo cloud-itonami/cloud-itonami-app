@@ -35,4 +35,8 @@
  :amu
  {:git/url "https://github.com/kotoba-lang/amu.git"
   :git/sha "8435eafb7dada2d3a85cee2c278ca6d38deb7588"
-  :note "last amu commit at or before kotoba-lang@bfe618b3 (2026-09-02 15:26 +0900). Not a floating HEAD. Not a deps.edn runtime pin. Emit frontend only."}}
+  :note "last amu commit at or before kotoba-lang@bfe618b3 (2026-09-02 15:26 +0900). Not a floating HEAD. Not a deps.edn runtime pin. Emit frontend only."}
+ :kbb
+ {:git/url "https://github.com/kotoba-lang/kotoba.git"
+  :git/sha "a755ec25a07637bab9ab97edab1ab1257418c558"
+  :note "launcher pin only: the kbb cutover merge (adr-2609112000) where bin/kbb and the .cljk engine landed. v0.6.29 (42ae4941) predates bin/kbb and CANNOT serve it. Not a deps.edn runtime pin."}}

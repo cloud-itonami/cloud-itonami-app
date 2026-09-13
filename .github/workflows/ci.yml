@@ -65,7 +65,14 @@ jobs:
           go-version: "1.24"
           cache: false
       - name: Build the app jar
-        run: kbb -T:build uber
+        # `kbb -T:build uber` cannot run this build: :build has :ns-default
+        # `build` and no :exec-fn, so kbb_deps refuses `-T` (measured
+        # 2026-09-13, kbb_deps.cljk:245 "No value supplied for key: uber"),
+        # and tools.build is a JVM library by design. The kbb cutover
+        # (adr-2609112000) covers the JVM-FREE run path — scripts, hooks and
+        # the resident hosts — not this one JVM-native build step. Java and
+        # the Clojure CLI are set up by this job above, on purpose.
+        run: clojure -T:build uber
       - name: Assemble the packaged layout
         shell: bash
         run: |
