@@ -12161,6 +12161,7 @@
           renderBotsRun(botsState.latestTurn);
           if (bot) {
             botAvatar($('#bots-titlebar-avatar'), bot.avatar, bot.status, bot.id);
+            botAvatar($('#bots-mobile-avatar'), bot.avatar, bot.status, bot.id);
             $('#bots-titlebar-status').textContent = botsStatusSummary(bot);
             $('#bots-mobile-status').textContent = botsStatusSummary(bot);
           }
