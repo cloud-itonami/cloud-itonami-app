@@ -13516,6 +13516,7 @@
         tabs[next].focus(); chooseMarketKind(tabs[next].dataset.marketTab);
       });
     });
+    chooseMarketKind(marketKind);
     $('#market-search').addEventListener('input', renderMarketplace);
     $('#market-installed-only').addEventListener('change', renderMarketplace);
     const settingsDialog = $('#settings-bot-dialog'); let settingsOrigin = null;
