@@ -1570,7 +1570,7 @@ remain under their respective licenses; see [NOTICE](NOTICE) and
 The Bots sidebar includes shared conversations. Create a conversation, select up
 to eight owned Bots, and join through its composer. Peer messages and replies
 between two Bots also appear in a shared thread. A submitted UI message has a
-request id, is persisted, and runs asynchronously; a interrupted discussion keeps
+request id, is persisted, and runs asynchronously; an interrupted discussion keeps
 its partial history instead of replaying the person's message. Each UI or
 scheduled discussion gives each member one turn. Tools still run in the Bot's
 own work conversation, not in the shared discussion.
