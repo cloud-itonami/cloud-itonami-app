@@ -13374,11 +13374,13 @@
       toggle.type = 'button'; toggle.setAttribute('aria-label', `${app.name}を${toggle.textContent}`);
       toggle.addEventListener('click', async () => {
         toggle.disabled = true;
+        const generation = appsLoadGeneration;
         try {
           const response = await fetch('/api/bots/workspace-apps', {method:'POST', headers:identityHeaders(),
             body:JSON.stringify({id:app.id, 'installed?':!app['installed?']})});
           const data = await response.json();
           if (!response.ok) throw new Error(data?.error?.message || 'App を更新できませんでした。');
+          if (generation !== appsLoadGeneration || !appUnlocked) return;
           workspaceApps = data.apps; renderWorkspaceApps(); renderMarketplace();
           (installedView ? $('#apps-status') : $('#market-status')).textContent =
             `${app.name}を${app['installed?'] ? '取り外しました。データと接続は保持しています。' : 'インストールしました。'}`;
