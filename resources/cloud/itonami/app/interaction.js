@@ -12675,15 +12675,22 @@
         thread.append(make('li', 'empty-state', 'まだ発言はありません。'));
         return;
       }
-      const names = new Map(roomsState.bots.map((bot) => [`bot:${bot.id}`, bot.name]));
+      const participants = new Map(roomsState.bots.map((bot) => [`bot:${bot.id}`, bot]));
       messages.forEach((message) => {
         // Attributed, as in the transcript the members themselves read. A room
         // where the lines are anonymous is a room where nobody can tell which
         // Bot to ask next, which is the only thing a room is for.
-        const who = message.from ? (names.get(message.from) || message.from) : (message.source === 'schedule' ? '定期対話' : 'あなた');
+        const speaker = participants.get(message.from);
+        const who = message.from ? (speaker?.name || message.from) : (message.source === 'schedule' ? '定期対話' : 'あなた');
         const row = make('li', 'record-list__row');
-        row.append(make('div', 'record-list__title', who));
-        row.append(make('div', 'record-list__meta', message.text));
+        const heading = make('div', 'room-message-heading');
+        if (speaker) heading.append(botAvatar(make('span', 'bot-avatar'), speaker.avatar, speaker.status, speaker.id));
+        heading.append(make('strong', '', who));
+        if (message.at && Number.isFinite(Date.parse(message.at))) {
+          const time = make('time', 'source-note', new Date(message.at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
+          time.dateTime = message.at; heading.append(time);
+        }
+        row.append(heading, make('div', 'record-list__meta', message.text));
         thread.append(row);
       });
       if (follow) thread.scrollTop = thread.scrollHeight;
@@ -12702,6 +12709,7 @@
       $('#room-schedule-enabled').checked = !!room?.schedule?.enabled;
       $('#room-interval').value = room?.schedule?.['interval-minutes'] || 60;
       $('#room-topic').value = room?.schedule?.prompt || '';
+      $('#room-schedule-label').textContent = room?.schedule?.enabled ? `定期対話 · ${room.schedule['interval-minutes']}分ごと` : '定期対話';
       renderRoomList();
       roomStatus('読み込み中…');
       try {
@@ -12749,6 +12757,7 @@
       $('#bots-conversations-panel').hidden = !open;
       $('#bots-conversations').setAttribute('aria-expanded', String(open));
       if (open) {
+        const menu = $('#bots-conversations').closest('details'); if (menu) menu.open = false;
         setBotsQualityOpen(false);
         $('#bots-routines-panel').hidden = true;
         $('#bots-routines').setAttribute('aria-expanded', 'false');
@@ -12801,6 +12810,7 @@
           'interval-minutes':Number($('#room-interval').value), prompt:$('#room-topic').value.trim()
         }, true);
         const room = roomsState.rooms.find(x => x.id === id); if (room) room.schedule = data.schedule;
+        $('#room-schedule-label').textContent = data.schedule.enabled ? `定期対話 · ${data.schedule['interval-minutes']}分ごと` : '定期対話';
         roomStatus(data.schedule.enabled ? '定期対話を保存しました。' : '定期対話を停止しました。');
       } catch (error) { roomStatus(error.message); }
     });

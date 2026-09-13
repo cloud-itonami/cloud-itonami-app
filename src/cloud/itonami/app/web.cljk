@@ -500,6 +500,10 @@
     background:var(--color-neutral-white);display:grid;
     align-content:start;gap:1rem}
   .bots-conversations[hidden]{display:none}
+  #bots-room-shortcuts{flex:0 0 auto;max-height:25%;overflow:auto}
+  .room-message-heading{display:flex;align-items:center;gap:.5rem}
+  .room-message-heading .bot-avatar{width:1.75rem;height:1.75rem;flex:0 0 auto}
+  .room-message-heading time{margin-left:auto}
   #room-panel{display:flex;flex-direction:column;min-width:0;gap:.75rem}
   #room-thread{min-height:8rem;max-height:50vh;overflow:auto}
   #room-bot-options{max-height:14rem;overflow:auto}
@@ -2766,13 +2770,14 @@
               [:input {:id "room-name" :required true :maxlength 100}]
               [:fieldset {:id "room-bot-options"} [:legend "参加する Bot"]]
               [:button {:type "submit"} "作成"]]]
+            [:p {:class "form-help" :id "room-status" :aria-live "polite"}]
             [:div {:class "bots-conversations__layout"}
              [:ul {:class "record-list__items" :id "room-list"}
               [:li {:class "empty-state"} "まだBot同士の会話はありません。"]]
              [:div {:id "room-panel" :hidden true}
               (dds/heading 3 "" {:size "20" :id "room-title"})
               [:p {:class "source-note" :id "room-members-summary"}]
-              [:details [:summary "定期対話"]
+              [:details [:summary {:id "room-schedule-label"} "定期対話"]
                [:form {:id "room-schedule-form"}
                 [:label [:input {:id "room-schedule-enabled" :type "checkbox"}] "定期的に話す"]
                 [:label {:for "room-interval"} "間隔（分）"]
@@ -2782,7 +2787,6 @@
                 [:button {:type "submit"} "保存"]]]
               [:ul {:class "record-list__items" :id "room-thread"}
                [:li {:class "empty-state"} "まだ発言はありません。"]]
-              [:p {:class "form-help" :id "room-status" :aria-live "polite"}]
               (chat/composer {:id "room-composer"}
                 [:label {:for "room-input"} "会話に参加"]
                 (chat/prompt {:id "room-input" :required true :placeholder "メッセージ"})
