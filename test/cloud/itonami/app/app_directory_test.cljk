@@ -194,3 +194,27 @@
       (is (str/includes? html "id=\"bots-slot-note\""))
       (is (str/includes? html "id=\"bots-service-grid\"")
           "the grid is still there: the slot rows are a second view, not a replacement"))))
+
+(deftest installed-apps-are-scoped-preferences-not-tool-grants
+  (let [state (atom {:bots {:sentinel "unchanged"}})
+        alice {:user-id "alice" :organization-id "one"}
+        bob {:user-id "bob" :organization-id "one"}
+        other {:user-id "alice" :organization-id "two"}]
+    (with-redefs [store/snapshot #(deref state)
+                  store/transact! (fn [f & args] (apply swap! state f args))]
+      (is (= directory/default-workspace-apps (directory/installed-app-ids @state alice)))
+      (directory/set-app-installed! alice "drive" true)
+      (is (contains? (directory/installed-app-ids @state alice) "drive"))
+      (is (not (contains? (directory/installed-app-ids @state bob) "drive")))
+      (is (not (contains? (directory/installed-app-ids @state other) "drive")))
+      (doseq [id (conj directory/default-workspace-apps "drive")]
+        (directory/set-app-installed! alice id false))
+      (is (= #{} (directory/installed-app-ids @state alice)) "empty installation must not restore defaults")
+      (is (= {:sentinel "unchanged"} (:bots @state)))
+      (is (thrown? clojure.lang.ExceptionInfo (directory/set-app-installed! alice "unknown" true)))
+      (is (thrown? clojure.lang.ExceptionInfo (directory/set-app-installed! alice "drive" "true")))
+      (is (thrown? clojure.lang.ExceptionInfo (directory/workspace-catalog {})))
+      (is (= (count directory/workspace-apps) (count (set (map :id directory/workspace-apps)))))
+      (let [html (web/page-html (config/load-config))]
+        (doseq [{:keys [id]} directory/workspace-apps]
+          (is (str/includes? html (str "data-view-panel=\"" id "\"")) (str "App has a real view: " id)))))))

@@ -198,6 +198,7 @@
     // Assigned once the worker surface is defined further down; showView runs
     // before that, so it must not name the worker helpers directly.
     let onViewChange = () => {};
+    const setAppBadge = (id, value) => { const node = document.getElementById(id); if (node) node.textContent = value; };
     const formatDate = (value, timeOnly = false) => {
       if (!value) return '日時不明';
       const date = new Date(value);
@@ -216,14 +217,15 @@
       // A deep-linked or programmatically selected view must reveal its place
       // in the information architecture, even when its section starts closed.
       active?.closest('.nav-section')?.setAttribute('open', '');
-      $('#current-view').textContent = active?.dataset.title || 'Bots';
+      const viewTitle = active?.dataset.title || document.querySelector(`[data-app-id='${name}'] h3`)?.textContent || name;
+      $('#current-view').textContent = viewTitle;
       $$('[data-topbar-view]').forEach((context) => {
         context.hidden = !appUnlocked || context.dataset.topbarView !== name;
       });
       const target = `#/${name}`;
       if (location.hash !== target) history.replaceState(null, '', target);
       const brand = document.querySelector('.workspace')?.dataset.brand || 'Cloud Itonami';
-      document.title = `${active?.dataset.title || 'Bots'} | ${brand}`;
+      document.title = `${viewTitle} | ${brand}`;
       document.body.dataset.currentView = name;
       currentView = name;
       onViewChange(name);
@@ -946,8 +948,8 @@
       }
       renderMessengerPrincipals();
       const unread = (data.conversations || []).reduce((n, c) => n + (c.unread || 0), 0);
-      $('#messenger-count').textContent = unread || '—';
-      $('#messenger-count').dataset.tone = data.quarantine ? 'warn' : (unread ? 'ok' : '');
+      setAppBadge('messenger-count', unread || '—');
+      // Unread and quarantine remain visible inside Messenger.
       $('#messenger-source').textContent = `${data.principal} · ${(data.conversations || []).length} conversations`;
       if (!messengerSignalReady) initializeMessengerSignal();
       loadMessengerMessages();
@@ -1198,7 +1200,7 @@
       else $('#inbox-detail').replaceChildren(make('div', 'empty-state', 'メールを選択してください。'));
       if (!$('#mail-compose-account')?.options.length) composeAccounts();
       $('#inbox-visible-count').textContent = `${items.length} 件を表示`;
-      $('#inbox-count').textContent = data.count;
+      setAppBadge('inbox-count', data.count);
       $('#inbox-source').textContent = `${data.source} · ${data.count} 件`;
     };
 
@@ -1593,7 +1595,7 @@
         ? `${bytes(quota['used-bytes'])} / ${bytes(quota['quota-bytes'])} を使用`
         : '';
       $('#drive-visible-count').textContent = `${items.length} 件を表示`;
-      $('#drive-count').textContent = data.count || data.items.length;
+      setAppBadge('drive-count', data.count || data.items.length);
       $('#drive-source').textContent = data.source;
     };
     // Trashing is only honest if untrashing exists, and the quota only comes
@@ -4648,7 +4650,7 @@
            : 'FILECOIN_PROVIDER_URL（provider の serviceURL）か'
              + ' FILECOIN_CLIENT_ADDRESS（FilBeam は client ごとに subdomain が違う）'
              + 'を設定すると有効になります。既定値は推測しません。']]);
-      $('#storage-count').textContent = rows.filter(([, , k]) => k === 'live').length;
+      setAppBadge('storage-count', rows.filter(([, , k]) => k === 'live').length);
       $('#storage-source').textContent =
         `${val(data['chain-network-name'])} · height ${val(data['chain-height'])} · StateCall (無料・オンチェーン書き込みなし)`;
       $('#storage-write-notice').hidden = data['write-status'] !== 'not-implemented';
@@ -4764,7 +4766,7 @@
       contractsData = data;
       const list = $('#contracts-list'); list.replaceChildren();
       const totals = $('#contracts-totals'); totals.replaceChildren();
-      const badge = $('#contracts-count');
+      const badge = document.getElementById('contracts-count');
       // A locked or absent vault is not an empty one. Writing 0 in the badge
       // would answer a question the app cannot answer yet.
       if (!data.contracts) {
@@ -4943,7 +4945,7 @@
     const renderEsign = (data) => {
       esignData = data;
       const list = $('#esign-list'); list.replaceChildren();
-      $('#esign-count').textContent = data.envelopes.length;
+      setAppBadge('esign-count', data.envelopes.length);
       const waiting = data.envelopes.filter(
         (e) => e.status === 'awaiting-signatures').length;
       $('#esign-source').textContent =
@@ -5128,13 +5130,13 @@
       if (!(data.items || []).length) {
         list.append(make('li', 'empty-state', 'このProjectにSiteはありません。'));
       }
-      $('#sites-count').textContent = (data.items || []).length;
+      setAppBadge('sites-count', (data.items || []).length);
     };
     const loadSites = async () => {
       if (!selectedProjectId) {
         $('#site-list').replaceChildren(make('li', 'empty-state', 'Projectを選択してください。'));
         $('#site-editor-panel').hidden = true;
-        $('#sites-count').textContent = '0';
+        setAppBadge('sites-count', '0');
         return false;
       }
       const requestedProject = selectedProjectId;
@@ -5211,7 +5213,7 @@
         item.querySelector('button')?.setAttribute(
           'aria-pressed', item.dataset.projectId === selectedProjectId ? 'true' : 'false'));
       syncBotsContextButton();
-      $('#projects-count').textContent = localProjects.length;
+      setAppBadge('projects-count', localProjects.length);
     };
     const loadLocalProjects = async () => {
       try {
@@ -5457,7 +5459,7 @@
           card.append(make('strong', null, String(count)), make('span', null, label));
           summary.append(card);
         });
-      $('#organization-count').textContent = units.length || performers.length || '—';
+      setAppBadge('organization-count', units.length || performers.length || '—');
       const tree = $('#organization-studio-tree'); tree.replaceChildren();
       const children = new Map();
       units.forEach((unit) => {
@@ -5882,7 +5884,7 @@
         }
       }
       else $('#calendar-detail').replaceChildren(make('div', 'empty-state', 'この日の予定はありません。'));
-      $('#scheduler-count').textContent = data.items.length;
+      setAppBadge('scheduler-count', data.items.length);
       $('#calendar-source').textContent = `${data.source} · ${data.status}`;
     };
     // Appended rather than replacing: a cursor says where to continue from,
@@ -5966,7 +5968,7 @@
         });
       }
       $('#resources-visible-count').textContent = `${visible.length} 件を表示`;
-      $('#resources-count').textContent = rows.length;
+      setAppBadge('resources-count', rows.length);
     };
     const loadResources = async () => {
       try {
@@ -6138,7 +6140,7 @@
         list.append(make('li', 'empty-state',
           'このOrganizationに割り当てられたAO workerはありません。'));
       }
-      $('#organism-count').textContent = organismWorkers.length;
+      setAppBadge('organism-count', organismWorkers.length);
       $('#organism-source').textContent =
         `${data.organization || 'organization'} · ${organismWorkers.length} AO`;
       renderOrganismDetail();
@@ -6435,7 +6437,7 @@
       // Guarded like every other lookup in these two renderers: the badge
       // lives in the sidebar, and a renderer that assumes its own chrome is
       // present cannot be reused anywhere the chrome is not.
-      const fc = $('#fleet-count'); if (fc) fc.textContent = data.total;
+      const fc = document.getElementById('fleet-count'); if (fc) fc.textContent = data.total;
     };
 
     const searchFleet = () => {
@@ -6481,7 +6483,7 @@
           statTile('fleet 全体', (s.fleet && s.fleet.actors) || 0),
           statTile('fleet の稼働', (s.fleet && s.fleet.callable) || 0));
       }
-      const oc = $('#operator-count'); if (oc) oc.textContent = s.adoptions || 0;
+      const oc = document.getElementById('operator-count'); if (oc) oc.textContent = s.adoptions || 0;
       const os_ = $('#operator-source');
       if (os_) os_.textContent = d.profile
         ? `${d.profile.name} として参与しています`
@@ -6638,7 +6640,7 @@
           statTile('5面すべて解決', counts['fully-resolved'] || 0),
           statTile('未割当の参与', counts['unassigned-adoptions'] || 0));
       }
-      const badge = $('#portfolio-count');
+      const badge = document.getElementById('portfolio-count');
       if (badge) badge.textContent = counts.businesses || 0;
       const src = $('#portfolio-source');
       if (src) src.textContent = rows.length
@@ -7027,7 +7029,7 @@
           list.append(make('li', 'empty-state', 'まだ提案はありません。'));
         }
       }
-      const badge = $('#canvas-count');
+      const badge = document.getElementById('canvas-count');
       if (badge) {
         const awaiting = (d?.proposals || [])
           .filter((p) => bare(p.state) === 'awaiting-governor').length;
@@ -7343,7 +7345,7 @@
                    `Meadows tier ${(b.tiers || []).join(', ')}`,
                    `重み ${b.weight}`)));
       }
-      const badge = $('#loops-count');
+      const badge = document.getElementById('loops-count');
       if (badge) badge.textContent = (lv.ranked || []).length || '—';
     };
 
@@ -7548,7 +7550,7 @@
       }
       const meta = $('#repos-meta');
       if (meta) meta.textContent = rows.length ? `${rows.length} repo` : '';
-      const badge = $('#repos-count');
+      const badge = document.getElementById('repos-count');
       if (badge) badge.textContent = rows.length || '—';
     };
 
@@ -7635,7 +7637,7 @@
          ((d && d['product-specific']) || []).map((e) => [e.key, e.value]));
       const meta = $('#metrics-meta');
       if (meta) meta.textContent = state === 'resolved' ? (d.source || '') : '';
-      const badge = $('#metrics-count');
+      const badge = document.getElementById('metrics-count');
       if (badge) badge.textContent = state === 'resolved' ? bare(f.state).slice(0, 1).toUpperCase() : '—';
     };
 
@@ -8385,6 +8387,7 @@
       (data.providers || []).forEach((provider) => {
         const connection = connections.get(provider.id);
         const card = make('article', 'connector-card');
+        card.dataset.connected = String(Boolean(connection));
         card.append(make('div', 'connector-logo', connectorMarks[provider.id] || '•'));
         const copy = make('div');
         copy.append(make('h3', null, provider.name));
@@ -8823,6 +8826,7 @@
       if (mayVerifyDomain) loadDomainVerifications();
       renderMembers(data.organization);
       renderConnectors(data);
+      loadWorkspaceApps();
       loadCloudAlias(data);
       loadTenantConnections();
       loadMailAccounts();
@@ -9566,7 +9570,7 @@
       if (!summary.childElementCount) {
         summary.append(make('span', 'state-chip', 'ジョブなし'));
       }
-      $('#worker-count').textContent = data.active || 0;
+      setAppBadge('worker-count', data.active || 0);
       $('#worker-source').textContent = `${data.source} · 同時実行 ${data['max-concurrency']}`
         + ` · 保持 ${items.length} / ${data['max-runs']} 件`;
       $('#worker-clear').disabled = items.length === (data.active || 0);
@@ -9603,7 +9607,7 @@
       const list = $('#credential-list');
       list.replaceChildren();
       const issued = data.issued || [];
-      $('#credentials-count').textContent = issued.length;
+      setAppBadge('credentials-count', issued.length);
       const live = issued.filter((record) => !record['revoked?']).length;
       $('#credentials-source').textContent = issued.length
         ? `${issued.length} 件発行済み・${issued.length - live} 件失効`
@@ -11836,6 +11840,7 @@
     };
     const selectBot = async (botId) => {
       botsState.selected = botId;
+      $('#bots-shell').classList.remove('show-bot-list');
       botsState.routines = [];
       // Both of these belong to the Bot you were just looking at. A rename
       // field carrying one Bot's name over another Bot's title would save the
@@ -12181,6 +12186,7 @@
         if (botsState.selected) renderBotsThread();
       } catch (error) { botsSetStatus(error.message); }
     };
+    $('#bots-list-toggle').addEventListener('click', () => { const open = $('#bots-shell').classList.toggle('show-bot-list'); $('#bots-list-toggle').setAttribute('aria-expanded', String(open)); });
     $('#bots-filter').addEventListener('input', renderBotsRail);
     // The one place the grid is redrawn alone, and it is not an exception to
     // the rule above: a search narrows what the GRID lists and changes nothing
@@ -12803,7 +12809,7 @@
       const passkeyWallets = walletEntries().filter((entry) => entry.wallet?.address);
       const waiting = transfers.filter((transfer) =>
         ['awaiting-wallet', 'awaiting-passkey-user-operation'].includes(transfer.status));
-      $('#wallet-count').textContent = passkeyWallets.length || '';
+      setAppBadge('wallet-count', passkeyWallets.length || '');
       $('#wallet-source').textContent = data['private-keys-stored?']
         ? '秘密鍵を保存しています' : `${passkeyWallets.length}個のPasskey Smart Account`;
       $('#wallet-summary').replaceChildren(
@@ -13348,7 +13354,150 @@
       finally { button.disabled = storefrontState.cart.size === 0; }
     });
 
+    // Marketplace installation only controls the launcher. API permissions stay
+    // on the underlying Bot, connector and App actions.
+    let workspaceApps = [];
+    let marketKind = 'plugin';
+    let appsLoadGeneration = 0;
+    const appCard = (app, installedView = false) => {
+      const card = make('article', 'market-card');
+      card.dataset.appId = app.id;
+      const icon = make('span', 'market-icon', app.icon); icon.setAttribute('aria-hidden', 'true');
+      const copy = make('div', 'market-copy');
+      copy.append(make('h3', null, app.name), make('p', null, app.description));
+      const actions = make('div', 'market-actions');
+      if (app['installed?']) {
+        const open = make('a', 'tool-button', '開く'); open.href = `#/${app.id}`;
+        actions.append(open);
+      }
+      const toggle = make('button', 'tool-button', app['installed?'] ? '取り外す' : 'インストール');
+      toggle.type = 'button'; toggle.setAttribute('aria-label', `${app.name}を${toggle.textContent}`);
+      toggle.addEventListener('click', async () => {
+        toggle.disabled = true;
+        try {
+          const response = await fetch('/api/bots/workspace-apps', {method:'POST', headers:identityHeaders(),
+            body:JSON.stringify({id:app.id, 'installed?':!app['installed?']})});
+          const data = await response.json();
+          if (!response.ok) throw new Error(data?.error?.message || 'App を更新できませんでした。');
+          workspaceApps = data.apps; renderWorkspaceApps(); renderMarketplace();
+          (installedView ? $('#apps-status') : $('#market-status')).textContent =
+            `${app.name}を${app['installed?'] ? '取り外しました。データと接続は保持しています。' : 'インストールしました。'}`;
+          const target = document.querySelector(`[data-app-id='${app.id}'] button`) || $('#market-search');
+          target?.focus();
+        } catch (error) { $('#market-status').textContent = error.message; $('#apps-status').textContent = error.message; toggle.disabled = false; }
+      });
+      actions.append(toggle); card.append(icon, copy, actions); return card;
+    };
+    const renderWorkspaceApps = () => {
+      const installed = workspaceApps.filter((app) => app['installed?']);
+      $$('[data-installed-apps]').forEach((container) => {
+        container.replaceChildren();
+        installed.forEach((app) => {
+          const link = make('a', 'installed-app-link', `${app.icon} ${app.name}`);
+          link.href = `#/${app.id}`; link.setAttribute('aria-current', currentView === app.id ? 'page' : 'false');
+          link.addEventListener('click', () => setMobileMenuOpen(false));
+          container.append(link);
+        });
+        if (!installed.length) container.append(make('p', null, 'まだ App がありません'));
+      });
+      const grid = $('#installed-app-grid'); grid.replaceChildren();
+      installed.forEach((app) => grid.append(appCard(app, true)));
+      $('#apps-status').textContent = installed.length ? `${installed.length} 件インストール済み` : 'マーケットプレイスから App を追加できます。';
+    };
+    const renderMarketplace = () => {
+      const grid = $('#market-results'); grid.replaceChildren();
+      const query = $('#market-search').value.trim().toLocaleLowerCase('ja');
+      const installedOnly = $('#market-installed-only').checked;
+      const matches = (text) => text.toLocaleLowerCase('ja').includes(query);
+      if (marketKind === 'app') {
+        workspaceApps.filter((app) => (!installedOnly || app['installed?']) && matches(`${app.name} ${app.description} ${app.category}`))
+          .forEach((app) => grid.append(appCard(app)));
+      } else if (marketKind === 'plugin') {
+        Array.from($('#connector-list').children).filter((card) => card.matches('article')).forEach((source) => {
+          if (!matches(source.textContent) || (installedOnly && source.dataset.connected !== 'true')) return;
+          const card = source.cloneNode(true); card.hidden = false;
+          card.querySelectorAll('[id]').forEach((node) => node.removeAttribute('id'));
+          card.querySelector('button')?.addEventListener('click', () => source.querySelector('button').click());
+          grid.append(card);
+        });
+      } else {
+        botsState.bots.filter((bot) => matches(`${bot.name} ${bot.role || ''}`)).forEach((bot) => {
+          const card = make('article', 'market-card'); const copy = make('div', 'market-copy');
+          copy.append(make('h3', null, bot.name), make('p', null, bot.role || 'あなたの Bot'));
+          const open = make('button', 'tool-button', '会話を開く'); open.type = 'button';
+          open.addEventListener('click', async () => { await selectBot(bot.id); showView('bots'); });
+          card.append(copy, open); grid.append(card);
+        });
+        if (!installedOnly) {
+          const create = make('button', 'market-card market-create', '＋ 新しい Bot を作る'); create.type = 'button';
+          create.addEventListener('click', () => { showView('bots'); $('#bots-new').click(); }); grid.prepend(create);
+          [['日々のアシスタント','予定と依頼を整理し、次の作業を提案する'],
+           ['設定サポート','設定の現状を確認し、変更案と必要な本人操作を案内する'],
+           ['プロジェクト担当','プロジェクトの進行と資料を整理する']].forEach(([name, brief]) => {
+            if (!matches(name + brief)) return;
+            const starter = make('button', 'market-card market-create', `${name} を作る`); starter.type = 'button';
+            starter.addEventListener('click', () => { showView('bots'); $('#bots-new').click(); $('#bots-name').value = name; $('#bots-brief').value = brief; $('#bots-name').focus(); });
+            grid.append(starter);
+          });
+        }
+      }
+      $('#market-status').textContent = grid.children.length ? `${grid.children.length} 件` : '一致する項目がありません。検索条件を変えてください。';
+      grid.setAttribute('aria-labelledby', `market-tab-${marketKind}`);
+    };
+    const loadWorkspaceApps = async () => {
+      const generation = ++appsLoadGeneration;
+      try {
+        const response = await fetch('/api/bots/workspace-apps'); const data = await response.json();
+        if (!response.ok) throw new Error(data?.error?.message || 'App を読み込めませんでした。');
+        if (generation !== appsLoadGeneration || !appUnlocked) return;
+        workspaceApps = data.apps; renderWorkspaceApps(); renderMarketplace();
+      } catch (error) { $('#apps-status').textContent = error.message; $('#market-status').textContent = error.message; }
+    };
+    const chooseMarketKind = (kind) => {
+      marketKind = kind;
+      $$('[data-market-tab]').forEach((button) => {
+        const selected = button.dataset.marketTab === kind;
+        button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1;
+      }); renderMarketplace();
+    };
+    $$('[data-market-tab]').forEach((button, index, tabs) => {
+      button.addEventListener('click', () => chooseMarketKind(button.dataset.marketTab));
+      button.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+        event.preventDefault(); const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length-1
+          : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+        tabs[next].focus(); chooseMarketKind(tabs[next].dataset.marketTab);
+      });
+    });
+    $('#market-search').addEventListener('input', renderMarketplace);
+    $('#market-installed-only').addEventListener('change', renderMarketplace);
+    const settingsDialog = $('#settings-bot-dialog'); let settingsOrigin = null;
+    settingsDialog.addEventListener('close', () => settingsOrigin?.focus());
+    $$('[data-ask-settings]').forEach((button) => button.addEventListener('click', async () => {
+      settingsOrigin = button; settingsDialog.showModal();
+      $('#settings-bot-request').value = `${button.dataset.askSettings}の設定を見直したい。現在の状態を調べ、変更案と必要な本人操作を教えてください。`;
+      $('#settings-bot-status').textContent = 'Bot を読み込んでいます…';
+      $('#settings-bot-list').replaceChildren();
+      await loadBots({keepSelection:true});
+      botsState.bots.filter((bot) => bot['enabled?'] !== false).forEach((bot) => {
+        const choose = make('button', 'installed-app-link', bot.name); choose.type = 'button';
+        choose.addEventListener('click', async () => {
+          choose.disabled = true;
+          try {
+            await selectBot(bot.id); showView('bots');
+            const request = $('#settings-bot-request').value.trim();
+            if (!request) throw new Error('変更したいことを入力してください。');
+            botsInput.value = [botsInput.value.trim(), request].filter(Boolean).join('\n\n');
+            settingsDialog.close(); botsInput.focus();
+          } catch (error) { $('#settings-bot-status').textContent = error.message; choose.disabled = false; }
+        }); $('#settings-bot-list').append(choose);
+      });
+      $('#settings-bot-status').textContent = $('#settings-bot-list').children.length ? '' : '有効な Bot がありません。Bot を作成してから依頼できます。';
+    }));
+
     onViewChange = () => {
+      if (appUnlocked) loadWorkspaceApps();
+      if (currentView === 'marketplace') loadBots({keepSelection:true}).then(renderMarketplace);
       scheduleWorkerPoll();
       if (currentView === 'bots') {
         loadBots({keepSelection:botsState.loaded});

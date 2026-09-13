@@ -8,6 +8,7 @@
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.app-client :as app-client]
+            [cloud.itonami.app.app-directory :as app-directory]
             [cloud.itonami.app.authority.api :as authority-api]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.bulky-waste :as bulky-waste]
@@ -6054,6 +6055,16 @@
   [config exchange method path]
   (let [session (require-human-session! exchange)]
     (cond
+      (and (= method "GET") (= path "/api/bots/workspace-apps"))
+      (send! exchange 200 (app-directory/workspace-catalog session))
+
+      (and (= method "POST") (= path "/api/bots/workspace-apps"))
+      (do (require-origin! exchange config)
+          (require-csrf! exchange session)
+          (let [body (read-json exchange)]
+            (send! exchange 200 (app-directory/set-app-installed!
+                                  session (:id body) (:installed? body)))))
+
       (and (= method "GET") (= path "/api/bots"))
       (send! exchange 200 (bots/overview config session))
 

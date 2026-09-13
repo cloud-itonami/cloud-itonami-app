@@ -4,7 +4,11 @@
             [cloud.itonami.app.appearance :as appearance]
             [hanmen.svg :as hanmen-svg]
             [jp-go-dds.core :as dds]
-            [jp-go-dds.page :as page]))
+            [jp-go-dds.page :as page]
+            [jp-go-dds.tokens :as tokens]
+            [cloud-kotoba-dds.chat :as chat]
+            [cloud-kotoba-dds.styles :as chat-styles]
+            [cloud.itonami.app.app-directory :as app-directory]))
 
 (def base-css
   "
@@ -1738,6 +1742,44 @@
   .bots-composer,.bots-main,.bots-rail{background:var(--color-neutral-white)}
   .bots-composer textarea{min-height:5rem}
   #plugin-filter{width:100%;max-width:36rem}
+
+  .bots-list-toggle{display:none}
+  [data-view-panel='marketplace']>.view-header,[data-view-panel='apps']>.view-header{padding-top:0}
+  [data-view-panel='marketplace'] .view-header h1,[data-view-panel='apps'] .view-header h1{display:none}
+  @media(max-width:56rem){
+    .bots-list-toggle{display:block}.topbar #bots-list-toggle{width:auto;min-width:4.5rem;flex-shrink:0}.topbar #bots-new{min-width:2.75rem;width:2.75rem;font-size:0}.topbar #bots-new::after{content:'＋';font-size:1rem}.bots-shell{grid-template-columns:minmax(0,1fr)}
+    .bots-shell>.bots-rail{display:none}.bots-shell.show-bot-list>.bots-rail{display:flex;width:100%;min-width:0}
+    .bots-shell.show-bot-list>.bots-main{display:none}.bots-shell.show-bot-list .bots-rail__item{grid-template-columns:2.5rem minmax(0,1fr);width:100%}
+    .bots-shell.show-bot-list .bots-rail__copy{display:block}.bots-shell.show-bot-list .bots-rail__search{display:block}
+    .bots-launcher{display:none}.topbar{padding-block:.25rem}.bots-view{height:calc(100dvh - var(--workspace-header-height,4rem) - var(--mobile-nav-height))}
+  }
+  .market-tabs,.market-filters,.market-actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+  .market-tabs{margin-block:1rem}.market-tabs button{border:1px solid var(--color-neutral-solid-gray-300);border-radius:999px;padding:.5rem 1.25rem;background:var(--color-neutral-white);min-height:2.75rem}
+  .market-tabs [aria-selected='true']{background:var(--color-key-900);color:var(--color-neutral-white)}
+  #market-search{width:100%;padding:.75rem 1rem;border:1px solid var(--color-neutral-solid-gray-300);border-radius:999px;font:inherit;box-sizing:border-box}
+  .market-filters{margin-top:.75rem}.market-filters label{display:flex;gap:.5rem;align-items:center;min-height:2.75rem}
+  .market-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin-top:1rem}
+  .market-card{display:flex;align-items:center;gap:1rem;padding:1rem;border:1px solid var(--color-neutral-solid-gray-200);border-radius:1rem;background:var(--color-neutral-white);min-width:0}
+  .market-copy{flex:1;min-width:0}.market-copy h3{margin:0;font-size:1rem}.market-copy p{margin:.25rem 0;color:var(--color-neutral-solid-gray-600);font-size:.875rem;overflow-wrap:anywhere}
+  .market-icon{font-size:1.5rem;flex:0 0 2.5rem;text-align:center}.market-actions{flex-direction:column;align-items:stretch}
+  .market-create{min-height:5rem;cursor:pointer;font:inherit}.installed-apps-nav h2{font-size:.75rem;color:var(--color-neutral-solid-gray-600)}
+  .installed-app-link{display:flex;padding:.5rem .75rem;min-height:2.75rem;align-items:center;box-sizing:border-box;text-decoration:none;color:inherit;border:0;background:transparent;font:inherit;width:100%;border-radius:.5rem}
+  .installed-app-link:hover,.installed-app-link[aria-current='page']{background:var(--color-neutral-solid-gray-100)}
+  .bots-launcher{padding:.75rem;border-top:1px solid var(--color-neutral-solid-gray-200);margin-top:auto;background:var(--color-neutral-white)}
+  .bots-launcher>a,.bots-launcher summary,.bots-launcher details>a{display:flex;align-items:center;min-height:2.75rem;color:inherit;text-decoration:none;padding-inline:.5rem}
+  .bots-launcher details[open]>div{max-height:12rem;overflow:auto}
+  .settings-manual{margin-top:1.5rem}.settings-manual>summary{padding:1rem;cursor:pointer}.settings-manual>.workspace-wallet{display:inline-flex;margin:1rem}
+  #settings-bot-dialog{border:1px solid var(--color-neutral-solid-gray-200);border-radius:1rem;width:min(36rem,calc(100% - 2rem));max-height:85dvh;box-sizing:border-box;padding:1.5rem}
+  #settings-bot-dialog::backdrop{background:var(--color-neutral-solid-gray-600);opacity:.5}
+  #settings-bot-dialog form{text-align:right}#settings-bot-request{width:100%;box-sizing:border-box;font:inherit;padding:.75rem}
+  #settings-bot-list{max-height:40dvh;overflow:auto}.bot-actions-menu{position:relative}.bot-actions-menu>summary{cursor:pointer;min-height:2.75rem;display:flex;align-items:center;padding:.5rem}
+  .bot-actions-menu__items{position:absolute;right:0;top:100%;z-index:60;display:flex;flex-direction:column;gap:.5rem;padding:1rem;width:15rem;background:var(--color-neutral-white);border:1px solid var(--color-neutral-solid-gray-200);border-radius:.75rem;box-shadow:0 .5rem 1.5rem var(--color-neutral-solid-gray-200)}
+  .bots-titlebar__identity{flex:1;min-width:0}.bots-titlebar__copy{min-width:0}.bots-titlebar__name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.bots-titlebar__status{white-space:normal}
+  body[data-current-view='bots'] #current-view{display:none}body[data-current-view='bots'] #bots-titlebar-context{flex:1;min-width:0}
+  .topbar{min-width:0}.topbar__title{white-space:nowrap}.topbar>button{flex-shrink:0}
+  .bots-composer.go-composer{max-width:52rem;width:100%;margin-inline:auto;box-sizing:border-box}.bots-composer__label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+  @media(max-width:56rem){.market-grid{grid-template-columns:minmax(0,1fr)}.market-card{gap:.75rem;padding:.75rem}.bots-launcher{padding:.25rem;font-size:.75rem}.bots-launcher>a{overflow-wrap:anywhere}.bots-titlebar__status{font-size:.75rem}.topbar #bots-new{font-size:.75rem;padding:.25rem}.topbar #bots-context-button{font-size:.75rem;padding:.25rem}.topbar>.appearance-toggle,.topbar>.comment-mode-toggle{display:none}}
+
   @media(min-width:56.01rem){
     .workspace{grid-template-columns:14rem minmax(0,1fr)}
     .sidebar{overflow-y:auto}
@@ -1776,7 +1818,7 @@
   The 8-bit appearance layer (`cloud.itonami.app.appearance/css`) is
   concatenated LAST so that its overrides win, and so that the same token
   guard covers it: every `--eightbit-*` it references it also declares."
-  (str base-css "\n" bot-workspace-css "\n  " hanmen-svg/stylesheet "\n" appearance/css "\n"))
+  (str tokens/bridge-css "\n" chat-styles/css "\n" base-css "\n" bot-workspace-css "\n  " hanmen-svg/stylesheet "\n" appearance/css "\n"))
 
 (def interaction-js
   "The page's interaction layer, which is JavaScript and now lives in a
@@ -2103,6 +2145,36 @@
          [:div {:class "connector-list" :id "connector-list"}
           [:div {:class "skeleton"}]]])
 
+(defn- app-marketplace-views []
+  [:div
+   [:section {:class "view" :data-view-panel "apps" :hidden true}
+    (view-header "App" "インストールした App を開く。")
+    [:div {:class "button-row"} [:a {:class "primary-action" :href "#/marketplace"} "App を探す"]]
+    [:p {:id "apps-status" :role "status"}]
+    [:div {:class "market-grid" :id "installed-app-grid"}]]
+   [:section {:class "view" :data-view-panel "marketplace" :hidden true}
+    (view-header "マーケットプレイス" "仕事に合わせて、Plugin・Bot・App を追加。")
+    [:div {:class "market-tabs" :role "tablist" :aria-label "種類"}
+     (for [[id label] [["plugin" "Plugin"] ["bot" "Bot"] ["app" "App"]]]
+       [:button {:type "button" :role "tab" :id (str "market-tab-" id)
+                 :data-market-tab id :aria-selected (= id "plugin")
+                 :aria-controls "market-results" :tabindex (if (= id "plugin") 0 -1)} label])]
+    [:label {:class "visually-hidden" :for "market-search"} "マーケットプレイスを検索"]
+    [:input {:id "market-search" :type "search" :placeholder "名前や用途で検索"}]
+    [:div {:class "market-filters"}
+     [:label [:input {:id "market-installed-only" :type "checkbox"}] "追加済みだけ"]]
+    [:p {:id "market-status" :role "status" :aria-live "polite"}]
+    [:div {:class "market-grid" :id "market-results" :role "tabpanel"
+           :aria-labelledby "market-tab-plugin"}]]
+   [:dialog {:id "settings-bot-dialog" :aria-labelledby "settings-bot-title"}
+    [:form {:method "dialog"} [:button {:class "tool-button" :autofocus true} "閉じる"]]
+    [:h2 {:id "settings-bot-title"} "設定を頼む Bot"]
+    [:label {:for "settings-bot-request"} "変更したいこと"]
+    [:textarea {:id "settings-bot-request" :rows 3}]
+    [:p "会話に下書きを渡します。変更内容を確認してから送信できます。"]
+    [:div {:id "settings-bot-list"}]
+    [:p {:id "settings-bot-status" :role "status"}]]])
+
 (defn- workspace-navigation [brand cloud? residency]
   [:aside {:class "sidebar" :aria-label "メインメニュー"}
        [:div {:class "brand" :id "signed-out-brand"}
@@ -2124,39 +2196,12 @@
        [:nav {:class "local-nav" :aria-label "機能メニュー"}
         [:div {:class "nav-primary authenticated-only" :hidden true}
          (nav-item "bots" "あなたの Bot" "◕" "bots-count")
-         (nav-item "plugins" "プラグイン" "▤" nil)
-         (nav-item "wallet" "ウォレット" "◈" "wallet-count")
-         (nav-item "messenger" "Messenger" "◇" "messenger-count")]
+         (nav-item "apps" "App" "▦" nil)
+         (nav-item "marketplace" "マーケットプレイス" "⊞" nil)]
         [:div {:class "nav-overflow-panel" :id "mobile-overflow-panel"}
-         [:details {:class "nav-secondary nav-section authenticated-only" :hidden true}
-          [:summary {:class "nav-section__summary"} "その他の機能"]
-          (nav-item "storefront" "Store" "▤" nil)
-          (nav-item "projects" "Projects" "▦" "projects-count")
-          (nav-item "sites" "Sites" "▦" "sites-count")
-          (nav-item "drive" "Drive" "◇" "drive-count")
-         (nav-item "resources" "Resources" "❋" "resources-count")
-          (nav-section
-           "business-design" "事業設計" "◱"
-           [(nav-item "portfolio" "Portfolio" "▤" "portfolio-count")
-            (nav-item "canvas" "Canvas" "◱" "canvas-count")
-            (nav-item "loops" "Loops" "∞" "loops-count")
-            (nav-item "metrics" "Metrics" "⌸" "metrics-count")
-            (nav-item "repos" "Repos" "⌗" "repos-count")])
-          (nav-section
-          "operations" "運営" "◉"
-           [(nav-item "organization" "Organization" "⌘" "organization-count")
-            (nav-item "operator" "事業者" "◐" "operator-count")
-            (nav-item "inbox" "Mail archive" "□" "inbox-count")
-            (nav-item "fleet" "Fleet" "◉" "fleet-count")
-            (nav-item "worker" "Worker" "◐" "worker-count")
-            (nav-item "organisms" "Organisms" "◎" "organism-count")
-            (nav-item "scheduler" "Scheduler" "○" "scheduler-count")])
-          (nav-section
-           "trust-records" "信頼・記録" "▣"
-           [(nav-item "contracts" "Contracts" "◫" "contracts-count")
-            (nav-item "esign" "eSign" "✍" "esign-count")
-            (nav-item "credentials" "Credentials" "▣" "credentials-count")
-            (nav-item "storage" "Storage" "◈" "storage-count")])]
+         [:section {:class "installed-apps-nav authenticated-only" :hidden true}
+          [:h2 "インストール済み App"]
+          [:div {:data-installed-apps "sidebar"}]]
          [:div {:class "sidebar__utility"}
           (nav-item "signin" "サインイン" "↪" nil)
          [:div {:class "authenticated-only" :hidden true}
@@ -2181,6 +2226,295 @@
         [:span {:id "workspace-residency" :data-residency (name residency)}
          (if (= :cloud residency) "cloud-agent · murakumo.cloud" "local-agent · この端末")]
         [:span {:id "workspace-status"} "既存サービスを確認中…"]]])
+
+(defn- settings-view [mode]
+  [:section {:class "view" :data-view-panel "settings" :hidden true}
+         (view-header "アカウント" "プロフィール、接続、Bot の設定を管理します。")
+         [:section {:class "settings-assistant local-card"}
+          [:h2 "設定は Bot に頼む"]
+          [:p "変更したいことを伝えて、担当する Bot を選びます。"]
+          [:button {:class "primary-action" :type "button" :data-ask-settings "全体"} "Bot に設定を頼む"]
+          [:div {:class "button-row"}
+           [:button {:class "tool-button" :type "button" :data-ask-settings "通知と定期実行"} "通知・定期実行"]
+           [:button {:class "tool-button" :type "button" :data-ask-settings "サービス接続"} "サービス接続"]
+           [:button {:class "tool-button" :type "button" :data-ask-settings "モデルと実行環境"} "モデル・実行環境"]]]
+         [:details {:class "settings-manual" :id "settings-manual"}
+          [:summary "アカウント・権限を確認 / 自分で設定する"]
+          [:div {:class "button-row"} (comment-mode-toggle) (appearance/toggle-button mode)]
+        [:a {:class "workspace-wallet authenticated-only" :id "workspace-wallet"
+             :href "#/wallet" :hidden true :aria-label "ウォレットを開く"}
+         [:span {:id "workspace-wallet-label"} "ウォレットを確認"]]
+         (context-capture-settings)
+         (model-routing-settings)
+         (agent-machine-settings)
+         [:div {:class "local-card" :id "desktop-update-card"}
+          (dds/heading 2 "Desktop update" {:size "20"})
+          [:p {:class "view-lead" :id "desktop-update-status"
+               :role "status" :aria-live "polite"}
+           "更新状態を確認しています…"]
+          [:p {:class "form-help"}
+           "公開Releaseはアプリ内のEd25519公開鍵で署名を検証し、packageのSHA-256とsizeが一致した場合だけ次回起動用に準備します。"]
+          [:div {:class "button-row"}
+           [:button {:class "primary-action" :id "desktop-update-action" :type "button"}
+            "更新を確認"]]]
+         [:div {:class "settings-notice" :id "connection-notice" :hidden true}]
+         [:div {:class "settings-stack" :id "identity-workspace" :hidden true}
+          [:div {:class "identity-summary"}
+           [:div {:class "identity-summary__avatar" :id "identity-avatar"
+                  :aria-hidden "true"} "U"]
+           [:div {:class "identity-summary__copy"}
+            [:p {:class "identity-summary__name" :id "identity-name"} "User"]
+            [:p {:class "identity-summary__meta" :id "identity-email"} "—"]
+            [:p {:class "identity-summary__meta" :id "identity-did"} "—"]]
+           [:span {:class "state-chip"} "サインイン済み"]]
+          [:div {:class "local-card" :id "auth-methods-card"}
+           (dds/heading 2 "サインイン方法" {:size "24"})
+           [:p {:class "view-lead" :id "current-auth-method"}
+            "現在の認証方法を確認中…"]
+           [:ul {:class "data-list" :id "linked-auth-methods"}]
+           [:p {:class "form-help"}
+            "同じEmailでも自動統合しません。既存Userへサインインした状態で接続してください。"]
+           [:div {:class "button-row"}
+            [:button {:class "primary-action" :id "itonami-cloud-link"
+                      :type "button"} "auth.itonami.cloud を接続"]]]
+          [:div {:class "local-card" :id "session-management-card"}
+           (dds/heading 2 "ログイン中の端末" {:size "24"})
+           [:p {:class "view-lead"}
+            "このUserの有効なセッションを確認し、不要な端末をログアウトできます。"]
+           [:ul {:class "data-list" :id "auth-session-list"}
+            [:li "セッションを確認中…"]]
+           [:div {:class "button-row"}
+            [:button {:class "tool-button" :id "sign-out-current"
+                      :type "button"} "この端末からログアウト"]]]
+          [:div {:class "settings-grid"}
+           [:div {:class "settings-stack"}
+            [:div {:class "local-card"}
+             (dds/heading 2 "Passkey" {:size "24"})
+             [:p {:class "view-lead" :id "passkey-state"} "Passkey 状態を確認中…"]
+             [:button {:class "primary-action" :id "passkey-register"
+                       :type "button"} "Passkey を登録"]]
+            [:div {:class "local-card"}
+             (dds/heading 2 "Private Email Relay" {:size "24"})
+             [:p {:class "view-lead" :id "cloud-alias-state"}
+              "グローバル予約状態を確認中…"]
+             [:div {:class "field"}
+              [:label {:for "cloud-alias-destination"} "実メール転送先"]
+              [:input {:id "cloud-alias-destination" :type "email"
+                       :autocomplete "email"
+                       :placeholder "private@example.jp"}]]
+             [:p {:class "form-help"}
+              "公開アドレスへの受信を転送し、返信時も実メールアドレスを相手に開示しません。"]
+             [:button {:class "primary-action" :id "cloud-alias-reserve"
+                       :type "button"} "グローバル予約して確認メールを送信"]]
+            [:div {:class "local-card"}
+             (dds/heading 2 "プラグイン" {:size "24"})
+             [:p "Bot が使うサービスを接続・管理します。"]
+             [:a {:href "#/plugins"} "プラグインを開く →"]]
+            ;; Mailboxes, listed one per account rather than one per provider:
+            ;; the same person's work Gmail and personal Gmail are two rows
+            ;; with two sync states, because "Google: エラー" does not say
+            ;; which of the two stopped working.
+            [:div {:class "local-card"}
+             (dds/heading 2 "メールアカウント" {:size "24"})
+             [:p {:class "view-lead"}
+              "Gmail と Microsoft 365 は上の「サービス接続」から、同じ提供者の2つ目以降のアカウントも同じ手順で追加できます。OAuth を持たないメールボックスは IMAP か POP3 で接続します。"]
+             [:p {:class "source-note" :id "mail-account-state"}
+              "メールアカウントを確認中…"]
+             [:ul {:class "member-list" :id "mail-account-list"}]
+             [:form {:class "settings-form" :id "mail-account-form"}
+              (dds/heading 3 "IMAP / POP3 でメールボックスを追加" {:size "16"})
+              [:div {:class "field"}
+               [:label {:for "mail-account-protocol"} "受信プロトコル"]
+               [:select {:id "mail-account-protocol" :name "protocol"}
+                [:option {:value "imap" :selected true} "IMAP（推奨）"]
+                [:option {:value "pop3"} "POP3"]]
+               [:span {:class "form-help"}
+                "POP3 はフォルダも既読状態もサーバーに持てません。IMAP が使えるなら IMAP を選んでください。"]]
+              [:div {:class "field"}
+               [:label {:for "mail-account-address"} "メールアドレス"]
+               [:input {:id "mail-account-address" :name "address"
+                        :type "email" :required true :autocomplete "email"
+                        :placeholder "me@example.com"}]]
+              [:div {:class "field"}
+               [:label {:for "mail-account-host"} "受信サーバー"]
+               [:input {:id "mail-account-host" :name "host" :required true
+                        :autocomplete "off" :placeholder "imap.example.com"}]]
+              [:div {:class "field"}
+               [:label {:for "mail-account-smtp-host"} "SMTP サーバー（任意）"]
+               [:input {:id "mail-account-smtp-host" :name "smtp-host"
+                        :autocomplete "off"
+                        :placeholder "空欄なら IMAP と同じホスト"}]]
+              [:div {:class "field"}
+               [:label {:for "mail-account-password"} "パスワード（アプリパスワード）"]
+               [:input {:id "mail-account-password" :name "password"
+                        :type "password" :required true
+                        :autocomplete "new-password"}]
+               [:span {:class "form-help"}
+                "macOS Keychain に保存します。state.edn には保存しません。"]]
+              [:button {:class "tool-button" :id "mail-account-submit"
+                        :type "submit"} "メールボックスを追加"]]]
+            [:div {:class "security-callout"}
+             [:strong "認証境界"]
+             " Passkey は challenge・origin・RP ID・署名・user verification・counter をサーバーで検証します。OAuth は state を一度だけ使用し、PKCE S256 と10分の期限を適用します。"]]
+           [:aside {:class "settings-stack"}
+            [:div {:class "local-card"}
+             (dds/heading 2 "Organization" {:size "20"})
+             [:p {:class "identity-summary__name" :id "organization-name"} "—"]
+             [:p {:class "identity-summary__meta" :id "organization-domain"} "—"]
+             [:p {:class "identity-summary__meta" :id "organization-did"} "—"]
+             [:form {:class "settings-form" :id "organization-form"}
+              [:div {:class "field"}
+               [:label {:for "organization-id"} "Organization ID"]
+               [:input {:id "organization-id" :name "organization-id"
+                        :required true :autocomplete "off"
+                        :pattern "[a-z0-9][a-z0-9._-]{1,30}[a-z0-9]"
+                        :placeholder "my-organization"}]
+               [:span {:class "form-help"}
+                "設定後は変更できません。管理ドメインと owner の公開アドレスを発行します。"]]
+              [:button {:class "primary-action" :id "organization-submit"
+                        :type "submit"} "Organization ID を設定"]]
+             [:form {:class "settings-form" :id "organization-create-form"}
+              (dds/heading 3 "別のOrganizationを作成" {:size "16"})
+              [:div {:class "field"}
+               [:label {:for "new-organization-name"} "表示名"]
+               [:input {:id "new-organization-name" :name "organization-name"
+                        :autocomplete "organization"
+                        :placeholder "Etzhayyim"}]]
+              [:div {:class "field"}
+               [:label {:for "new-organization-id"} "Organization ID"]
+               [:input {:id "new-organization-id" :name "organization-id"
+                        :required true :autocomplete "off"
+                        :pattern "[a-z0-9][a-z0-9._-]{1,30}[a-z0-9]"
+                        :placeholder "etzhayyim"}]]
+              [:button {:class "tool-button" :id "organization-create"
+                        :type "submit"} "Organizationを追加"]]
+             ;; Here rather than in the Projects panel: that panel reads GitHub
+             ;; Projects v2, and this moves a LOCAL project between tenants —
+             ;; a question about tenants, which is what this card is (ADR-0024).
+             [:form {:class "settings-form" :id "project-transfer-form"}
+              (dds/heading 3 "Project を別の tenant へ移動" {:size "16"})
+              [:div {:class "field"}
+               [:label {:for "project-transfer-project"} "Project ID"]
+               [:input {:id "project-transfer-project" :name "project"
+                        :required true :autocomplete "off"
+                        :placeholder "my-project"}]]
+              [:div {:class "field"}
+               [:label {:for "project-transfer-tenant"} "移動先"]
+               [:select {:id "project-transfer-tenant" :name "tenant"
+                         :required true}]
+               [:span {:class "form-help" :id "project-transfer-help"}
+                (str "両方の tenant で owner または admin 権限が必要です。"
+                     "公開済みの Project は移動できません。")]]
+              [:button {:class "tool-button" :id "project-transfer-submit"
+                        :type "submit"} "移動する"]]
+             [:form {:class "settings-form"
+                     :id "organization-invitation-form"}
+              (dds/heading 3 "既存Organizationへ参加" {:size "16"})
+              [:p {:class "form-help" :id "organization-invitation-state"}
+               "参加待ちの招待を確認中…"]
+              [:div {:class "field"}
+               [:label {:for "organization-invitation-code"} "招待コード"]
+               [:input {:id "organization-invitation-code"
+                        :name "invitation-code"
+                        :required true
+                        :autocomplete "one-time-code"}]]
+              [:button {:class "tool-button"
+                        :id "organization-invitation-accept"
+                        :type "submit"}
+               "招待を承認して参加"]]
+             [:ul {:class "member-list" :id "member-list"}]]
+            [:div {:class "local-card" :id "domain-verification-card"}
+             (dds/heading 2 "会社ドメイン" {:size "20"})
+             ;; Two steps, and the card says why there are two (ADR-0043). The
+             ;; TXT record proves the zone is yours; it does not make the name
+             ;; resolve here, and a tenant named by an address that answers
+             ;; nothing is what the second step exists to prevent.
+             [:p {:class "form-help"}
+              "会社ドメインでこのOrganizationを名乗るには2段階が必要です。①DNS の TXT レコードで、そのドメインを管理していることを確認します（DNSの書き込み権限をCloud Itonamiへ渡す必要はありません）。②ドメインをこの deployment に向けてから有効化します。①だけではまだ名前になりません。"]
+             [:p {:class "source-note" :id "domain-verification-state"
+                  :role "status" :aria-live "polite"}
+              "所有権確認を読み込み中…"]
+             [:form {:class "settings-form" :id "domain-verification-form"}
+              [:div {:class "field"}
+               [:label {:for "company-domain"} "会社ドメイン"]
+               [:input {:id "company-domain" :name "domain" :required true
+                        :type "text" :inputmode "url" :autocomplete "url"
+                        :placeholder "example.co.jp"}]
+               [:span {:class "form-help"}
+                "URLやワイルドカードではなく、会社が管理する完全なドメイン名を入力します。"]]
+              [:button {:class "primary-action" :id "domain-verification-start"
+                        :type "submit"}
+               "TXTレコードを発行"]]
+             [:div {:class "settings-form" :id "domain-verification-record"
+                    :hidden true}
+              [:div {:class "field"}
+               [:label {:for "domain-verification-record-name"} "TXT ホスト名"]
+               [:code {:id "domain-verification-record-name"} "—"]]
+              [:div {:class "field"}
+               [:label {:for "domain-verification-record-value"} "TXT 値"]
+               [:code {:id "domain-verification-record-value"} "—"]]
+              [:p {:class "form-help" :id "domain-verification-expiry"} "—"]
+              [:div {:class "record-actions"}
+               [:button {:class "tool-button" :id "domain-verification-copy"
+                         :type "button"}
+                "TXTをコピー"]
+               [:button {:class "primary-action" :id "domain-verification-claim"
+                         :type "button"}
+                "DNSを確認"]]]
+             ;; Step 2. Shown once the claim holds — until then there is nothing
+             ;; to point anywhere, and offering activation would invite an owner
+             ;; to cut production DNS over to a name they have not reserved.
+             [:div {:class "settings-form" :id "domain-verification-activation"
+                    :hidden true}
+              (dds/heading 3 "この deployment に向ける" {:size "16"})
+              [:p {:class "form-help"}
+               "所有権の確認だけでは、まだこのOrganizationの名前になりません。ドメインをこの deployment に向け、証明書が有効になってから有効化してください。有効化は、この URL がこの deployment の応答を返すことを実際に取得して確かめます。"]
+              [:div {:class "field"}
+               [:label {:for "domain-verification-activation-url"} "確認するURL"]
+               [:code {:id "domain-verification-activation-url"} "—"]]
+              [:p {:class "source-note" :id "domain-verification-probe"
+                   :role "status" :aria-live "polite"} "—"]
+              [:div {:class "record-actions"}
+               [:button {:class "primary-action"
+                         :id "domain-verification-activate" :type "button"}
+                "有効化"]
+               [:button {:class "tool-button" :id "domain-verification-recheck"
+                         :type "button"}
+                "再確認"]]]]
+            [:div {:class "local-card"}
+             (dds/heading 2 "Agent tenant connections" {:size "20"})
+             [:p {:class "form-help"}
+              "Agentの申請を確認し、tenant・capability・期限・予算を固定して承認します。Agent自身は承認できません。"]
+             [:p {:class "source-note" :id "tenant-connection-state"
+                  :role "status" :aria-live "polite"}
+              "接続申請を確認中…"]
+             [:ul {:class "member-list" :id "tenant-connection-list"}
+              [:li {:class "skeleton"}]]]
+            [:div {:class "local-card" :id "member-card"}
+             (dds/heading 2 "User を追加" {:size "20"})
+             [:form {:class "settings-form" :id "member-form"}
+              [:div {:class "field"}
+               [:label {:for "member-name"} "表示名"]
+               [:input {:id "member-name" :name "display-name" :required true
+                        :autocomplete "off"}]]
+              [:div {:class "field"}
+               [:label {:for "member-account-id"} "アカウントID"]
+               [:input {:id "member-account-id" :name "account-id"
+                        :required true :autocomplete "off"
+                        :pattern "[a-z0-9][a-z0-9._-]{1,30}[a-z0-9]"}]
+               [:span {:class "form-help"} "管理ドメインのアドレスを発行"]]
+              [:div {:class "field"}
+               [:label {:for "member-email"} "連絡先メール（任意）"]
+               [:input {:id "member-email" :name "contact-email" :type "email"
+                        :autocomplete "off"}]]
+              [:div {:class "field"}
+               [:label {:for "member-role"} "ロール"]
+               [:select {:id "member-role" :name "role"}
+                [:option {:value "member"} "Member"]
+                [:option {:value "admin"} "Admin"]]]
+              [:button {:class "primary-action" :type "submit"} "User を登録"]]
+             [:p {:class "security-callout" :id "enrollment-result"
+                  :hidden true :aria-live "polite"}]]]]]]])
 
 (defn page-html [configuration]
   (let [cloud? (get-in configuration [:routing :cloud-enabled?])
@@ -2212,11 +2546,6 @@
       [:div {:class "main"}
        [:header {:class "topbar" :data-kotoba-window-drag "true"}
         [:h2 {:class "topbar__title" :id "current-view"} "あなたの Bot"]
-        [:a {:class "workspace-wallet authenticated-only" :id "workspace-wallet"
-             :href "#/wallet" :hidden true :aria-label "ウォレットを開く"}
-         [:span {:id "workspace-wallet-label"} "ウォレットを確認"]]
-        (comment-mode-toggle)
-        (appearance/toggle-button mode)
         [:div {:class "topbar__context authenticated-only" :id "project-titlebar-context"
                :data-topbar-view "chat" :hidden true}
          [:button {:class "context-button" :id "chat-context-button" :type "button"
@@ -2225,6 +2554,7 @@
           "参照 0"]]
         [:div {:class "topbar__context authenticated-only" :id "bots-titlebar-context"
                :data-topbar-view "bots" :hidden true}
+         [:button {:class "tool-button bots-list-toggle" :id "bots-list-toggle" :type "button" :aria-controls "bots-list" :aria-expanded "false"} "Bot 一覧"]
          [:button {:class "context-button" :id "bots-context-button" :type "button"
                    :aria-expanded "false" :aria-controls "conversation-context-panel"
                    :title "このBotにProject、フォルダ、データを追加" :disabled true}
@@ -2247,24 +2577,29 @@
                     :type "text" :maxlength "60" :autocomplete "off" :hidden true
                     :placeholder "役割を短く（例: 価格の見直し）"}]
            [:span {:class "bots-titlebar__status" :id "bots-titlebar-status"}]]]
+         [:details {:class "bot-actions-menu"}
+          [:summary {:aria-label "Bot の操作"} "操作"]
+          [:div {:class "bot-actions-menu__items"}
+           [:button {:class "tool-button" :type "button" :data-ask-settings "この Bot"} "設定を Bot に頼む"]
          [:button {:class "tool-button" :id "bots-thread-tools" :type "button"
                    :aria-expanded "false" :aria-controls "bots-thread-panel"
-                   :title "この Bot が届く範囲" :hidden true} "▤"]
+                   :title "この Bot が届く範囲" :hidden true} "権限・詳細"]
          [:button {:class "tool-button" :id "bots-routines" :type "button"
                    :aria-expanded "false" :aria-controls "bots-routines-panel"
                    :aria-label "このBotの定期ジョブ" :title "このBotの定期ジョブ"
-                   :hidden true} "◷"]
+                   :hidden true} "定期ジョブ"]
          [:button {:class "tool-button" :id "bots-conversations" :type "button"
                    :aria-expanded "false" :aria-controls "bots-conversations-panel"
                    :aria-label "Bot同士の会話を読む" :title "Bot同士の会話を読む"}
-          "↔" [:span {:class "bots-conversations__count" :id "rooms-count"} "—"]]
+          "Bot 同士の会話 " [:span {:class "bots-conversations__count" :id "rooms-count"} "—"]]
          [:button {:class "tool-button" :id "bots-quality" :type "button"
                    :aria-expanded "false" :aria-controls "bots-quality-panel"
                    :aria-label "Bots の安定性と出力品質" :title "Bots の安定性と出力品質"}
-          "◎"]
+          "稼働状況"]
          [:button {:class "tool-button" :id "bots-workforce" :type "button"
                    :aria-label "会社Botを常駐化"
-                   :title "8事業の職務Botを常駐化"} "▦"]
+                   :title "8事業の職務Botを常駐化"} "会社 Bot を追加"]
+]]
          [:button {:class "tool-button" :id "bots-new" :type "button"
                    :aria-label "新しい Bot を作る"} "＋ 新しい Bot"]]]
        [:main {:id "main-content"}
@@ -2348,7 +2683,10 @@
                      :autocomplete "off"}]]
            [:ul {:class "bots-rail__list" :id "bots-list"}]
            [:p {:class "bots-rail__empty" :id "bots-rail-empty"} "まだ Bot がいません"]
-           [:a {:class "bots-plugin-link" :href "#/plugins"} "プラグインを接続 →"]]
+           [:footer {:class "bots-launcher"}
+            [:details [:summary "App"] [:div {:data-installed-apps "bots"}]
+             [:a {:href "#/apps"} "App を管理"]]
+            [:a {:href "#/marketplace"} "⊞ マーケットプレイス"]]]
           [:div {:class "bots-main"}
            [:aside {:class "bots-routines-panel" :id "bots-routines-panel" :hidden true
                     :aria-label "このBotの定期ジョブ"}
@@ -2490,17 +2828,17 @@
                    :role "status" :aria-live "polite"}]
               [:ol {:class "bots-trajectory__list" :id "bots-trajectory-list"}]]
              [:ol {:class "bots-thread__messages" :id "bots-messages"}]]
-            [:form {:class "bots-composer" :id "bots-form"}
+            (chat/composer {:class "bots-composer" :id "bots-form"}
              [:label {:class "bots-composer__label" :for "bots-input"} "何を頼みますか？"]
-             [:textarea {:id "bots-input" :rows "2" :maxlength "8000"
+             (chat/prompt {:id "bots-input" :rows "2" :maxlength "8000"
                          :placeholder "この Bot に頼む" :autocomplete "off"
-                         :aria-describedby "bots-input-help"}]
+                         :aria-describedby "bots-input-help"})
              [:button {:class "primary-action" :id "bots-send" :type "submit"
                        :disabled true} "送信"]
              [:button {:class "tool-button" :id "bots-cancel" :type "button"
                        :hidden true} "中止"]
              [:small {:class "bots-composer__help" :id "bots-input-help"}
-              "Enter で改行 · ⌘ / Ctrl + Enter で送信"]]
+              "Enter で改行 · ⌘ / Ctrl + Enter で送信"])
             [:p {:class "drive-create__status" :id "bots-thread-status-line"
                  :aria-live "polite"}]]]]]
         [:section {:class "legacy-surface" :hidden true}
@@ -3831,277 +4169,6 @@
                         :required true :autocomplete "one-time-code"}]]
               [:button {:class "tool-button" :id "enrollment-submit" :type "submit"}
                "Passkey を登録して参加"]]]])]]
+        (app-marketplace-views)
         (plugins-view)
-        [:section {:class "view" :data-view-panel "settings" :hidden true}
-         (view-header "アカウント" "プロフィール、接続、Bot の設定を管理します。")
-         (context-capture-settings)
-         (model-routing-settings)
-         (agent-machine-settings)
-         [:div {:class "local-card" :id "desktop-update-card"}
-          (dds/heading 2 "Desktop update" {:size "20"})
-          [:p {:class "view-lead" :id "desktop-update-status"
-               :role "status" :aria-live "polite"}
-           "更新状態を確認しています…"]
-          [:p {:class "form-help"}
-           "公開Releaseはアプリ内のEd25519公開鍵で署名を検証し、packageのSHA-256とsizeが一致した場合だけ次回起動用に準備します。"]
-          [:div {:class "button-row"}
-           [:button {:class "primary-action" :id "desktop-update-action" :type "button"}
-            "更新を確認"]]]
-         [:div {:class "settings-notice" :id "connection-notice" :hidden true}]
-         [:div {:class "settings-stack" :id "identity-workspace" :hidden true}
-          [:div {:class "identity-summary"}
-           [:div {:class "identity-summary__avatar" :id "identity-avatar"
-                  :aria-hidden "true"} "U"]
-           [:div {:class "identity-summary__copy"}
-            [:p {:class "identity-summary__name" :id "identity-name"} "User"]
-            [:p {:class "identity-summary__meta" :id "identity-email"} "—"]
-            [:p {:class "identity-summary__meta" :id "identity-did"} "—"]]
-           [:span {:class "state-chip"} "サインイン済み"]]
-          [:div {:class "local-card" :id "auth-methods-card"}
-           (dds/heading 2 "サインイン方法" {:size "24"})
-           [:p {:class "view-lead" :id "current-auth-method"}
-            "現在の認証方法を確認中…"]
-           [:ul {:class "data-list" :id "linked-auth-methods"}]
-           [:p {:class "form-help"}
-            "同じEmailでも自動統合しません。既存Userへサインインした状態で接続してください。"]
-           [:div {:class "button-row"}
-            [:button {:class "primary-action" :id "itonami-cloud-link"
-                      :type "button"} "auth.itonami.cloud を接続"]]]
-          [:div {:class "local-card" :id "session-management-card"}
-           (dds/heading 2 "ログイン中の端末" {:size "24"})
-           [:p {:class "view-lead"}
-            "このUserの有効なセッションを確認し、不要な端末をログアウトできます。"]
-           [:ul {:class "data-list" :id "auth-session-list"}
-            [:li "セッションを確認中…"]]
-           [:div {:class "button-row"}
-            [:button {:class "tool-button" :id "sign-out-current"
-                      :type "button"} "この端末からログアウト"]]]
-          [:div {:class "settings-grid"}
-           [:div {:class "settings-stack"}
-            [:div {:class "local-card"}
-             (dds/heading 2 "Passkey" {:size "24"})
-             [:p {:class "view-lead" :id "passkey-state"} "Passkey 状態を確認中…"]
-             [:button {:class "primary-action" :id "passkey-register"
-                       :type "button"} "Passkey を登録"]]
-            [:div {:class "local-card"}
-             (dds/heading 2 "Private Email Relay" {:size "24"})
-             [:p {:class "view-lead" :id "cloud-alias-state"}
-              "グローバル予約状態を確認中…"]
-             [:div {:class "field"}
-              [:label {:for "cloud-alias-destination"} "実メール転送先"]
-              [:input {:id "cloud-alias-destination" :type "email"
-                       :autocomplete "email"
-                       :placeholder "private@example.jp"}]]
-             [:p {:class "form-help"}
-              "公開アドレスへの受信を転送し、返信時も実メールアドレスを相手に開示しません。"]
-             [:button {:class "primary-action" :id "cloud-alias-reserve"
-                       :type "button"} "グローバル予約して確認メールを送信"]]
-            [:div {:class "local-card"}
-             (dds/heading 2 "プラグイン" {:size "24"})
-             [:p "Bot が使うサービスを接続・管理します。"]
-             [:a {:href "#/plugins"} "プラグインを開く →"]]
-            ;; Mailboxes, listed one per account rather than one per provider:
-            ;; the same person's work Gmail and personal Gmail are two rows
-            ;; with two sync states, because "Google: エラー" does not say
-            ;; which of the two stopped working.
-            [:div {:class "local-card"}
-             (dds/heading 2 "メールアカウント" {:size "24"})
-             [:p {:class "view-lead"}
-              "Gmail と Microsoft 365 は上の「サービス接続」から、同じ提供者の2つ目以降のアカウントも同じ手順で追加できます。OAuth を持たないメールボックスは IMAP か POP3 で接続します。"]
-             [:p {:class "source-note" :id "mail-account-state"}
-              "メールアカウントを確認中…"]
-             [:ul {:class "member-list" :id "mail-account-list"}]
-             [:form {:class "settings-form" :id "mail-account-form"}
-              (dds/heading 3 "IMAP / POP3 でメールボックスを追加" {:size "16"})
-              [:div {:class "field"}
-               [:label {:for "mail-account-protocol"} "受信プロトコル"]
-               [:select {:id "mail-account-protocol" :name "protocol"}
-                [:option {:value "imap" :selected true} "IMAP（推奨）"]
-                [:option {:value "pop3"} "POP3"]]
-               [:span {:class "form-help"}
-                "POP3 はフォルダも既読状態もサーバーに持てません。IMAP が使えるなら IMAP を選んでください。"]]
-              [:div {:class "field"}
-               [:label {:for "mail-account-address"} "メールアドレス"]
-               [:input {:id "mail-account-address" :name "address"
-                        :type "email" :required true :autocomplete "email"
-                        :placeholder "me@example.com"}]]
-              [:div {:class "field"}
-               [:label {:for "mail-account-host"} "受信サーバー"]
-               [:input {:id "mail-account-host" :name "host" :required true
-                        :autocomplete "off" :placeholder "imap.example.com"}]]
-              [:div {:class "field"}
-               [:label {:for "mail-account-smtp-host"} "SMTP サーバー（任意）"]
-               [:input {:id "mail-account-smtp-host" :name "smtp-host"
-                        :autocomplete "off"
-                        :placeholder "空欄なら IMAP と同じホスト"}]]
-              [:div {:class "field"}
-               [:label {:for "mail-account-password"} "パスワード（アプリパスワード）"]
-               [:input {:id "mail-account-password" :name "password"
-                        :type "password" :required true
-                        :autocomplete "new-password"}]
-               [:span {:class "form-help"}
-                "macOS Keychain に保存します。state.edn には保存しません。"]]
-              [:button {:class "tool-button" :id "mail-account-submit"
-                        :type "submit"} "メールボックスを追加"]]]
-            [:div {:class "security-callout"}
-             [:strong "認証境界"]
-             " Passkey は challenge・origin・RP ID・署名・user verification・counter をサーバーで検証します。OAuth は state を一度だけ使用し、PKCE S256 と10分の期限を適用します。"]]
-           [:aside {:class "settings-stack"}
-            [:div {:class "local-card"}
-             (dds/heading 2 "Organization" {:size "20"})
-             [:p {:class "identity-summary__name" :id "organization-name"} "—"]
-             [:p {:class "identity-summary__meta" :id "organization-domain"} "—"]
-             [:p {:class "identity-summary__meta" :id "organization-did"} "—"]
-             [:form {:class "settings-form" :id "organization-form"}
-              [:div {:class "field"}
-               [:label {:for "organization-id"} "Organization ID"]
-               [:input {:id "organization-id" :name "organization-id"
-                        :required true :autocomplete "off"
-                        :pattern "[a-z0-9][a-z0-9._-]{1,30}[a-z0-9]"
-                        :placeholder "my-organization"}]
-               [:span {:class "form-help"}
-                "設定後は変更できません。管理ドメインと owner の公開アドレスを発行します。"]]
-              [:button {:class "primary-action" :id "organization-submit"
-                        :type "submit"} "Organization ID を設定"]]
-             [:form {:class "settings-form" :id "organization-create-form"}
-              (dds/heading 3 "別のOrganizationを作成" {:size "16"})
-              [:div {:class "field"}
-               [:label {:for "new-organization-name"} "表示名"]
-               [:input {:id "new-organization-name" :name "organization-name"
-                        :autocomplete "organization"
-                        :placeholder "Etzhayyim"}]]
-              [:div {:class "field"}
-               [:label {:for "new-organization-id"} "Organization ID"]
-               [:input {:id "new-organization-id" :name "organization-id"
-                        :required true :autocomplete "off"
-                        :pattern "[a-z0-9][a-z0-9._-]{1,30}[a-z0-9]"
-                        :placeholder "etzhayyim"}]]
-              [:button {:class "tool-button" :id "organization-create"
-                        :type "submit"} "Organizationを追加"]]
-             ;; Here rather than in the Projects panel: that panel reads GitHub
-             ;; Projects v2, and this moves a LOCAL project between tenants —
-             ;; a question about tenants, which is what this card is (ADR-0024).
-             [:form {:class "settings-form" :id "project-transfer-form"}
-              (dds/heading 3 "Project を別の tenant へ移動" {:size "16"})
-              [:div {:class "field"}
-               [:label {:for "project-transfer-project"} "Project ID"]
-               [:input {:id "project-transfer-project" :name "project"
-                        :required true :autocomplete "off"
-                        :placeholder "my-project"}]]
-              [:div {:class "field"}
-               [:label {:for "project-transfer-tenant"} "移動先"]
-               [:select {:id "project-transfer-tenant" :name "tenant"
-                         :required true}]
-               [:span {:class "form-help" :id "project-transfer-help"}
-                (str "両方の tenant で owner または admin 権限が必要です。"
-                     "公開済みの Project は移動できません。")]]
-              [:button {:class "tool-button" :id "project-transfer-submit"
-                        :type "submit"} "移動する"]]
-             [:form {:class "settings-form"
-                     :id "organization-invitation-form"}
-              (dds/heading 3 "既存Organizationへ参加" {:size "16"})
-              [:p {:class "form-help" :id "organization-invitation-state"}
-               "参加待ちの招待を確認中…"]
-              [:div {:class "field"}
-               [:label {:for "organization-invitation-code"} "招待コード"]
-               [:input {:id "organization-invitation-code"
-                        :name "invitation-code"
-                        :required true
-                        :autocomplete "one-time-code"}]]
-              [:button {:class "tool-button"
-                        :id "organization-invitation-accept"
-                        :type "submit"}
-               "招待を承認して参加"]]
-             [:ul {:class "member-list" :id "member-list"}]]
-            [:div {:class "local-card" :id "domain-verification-card"}
-             (dds/heading 2 "会社ドメイン" {:size "20"})
-             ;; Two steps, and the card says why there are two (ADR-0043). The
-             ;; TXT record proves the zone is yours; it does not make the name
-             ;; resolve here, and a tenant named by an address that answers
-             ;; nothing is what the second step exists to prevent.
-             [:p {:class "form-help"}
-              "会社ドメインでこのOrganizationを名乗るには2段階が必要です。①DNS の TXT レコードで、そのドメインを管理していることを確認します（DNSの書き込み権限をCloud Itonamiへ渡す必要はありません）。②ドメインをこの deployment に向けてから有効化します。①だけではまだ名前になりません。"]
-             [:p {:class "source-note" :id "domain-verification-state"
-                  :role "status" :aria-live "polite"}
-              "所有権確認を読み込み中…"]
-             [:form {:class "settings-form" :id "domain-verification-form"}
-              [:div {:class "field"}
-               [:label {:for "company-domain"} "会社ドメイン"]
-               [:input {:id "company-domain" :name "domain" :required true
-                        :type "text" :inputmode "url" :autocomplete "url"
-                        :placeholder "example.co.jp"}]
-               [:span {:class "form-help"}
-                "URLやワイルドカードではなく、会社が管理する完全なドメイン名を入力します。"]]
-              [:button {:class "primary-action" :id "domain-verification-start"
-                        :type "submit"}
-               "TXTレコードを発行"]]
-             [:div {:class "settings-form" :id "domain-verification-record"
-                    :hidden true}
-              [:div {:class "field"}
-               [:label {:for "domain-verification-record-name"} "TXT ホスト名"]
-               [:code {:id "domain-verification-record-name"} "—"]]
-              [:div {:class "field"}
-               [:label {:for "domain-verification-record-value"} "TXT 値"]
-               [:code {:id "domain-verification-record-value"} "—"]]
-              [:p {:class "form-help" :id "domain-verification-expiry"} "—"]
-              [:div {:class "record-actions"}
-               [:button {:class "tool-button" :id "domain-verification-copy"
-                         :type "button"}
-                "TXTをコピー"]
-               [:button {:class "primary-action" :id "domain-verification-claim"
-                         :type "button"}
-                "DNSを確認"]]]
-             ;; Step 2. Shown once the claim holds — until then there is nothing
-             ;; to point anywhere, and offering activation would invite an owner
-             ;; to cut production DNS over to a name they have not reserved.
-             [:div {:class "settings-form" :id "domain-verification-activation"
-                    :hidden true}
-              (dds/heading 3 "この deployment に向ける" {:size "16"})
-              [:p {:class "form-help"}
-               "所有権の確認だけでは、まだこのOrganizationの名前になりません。ドメインをこの deployment に向け、証明書が有効になってから有効化してください。有効化は、この URL がこの deployment の応答を返すことを実際に取得して確かめます。"]
-              [:div {:class "field"}
-               [:label {:for "domain-verification-activation-url"} "確認するURL"]
-               [:code {:id "domain-verification-activation-url"} "—"]]
-              [:p {:class "source-note" :id "domain-verification-probe"
-                   :role "status" :aria-live "polite"} "—"]
-              [:div {:class "record-actions"}
-               [:button {:class "primary-action"
-                         :id "domain-verification-activate" :type "button"}
-                "有効化"]
-               [:button {:class "tool-button" :id "domain-verification-recheck"
-                         :type "button"}
-                "再確認"]]]]
-            [:div {:class "local-card"}
-             (dds/heading 2 "Agent tenant connections" {:size "20"})
-             [:p {:class "form-help"}
-              "Agentの申請を確認し、tenant・capability・期限・予算を固定して承認します。Agent自身は承認できません。"]
-             [:p {:class "source-note" :id "tenant-connection-state"
-                  :role "status" :aria-live "polite"}
-              "接続申請を確認中…"]
-             [:ul {:class "member-list" :id "tenant-connection-list"}
-              [:li {:class "skeleton"}]]]
-            [:div {:class "local-card" :id "member-card"}
-             (dds/heading 2 "User を追加" {:size "20"})
-             [:form {:class "settings-form" :id "member-form"}
-              [:div {:class "field"}
-               [:label {:for "member-name"} "表示名"]
-               [:input {:id "member-name" :name "display-name" :required true
-                        :autocomplete "off"}]]
-              [:div {:class "field"}
-               [:label {:for "member-account-id"} "アカウントID"]
-               [:input {:id "member-account-id" :name "account-id"
-                        :required true :autocomplete "off"
-                        :pattern "[a-z0-9][a-z0-9._-]{1,30}[a-z0-9]"}]
-               [:span {:class "form-help"} "管理ドメインのアドレスを発行"]]
-              [:div {:class "field"}
-               [:label {:for "member-email"} "連絡先メール（任意）"]
-               [:input {:id "member-email" :name "contact-email" :type "email"
-                        :autocomplete "off"}]]
-              [:div {:class "field"}
-               [:label {:for "member-role"} "ロール"]
-               [:select {:id "member-role" :name "role"}
-                [:option {:value "member"} "Member"]
-                [:option {:value "admin"} "Admin"]]]
-              [:button {:class "primary-action" :type "submit"} "User を登録"]]
-             [:p {:class "security-callout" :id "enrollment-result"
-                  :hidden true :aria-live "polite"}]]]]]]]]])))
+        (settings-view mode)]]])))
