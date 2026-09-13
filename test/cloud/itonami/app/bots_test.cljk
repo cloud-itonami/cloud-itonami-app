@@ -1626,7 +1626,7 @@
   ;; future edit that raises a worker-side bound above a test-side wait (or
   ;; vice versa without headroom) reintroduces the race. This test reads the
   ;; bounds out of the source so the relationship cannot silently regress.
-  (let [source (slurp (io/file "test" "cloud" "itonami" "app" "bots_test.clj"))
+  (let [source (slurp (io/file "test" "cloud" "itonami" "app" "bots_test.cljk"))
         ;; every test-side admission wait on the `entered` promise
         entered-waits (mapv #(Long/parseLong (second %))
                             (re-seq #"deref entered (\d+) false" source))
@@ -5597,3 +5597,86 @@
             (is (str/includes? (:text message) "workspace_write_file"))
             (is (str/includes? (:text message) "repository access"))
             (is (empty? ((private-fn 'trace-of) (:bot/id b))))))))))
+
+(deftest abandoned-resident-workers-recover-without-replaying-open-actions
+  (doseq [[initial events expected reason]
+          [[:running [] :checkpointed :worker-lost]
+           [:leased [] :queued :worker-lost]
+           [:running [{:event/kind :action/started :event/data {:action/id "write"}}]
+            :held :orphaned-action-review]
+           [:leased [{:event/kind :action/started :event/data {:action/id "write"}}]
+            :held :orphaned-action-review]
+           [:running [{:event/kind :action/started :event/data {:action/id "read"}}
+                      {:event/kind :action/finished :event/data {:action/id "read"}}]
+            :checkpointed :worker-lost]]]
+    (with-store
+      (fn []
+        (let [bot-id (:bot/id (make-bot alice {}))
+              run-id "abandoned"
+              run (assoc (agent-run/agent-run {:id run-id :goal "preserve progress"} 0)
+                         :agent.run/status initial)
+              recover! (private-fn 'recover-orphaned-goals!)]
+          (swap! store/state assoc-in [:bots :goal-jobs run-id]
+                 {:job/id run-id :job/bot bot-id :job/session alice
+                  :job/resident-workforce? true :job/run run :job/events events
+                  :job/updated-at "2026-09-13T00:00:00Z"
+                  :job/plan [{:id "existing-step"}]})
+          (with-redefs-fn
+            {(ns-resolve 'cloud.itonami.app.bots 'goal-workers) (atom {})
+             (ns-resolve 'cloud.itonami.app.bots 'active-turns) (atom {})
+             #'store/now (constantly "2026-09-13T00:02:00Z")}
+            (fn []
+              (recover!)
+              (let [j (get-in @store/state [:bots :goal-jobs run-id])]
+                (is (= expected (get-in j [:job/run :agent.run/status])))
+                (is (= reason (get-in j [:job/run :agent.run/checkpoint-reason])))
+                (is (= [{:id "existing-step"}] (:job/plan j)))
+                (is (= reason (get-in (last (:job/events j)) [:event/data :reason])))
+                (is (= (= expected :held) (true? (:job/controller-migration-review? j))))
+                (recover!)
+                (is (= j (get-in @store/state [:bots :goal-jobs run-id]))
+                    "recovery is idempotent and preserves run identity")))))))))
+
+(deftest orphan-recovery-never-steals-live-or-new-work
+  (doseq [mode [:worker :turn :grace :review :interactive :finished-future]]
+    (with-store
+      (fn []
+        (let [bot-id (:bot/id (make-bot alice {}))
+              task (java.util.concurrent.FutureTask. ^java.util.concurrent.Callable (fn [] true))
+              workers (atom (if (contains? #{:worker :finished-future} mode) {"run" task} {}))
+              job {:job/id "run" :job/bot bot-id :job/session alice
+                   :job/resident-workforce? (not= mode :interactive)
+                   :job/controller-migration-review? (= mode :review)
+                   :job/run (assoc (agent-run/agent-run {:id "run" :goal "work"} 0)
+                                   :agent.run/status :running)
+                   :job/events []
+                   :job/updated-at (if (= mode :grace) "2026-09-13T00:00:01Z"
+                                      "2026-09-13T00:00:00Z")}]
+          (when (= mode :finished-future) (.run task))
+          (swap! store/state assoc-in [:bots :goal-jobs "run"] job)
+          (with-redefs-fn
+            {(ns-resolve 'cloud.itonami.app.bots 'goal-workers) workers
+             (ns-resolve 'cloud.itonami.app.bots 'active-turns)
+             (atom (if (= mode :turn) {bot-id true} {}))
+             #'store/now (constantly "2026-09-13T00:02:00Z")}
+            (fn []
+              ((private-fn 'recover-orphaned-goals!))
+              (if (= mode :finished-future)
+                (do (is (= :checkpointed (get-in @store/state [:bots :goal-jobs "run" :job/run :agent.run/status])))
+                    (is (empty? @workers)))
+                (is (= job (get-in @store/state [:bots :goal-jobs "run"])))))))))))
+
+(deftest admission-exceptions-release-the-worker-slot
+  (let [workers (atom {"failed-admission" :worker}) drained (atom 0)]
+    (with-redefs-fn
+      {(ns-resolve 'cloud.itonami.app.bots 'goal-workers) workers
+       (ns-resolve 'cloud.itonami.app.bots 'goal-job) (constantly {})
+       (ns-resolve 'cloud.itonami.app.bots 'goal-job-configuration)
+       (fn [& _] (throw (ex-info "admission failed" {:type :test/admission})))
+       (ns-resolve 'cloud.itonami.app.bots 'drain-goal-queue!) (fn [_] (swap! drained inc))}
+      (fn []
+        (let [error (try ((private-fn 'run-goal-job!) {} "failed-admission") nil
+                         (catch Exception e e))]
+          (is (= :test/admission (:type (ex-data error))))
+          (is (empty? @workers))
+          (is (= 1 @drained)))))))

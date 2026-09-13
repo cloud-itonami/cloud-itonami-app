@@ -6524,6 +6524,7 @@
              :agent.run/blocking-prerequisites (:turn/evidence turn)))))
 
 (defn- run-goal-job! [configuration run-id]
+  (try
   (let [{:job/keys [bot session objective attempt] :as job} (goal-job run-id)
         configuration (goal-job-configuration configuration job)
         ;; The spend ceiling, checked BEFORE the lease. A budget consulted
@@ -6665,12 +6666,12 @@
                                    ;; the one case where the type is all a reader
                                    ;; has, so it is the one case it must be kept.
                                    :cause-class (.getName (class error))})))))
-      (finally
+      )))
+    (finally
+      ;; Cover admission failures too, and serialize release with enqueue.
+      (locking goal-workers
         (swap! goal-workers dissoc run-id)
-        ;; A resident recovery queue is durable rather than submitted wholesale
-        ;; to the executor. Finishing any job frees the slot for exactly the
-        ;; next persisted resident job.
-        (drain-goal-queue! configuration))))))
+        (drain-goal-queue! configuration)))))
 
 (defn- finish-goal-run-from-visible! [run-id state]
   (let [status (goal-run-status
@@ -6692,6 +6693,54 @@
   [(if (= :checkpointed (get-in job [:job/run :agent.run/status]))
      (or (:job/updated-at job) (:job/created-at job))
      (:job/created-at job)) (:job/id job)])
+
+(defn- recover-orphaned-goals!
+  "Reconcile abandoned leases with this controller's actual workers.
+
+  Age alone never cancels a live worker. The grace period protects the gap
+  between persisting a new job and enqueueing it. Keep the same run, context
+  and receipts; an unfinished action must be reviewed instead of replayed."
+  []
+  (locking goal-workers
+    (let [at (store/now)
+          now (.toEpochMilli (java.time.Instant/parse at))]
+      (doseq [[run-id job] (:goal-jobs (snapshot))
+              :let [worker (get @goal-workers run-id)
+                    status (get-in job [:job/run :agent.run/status])
+                    updated (or (:job/updated-at job) (:job/created-at job))]
+              :when (and (:job/resident-workforce? job)
+                         (contains? #{:running :leased} status)
+                         (not (:job/controller-migration-review? job))
+                         (not (contains? @active-turns (:job/bot job)))
+                         (or (nil? worker)
+                             (and (instance? java.util.concurrent.Future worker)
+                                  (.isDone ^java.util.concurrent.Future worker)))
+                         updated
+                         (>= (- now (.toEpochMilli (java.time.Instant/parse updated)))
+                             120000))]
+        (let [unfinished
+              (reduce (fn [pending {:event/keys [kind data]}]
+                        (let [id (:action/id data)]
+                          (case kind
+                            :action/started (conj pending id)
+                            :action/finished (disj pending id)
+                            :action/failed (disj pending id)
+                            pending))) #{} (:job/events job))
+              review? (seq unfinished)
+              target (if review? :held (if (= :leased status) :queued :checkpointed))
+              reason (if review? :orphaned-action-review :worker-lost)]
+          (swap! goal-workers dissoc run-id)
+          ;; A persisted action proves this leased run had started work.
+          (when (and review? (= :leased status))
+            (transition-goal-run! run-id :running {}))
+          (transition-goal-run! run-id target {:agent.run/checkpoint-reason reason})
+          (when review?
+            (update-goal-job! run-id assoc :job/controller-migration-review? true))
+          (record-turn! (:job/bot job) run-id
+                        {:turn/state target :turn/phase target
+                         :turn/checkpoint-reason reason :turn/updated-at at})
+          (append-goal-event! run-id (if review? :run/held :run/checkpointed)
+                              {:reason reason :unfinished-actions (vec unfinished)}))))))
 
 (defn- drain-goal-queue!
   "Enqueue only the resident Goals that fit the configured inference budget.
@@ -8399,6 +8448,7 @@
   OAuth token must not stop everybody else's schedules, and a timer that dies
   on the first failure is a scheduler that silently stops being one."
   [configuration now]
+  (recover-orphaned-goals!)
   (let [result
         (mapv (fn [{:keys [session per-organization]}]
                 (try
