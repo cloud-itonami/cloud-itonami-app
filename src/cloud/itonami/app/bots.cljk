@@ -9027,7 +9027,7 @@
                      {:state :failed :error-type :profile/review-interrupted :finished-at (store/now)}))
         (when (and (empty? @profile-review-workers)
                    (zero? (:waiting (bot-dispatcher/snapshot)))
-                   (zero? (:active (bot-dispatcher/snapshot))))
+                   (< (:active (bot-dispatcher/snapshot)) (:max-parallel (bot-dispatcher/snapshot))))
           (when-let [r (first (sort-by :created-at (filter #(and (mine? %) (= :queued (:state %)))
                                                           (vals (:profile-reviews (snapshot))))))]
             (swap! profile-review-workers conj (:id r))

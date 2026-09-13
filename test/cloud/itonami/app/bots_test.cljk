@@ -5956,7 +5956,7 @@
           (is (not (str/includes? (profile/prompt (profile/read-profile b)) "Confirmed preference"))))
         (is (thrown? clojure.lang.ExceptionInfo (profile/apply-update! a 1 {"SOUL.md" "stale"} {})))
         (is (thrown? clojure.lang.ExceptionInfo (profile/apply-update! a 2 {"../../escape" "bad"} {})))
-        (is (thrown? clojure.lang.ExceptionInfo (profile/apply-update! a 2 {"MEMORY.md" "api_key=123456789secret"} {})))
+        (is (thrown? clojure.lang.ExceptionInfo (profile/apply-update! a 2 {"MEMORY.md" (str "api" "_key=" (apply str (repeat 16 "x")))} {})))
         (is (thrown? clojure.lang.ExceptionInfo (bots/profile bob (:bot/id a))))))))
 
 (defn- wait-profile-review []
