@@ -346,7 +346,7 @@
                          ".workspace{display:block;min-height:100dvh;padding-bottom:var(--mobile-nav-height)}"))
       (is (str/includes? web/app-css "--mobile-nav-height"))
       (is (str/includes? web/interaction-js "setMobileMenuOpen"))
-      (is (str/includes? web/interaction-js "document.body.dataset.currentView = name"))
+      (is (str/includes? web/interaction-js "document.body.dataset.currentView = overlay ? 'bots' : name"))
       (is (re-find #"id=\"connector-list\"" html))
       (is (re-find #"id=\"member-form\"" html))
       ;; Both gate steps are on the card, not just the first. ADR-0043 split
@@ -1584,7 +1584,7 @@
 
 (deftest the-bots-view-loads-its-read-only-conversations
   (is (not (str/includes? web/interaction-js "currentView === 'rooms'")))
-  (is (str/includes? web/interaction-js "if (currentView === 'bots')"))
+  (is (str/includes? web/interaction-js "if (botsVisible())"))
   (is (str/includes? web/interaction-js "setBotConversationsOpen"))
   (is (str/includes? web/interaction-js "loadRooms()")))
 

@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.web
   "DADS-backed WebKit workspace hosted by kotoba-lang/shell."
   (:require [clojure.java.io :as io]
+            [kotoba.lang.text :as str]
             [cloud.itonami.app.appearance :as appearance]
             [hanmen.svg :as hanmen-svg]
             [jp-go-dds.core :as dds]
@@ -1803,6 +1804,42 @@
     .topbar{padding-left:3.5rem;flex-wrap:wrap}
     .workspace-wallet{max-width:11rem;overflow:hidden;text-overflow:ellipsis}
   }
+
+  #workspace-overlay{width:min(54rem,calc(100vw - 3rem));max-width:none;height:min(48rem,calc(100dvh - 4rem));max-height:none;box-sizing:border-box;padding:0;border:1px solid var(--color-neutral-solid-gray-200);border-radius:1.25rem;background:var(--color-neutral-white);color:var(--color-neutral-solid-gray-900);overflow:hidden}
+  #workspace-overlay[open]{display:flex;flex-direction:column}
+  #workspace-overlay::backdrop{background:var(--color-neutral-solid-gray-900);opacity:.45}
+  .workspace-overlay__header{display:flex;align-items:center;justify-content:space-between;padding:1.25rem 2rem;flex:none;gap:1rem}
+  .workspace-overlay__header h2{font-size:1.25rem;margin:0}.workspace-overlay__header button{font-size:1.5rem;min-width:2.75rem}
+  #workspace-overlay-content{overflow:auto;min-height:0;padding:0 2rem 2rem;overscroll-behavior:contain}
+  #workspace-overlay-content>.view{padding:0;max-width:none;min-width:0}
+  #workspace-overlay-content>.view>.view-header{display:none}
+  .bots-pinned{list-style:none;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.25rem;margin:0;padding:.5rem 0;max-height:13rem;overflow:auto;flex-shrink:0}
+  .bots-pinned[hidden]{display:none}.bots-pinned .bots-rail__item{flex-direction:column;gap:.5rem;padding:.625rem .25rem;border-radius:.75rem;position:relative}
+  .bots-pinned .bot-avatar{width:3.75rem;height:3.75rem;flex:none;font-size:2.5rem}
+  .bots-pinned .bots-rail__copy{display:block;width:100%;text-align:center}.bots-pinned .bots-rail__headline{display:block}
+  .bots-pinned .bots-rail__name{display:block;font-size:.75rem;font-weight:500}.bots-pinned .bots-rail__time,.bots-pinned .bots-rail__last{display:none}
+  .bots-pinned .bots-dot{position:absolute;top:.5rem;right:.5rem}
+  .bots-rail__list{flex:1;min-height:0}.bots-rail__item{padding:.625rem .5rem}
+  .bots-launcher{margin-top:auto;flex:none;padding:.25rem;border-top:0}.bots-launcher>a{font-size:.875rem}
+  .bots-account{position:relative}.bots-account>summary{display:flex;align-items:center;gap:.625rem;padding:.5rem;cursor:pointer;list-style:none;min-height:2.75rem}
+  .bots-account>summary::-webkit-details-marker{display:none}.bots-account>summary .identity-summary__avatar{width:2rem;height:2rem;font-size:.875rem}
+  .bots-account>summary>span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.875rem}.bots-account small{display:none}
+  .bots-account__menu{position:absolute;bottom:100%;left:0;width:100%;box-sizing:border-box;padding:.5rem;background:var(--color-neutral-white);border:1px solid var(--color-neutral-solid-gray-200);border-radius:.75rem;box-shadow:0 .5rem 1.5rem var(--color-neutral-solid-gray-200);z-index:55}
+  .bots-account__menu .account-entry{position:static;padding:.5rem}.bots-account__menu .workspace-switcher{margin:0}.bots-account__menu .account-entry>span{display:none}.bots-account__menu .workspace-switcher{display:block}
+  @media(min-width:56.01rem){
+    body[data-current-view='bots'] .sidebar{display:none}
+    body[data-current-view='bots'] .bots-rail{position:fixed;inset:0 auto 0 0;width:19rem;box-sizing:border-box;z-index:41;padding:2.5rem .75rem .5rem}
+    body[data-current-view='bots'] .bots-main{grid-column:2}
+    body[data-current-view='bots'] .topbar{padding-left:20rem}
+  }
+  @media(max-width:56rem){
+    #workspace-overlay{width:calc(100vw - 1rem);height:calc(100dvh - 1rem);border-radius:1rem}
+    .workspace-overlay__header{padding:1rem}.workspace-overlay__header h2{font-size:1.125rem}
+    #workspace-overlay-content{padding:0 1rem 1rem}
+    .bots-shell.show-bot-list .bots-launcher{display:block}.bots-shell.show-bot-list .bots-rail__list{display:block;overflow:auto}
+    .bots-shell.show-bot-list .bots-pinned .bots-rail__item{display:flex}.bots-shell.show-bot-list .bots-pinned .bots-rail__copy{display:block}
+    .topbar{padding-left:.75rem}.topbar #bots-new{font-size:0}
+  }
   ")
 
 (def app-css
@@ -2147,6 +2184,13 @@
 
 (defn- app-marketplace-views []
   [:div
+   [:dialog {:id "workspace-overlay" :aria-labelledby "workspace-overlay-title"
+             :data-app-views (str/join " " (map :id app-directory/workspace-apps))}
+    [:header {:class "workspace-overlay__header"}
+     [:h2 {:id "workspace-overlay-title"} "App"]
+     [:button {:id "workspace-overlay-close" :type "button" :class "tool-button"
+               :aria-label "会話に戻る" :autofocus true} "×"]]
+    [:div {:id "workspace-overlay-content"}]]
    [:section {:class "view" :data-view-panel "apps" :hidden true}
     (view-header "App" "インストールした App を開く。")
     [:div {:class "button-row"} [:a {:class "primary-action" :href "#/marketplace"} "App を探す"]]
@@ -2681,12 +2725,15 @@
             [:span {:class "visually-hidden"} "Botを検索"]
             [:input {:id "bots-filter" :type "search" :placeholder "Botを検索"
                      :autocomplete "off"}]]
+           [:ul {:class "bots-pinned" :id "bots-pinned" :aria-label "ピン留めした Bot" :hidden true}]
            [:ul {:class "bots-rail__list" :id "bots-list"}]
            [:p {:class "bots-rail__empty" :id "bots-rail-empty"} "まだ Bot がいません"]
            [:footer {:class "bots-launcher"}
-            [:details [:summary "App"] [:div {:data-installed-apps "bots"}]
-             [:a {:href "#/apps"} "App を管理"]]
-            [:a {:href "#/marketplace"} "⊞ マーケットプレイス"]]]
+            [:a {:href "#/apps"} "▦ App"]
+            [:a {:href "#/marketplace"} "⊞ マーケットプレイス"]
+            [:details {:class "bots-account" :id "bots-account"}
+             [:summary {:id "bots-account-summary"} "アカウント"]
+             [:div {:class "bots-account__menu" :id "bots-account-menu"}]]]]
           [:div {:class "bots-main"}
            [:aside {:class "bots-routines-panel" :id "bots-routines-panel" :hidden true
                     :aria-label "このBotの定期ジョブ"}

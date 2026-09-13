@@ -13,3 +13,9 @@ The pinned cloud-kotoba-dds 0.3 alpha supplies the composer, prompt and styles, 
 Desktop keeps the conversation list and thread together. Phone widths give the thread the full width and expose the list through a labelled toggle. Secondary Bot actions live in one disclosure. Marketplace and settings preserve the same document and draft.
 
 Verification: App catalog coverage and isolated user/organization installation tests; real HTTP tests for session, CSRF, agent-session denial, installation/readback and cross-organization isolation; generated UI structural/token checks; browser exercise of search/tabs, install/reload, settings-to-composer handoff and viewport widths 320/390/768/1440. Browser fixtures do not prove production credentials or third-party connector authorization.
+
+## Overlay navigation (2026-09-13)
+
+App, marketplace, and account views open in a native modal dialog above the existing Bot workspace. Moving the existing view node preserves its state; closing with Escape, the close button, or the backdrop returns to the same conversation and restores focus. The fragment still addresses the opened surface, including direct links. Bot updates continue while the overlay is open.
+
+Pinned and priority Bots occupy large tiles at the top of the rail. The remaining conversation list scrolls independently. The account selector and organization switcher live in the bottom-left account menu, below App and marketplace launchers.
