@@ -55,6 +55,11 @@ fi
 export KBB_ENGINE="$engine"
 PATH="$kbb_home/bin:$PATH"
 export PATH
+# Force the amu emitter: without this bin/kotoba probes for a native kotoba
+# CLI on PATH, and the kotoba launcher the kbb checkout ships cannot run on a
+# JVM-free runner (its own path needs the JVM; measured 2026-09-13, CI failed
+# with "native kotoba CLI did not emit" after a 30-dep classpath refusal).
+export KOTOBA_EMITTER=amu
 if [[ ! -f "$KBB_ENGINE" ]]; then
   echo "kbb engine missing: $KBB_ENGINE" >&2
   exit 1
