@@ -1117,7 +1117,10 @@
                       :did (:ao.worker/subject worker)
                       :name (:ao.worker/id worker) :kind "organism"
                       :status (name (:ao.worker/status worker))}])]
-    (into {} (concat humans agents organisms))))
+    (into {} (concat humans agents organisms
+                     (for [b (vals (get-in (store/snapshot) [:bots :bots]))
+                           :when (= organization-id (:bot/organization b))]
+                       [(:bot/id b) {:id (:bot/id b) :name (:bot/name b) :kind "bot"}])))))
 
 (defn- messenger-principals
   "The addressable identities in the active organization.
@@ -1174,7 +1177,7 @@
     (when (str/blank? (str organization))
       (throw (ex-info "Messengerにはactive Organizationが必要です。"
                       {:type :identity/organization-required})))
-    {:session session
+    {:session (assoc session :organization-id (:active-organization-id context))
      :organization organization
      :actor (messenger-actor session)
      :principals (messenger-principals exchange session)}))
@@ -2245,17 +2248,21 @@
 
     (and (= method "GET")
          (id-from-path path #"/api/messenger/conversations/([^/]+)/messages"))
-    (let [{:keys [organization actor principals]} (messenger-context exchange)
+    (let [{:keys [session organization actor principals]} (messenger-context exchange)
           id (id-from-path path #"/api/messenger/conversations/([^/]+)/messages")]
-      (send! exchange 200 (messenger/messages organization actor id principals)))
+      (send! exchange 200 (assoc (messenger/messages organization actor id principals)
+                                :run (bots/messenger-run session id))))
 
     (and (= method "POST")
          (id-from-path path #"/api/messenger/conversations/([^/]+)/messages"))
     (let [{:keys [session organization actor]} (messenger-context exchange)
           id (id-from-path path #"/api/messenger/conversations/([^/]+)/messages")]
       (require-origin! exchange config) (require-csrf! exchange session)
-      (send! exchange 202
-             (messenger/send-message! organization actor id (read-json exchange))))
+      (let [request (read-json exchange)
+            _ (bots/validate-messenger-input! session id request)
+            receipt (messenger/send-message! organization actor id request)]
+        (send! exchange 202 (assoc receipt :run
+          (bots/queue-messenger-reply! config session id (:message-id receipt))))))
 
     (and (= method "POST")
          (id-from-path path #"/api/messenger/conversations/([^/]+)/read"))
@@ -6236,7 +6243,8 @@
       (and (= method "GET") (bot-id-from path #"/api/bots/([^/]+)/messages"))
       (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/messages")]
         (send! exchange 200
-               {:messages (bots/messages session bot-id)
+               {:conversation (bots/messenger-binding session :direct bot-id)
+                :messages (bots/messages session bot-id)
                 :turn (bots/latest-turn session bot-id)
                 :handoffs (bots/handoff-runs session bot-id)}))
 
@@ -6947,7 +6955,8 @@
            (bot-id-from path #"/api/agent-bots/([^/]+)/messages"))
       (let [bot-id (bot-id-from path #"/api/agent-bots/([^/]+)/messages")]
         (send! exchange 200
-               {:messages (bots/messages session bot-id)
+               {:conversation (bots/messenger-binding session :direct bot-id)
+                :messages (bots/messages session bot-id)
                 :turn (bots/latest-turn session bot-id)
                 :handoffs (bots/handoff-runs session bot-id)}))
 

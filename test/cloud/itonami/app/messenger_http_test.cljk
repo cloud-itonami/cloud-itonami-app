@@ -7,6 +7,9 @@
             [cloud.itonami.app.organism-gateway :as organism-gateway]
             [cloud.itonami.app.organism-messenger-transport :as organism-transport]
             [cloud.itonami.app.server :as server]
+            [cloud.itonami.app.bots :as bots]
+            [cloud.itonami.app.provider :as provider]
+            [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.store :as store])
   (:import [java.net URI]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
@@ -101,6 +104,9 @@
                       (when (= token "ao-token")
                         {:organization "acme" :worker-id "ao:acme:reviewer"
                          :principal "organism:ao:acme:reviewer"}))]
+        ;; Startup and transactions reload durable state. Persist the identity
+        ;; fixture rather than relying on an atom the first write can replace.
+        (let [seed @store/state] (store/transact! (constantly seed)))
         (server/stop!)
         (server/start! config)
         (try (body) (finally (server/stop!))))
@@ -175,3 +181,29 @@
                               (str "/api/messenger/conversations/"
                                    conversation-id "/messages") nil)
                      :body :items last :content))))))))
+
+(deftest bot-group-uses-the-existing-messenger-http-protocol
+  (with-server (atom "human:alice")
+    (fn []
+      (let [session {:user-id "human:alice" :organization-id "organization-record-acme" :kind :passkey}
+            b (bots/create! nil session {:name "HTTP speaker" :connectors [] :writes? false :omakase? false})
+            g (bots/create-group! session {:name "HTTP group" :members [(:bot/id b)]})
+            cid (:id (bots/messenger-binding session :group (:group/id g)))
+            path (str "/api/messenger/conversations/" cid "/messages")]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local :default-model "m"})
+                      provider/agent-turn (fn [_ _] {:content "HTTP reply" :tool-calls []})]
+          (is (= 200 (:status (request :get path nil))))
+          (let [body {:content "HTTP question" :idempotency-key "http-once"}
+                sent (request :post path body)]
+            (is (= 202 (:status sent)))
+            (loop [n 500]
+              (when (and (pos? n) (#{:queued :running} (:state (bots/messenger-run session cid))))
+                (Thread/sleep 10) (recur (dec n))))
+            (is (= :completed (:state (bots/messenger-run session cid))))
+            (is (= (get-in sent [:body :message-id])
+                   (get-in (request :post path body) [:body :message-id])))
+            (let [received (request :get path nil)]
+              (is (= "cloud.itonami.app.messenger.v1" (get-in received [:body :schema])))
+              (is (= ["HTTP question" "HTTP reply"] (mapv :content (get-in received [:body :items]))))
+              (is (= ["human" "bot"] (mapv :sender-kind (get-in received [:body :items])))))
+            (is (= ["HTTP question" "HTTP reply"] (mapv :text (bots/group-messages session (:group/id g)))))))))))

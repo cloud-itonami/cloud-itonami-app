@@ -61,6 +61,7 @@
             [cloud.itonami.app.bot :as bot]
             [cloud.itonami.app.bot-authority :as bot-authority]
             [cloud.itonami.app.bot-dispatcher :as bot-dispatcher]
+            [cloud.itonami.app.messenger :as messenger]
             [cloud.itonami.app.bot-identity :as bot-identity]
             [cloud.itonami.app.bot-workspace :as bot-workspace]
             [cloud.itonami.app.bot-bounds :as bounds]
@@ -1814,12 +1815,76 @@
 
 ;; ── conversation ────────────────────────────────────────────────────────
 
+(def ^:dynamic *conversation-reader* nil)
+(def ^:dynamic *incoming-messenger-id* nil)
+(declare owned-group! dispatch-messenger-replies! turn-lock)
+
+(defn- dialogue-binding [kind id]
+  (let [record (get-in (snapshot) [(if (= kind :group) :groups :bots) id])
+        owner (get record (if (= kind :group) :group/owner :bot/owner))
+        org (get record (if (= kind :group) :group/organization :bot/organization))
+        members (if (= kind :group) (:group/members record) [id])]
+    (when (and owner org)
+      (doseq [member members]
+        (let [b (bot-by-id member)]
+          (when-not (and (= owner (:bot/owner b)) (= org (:bot/organization b)))
+            (throw (ex-info "Conversation contains a Bot outside its owner and organization."
+                            {:type :bot/forbidden})))))
+      {:id (or (:group/messenger-id record) (str "conversation-" (subs (receipt-sha256 (pr-str [org kind id])) 0 32)))
+       :owner owner :organization (messenger/organization-key org) :members (vec (cons owner members))
+       :title (or (get record (if (= kind :group) :group/name :bot/name)) "Conversation")
+       :kind kind :target id})))
+
+(defn- ensure-dialogue! [kind id]
+  (when-let [{:keys [owner organization members title] :as binding} (dialogue-binding kind id)]
+    (let [legacy (get-in (snapshot) [(if (= kind :group) :group-conversations :conversations) id] [])
+          cid (:id binding)
+          imported (mapv (fn [m]
+                     (let [from (some-> (:message/from m) (str/replace #"^bot:" ""))
+                           ;; A note forwarded into a direct Bot thread is a
+                           ;; relay by that Bot, not membership for its author.
+                           sender (cond (and (= kind :group) from) from
+                                        (or (= :bot (:message/role m)) from) id
+                                        :else owner)]
+                       {:message/id (str "message-" (subs (receipt-sha256 (pr-str [cid (:message/id m)])) 0 32))
+                        :message/sender sender :message/content (or (:message/text m) "")
+                        :message/created-at (or (:message/at m) "1970-01-01T00:00:00Z")
+                        :message/bot-view (dissoc m :message/text)})) legacy)]
+      (messenger/adopt-local-conversation! organization owner cid kind title members
+        {(if (= kind :group) :conversation/bot-group :conversation/bot) id} imported)
+      binding)))
+
+(defn messenger-binding [session kind id]
+  (if (= kind :group) (owned-group! session id) (owned! session id))
+  (select-keys (ensure-dialogue! kind id) [:id :kind :members :title]))
+
+(defn- dialogue-messages [kind id recipient]
+  (let [legacy (get-in (snapshot) [(if (= kind :group) :group-conversations :conversations) id] [])]
+    (if-let [{:keys [organization owner] cid :id} (ensure-dialogue! kind id)]
+      (let [cache (into {} (map (juxt :message/id identity) legacy))
+            items (:items (messenger/messages organization (or recipient owner) cid {}))
+            stored (get-in (store/snapshot) [:messenger :organizations (messenger/organization-key organization) :messages])]
+        (mapv (fn [item]
+                (let [m (get stored (:id item)) meta (:message/bot-view m)
+                      sender (:sender-id item)]
+                  (merge meta (get cache (:message/id meta))
+                         {:message/id (or (:message/id meta) (:id item))
+                          :message/bot id :message/text (:content item)
+                          :message/role (or (:message/role meta) (if (= sender owner) :person :bot))
+                          :message/at (:created-at item)}
+                         (when (and (= kind :group) (not= sender owner))
+                           {:message/from (peer/address sender)}))))
+              ;; Sealed envelopes stay opaque. They never enter model context.
+              (take-last max-conversation (remove :sealed? items))))
+      (vec legacy))))
+
 (defn- conversation [bot-id]
-  (vec (get-in (snapshot) [:conversations bot-id] [])))
+  (dialogue-messages :direct bot-id (or *conversation-reader* bot-id)))
 
 (defn- append! [bot-id message]
   (transact! update-in [:conversations bot-id]
              #(store-core/append-bounded % message max-conversation))
+  (ensure-dialogue! :direct bot-id)
   message)
 
 (defn- context-message
@@ -2370,7 +2435,8 @@
   (let [providers (connected-providers did)]
     ;; `mapv` is eager, so the memo is spent inside this binding rather than
     ;; escaping in a lazy sequence that would resolve after it was gone.
-    (binding [*secret-source* (memoize secret-store/source)]
+    (binding [*secret-source* (memoize secret-store/source)
+              *conversation-reader* (:bot/owner (bot-by-id bot-id))]
       (mapv #(public-message % providers bot-id)
             (classify-resident-messages (conversation bot-id))))))
 
@@ -6010,6 +6076,7 @@
        (mapv (fn [g]
                {:id (:group/id g)
                 :name (:group/name g)
+                :messenger-conversation-id (:id (ensure-dialogue! :group (:group/id g)))
                 :schedule (:group/schedule g)
                 :run (get-in (snapshot) [:group-runs (:group/id g)])
                 :members (mapv (fn [id]
@@ -6018,8 +6085,9 @@
                                     :enabled? (boolean (:bot/enabled? b))}))
                                (:group/members g))}))))
 
-(defn- group-conversation [group-id]
-  (get-in (snapshot) [:group-conversations group-id] []))
+(defn- group-conversation
+  ([group-id] (dialogue-messages :group group-id nil))
+  ([group-id recipient] (dialogue-messages :group group-id recipient)))
 
 (defn group-messages
   [session group-id]
@@ -6034,7 +6102,9 @@
 
 (defn- append-group! [group-id message]
   (transact! update-in [:group-conversations group-id]
-             #(store-core/append-bounded % message max-conversation)))
+             #(store-core/append-bounded % message max-conversation))
+  (ensure-dialogue! :group group-id)
+  message)
 
 (defn- group-prompt [b g others]
   (str "You are " (:bot/name b) ", in a room called \"" (:group/name g)
@@ -6060,7 +6130,7 @@
 (def ^:dynamic *group-turn-source* :person)
 (def ^:dynamic *group-round-limit* max-group-rounds)
 
-(defn group-send!
+(defn- group-send-unlocked!
   "One message to a room, and the rounds it causes.
 
   Each member gets at most one turn per round and may pass; a round nobody
@@ -6079,10 +6149,12 @@
       (throw (ex-info "メッセージが空です。" {:type :bot/empty-message})))
     (when (> (count text) max-message-chars)
       (throw (ex-info "メッセージが長すぎます。" {:type :bot/message-too-long})))
-    (append-group! (:group/id g)
+    (when-not *incoming-messenger-id*
+      (append-group! (:group/id g)
                    (bot/message {:id (new-id "msg") :bot (:group/id g)
-                                 :role :person :source *group-turn-source* :text text :at (store/now)}))
-    (let [members (keep bot-by-id (:group/members g))
+                                 :role :person :source *group-turn-source* :text text :at (store/now)})))
+    (let [input-id (or *incoming-messenger-id* (:message/id (last (group-conversation group-id))))
+          members (keep bot-by-id (:group/members g))
           ;; `may-address?` is the landed judgement (ADR-0062) and it is asked
           ;; per member per round rather than once: a Bot disabled while the
           ;; room is mid-conversation stops answering at the next question, not
@@ -6104,7 +6176,8 @@
         (let [answered
               (reduce
                (fn [answered b]
-                 (if-not (reachable b)
+                 (if-not (and (reachable b)
+                              (some #(= input-id (:message/id %)) (group-conversation group-id (:bot/id b))))
                    answered
                    (let [others (->> members
                                      (remove #(= (:bot/id %) (:bot/id b)))
@@ -6121,7 +6194,7 @@
                           (provider-choice! configuration b))
                          messages (into [{:role "system"
                                           :content (group-prompt b g others)}]
-                                        (for [m (group-conversation (:group/id g))
+                                        (for [m (group-conversation (:group/id g) (:bot/id b))
                                               :when (seq (str (:message/text m)))]
                                           {:role (if (= (:message/from m)
                                                         (peer/address (:bot/id b)))
@@ -6153,6 +6226,10 @@
              :rounds round
              :answers (+ spoke answered)
              :messages (group-messages session group-id)}))))))
+
+(defn group-send! [configuration session group-id text]
+  (locking (turn-lock group-id)
+    (group-send-unlocked! configuration session group-id text)))
 
 ;; One local conversation worker; model requests remain behind the dispatcher.
 (defonce ^:private group-workers (atom #{}))
@@ -6187,13 +6264,15 @@
         (or (>= (count @group-workers) 4) (contains? @group-workers group-id) (= :running (:state previous)))
         (throw (ex-info "この会話の返答を待ってから送ってください。" {:type :group/busy}))
         :else
-        (let [run {:id request-id :state :running :source source :started-at (store/now)}]
+        (let [incoming-id *incoming-messenger-id*
+              run {:id request-id :state :running :source source :started-at (store/now)}]
           (transact! assoc-in [:group-runs group-id] run)
           (swap! group-workers conj group-id)
           (.submit ^ExecutorService group-executor ^Runnable
             (fn []
               (try
-                (binding [*group-turn-source* source *group-round-limit* 1]
+                (binding [*group-turn-source* source *group-round-limit* 1
+                          *incoming-messenger-id* incoming-id]
                   (group-send! configuration session group-id text))
                 (transact! update-in [:group-runs group-id]
                            merge {:state :completed :finished-at (store/now)})
@@ -6307,12 +6386,12 @@
           message-source (or requested-source
                              (if resident? :resident :person))
           person-message
-          (bot/message {:id (new-id "msg") :bot bot-id :role :person
+          (bot/message {:id (or *incoming-messenger-id* (new-id "msg")) :bot bot-id :role :person
                         :text text :at (store/now)
                         :direction current-direction
                         :context-id context-id
                         :source message-source})
-          _ (append! bot-id person-message)
+          _ (when-not *incoming-messenger-id* (append! bot-id person-message))
           context (store-context! context-id b current-direction message-source
                                   (if isolated?
                                     [person-message]
@@ -8716,7 +8795,8 @@
         (mapv (fn [{:keys [session per-organization]}]
                 (try
                   (let [_ (doseq [organization-session per-organization]
-                            (fire-due-groups! configuration organization-session now))
+                            (fire-due-groups! configuration organization-session now)
+                            (dispatch-messenger-replies! configuration organization-session))
                         routines (fire-due! configuration session now)
                         workforce (fire-due-workforce! configuration per-organization now)]
                     {:user (:user-id session)
@@ -8768,3 +8848,108 @@
     (.shutdownNow executor)
     (reset! tick-scheduler nil))
   true)
+
+;; Messenger is the delivery protocol; this bounded adapter supplies Bot replies.
+;; It consumes only admitted plaintext and preserves the original message id.
+(defonce ^:private messenger-reply-workers (atom #{}))
+(defonce ^:private messenger-reply-executor
+  (Executors/newFixedThreadPool 2
+    (reify java.util.concurrent.ThreadFactory
+      (newThread [_ runnable] (doto (Thread. runnable "itonami-messenger-reply") (.setDaemon true))))))
+
+(defn- messenger-target! [session cid]
+  (let [org (:organization-id session) owner (:user-id session)
+        c (get-in (store/snapshot) [:messenger :organizations (messenger/organization-key org) :conversations cid])]
+    (when (= owner (:conversation/created-by c))
+      (cond
+        (:conversation/bot c) (do (owned! session (:conversation/bot c)) [:direct (:conversation/bot c)])
+        (:conversation/bot-group c) (do (owned-group! session (:conversation/bot-group c)) [:group (:conversation/bot-group c)])
+        :else
+        (let [members (vec (remove #{owner} (:conversation/members c)))
+              bots (mapv bot-by-id members)]
+          (when (and (seq members) (<= (count members) 8)
+                     (every? #(and (= owner (:bot/owner %)) (= org (:bot/organization %))) bots))
+            (let [id (str "group-messenger-" (subs (receipt-sha256 cid) 0 24))
+                  g (assoc (bot/group {:id id :owner owner :organization org
+                                      :name (:conversation/title c) :members members
+                                      :created-at (:conversation/created-at c)}) :group/messenger-id cid)]
+              ;; Existing Messenger trust decisions are deliberately untouched.
+              (store/transact! (fn [state] (-> state
+                (assoc-in [:bots :groups id] g)
+                (assoc-in [:messenger :organizations (messenger/organization-key org) :conversations cid :conversation/bot-group] id))))
+              [:group id])))))))
+
+(defn messenger-run [session cid]
+  (let [org (:organization-id session) owner (:user-id session)
+        records (filter #(and (= org (:organization %)) (= owner (:owner %)) (= cid (:conversation %)))
+                        (vals (:messenger-replies (snapshot))))
+        reply (last (sort-by :created-at records))
+        target (messenger-target! session cid)
+        scheduled (when (= :group (first target)) (group-run session (second target)))
+        run (if (and scheduled (pos? (compare (or (:started-at scheduled) "") (or (:created-at reply) "")))) scheduled reply)]
+    (select-keys run [:id :state :started-at :finished-at :error-type])))
+
+(defn dispatch-messenger-replies! [configuration session]
+  (locking messenger-reply-workers
+    (let [org (:organization-id session) owner (:user-id session)]
+      (doseq [r (vals (:messenger-replies (snapshot)))
+              :when (and (= org (:organization r)) (= owner (:owner r))
+                         (= :running (:state r)) (not (contains? @messenger-reply-workers (:id r))))]
+        (transact! update-in [:messenger-replies (:id r)] merge
+                   {:state :failed :error-type :messenger/interrupted :finished-at (store/now)}))
+      (doseq [r (take (max 0 (- 2 (count @messenger-reply-workers)))
+                     (sort-by :created-at
+                       (filter #(and (= org (:organization %)) (= owner (:owner %)) (= :queued (:state %)))
+                               (vals (:messenger-replies (snapshot))))))]
+        (let [mid (:id r)]
+          (swap! messenger-reply-workers conj mid)
+          (transact! update-in [:messenger-replies mid] merge {:state :running :started-at (store/now)})
+          (.submit ^ExecutorService messenger-reply-executor ^Runnable
+            (fn []
+              (try
+                (let [[kind target] (messenger-target! session (:conversation r))
+                      readers (if (= kind :group) (:group/members (owned-group! session target)) [target])
+                      admitted? (some (fn [recipient]
+                                        (some #(= mid (:id %)) (:items (messenger/messages org recipient (:conversation r) {})))) readers)
+                      message (get-in (store/snapshot) [:messenger :organizations (messenger/organization-key org) :messages mid])]
+                  (when-not (and target admitted? (:message/content message)
+                                 (= owner (:message/sender message)))
+                    (throw (ex-info "Message is not admitted for a Bot reply." {:type :messenger/not-admitted})))
+                  (binding [*incoming-messenger-id* mid *group-round-limit* 1]
+                    (if (= kind :group)
+                      (group-send! configuration session target (:message/content message))
+                      (locking (turn-lock target)
+                        (send-stream! configuration session target (:message/content message) mid false nil)
+                        (when-let [result (turn session target mid)]
+                          (when-not (= "completed" (:state result))
+                            (throw (ex-info "Bot reply did not complete."
+                                            {:type :messenger/reply-incomplete})))))))
+                  (transact! update-in [:messenger-replies mid] merge {:state :completed :finished-at (store/now)}))
+                (catch Exception error
+                  (transact! update-in [:messenger-replies mid] merge
+                             {:state :failed :error-type (or (:type (ex-data error)) :messenger/reply-failed)
+                              :finished-at (store/now)}))
+                (finally (swap! messenger-reply-workers disj mid))))))))))
+
+(defn queue-messenger-reply! [configuration session cid message-id]
+  (when-let [[kind target] (messenger-target! session cid)]
+    (let [org (:organization-id session) owner (:user-id session)
+          message (get-in (store/snapshot) [:messenger :organizations (messenger/organization-key org) :messages message-id])
+          readers (if (= kind :group) (:group/members (owned-group! session target)) [target])]
+      (when (and (= cid (:message/conversation message)) (= owner (:message/sender message))
+                 (:message/content message)
+                 (some (fn [recipient] (some #(= message-id (:id %))
+                                            (:items (messenger/messages org recipient cid {})))) readers))
+        (transact! update-in [:messenger-replies message-id]
+                   #(or % {:id message-id :state :queued :organization org :owner owner
+                           :conversation cid :created-at (store/now)}))
+        (dispatch-messenger-replies! configuration session)
+        (messenger-run session cid)))))
+
+(defn validate-messenger-input! [session cid request]
+  (when-let [[kind target] (messenger-target! session cid)]
+    (when (and (= :direct kind) (:content request))
+      (let [requirements (keep #(secret-request/requirement (:card/secret %)) (open-secret-cards target))]
+        (when (and (seq requirements) (secret-request/carries-value? requirements (:content request)))
+          (throw (ex-info "資格情報はチャットではなく専用欄に入力してください。"
+                          {:type :secret/plaintext-in-message :bot target})))))))

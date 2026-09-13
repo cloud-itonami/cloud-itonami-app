@@ -46,12 +46,15 @@
   (merge {:conversations {} :messages {} :deliveries {} :trust {} :devices {}}
          (:messenger state)))
 
+(defn organization-key [organization]
+  (or (get-in (store/snapshot) [:identity :organizations organization :organization-id]) organization))
+
 (defn- organization-state [state organization]
-  (get-in (messenger-state state) [:organizations organization]
+  (get-in (messenger-state state) [:organizations (organization-key organization)]
           {:conversations {} :messages {} :deliveries {} :trust {} :devices {}}))
 
 (defn- org-path [organization & more]
-  (into [:messenger :organizations organization] more))
+  (into [:messenger :organizations (organization-key organization)] more))
 
 (defn- digest [value]
   (let [bytes (.digest (MessageDigest/getInstance "SHA-256")
@@ -276,6 +279,61 @@
       (store/transact! assoc-in (org-path organization :conversations id) conversation)
       conversation)))
 
+(defn adopt-local-conversation!
+  "Host adapter for an existing owner-bound local dialogue. Stable message ids
+  make migration replayable. This translates existing exact sender admission;
+  ordinary Messenger membership still grants no trust, and explicit revocations
+  are never replaced. Legacy records remain available for UI action metadata."
+  [organization owner id kind title members binding imported]
+  (let [members (vec (distinct (cons owner members)))
+        path (org-path organization)
+        missing? (fn [state] (or (nil? (get-in state (conj path :conversations id)))
+                                 (some #(not (get-in state (conj path :messages (:message/id %)))) imported)))]
+    (when (missing? (store/snapshot))
+      (store/transact!
+       (fn [state]
+         (let [existing (get-in state (conj path :conversations id))
+               _ (when (and existing (or (not= owner (:conversation/created-by existing))
+                                         (not= (set members) (set (:conversation/members existing)))))
+                   (fail! :messenger/forbidden "local conversation binding does not match"))
+               state (if existing state
+                       (assoc-in state (conj path :conversations id)
+                         (merge {:conversation/id id :conversation/organization organization
+                                 :conversation/kind kind :conversation/title title
+                                 :conversation/members members :conversation/created-by owner
+                                 :conversation/created-at (store/now)} binding)))
+               state (if existing state
+                       (reduce (fn [s [recipient sender]]
+                                 (let [p (into path [:trust recipient sender])]
+                                   (if (some? (get-in s p)) s
+                                     (assoc-in s p {:allowed? true :source :existing-local-dialogue
+                                                   :updated-at (store/now)}))))
+                               state (for [r members s members :when (not= r s)] [r s])))]
+           (reduce
+            (fn [state message]
+              (let [mid (:message/id message) sender (:message/sender message)]
+                (when-not (some #{sender} members)
+                  (fail! :messenger/forbidden "local message sender is outside the conversation"))
+                (if (get-in state (conj path :messages mid)) state
+                  (let [message (merge message {:message/organization organization
+                                                :message/conversation id :message/type :message
+                                                :message/encryption {:mode :local-plaintext :e2ee? false}})
+                        org (get-in state path)
+                        seqno (count (:messages org))]
+                    (-> state
+                        (assoc-in (conj path :messages mid) message)
+                        (update-in (conj path :deliveries)
+                          #(merge (or % {})
+                            (into {} (for [recipient members]
+                              [[mid recipient]
+                               {:delivery/message mid :delivery/conversation id
+                                :delivery/sender sender :delivery/recipient recipient
+                                :delivery/status (if (trusted? org recipient sender) :accepted :quarantined)
+                                :delivery/content-digest (digest (:message/content message))
+                                :delivery/sequence seqno :delivery/created-at (:message/created-at message)}])))))))))
+            state imported)))))
+    id))
+
 (defn set-trust!
   "Allow or revoke one exact sender for the caller's mailbox.
 
@@ -345,7 +403,9 @@
               (when-not (= conversation-id (:message/conversation parent))
                 (fail! :messenger/invalid "reply-to must name a message in this conversation"))))
         payload (message-payload request)
-        id (str "message-" (UUID/randomUUID))
+        id (if-let [key (:idempotency-key request)]
+             (str "message-" (subs (digest (pr-str [sender conversation-id (clean-id key :idempotency-key)])) 7))
+             (str "message-" (UUID/randomUUID)))
         at (store/now)
         message (merge {:message/id id
                         :message/organization organization
@@ -373,9 +433,17 @@
                    (:conversation/members conversation)))]
     (store/transact!
      (fn [current]
-       (-> current
-           (assoc-in (org-path organization :messages id) message)
-           (update-in (org-path organization :deliveries) #(merge (or % {}) deliveries)))))
+       (if-let [prior (get-in current (org-path organization :messages id))]
+         (if (= (select-keys prior [:message/sender :message/conversation :message/content :message/sealed :message/reply-to])
+                (select-keys message [:message/sender :message/conversation :message/content :message/sealed :message/reply-to]))
+           current
+           (fail! :messenger/idempotency-conflict "request id was already used for another message"))
+         (-> current
+             (assoc-in (org-path organization :messages id) message)
+             (update-in (org-path organization :deliveries)
+               #(merge (or % {}) (into {} (map (fn [[key delivery]]
+                 [key (assoc delivery :delivery/sequence (count (get-in current (org-path organization :messages)))
+                                      :delivery/status (if (trusted? (organization-state current organization) (:delivery/recipient delivery) sender) :accepted :quarantined))]) deliveries))))))))
     {:schema schema :message-id id :conversation-id conversation-id
      :deliveries (frequencies (map :delivery/status (vals deliveries)))
      :encryption (:message/encryption message)}))
@@ -388,6 +456,7 @@
              :sender (or (:name sender) (:message/sender message))
              :sender-kind (:kind sender)
              :reply-to (:message/reply-to message)
+             :source (get-in message [:message/bot-view :message/source])
              :created-at (:message/created-at message)
              :delivery-status (name (:delivery/status delivery))
              :encryption {:mode (name (get-in message [:message/encryption :mode]))
@@ -407,7 +476,7 @@
                      (filter #(and (= principal (:delivery/recipient %))
                                    (= conversation-id (:delivery/conversation %))
                                    (#{:accepted :read} (:delivery/status %))))
-                     (sort-by :delivery/created-at)
+                     (sort-by (juxt #(or (:delivery/sequence %) 0) :delivery/created-at :delivery/message))
                      (mapv (fn [delivery]
                              (message-view (get-in org-state [:messages (:delivery/message delivery)])
                                            delivery principals))))]

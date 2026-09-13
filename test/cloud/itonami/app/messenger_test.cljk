@@ -168,3 +168,14 @@
                     (get-in (store/snapshot)
                             [:messenger :organizations "acme" :deliveries
                              [message-id "human:bob"]])))))))
+
+(deftest idempotent-message-requests-are-immutable
+  (let [c (messenger/create-conversation! "org" "human:alice" principals
+            {:title "retry" :members ["human:bob"]}) cid (:conversation/id c)
+        request {:content "once" :idempotency-key "retry-1"}
+        a (messenger/send-message! "org" "human:alice" cid request)
+        b (messenger/send-message! "org" "human:alice" cid request)]
+    (is (= (:message-id a) (:message-id b)))
+    (is (= 1 (count (:items (messenger/messages "org" "human:alice" cid principals)))))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (messenger/send-message! "org" "human:alice" cid (assoc request :content "changed"))))))
