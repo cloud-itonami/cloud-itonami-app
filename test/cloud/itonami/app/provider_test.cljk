@@ -996,3 +996,29 @@
         (is (= :provider/output-budget-exhausted (:type error)))
         (is (= reason (:finish-reason error)))))
     (is (= "Complete report" (:content (result {:content "Complete report"} "stop"))))))
+
+(deftest exhausted-network-wait-uses-only-explicit-independent-capacity
+  (let [run (private-fn 'with-model-fallback)
+        p {:backoff-on-rate-limit? true
+           :capacity-fallbacks {"murakumo-main" "ling-3.0-tiny"}}
+        calls (atom [])
+        invoke (fn [model]
+                 (swap! calls conj model)
+                 (if (= model "murakumo-main")
+                   (throw (ex-info "busy" {:type :provider/http-error :status 429
+                                           :response {:error {:code "network_queue_timeout"}}}))
+                   {:content "ok"}))]
+    (is (= "ling-3.0-tiny" (:model (run p "murakumo-main" invoke))))
+    (is (= ["murakumo-main" "ling-3.0-tiny"] @calls))
+    (reset! calls [])
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (run (assoc p :no-fallback-models #{"murakumo-main"}) "murakumo-main" invoke)))
+    (is (= ["murakumo-main"] @calls))
+    (doseq [code ["network_queue_full" "quota_exceeded"]]
+      (let [seen (atom 0)]
+        (is (thrown? clojure.lang.ExceptionInfo
+                     (run p "murakumo-main"
+                          (fn [_] (swap! seen inc)
+                            (throw (ex-info "limited" {:type :provider/http-error :status 429
+                                                       :response {:error {:code code}}}))))))
+        (is (= 1 @seen))))))
