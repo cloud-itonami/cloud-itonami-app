@@ -38,7 +38,7 @@
     developer, which is the pair this workspace keeps having to arrange by
     hand: the runtime stays correct and the omission still makes a noise."
   (:require [kotoba.lang.text :as str]
-            [cloud.itonami.app.store :as store]))
+            #?(:clj [cloud.itonami.app.store :as store])))
 
 ;; ── whether a row can be picked at all ──────────────────────────────────
 
@@ -224,6 +224,9 @@
 (defn installed-app-ids [state session]
   (get-in state (installation-path session) default-workspace-apps))
 
+;; The JVM controller owns persistence; catalog and selection remain portable.
+#?(:clj
+   (do
 (defn workspace-catalog [session]
   (let [installed (installed-app-ids (store/snapshot) session)]
     {:apps (mapv #(assoc % :installed? (contains? installed (:id %))) workspace-apps)}))
@@ -237,3 +240,4 @@
                                 ((if installed? conj disj)
                                  (installed-app-ids state session) id)))))
   (workspace-catalog session))
+))
