@@ -208,25 +208,63 @@
         : {month:'numeric', day:'numeric', weekday:'short', hour:'2-digit', minute:'2-digit'}
       ).format(date);
     };
+    const workspaceOverlay = $('#workspace-overlay');
+    const overlayViews = new Set(['apps', 'marketplace', 'settings',
+      ...workspaceOverlay.dataset.appViews.split(' ')]);
+    let overlayOrigin = null;
+    const botsVisible = () => currentView === 'bots' || workspaceOverlay.open;
+    const accountMenu = $('#bots-account-menu');
+    const accountSummary = $('#bots-account-summary');
+    const accountEntry = $('#account-entry');
+    accountSummary.replaceChildren(...Array.from(accountEntry.children).map(node => node.cloneNode(true)));
+    // Keep the identity IDs on the visible account selector so identity refreshes
+    // continue to update it. The settings link has only its accessible name.
+    accountEntry.replaceChildren(document.createTextNode('アカウント設定'));
+    accountEntry.setAttribute('aria-label', 'アカウント設定');
+    accountMenu.append(accountEntry, $('.workspace-switcher'));
+    $('#workspace-overlay-close').addEventListener('click', () => showView('bots'));
+    workspaceOverlay.addEventListener('cancel', event => { event.preventDefault(); showView('bots'); });
+    workspaceOverlay.addEventListener('click', event => {
+      if (event.target !== workspaceOverlay) return;
+      const rect = workspaceOverlay.getBoundingClientRect();
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) showView('bots');
+    });
     const showView = (name) => {
       if (!appUnlocked && !publicViews.has(name)) name = 'signin';
       $$('.local-nav__item').forEach((item) => item.setAttribute(
         'aria-current', item.dataset.view === name ? 'page' : 'false'));
-      $$('.view').forEach((panel) => { panel.hidden = panel.dataset.viewPanel !== name; });
+      const overlay = appUnlocked && overlayViews.has(name);
+      const wasOpen = workspaceOverlay.open;
+      if (overlay) {
+        if (!wasOpen) overlayOrigin = document.activeElement;
+        const panel = $(`.view[data-view-panel='${name}']`);
+        if (panel) $('#workspace-overlay-content').append(panel);
+      }
+      $$('.view').forEach((panel) => {
+        panel.hidden = panel.dataset.viewPanel !== name && !(overlay && panel.dataset.viewPanel === 'bots');
+      });
       const active = $(`.local-nav__item[data-view='${name}']`);
       // A deep-linked or programmatically selected view must reveal its place
       // in the information architecture, even when its section starts closed.
       active?.closest('.nav-section')?.setAttribute('open', '');
       const viewTitle = active?.dataset.title || document.querySelector(`[data-app-id='${name}'] h3`)?.textContent || name;
       $('#current-view').textContent = viewTitle;
+      $('#workspace-overlay-title').textContent = ({apps:'App', marketplace:'マーケットプレイス', settings:'アカウント'})[name] || viewTitle;
       $$('[data-topbar-view]').forEach((context) => {
-        context.hidden = !appUnlocked || context.dataset.topbarView !== name;
+        context.hidden = !appUnlocked || context.dataset.topbarView !== (overlay ? 'bots' : name);
       });
       const target = `#/${name}`;
       if (location.hash !== target) history.replaceState(null, '', target);
       const brand = document.querySelector('.workspace')?.dataset.brand || 'Cloud Itonami';
       document.title = `${viewTitle} | ${brand}`;
-      document.body.dataset.currentView = name;
+      document.body.dataset.currentView = overlay ? 'bots' : name;
+      if (overlay && !wasOpen) workspaceOverlay.showModal();
+      if (overlay && wasOpen && name !== currentView) $('#workspace-overlay-close').focus();
+      if (!overlay && wasOpen) {
+        workspaceOverlay.close();
+        if (name === 'bots') (overlayOrigin?.isConnected && !overlayOrigin.closest('dialog') ? overlayOrigin : $('#bots-filter'))?.focus();
+      }
+      $('#bots-account').open = false;
       currentView = name;
       onViewChange(name);
     };
@@ -10460,6 +10498,8 @@
     const renderBotsRail = () => {
       const list = $('#bots-list');
       list.replaceChildren();
+      const pinnedList = $('#bots-pinned');
+      pinnedList.replaceChildren();
       const query = $('#bots-filter').value.trim().toLocaleLowerCase('ja');
       const visibleBots = botsRecentFirst(botsState.bots)
         .filter((bot) => {
@@ -10474,9 +10514,10 @@
       empty.hidden = visibleBots.length > 0;
       empty.textContent = query ? '一致する Bot がいません' : 'まだ Bot がいません';
       botsSidebarGroups(visibleBots).forEach((group) => {
+        const pinnedGroup = group.label === 'ピン留め' || group.label === '優先度';
         const heading = make('li', 'bots-rail__group', group.label);
         heading.setAttribute('aria-hidden', 'true');
-        list.append(heading);
+        if (!pinnedGroup) list.append(heading);
         group.bots.forEach((bot) => {
         const item = make('button', 'bots-rail__item');
         item.type = 'button';
@@ -10512,9 +10553,10 @@
         });
         const entry = make('li');
         entry.append(item);
-        list.append(entry);
+        (pinnedGroup ? pinnedList : list).append(entry);
         });
       });
+      pinnedList.hidden = !pinnedList.children.length;
       const badge = $('#bots-count');
       if (badge) {
         const needing = botsState.bots.filter((bot) =>
@@ -12091,12 +12133,12 @@
     };
     const scheduleBotsRealtime = (delay = 1000) => {
       stopBotsRealtime();
-      if (!appUnlocked || currentView !== 'bots') return;
+      if (!appUnlocked || !botsVisible()) return;
       botsState.syncTimer = window.setTimeout(syncBotsFromResident, delay);
     };
     const syncBotsFromResident = async () => {
       botsState.syncTimer = null;
-      if (!appUnlocked || currentView !== 'bots') return;
+      if (!appUnlocked || !botsVisible()) return;
       if (document.hidden || botsState.activeRuns.has(botsState.selected) ||
           botsState.shellBusy || botsState.syncing || !botsState.selected) {
         scheduleBotsRealtime(document.hidden ? 5000 : 1000);
@@ -12147,7 +12189,7 @@
       }
     };
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && currentView === 'bots') scheduleBotsRealtime(0);
+      if (!document.hidden && botsVisible()) scheduleBotsRealtime(0);
     });
     const loadBots = async (options = {}) => {
       try {
@@ -13393,7 +13435,7 @@
     };
     const renderWorkspaceApps = () => {
       const activeApp = workspaceApps.find((app) => app.id === currentView);
-      if (activeApp) { $('#current-view').textContent = activeApp.name; document.title = `${activeApp.name} | ${document.querySelector('.workspace').dataset.brand}`; }
+      if (activeApp) { $('#workspace-overlay-title').textContent = activeApp.name; $('#current-view').textContent = activeApp.name; document.title = `${activeApp.name} | ${document.querySelector('.workspace').dataset.brand}`; }
       const installed = workspaceApps.filter((app) => app['installed?']);
       $$('[data-installed-apps]').forEach((container) => {
         container.replaceChildren();
@@ -13505,7 +13547,7 @@
       if (appUnlocked) loadWorkspaceApps();
       if (currentView === 'marketplace') loadBots({keepSelection:true}).then(renderMarketplace);
       scheduleWorkerPoll();
-      if (currentView === 'bots') {
+      if (botsVisible()) {
         loadBots({keepSelection:botsState.loaded});
         loadRooms();
         scheduleBotsRealtime(0);
