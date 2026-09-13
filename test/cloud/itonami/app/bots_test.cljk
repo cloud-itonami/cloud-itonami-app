@@ -1665,6 +1665,7 @@
             entered (promise)
             release (promise)
             calls (atom 0)
+            verification-retry-response (atom nil)
             run-id "goal-durable-parallel-1"]
         (with-redefs
           [policy/select-provider (fn [_ _] {:id :local})
@@ -1673,7 +1674,7 @@
              (throw (ex-info "detached Goal must not stream"
                              {:type :test/unexpected-stream})))
            provider/agent-turn
-           (fn [_ _]
+           (fn [_ request]
              (case (swap! calls inc)
                1 (do (deliver entered true)
                      (deref release 3000 nil)
@@ -1690,6 +1691,17 @@
                   [{:id "verify-step" :name "goal_step_complete"
                     :input {:step_id "inspect" :summary "repository inspected"
                             :evidence ["status and log receipts"]}}]}
+               5 {:content "" :tool-calls
+                  [{:id "verify-step-again" :name "goal_step_complete"
+                    :input {:step_id "inspect" :summary "must not replace earned evidence"
+                            :evidence ["untrusted replacement"]}}]}
+               6 (do
+                   (reset! verification-retry-response
+                           (:content (last (:messages request))))
+                   {:content "" :tool-calls
+                    [{:id "finish" :name "goal_complete"
+                      :input {:summary "inspection completed"
+                              :evidence ["host verifier passed"]}}]})
                {:content "" :tool-calls
                 [{:id "finish" :name "goal_complete"
                   :input {:summary "inspection completed"
@@ -1732,6 +1744,9 @@
                                  (= "succeeded" (:state %)))
                           (:children job)))
               (is (some #{"verifier/step-passed"} kinds))
+              (is (= 1 (count (filter #{"verifier/step-passed"} kinds)))
+                  "verification retries preserve the original receipt and summary")
+              (is (str/includes? @verification-retry-response "already verified"))
               (is (some #{"verifier/goal-passed"} kinds)))))))))
 
 (deftest policy-violating-parallel-batch-returns-to-the-model-instead-of-failing-the-turn

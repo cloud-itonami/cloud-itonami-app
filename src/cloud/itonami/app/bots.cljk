@@ -5335,7 +5335,18 @@
                                      (action-receipts (:id run)))
                     summary (some-> (:summary input) str str/trim)
                     evidence (vec (remove str/blank? (map str (:evidence input))))]
-                (if (and step (= :pending (:step/state step))
+                (cond
+                  (= :verified (:step/state step))
+                  ;; A retry cannot revoke an earned verification or replace
+                  ;; its evidence. Returning a generic refusal here made the
+                  ;; live Numbering support Bot retry until its slice ended.
+                  (recur (update run :messages conj
+                                 {:role "tool" :tool-call-id (:id call) :name name
+                                  :content (str "Step " step-id " is already verified. "
+                                                "Reuse its recorded evidence and continue with the next step, "
+                                                "or call goal_complete when every planned step is verified.")}))
+
+                  (and step (= :pending (:step/state step))
                          (every? verified dependencies) (seq receipts)
                          (seq summary) (seq evidence))
                   (do
@@ -5352,6 +5363,7 @@
                     (recur (update run :messages conj
                                    {:role "tool" :tool-call-id (:id call) :name name
                                     :content "Host verifier passed this step."})))
+                  :else
                   (recur (update run :messages conj
                                  {:role "tool" :tool-call-id (:id call) :name name
                                   :content "Step verification requires a dependency-ready plan step, a host execution receipt, summary, and evidence."}))))
