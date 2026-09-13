@@ -1,6 +1,9 @@
 {:paths ["src" "resources"]
  :deps
- {
+ {io.github.kotoba-lang/cloud-kotoba-dds
+  {:git/url "https://github.com/kotoba-lang/cloud-kotoba-dds.git"
+   :git/sha "f48ca5c3bf6363feeae9c736e6b3d4dbf67c1af2"}
+
         ;; kotoba.lang.text, not clojure.string. Pinned as an explicit floor:
         ;; tools.deps takes the NEWEST sha it is shown, so without a floor here
         ;; this repo silently rides whatever a sibling happens to name.

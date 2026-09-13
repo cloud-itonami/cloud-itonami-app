@@ -37,7 +37,8 @@
     added to a later build arrives in その他 for the person and RED for the
     developer, which is the pair this workspace keeps having to arrange by
     hand: the runtime stays correct and the omission still makes a noise."
-  (:require [kotoba.lang.text :as str]))
+  (:require [kotoba.lang.text :as str]
+            #?(:clj [cloud.itonami.app.store :as store])))
 
 ;; ── whether a row can be picked at all ──────────────────────────────────
 
@@ -184,3 +185,59 @@
               (when-let [n (:no-client by-state)]
                 (str n " 件は OAuth クライアントが未設定なので選べません"
                      "（Settings の接続に同じ表示が出ます）。"))]))))
+
+;; UI installation is a personal launcher preference, never a capability grant.
+;; Existing built-in surfaces remain reachable by their stable fragment routes.
+(def workspace-apps
+  [{:id "plugins" :name "サービス接続" :icon "▤" :description "Bot が使う Plugin の接続を管理" :category "基本"}
+   {:id "wallet" :name "ウォレット" :icon "◈" :description "残高・履歴・承認が必要な取引" :category "基本"}
+   {:id "messenger" :name "Messenger" :icon "◇" :description "人やチームとのメッセージ" :category "基本"}
+   {:id "projects" :name "Projects" :icon "▦" :description "仕事と資料をプロジェクトにまとめる" :category "仕事"}
+   {:id "drive" :name "Drive" :icon "◇" :description "ファイルを探して共有する" :category "仕事"}
+   {:id "sites" :name "Sites" :icon "▦" :description "サイトを管理する" :category "仕事"}
+   {:id "storefront" :name "Store" :icon "▤" :description "商品と注文を確認する" :category "仕事"}
+   {:id "portfolio" :name "Portfolio" :icon "▤" :description "事業を一覧する" :category "事業"}
+   {:id "canvas" :name "Canvas" :icon "◱" :description "事業の設計を整理する" :category "事業"}
+   {:id "loops" :name "Loops" :icon "∞" :description "業務の繰り返しを管理する" :category "事業"}
+   {:id "metrics" :name "Metrics" :icon "⌸" :description "事業の指標を確認する" :category "事業"}
+   {:id "repos" :name "Repos" :icon "⌗" :description "コードとリポジトリを管理する" :category "開発"}
+   {:id "organization" :name "Organization" :icon "⌘" :description "組織とメンバーを管理する" :category "運営"}
+   {:id "operator" :name "事業者" :icon "◐" :description "事業者の情報を確認する" :category "運営"}
+   {:id "inbox" :name "Mail archive" :icon "□" :description "受信したメールを探す" :category "仕事"}
+   {:id "fleet" :name "Fleet" :icon "◉" :description "稼働先を確認する" :category "開発"}
+   {:id "worker" :name "Worker" :icon "◐" :description "実行環境を管理する" :category "開発"}
+   {:id "organisms" :name "Organisms" :icon "◎" :description "常駐サービスの活動を確認する" :category "開発"}
+   {:id "scheduler" :name "Scheduler" :icon "○" :description "定期実行を確認する" :category "運営"}
+   {:id "resources" :name "Resources" :icon "❋" :description "利用できるリソースを確認する" :category "開発"}
+   {:id "contracts" :name "Contracts" :icon "◫" :description "契約と合意を確認する" :category "記録"}
+   {:id "esign" :name "eSign" :icon "✍" :description "文書への署名を進める" :category "記録"}
+   {:id "credentials" :name "Credentials" :icon "▣" :description "証明書を確認する" :category "記録"}
+   {:id "storage" :name "Storage" :icon "◈" :description "保存先と容量を確認する" :category "記録"}])
+
+(def default-workspace-apps #{"plugins" "wallet" "messenger"})
+
+(defn- installation-path [session]
+  (when-not (and (:organization-id session) (:user-id session))
+    (throw (ex-info "認証が必要です。" {:type :identity/unauthenticated})))
+  [:workspace-apps (:organization-id session) (:user-id session)])
+
+(defn installed-app-ids [state session]
+  (get-in state (installation-path session) default-workspace-apps))
+
+;; The JVM controller owns persistence; catalog and selection remain portable.
+#?(:clj
+   (do
+(defn workspace-catalog [session]
+  (let [installed (installed-app-ids (store/snapshot) session)]
+    {:apps (mapv #(assoc % :installed? (contains? installed (:id %))) workspace-apps)}))
+
+(defn set-app-installed! [session id installed?]
+  (when-not (and (some #(= id (:id %)) workspace-apps) (boolean? installed?))
+    (throw (ex-info "App とインストール状態を確認してください。" {:type :request/invalid})))
+  (let [path (installation-path session)]
+    (store/transact! (fn [state]
+                      (assoc-in state path
+                                ((if installed? conj disj)
+                                 (installed-app-ids state session) id)))))
+  (workspace-catalog session))
+))

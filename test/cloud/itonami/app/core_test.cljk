@@ -335,9 +335,8 @@
       (is (re-find #"id=\"auth-methods-card\"" html))
       (is (re-find #"現在のOrganization" html))
       (is (re-find #"aria-label=\"Organization切替\"" html))
-      (doseq [section ["business-design" "operations" "trust-records"]]
-        (is (re-find (re-pattern (str "data-nav-section=\"" section "\""))
-                     html)))
+      (doseq [section ["apps" "marketplace"]]
+        (is (boolean (re-find (re-pattern (str "data-view-panel=\"" section "\"")) html))))
       (is (re-find #"id=\"mobile-overflow-panel\"" html))
       (is (re-find #"class=\"mobile-menu-toggle\"[^>]*aria-expanded=\"false\"" html))
       (is (re-find #"aria-label=\"メニューを閉じる\"" html))
@@ -365,7 +364,6 @@
       (is (re-find #"id=\"worker-prompt\"" html))
       (is (re-find #"id=\"worker-list\"" html))
       (is (re-find #"id=\"worker-detail\"" html))
-      (is (re-find #"id=\"worker-count\"" html))
       (is (re-find #"color-scheme\" content=\"light\"" html))
       (is (re-find #"id=\"request-status\"[^>]*role=\"status\"" html))
       (doseq [view ["Worker" "Inbox" "Projects" "Sites" "Drive" "Scheduler"]]
@@ -487,7 +485,8 @@
       "the phone picker must not become a sideways strip")
   (is (str/includes? (web/page-html {}) "id=\"bots-filter\""))
   (is (str/includes? (web/page-html {}) "id=\"bots-mobile-context\""))
-  (is (not (str/includes? web/app-css ".bots-rail{display:none}")))
+  (is (str/includes? web/app-css ".bots-shell.show-bot-list>.bots-rail{display:flex"))
+  (is (str/includes? (web/page-html {}) "id=\"bots-list-toggle\""))
   (is (str/includes? web/app-css
                      ".bots-thread__scroll{flex:1;min-height:0;overflow-y:auto"))
   (is (str/includes? web/app-css ".global-status{position:fixed")))
@@ -602,8 +601,10 @@
           views (set (map second (re-seq #"data-view=\"([^\"]+)\"" html)))]
       (is (seq scripted))
       (is (empty? (set/difference scripted html-ids)))
-      (is (contains? views "worker"))
-      (is (= views panels)))))
+      (is (contains? panels "worker"))
+      (is (every? panels views))
+      (is (= (set (map :id cloud.itonami.app.app-directory/workspace-apps))
+             (set/difference panels #{"signin" "settings" "bots" "apps" "marketplace"}))))))
 
 (defn- js-object-keys
   "The keys of a `const <name> = {a:x, b:y}` literal in the interaction layer.

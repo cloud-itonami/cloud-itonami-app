@@ -26,6 +26,9 @@ for i, source in enumerate(cp):
         shutil.copytree(src, out / dest)
         for renamed in src.rglob('*.cljk'):
             if not renamed.is_relative_to(root):
+                if renamed.parent.name == 'cloud_kotoba_dds' and renamed.stem in {'chat', 'styles'}:
+                    target = out / dest / renamed.relative_to(src).with_suffix('.cljc')
+                    shutil.copy2(renamed, target)
                 continue  # dependency fixtures may intentionally use .cljk
             relative = str(renamed.relative_to(root))
             extension = origins.get(relative)
