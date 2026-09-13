@@ -207,9 +207,6 @@
    ".workspace[data-appearance=\"grok\"] .bots-rail__name{color:var(--grok-text)}\n"
    ".workspace[data-appearance=\"grok\"] .bots-rail__last,.workspace[data-appearance=\"grok\"] .bots-rail__time,"
    ".workspace[data-appearance=\"grok\"] .bots-rail__group{color:var(--grok-muted)}\n"
-   ".workspace[data-appearance=\"grok\"] .bot-avatar{border-radius:10px;background:var(--grok-hover)}\n"
-   ".workspace[data-appearance=\"grok\"] .bot-avatar::before,.workspace[data-appearance=\"grok\"] .bot-avatar::after{"
-   "background:var(--grok-text)}\n"
    ".workspace[data-appearance=\"grok\"] .bots-dot{background:var(--grok-accent)}\n"
    ;; the toggle itself shows what it will do
    ".appearance-toggle[data-next=\"grok\"]::before{content:\"◍ \"}\n"
@@ -304,16 +301,8 @@
    ".workspace[data-appearance=\"8bit\"] .bots-rail__item{border-radius:0;border:var(--eightbit-border);background:var(--eightbit-sand);"
    "box-shadow:var(--eightbit-shadow);margin:8px}\n"
    ".workspace[data-appearance=\"8bit\"] .bots-rail__item[aria-current=\"true\"],.workspace[data-appearance=\"8bit\"] .bots-rail__item.is-selected{background:var(--eightbit-sun)}\n"
-   ".workspace[data-appearance=\"8bit\"] .bot-avatar{border-radius:0;border:var(--eightbit-border);box-shadow:var(--eightbit-shadow);"
-   "background:var(--eightbit-sky);image-rendering:pixelated}\n"
-   ".workspace[data-appearance=\"8bit\"] .bot-avatar::before,.workspace[data-appearance=\"8bit\"] .bot-avatar::after{"
-   "border-radius:0;background:var(--eightbit-night)}\n"
-   ".workspace[data-appearance=\"8bit\"] .bot-avatar[data-status='working']{background:var(--eightbit-leaf);"
-   "animation:eightbit-bob .6s steps(2,end) infinite}\n"
-   ".workspace[data-appearance=\"8bit\"] .bot-avatar[data-status='waiting-approval']{background:var(--eightbit-pink)}\n"
-   ".workspace[data-appearance=\"8bit\"] .bot-avatar[data-status='waiting-connection']{background:var(--eightbit-orange)}\n"
+   ".workspace[data-appearance=\"8bit\"] .ck-bot>svg{image-rendering:pixelated}\n"
    ".workspace[data-appearance=\"8bit\"] .bots-dot{border-radius:0;border:2px solid var(--eightbit-night)}\n"
-   "@keyframes eightbit-bob{0%{transform:translateY(0)}100%{transform:translateY(-3px)}}\n"
    ;; scanlines: a quiet CRT hint on the main surface only, never over text
    ;; contrast — 6% ink at 4px pitch is below the threshold that changes
    ;; measured contrast on cream.

@@ -492,19 +492,12 @@
   (is (str/includes? web/app-css ".global-status{position:fixed")))
 
 (deftest bot-faces-have-eyes-life-and-a-still-accessible-state
-  (is (str/includes? web/app-css ".bot-avatar::before,.bot-avatar::after{content:''"))
-  (is (str/includes? web/app-css "@keyframes bot-breathe"))
-  (is (str/includes? web/app-css "@keyframes bot-blink"))
-  (is (str/includes? web/app-css "@keyframes bot-look"))
-  (is (str/includes? web/app-css "@keyframes bot-hurry"))
-  (is (str/includes? web/app-css "@keyframes bot-nap"))
-  (is (str/includes? web/app-css "@keyframes bot-joy"))
-  (is (str/includes? web/app-css "@keyframes bot-nervous"))
-  (doseq [mood ["hurry" "nap" "joy" "nervous" "upset"]]
-    (is (str/includes? web/app-css (str "data-mood='" mood "'"))))
-  (is (str/includes? web/app-css ".bot-avatar[data-status='working']"))
-  (is (str/includes? web/app-css
-                     ".bot-avatar,.bot-avatar::before,.bot-avatar::after{animation:none}")))
+  (doseq [hook ["@keyframes ck-bot-breathe" "@keyframes ck-bot-blink"
+                "@keyframes ck-bot-work" "data-motion='off'" "prefers-reduced-motion"]]
+    (is (str/includes? web/app-css hook)))
+  (is (str/includes? (web/page-html {}) "root.cloudKotobaBot="))
+  (is (not (str/includes? web/app-css "@keyframes bot-nap")))
+  (is (not (str/includes? web/app-css ".bot-avatar{border-radius:10px;background:"))))
 
 (deftest app-css-only-references-design-system-tokens-that-exist
   ;; An undefined custom property makes the whole declaration invalid at
