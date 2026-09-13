@@ -85,6 +85,9 @@ jobs:
           export AMU="$(cygpath -w "$PWD/target/amu-rt/bin/amu.cmd")"
           export AMU_HOME="$(cygpath -w "$PWD/target/amu-rt")"
           export KOTOBA_EMITTER=amu
+          echo "AMU=$AMU"
+          "$AMU" check src/cloud/itonami/app/server_main.kotoba --jvm-free || true
+          echo "--- direct amu check exit=$? (above, if any output) ---"
           kbb --backend sci --classpath bin bin/compile-amu
       - name: Launch and wait for /health
         shell: bash
