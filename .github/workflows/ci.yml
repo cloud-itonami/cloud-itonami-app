@@ -76,7 +76,10 @@ jobs:
           git clone --depth 5 https://github.com/kotoba-lang/amu.git target/amu-rt
           git -C target/amu-rt fetch --depth 20 origin "$AMU_SHA"
           git -C target/amu-rt checkout --detach "$AMU_SHA"
-          export AMU="$PWD/target/amu-rt/bin/amu"
+          # spawnSync cannot exec a shebang script on Windows; a .cmd shim is
+          # how node launchers are made spawnable there.
+          printf '@node "%%~dp0amu" %%*\n' > target/amu-rt/bin/amu.cmd
+          export AMU="$PWD/target/amu-rt/bin/amu.cmd"
           export AMU_HOME="$PWD/target/amu-rt"
           export KOTOBA_EMITTER=amu
           kbb --backend sci --classpath bin bin/compile-amu
