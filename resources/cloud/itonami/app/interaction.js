@@ -12130,14 +12130,31 @@
     const syncBotsFromResident = async () => {
       botsState.syncTimer = null;
       if (!appUnlocked || !botsVisible()) return;
-      if (document.hidden || botsState.activeRuns.has(botsState.selected) ||
-          botsState.shellBusy || botsState.syncing || !botsState.selected) {
+      if (document.hidden || botsState.syncing) {
         scheduleBotsRealtime(document.hidden ? 5000 : 1000);
         return;
       }
       botsState.syncing = true;
       const botId = botsState.selected;
       try {
+        // Other Bots keep working even when this conversation is unchanged.
+        // Refresh the rail independently, including during a foreground run.
+        if (Date.now() - (botsState.overviewSyncedAt || 0) >= 5000) {
+          const overviewRequest = await fetch('/api/bots', {cache:'no-store'});
+          const overview = await overviewRequest.json();
+          if (!overviewRequest.ok) throw new Error('Bots を同期できませんでした。');
+          botsState.bots = overview.bots || botsState.bots;
+          botsState.overviewSyncedAt = Date.now();
+          renderBotsRail();
+          const selected = botsState.bots.find((candidate) => candidate.id === botsState.selected);
+          if (selected) {
+            botAvatar($('#bots-titlebar-avatar'), selected.avatar, selected.status, selected.id);
+            botAvatar($('#bots-mobile-avatar'), selected.avatar, selected.status, selected.id);
+            $('#bots-titlebar-status').textContent = botsStatusSummary(selected);
+            $('#bots-mobile-status').textContent = botsStatusSummary(selected);
+          }
+        }
+        if (botsState.activeRuns.has(botId) || botsState.shellBusy || !botId) return;
         const request = await fetch(`/api/bots/${botId}/messages`, {cache:'no-store'});
         const data = await request.json();
         if (!request.ok) throw new Error(data?.error?.message || '会話を同期できませんでした。');
@@ -12150,12 +12167,6 @@
           botsState.messages = data.messages || [];
           botsState.latestTurn = data.turn || null;
           botsState.threadVersion = version;
-          const overviewRequest = await fetch('/api/bots', {cache:'no-store'});
-          const overview = await overviewRequest.json();
-          if (overviewRequest.ok && botsState.selected === botId) {
-            botsState.bots = overview.bots || botsState.bots;
-            renderBotsRail();
-          }
           if (botsState.selected !== botId) return;
           const bot = botsState.bots.find((candidate) => candidate.id === botId);
           renderBotsRun(botsState.latestTurn);

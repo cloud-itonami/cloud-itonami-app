@@ -760,25 +760,25 @@
              :model (or (:served-model result) requested)
              :requested-model requested :fallback? false))
     (catch Exception primary
-      (let [_ (when (and (:backoff-on-rate-limit? provider)
-                               (= 429 (:status (ex-data primary))))
-                       ;; Capacity rejection is backpressure, not permission to
-                       ;; start a second model request. Preserve the cause for
-                       ;; the durable scheduler to retry this same Goal.
-                       (throw (ex-info "model capacity is busy; retry after backoff"
-                                       {:type :provider/rate-limited :status 429
-                                        :requested-model requested}
-                                       primary)))
-            error-type (:type (ex-data primary))
-            ;; A model can be an intentionally literal operational route. In
-            ;; that case a fallback is not resilience: it turns one failed SLO
-            ;; probe into load on a second plane and makes the result stop
-            ;; measuring the route the caller selected. Keep this check after
-            ;; configuration overlays have merged so an old operator override
-            ;; cannot silently reintroduce the cascading failure.
-            fallback (when-not (contains? (set (:no-fallback-models provider))
-                                          requested)
-                       (get (:model-fallbacks provider) requested))]
+      (let [error-type (:type (ex-data primary))
+            no-fallback? (contains? (set (:no-fallback-models provider)) requested)
+            ;; Only an exhausted network wait may move to an explicitly
+            ;; independent pool. Quotas/authentication limits still back off.
+            capacity-fallback (when (and (not no-fallback?)
+                                         (= 429 (:status (ex-data primary)))
+                                         (= "network_queue_timeout"
+                                            (get-in (ex-data primary) [:response :error :code])))
+                                (get (:capacity-fallbacks provider) requested))
+            _ (when (and (:backoff-on-rate-limit? provider)
+                         (= 429 (:status (ex-data primary)))
+                         (not capacity-fallback))
+                (throw (ex-info "model capacity is busy; retry after backoff"
+                                {:type :provider/rate-limited :status 429
+                                 :requested-model requested}
+                                primary)))
+            fallback (when-not no-fallback?
+                       (or capacity-fallback
+                           (get (:model-fallbacks provider) requested)))]
         (if (and fallback
                  (contains? fallback-error-types error-type)
                  (not (:stream-emitted? (ex-data primary))))

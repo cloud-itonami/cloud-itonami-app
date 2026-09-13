@@ -144,6 +144,8 @@
    :enabled? false}
   {:id "murakumo"
    :backoff-on-rate-limit? true
+   :capacity-fallbacks {"murakumo-main" "ling-3.0-tiny"
+                        "qwen3.8-27b-throughput-b70" "ling-3.0-tiny"}
    :name "Murakumo fleet"
    :kind :openai-compatible
    ;; `murakumo-main` is an ALIAS the fleet resolves, never a concrete model

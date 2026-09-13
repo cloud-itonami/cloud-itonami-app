@@ -219,7 +219,7 @@
     (is (str/includes? sync "fetch(`/api/bots/${botId}/messages`, {cache:'no-store'})"))
     (is (str/includes? sync "version !== botsState.threadVersion")
         "unchanged conversations do not rebuild the thread")
-    (is (str/includes? sync "document.hidden || botsState.activeRuns.has(botsState.selected) ||")
+    (is (str/includes? sync "botsState.activeRuns.has(botId) || botsState.shellBusy || !botId")
         "background tabs and only the selected Bot's active stream are not raced")
     (is (str/includes? sync "stickToBottom")
         "an external message does not pull a person away from older history")
