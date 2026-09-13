@@ -77,10 +77,13 @@ jobs:
           git -C target/amu-rt fetch --depth 20 origin "$AMU_SHA"
           git -C target/amu-rt checkout --detach "$AMU_SHA"
           # spawnSync cannot exec a shebang script on Windows; a .cmd shim is
-          # how node launchers are made spawnable there.
+          # how node launchers are made spawnable there. The shell that runs
+          # it is cmd.exe, which cannot read git-bash's /d/a/... style paths,
+          # so convert (measured 2026-09-13: bare $PWD path → amu died with
+          # empty output; cygpath -w path → works).
           printf '@node "%%~dp0amu" %%*\n' > target/amu-rt/bin/amu.cmd
-          export AMU="$PWD/target/amu-rt/bin/amu.cmd"
-          export AMU_HOME="$PWD/target/amu-rt"
+          export AMU="$(cygpath -w "$PWD/target/amu-rt/bin/amu.cmd")"
+          export AMU_HOME="$(cygpath -w "$PWD/target/amu-rt")"
           export KOTOBA_EMITTER=amu
           kbb --backend sci --classpath bin bin/compile-amu
       - name: Launch and wait for /health
