@@ -81,8 +81,15 @@
                                               [(str/trim item)])) []))
                    current-key
                    more)
-            ;; indented scalar under a blank-valued top key
+            ;; Indented scalar under a blank-valued top key. A key whose
+            ;; current value is ALREADY a list (measured 2026-09-12:
+            ;; `fallback_providers` starts as a `- provider: custom` list and
+            ;; then no nested scalar follows) must not be turned into a path --
+            ;; `(assoc-in entries [key nested] v)` assoces into the vector and
+            ;; throws "Key must be integer", which 500s the whole preview. Only
+            ;; a genuinely string-valued entry can carry a nested scalar.
             (if-let [[_ key value] (and current-key
+                                        (string? (get entries current-key))
                                         (re-matches #"^\s\s([A-Za-z0-9_-]+):\s*(.+)$" line))]
               (recur (assoc-in entries [current-key key] (str/trim value))
                      current-key
@@ -236,7 +243,10 @@
                      (map (fn [^File file] {:id (.getName file) :root file}))
                      (sort-by :id))
                 [])]
-    (into [{:id "default" :root home}] named)))
+    (into (if (or (nil? (str home)) (str/blank? (str home)))
+            []
+            [{:id "default" :root home}])
+          named)))
 
 (defn- credential-presence [^File root]
   (->> credential-file-names
@@ -269,7 +279,7 @@
 
 (defn- profile-inventory [profile]
   (let [files (portable-files profile)
-        root (:root profile)
+        root (or (:root profile) (hermes-home))
         rows (mapv (fn [^File file]
                      (let [relative (relative-path root file)]
                        {:path relative
@@ -292,6 +302,7 @@
                                         (str path "\t" bytes "\t" control-token))
                                       control-rows))))]
     {:id (:id profile)
+     :root (str root)
      :runtime (runtime-reference root)
      :source {:files (count rows)
               :bytes (reduce + 0 (map :bytes rows))
@@ -523,6 +534,11 @@
     (doseq [^Path path (reverse (walked-paths root))]
       (Files/deleteIfExists path))))
 
+(defn- stage-roots [home]
+  (into {} (map (fn [{:keys [id root]}]
+                  [id (io/file (or root home))]))
+        (:profiles (preview {:home home}))))
+
 (defn stage!
   "Stage every profile and session export, returning the same v2 manifest.
 
@@ -562,7 +578,7 @@
         (throw (ex-info "Hermes bundle の一時ディレクトリを作れません。"
                         {:type :bot-import/stage-directory})))
       (try
-        (let [roots (into {} (map (juxt :id :root)) (profile-roots home))
+        (let [roots (stage-roots home)
               staged-profiles
               (mapv
                (fn [profile]

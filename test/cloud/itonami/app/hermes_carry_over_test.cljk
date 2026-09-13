@@ -51,7 +51,16 @@
     (let [root (write-config! (temp-dir) bare-profile-config)]
       (is (empty? (#'migration/observed-permissions root)))))
   (testing "no config file observes nothing"
-    (is (nil? (#'migration/observed-permissions (temp-dir))))))
+    (is (nil? (#'migration/observed-permissions (temp-dir)))))
+  (testing "a list-valued key followed by a nested scalar does not 500 the preview"
+    ;; The real default profile's config.yaml starts `fallback_providers` as a
+    ;; `- provider: …` list. The nested-scalar arm used to `assoc-in` through
+    ;; that vector and throw "Key must be integer", failing EVERY preview of a
+    ;; real Hermes home (measured 2026-09-12).
+    (let [root (write-config! (temp-dir)
+                              "fallback_providers:\n  - provider: custom\n    model: claude-sonnet-5\nplugins:\n  enabled: []\n")]
+      (is (empty? (#'migration/observed-permissions root))
+          "the list form parses and carries no permission evidence"))))
 
 (deftest preview-records-observed-permissions-per-profile
   (let [home (temp-dir)

@@ -28,6 +28,17 @@ jobs:
         # kexe verify on Linux is HOLD and must not be faked as :ok.
         # bin/kotoba is this app's compile adapter, not production kotoba v0.6.29.
 
+
+      - name: Publish guest artifacts for the windows smoke
+        uses: actions/upload-artifact@v4
+        with:
+          name: amu-guest
+          path: |
+            target/amu/server_main.wasm
+            target/amu/mcp_main.wasm
+            target/amu/browser-host.mjs
+          if-no-files-found: error
+
   secret-scan:
     runs-on: ubuntu-latest
     steps:
@@ -43,57 +54,48 @@ jobs:
       - name: Scan Git history
         run: gitleaks git --redact --no-banner
 
-  # Smoke-tests the Windows launch path end to end: jar build, launcher exe
-  # build, packaged layout, first-boot health. The 2026-09-03 v0.4.1 report
-  # (UnsupportedOperationException 'posix:permissions' on agent-enrollment.key,
-  # localhost:1338 never answering) was invisible to the Linux-only jobs above.
+  # Smoke-tests the Windows launch path end to end: kbb + engine + guest-wasm
+  # server, first-boot health on 1338. This is the run path the resident
+  # actually uses since adr-2609112000. The OLD smoke ran the JVM uberjar;
+  # that path cannot boot since the cljk rename (src is .cljk; JVM
+  # clojure.main reads .clj/.cljc only) — a product-level breakage tracked
+  # separately, not masked by pointing this smoke at the kbb path it has
+  # always exercised on Linux.
   windows-launch-smoke:
+    needs: amu-jvm-free-emit
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Authenticate git deps (private kotoba-lang repos)
-        run: git config --global url."https://x-access-token:${{ github.token }}@github.com/".insteadOf "https://github.com/"
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-node@v4
         with:
-          distribution: temurin
-          java-version: "21"
-      - uses: DeLaGuardo/setup-clojure@13.4
-        with:
-          cli: latest
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.24"
-          cache: false
-      - name: Build the app jar
-        run: kbb -T:build uber
-      - name: Assemble the packaged layout
+          node-version: "22"
+      - name: Install kbb launcher + engine (pinned)
         shell: bash
         run: |
           set -euo pipefail
-          layout="$PWD/target/release/windows-stage/Cloud Itonami"
-          mkdir -p "$layout"
-          cp target/release/cloud-itonami-app.jar "$layout/cloud-itonami-app.jar"
-          cp packaging/windows/README.txt "$layout/README.txt"
-          # Launcher, cross-compiled exactly as scripts/build-windows-release does.
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
-            go build -trimpath -ldflags "-s -w" \
-            -o "$layout/CloudItonami.exe" packaging/windows/launcher/main.go
-          # CI-only JVM server shim (the real server binary is packaged elsewhere).
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
-            go build -trimpath \
-            -o "$layout/cloud-itonami-server.exe" packaging/windows/smoke/main.go
+          KBB_SHA=a755ec25a07637bab9ab97edab1ab1257418c558
+          git clone --depth 5 https://github.com/kotoba-lang/kotoba.git target/kbb
+          git -C target/kbb fetch --depth 20 origin "$KBB_SHA"
+          git -C target/kbb checkout --detach "$KBB_SHA"
+          git clone --depth 5 https://github.com/kotoba-lang/org-babashka-nbb.git target/engine
+          echo "KBB_ENGINE=$PWD/target/engine/cli.js" >> "$GITHUB_ENV"
+          echo "$PWD/target/kbb/bin" >> "$GITHUB_PATH"
+      - name: Download the guest wasm emitted by the linux job
+        uses: actions/download-artifact@v4
+        with:
+          name: amu-guest
+          path: target/amu
       - name: Launch and wait for /health
         shell: bash
         run: |
           set -euo pipefail
-          layout="$PWD/target/release/windows-stage/Cloud Itonami"
           data_dir="$PWD/target/release/ci-data"
           mkdir -p "$data_dir"
           export CLOUD_ITONAMI_DATA_DIR="$data_dir"
-          cd "$layout"
-          ./CloudItonami.exe &
+          export CLOUD_ITONAMI_PORT=1338
+          kbb --backend sci --classpath bin bin/cloud-itonami-server &
           ok=0
-          for attempt in $(seq 1 240); do
+          for attempt in $(seq 1 120); do
             if curl -fsS http://127.0.0.1:1338/health >/dev/null 2>&1; then
               ok=1
               break
@@ -102,13 +104,9 @@ jobs:
           done
           if [[ "$ok" != 1 ]]; then
             echo "::error::Windows launch smoke test failed: /health never returned 200"
-            echo "--- server.log ---"
-            cat "$data_dir/logs/server.log" || true
-            echo "--- launcher-error.log ---"
-            cat "$data_dir/logs/launcher-error.log" || true
             exit 1
           fi
           curl -fsS http://127.0.0.1:1338/health
           echo ""
-          echo "Windows launch smoke test: /health returned 200"
+          echo "Windows launch smoke test: /health returned 200 (kbb guest-wasm run path)"
 
