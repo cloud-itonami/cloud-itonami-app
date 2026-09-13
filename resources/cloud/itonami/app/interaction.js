@@ -12143,9 +12143,10 @@
           const overviewRequest = await fetch('/api/bots', {cache:'no-store'});
           const overview = await overviewRequest.json();
           if (!overviewRequest.ok) throw new Error('Bots を同期できませんでした。');
+          const overviewChanged = JSON.stringify(overview.bots || botsState.bots) !== JSON.stringify(botsState.bots);
           botsState.bots = overview.bots || botsState.bots;
           botsState.overviewSyncedAt = Date.now();
-          renderBotsRail();
+          if (overviewChanged) renderBotsRail();
           const selected = botsState.bots.find((candidate) => candidate.id === botsState.selected);
           if (selected) {
             botAvatar($('#bots-titlebar-avatar'), selected.avatar, selected.status, selected.id);

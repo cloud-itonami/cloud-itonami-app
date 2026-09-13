@@ -13,5 +13,8 @@ for (const active of [false,true]) {
  assert.deepEqual(rail,['running'],'unchanged selected thread must not freeze other Bots');
  assert.equal(calls.includes('/api/bots/old-failure/messages'),!active,'do not race an active stream');
  assert.equal(state.syncing,false);assert.equal(timers.length,1);
+ state.overviewSyncedAt=0;
+ await vm.runInNewContext('syncBotsFromResident();',c);
+ assert.deepEqual(rail,['running'],'unchanged overview must preserve focused controls');
 }
 console.log('Bot overview advances with unchanged conversation and during active streams.');
