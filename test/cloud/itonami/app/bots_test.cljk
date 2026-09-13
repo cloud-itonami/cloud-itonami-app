@@ -136,6 +136,18 @@
                                 {:job/resident-workforce? true})
                      [:bots :goal :max-input-tokens]))))))
 
+(deftest qualified-goal-models-require-a-tool-choice
+  (let [request (private-fn 'agent-request)
+        model "qualified-model"
+        provider {:require-goal-tool-models #{model}}
+        run {:goal? true :messages [] :tools [{:name "goal_complete"}]}
+        b {:bot/id "bot-1"}]
+    (is (true? (:require-tool? (request {} provider b run model))))
+    (is (nil? (:require-tool? (request {} provider b run "other-model"))))
+    (is (nil? (:require-tool? (request {} {} b run model))))
+    (is (nil? (:require-tool? (request {} provider b (assoc run :goal? false) model))))
+    (is (nil? (:require-tool? (request {} provider b (assoc run :tools []) model))))))
+
 (deftest resident-input-is-bounded-without-changing-interactive-context
   (let [configure (private-fn 'goal-job-configuration)
         request (private-fn 'agent-request)
