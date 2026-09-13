@@ -10060,6 +10060,7 @@
         $('#bots-routines-panel').hidden = true;
         $('#bots-routines').setAttribute('aria-expanded', 'false');
         $('#bots-conversations-panel').hidden = true;
+      document.body.classList.remove('group-chat-open');
         $('#bots-conversations').setAttribute('aria-expanded', 'false');
         renderBotsSlo();
       }
@@ -10198,6 +10199,7 @@
       if (open) {
         setBotsQualityOpen(false);
         $('#bots-conversations-panel').hidden = true;
+      document.body.classList.remove('group-chat-open');
         $('#bots-conversations').setAttribute('aria-expanded', 'false');
         await loadBotRoutines();
       }
@@ -10512,7 +10514,7 @@
         group.bots.forEach((bot) => {
         const item = make('button', 'bots-rail__item');
         item.type = 'button';
-        item.setAttribute('aria-current', String(bot.id === botsState.selected));
+        item.setAttribute('aria-current', String(bot.id === botsState.selected && !document.body.classList.contains('group-chat-open')));
         const statusSummary = botsStatusSummary(bot);
         const preview = botsRailPreview(bot, statusSummary);
         item.setAttribute('aria-label',
@@ -11874,6 +11876,7 @@
     const selectBot = async (botId) => {
       botsState.selected = botId;
       $('#bots-conversations-panel').hidden = true;
+      document.body.classList.remove('group-chat-open');
       $('#bots-conversations').setAttribute('aria-expanded', 'false');
       $('#bots-learning-panel').open = false;
       $('#bots-shell').classList.remove('show-bot-list');
@@ -12655,7 +12658,17 @@
         row.append(button);
         list.append(row);
         const shortcut = make('li');
-        const open = make('button', 'bots-rail__item', `◉ ${room.name}`);
+        const open = make('button', 'bots-rail__item');
+        open.setAttribute('aria-label', `${room.name}、あなたと${room.members.length}体の Bot`);
+        open.setAttribute('aria-current', String(roomsState.selected === room.id && !$('#bots-conversations-panel').hidden));
+        const faces = make('span', 'group-chat-avatars');
+        room.members.slice(0, 2).forEach(member => {
+          const b = roomsState.bots.find(x => x.id === member.id) || member;
+          faces.append(botAvatar(make('span', 'bot-avatar'), b.avatar, b.status, b.id));
+        });
+        const copy = make('div', 'bots-rail__copy');
+        copy.append(make('span', 'bots-rail__name', room.name), make('span', 'bots-rail__last', `あなたと${room.members.length}体の Bot`));
+        open.append(faces, copy);
         open.type = 'button';
         open.addEventListener('click', () => {
           $('#bots-shell').classList.remove('show-bot-list');
@@ -12682,7 +12695,15 @@
         // Bot to ask next, which is the only thing a room is for.
         const speaker = participants.get(message.from);
         const who = message.from ? (speaker?.name || message.from) : (message.source === 'schedule' ? '定期対話' : 'あなた');
-        const row = make('li', 'record-list__row');
+        if (message.source === 'schedule' && !message.from) {
+          const row = make('li', 'room-scheduled');
+          const details = document.createElement('details');
+          const at = message.at && Number.isFinite(Date.parse(message.at)) ? new Date(message.at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+          details.append(make('summary', '', `${at} · 定期チェックイン`), make('p', '', message.text));
+          row.append(details); thread.append(row); return;
+        }
+        const row = make('li', 'bots-msg'); row.dataset.role = message.from ? 'bot' : 'person';
+        const bubble = make('div', 'bots-msg__bubble');
         const heading = make('div', 'room-message-heading');
         if (speaker) heading.append(botAvatar(make('span', 'bot-avatar'), speaker.avatar, speaker.status, speaker.id));
         heading.append(make('strong', '', who));
@@ -12690,7 +12711,7 @@
           const time = make('time', 'source-note', new Date(message.at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
           time.dateTime = message.at; heading.append(time);
         }
-        row.append(heading, make('div', 'record-list__meta', message.text));
+        bubble.append(heading, make('div', 'room-message-body', message.text)); row.append(bubble);
         thread.append(row);
       });
       if (follow) thread.scrollTop = thread.scrollHeight;
@@ -12699,13 +12720,27 @@
       if (roomsState.selected) roomsState.drafts.set(roomsState.selected, $('#room-input').value);
       roomsState.selected = roomId;
       $('#room-input').value = roomsState.drafts.get(roomId) || '';
+      roomStatus('');
       const room = roomsState.rooms.find((entry) => entry.id === roomId);
       $('#room-panel').hidden = false;
+      document.body.classList.add('group-chat-open');
+      renderBotsRail();
+      $('#room-details').hidden = true;
+      $('#group-chat-details').setAttribute('aria-expanded', 'false');
       $('#room-title').textContent = room ? room.name : 'ルーム';
       $('#room-members-summary').textContent = room
         ? room.members.map((member) =>
             (member['enabled?'] ?? member.enabled) ? member.name : `${member.name}（停止中）`).join(' · ')
         : '';
+      const faces = $('#group-chat-avatars'), participants = $('#room-participants');
+      faces.replaceChildren(); participants.replaceChildren();
+      const person = make('li'); person.append(make('span', 'bot-avatar', 'あなた'), document.createTextNode('あなた')); participants.append(person);
+      (room?.members || []).forEach((member, index) => {
+        const b = roomsState.bots.find(x => x.id === member.id) || member;
+        if (index < 3) faces.append(botAvatar(make('span', 'bot-avatar'), b.avatar, b.status, b.id));
+        const row = make('li'); row.append(botAvatar(make('span', 'bot-avatar'), b.avatar, b.status, b.id), document.createTextNode(member.name)); participants.append(row);
+      });
+      $('#room-input').placeholder = `${room?.name || 'グループ'} にメッセージ`;
       $('#room-schedule-enabled').checked = !!room?.schedule?.enabled;
       $('#room-interval').value = room?.schedule?.['interval-minutes'] || 60;
       $('#room-topic').value = room?.schedule?.prompt || '';
@@ -12755,6 +12790,7 @@
     };
     const setBotConversationsOpen = (open) => {
       $('#bots-conversations-panel').hidden = !open;
+      document.body.classList.toggle('group-chat-open', open && !!roomsState.selected);
       $('#bots-conversations').setAttribute('aria-expanded', String(open));
       if (open) {
         const menu = $('#bots-conversations').closest('details'); if (menu) menu.open = false;
@@ -12849,8 +12885,17 @@
         }
       } catch (_) { /* Keep the last received conversation while disconnected. */ }
     }, 5000);
-    $('#bots-conversations').addEventListener('click', () =>
-      setBotConversationsOpen($('#bots-conversations').getAttribute('aria-expanded') !== 'true'));
+    $('#group-chat-details').addEventListener('click', () => {
+      const open = $('#room-details').hidden;
+      $('#room-details').hidden = !open; $('#group-chat-details').setAttribute('aria-expanded', String(open));
+    });
+    $('#room-details-close').addEventListener('click', () => {
+      $('#room-details').hidden = true; $('#group-chat-details').setAttribute('aria-expanded', 'false');
+    });
+    $('#bots-conversations').addEventListener('click', () => {
+      roomsState.selected = null; $('#room-panel').hidden = true;
+      setBotConversationsOpen(true); $('#room-create').open = true;
+    });
     $('#bots-conversations-close').addEventListener('click', () =>
       setBotConversationsOpen(false));
 

@@ -528,6 +528,33 @@
   #room-list{display:flex;flex:0 0 auto;gap:.5rem;max-height:3rem;overflow:auto;list-style:none;margin:0;padding:0}
   #room-list>li{flex:0 0 auto}
   #room-list button{white-space:nowrap;padding:.375rem .625rem;border-radius:999px;font-size:.8125rem}
+
+  #group-chat-header{display:none;flex:1;min-width:0}
+  body.group-chat-open #group-chat-header{display:flex}
+  body.group-chat-open #bots-titlebar-identity,body.group-chat-open #bots-context-button,
+  body.group-chat-open #bots-titlebar-context>.bot-actions-menu,body.group-chat-open #bots-new{display:none!important}
+  .group-chat-avatars{display:flex;padding-right:.5rem}
+  .group-chat-avatars .bot-avatar{width:2rem;height:2rem;margin-right:-.5rem;border:2px solid white;border-radius:50%}
+  #group-chat-details{margin-left:auto;white-space:nowrap}
+  body.group-chat-open .bots-conversations>.section-heading,
+  body.group-chat-open .bots-conversations>.form-help:not(#room-status),
+  body.group-chat-open #room-create,body.group-chat-open #room-list{display:none}
+  body.group-chat-open .bots-conversations{padding:.75rem 1rem;gap:0}
+  #room-thread{width:100%;box-sizing:border-box;max-width:52rem}
+  #room-thread>.bots-msg{list-style:none;margin:0 0 1rem;display:block}
+  #room-thread .bots-msg__bubble{width:fit-content;max-width:100%;box-sizing:border-box}
+  #room-thread .room-message-heading{margin:0 0 .375rem}
+  #room-thread .room-message-body{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
+  #room-thread .bots-msg[data-role='person']{margin-left:2rem}
+  #room-thread .bots-msg[data-role='person'] .bots-msg__bubble{margin-left:auto}
+  #room-thread .room-scheduled{font-size:.75rem;color:var(--color-neutral-solid-gray-600);text-align:center;margin:1rem}
+  #room-thread .room-scheduled p{font-size:.8125rem;text-align:left;white-space:pre-wrap}
+  #room-composer{width:100%;max-width:52rem;align-self:center}
+  #room-details{position:absolute;z-index:6;right:1rem;top:.5rem;width:min(24rem,calc(100% - 2rem));max-height:calc(100% - 1rem);overflow:auto;padding:1rem;box-sizing:border-box;border:1px solid var(--color-neutral-solid-gray-200);border-radius:1rem;background:var(--color-neutral-white);box-shadow:0 8px 32px #0002}
+  #room-details>.section-heading{display:flex;justify-content:space-between;align-items:center}
+  #room-participants{padding:0;list-style:none}
+  #room-participants li{display:flex;align-items:center;gap:.5rem;padding:.5rem 0}
+  #room-participants .bot-avatar{width:2rem;height:2rem;flex:none}
   .bots-onboard{overflow-y:auto;padding:clamp(1rem,4vw,3rem);max-width:52rem;
     margin:0 auto;width:100%}
   .bots-onboard__step{display:grid;gap:1rem;justify-items:stretch}
@@ -2559,6 +2586,13 @@
                     :type "text" :maxlength "60" :autocomplete "off" :hidden true
                     :placeholder "役割を短く（例: 価格の見直し）"}]
            [:span {:class "bots-titlebar__status" :id "bots-titlebar-status"}]]]
+         [:div {:id "group-chat-header" :class "bots-titlebar__identity"}
+          [:div {:id "group-chat-avatars" :class "group-chat-avatars" :aria-hidden true}]
+          [:div {:class "bots-titlebar__copy"}
+           [:span {:id "room-title" :class "bots-titlebar__name"} "グループチャット"]
+           [:span {:id "room-members-summary" :class "bots-titlebar__status"}]]
+          [:button {:id "group-chat-details" :class "tool-button" :type "button"
+                    :aria-expanded "false" :aria-controls "room-details"} "参加者・詳細"]]
          [:details {:class "bot-actions-menu"}
           [:summary {:aria-label "Bot の操作"} "操作"]
           [:div {:class "bot-actions-menu__items"}
@@ -2572,8 +2606,8 @@
                    :hidden true} "定期ジョブ"]
          [:button {:class "tool-button" :id "bots-conversations" :type "button"
                    :aria-expanded "false" :aria-controls "bots-conversations-panel"
-                   :aria-label "Bot同士の会話を読む" :title "Bot同士の会話を読む"}
-          "Bot 同士の会話 " [:span {:class "bots-conversations__count" :id "rooms-count"} "—"]]
+                   :aria-label "グループチャットを作成" :title "グループチャットを作成"}
+          "グループチャット " [:span {:class "bots-conversations__count" :id "rooms-count"} "—"]]
          [:button {:class "tool-button" :id "bots-quality" :type "button"
                    :aria-expanded "false" :aria-controls "bots-quality-panel"
                    :aria-label "Bots の安定性と出力品質" :title "Bots の安定性と出力品質"}
@@ -2771,13 +2805,13 @@
            ;; Shared conversations accept owner participation. Tool authority
            ;; remains in each Bot's own admitted work context.
            [:aside {:class "bots-conversations" :id "bots-conversations-panel"
-                    :hidden true :aria-label "Bot同士の会話"}
+                    :hidden true :aria-label "グループチャット"}
             [:div {:class "section-heading"}
-             (dds/heading 2 "Bot同士の会話" {:size "24"})
+             (dds/heading 2 "新しいグループ" {:size "24"})
              [:button {:class "tool-button" :id "bots-conversations-close"
                        :type "button" :aria-label "会話一覧を閉じる"} "閉じる"]]
             [:p {:class "form-help"}
-             "Bot と一緒に話す。作業の実行は各 Bot の会話へ。"]
+             "名前と参加する Bot を選んでください。"]
             [:details {:id "room-create"}
              [:summary "新しい会話"]
              [:form {:id "room-create-form"}
@@ -2790,17 +2824,19 @@
              [:ul {:class "record-list__items" :id "room-list"}
               [:li {:class "empty-state"} "まだBot同士の会話はありません。"]]
              [:div {:id "room-panel" :hidden true}
-              (dds/heading 3 "" {:size "20" :id "room-title"})
-              [:p {:class "source-note" :id "room-members-summary"}]
-              [:details [:summary {:id "room-schedule-label"} "定期対話"]
+              [:aside {:id "room-details" :hidden true :aria-label "参加者・詳細"}
+               [:div {:class "section-heading"} [:strong "参加者・詳細"]
+                [:button {:id "room-details-close" :type "button" :class "tool-button"} "閉じる"]]
+               [:ul {:id "room-participants"}]
+               [:details [:summary {:id "room-schedule-label"} "定期対話"]
                [:form {:id "room-schedule-form"}
                 [:label [:input {:id "room-schedule-enabled" :type "checkbox"}] "定期的に話す"]
                 [:label {:for "room-interval"} "間隔（分）"]
                 [:input {:id "room-interval" :type "number" :min 5 :max 10080 :value 60}]
                 [:label {:for "room-topic"} "話す内容"]
                 [:textarea {:id "room-topic" :maxlength 2000}]
-                [:button {:type "submit"} "保存"]]]
-              [:ul {:class "record-list__items" :id "room-thread"}
+                [:button {:type "submit"} "保存"]]]]
+              [:ul {:class "bots-thread__messages" :id "room-thread"}
                [:li {:class "empty-state"} "まだ発言はありません。"]]
               (chat/composer {:id "room-composer"}
                 [:label {:for "room-input"} "会話に参加"]
