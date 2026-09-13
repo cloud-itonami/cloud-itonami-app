@@ -1666,6 +1666,7 @@
             release (promise)
             calls (atom 0)
             verification-retry-response (atom nil)
+            missing-receipt-response (atom nil)
             run-id "goal-durable-parallel-1"]
         (with-redefs
           [policy/select-provider (fn [_ _] {:id :local})
@@ -1680,7 +1681,8 @@
                      (deref release 3000 nil)
                      {:content "" :tool-calls
                       [{:id "plan" :name "goal_plan"
-                        :input {:steps [{:id "inspect" :title "Inspect repository"}]}}]})
+                        :input {:steps [{:id "inspect" :title "Inspect repository"}
+                                        {:id "redundant" :title "Report the inspection"}]}}]})
                2 {:content "" :tool-calls
                   [{:id "status" :name "git_status" :input {}}
                    {:id "diff" :name "git_diff" :input {}}]}
@@ -1698,6 +1700,17 @@
                6 (do
                    (reset! verification-retry-response
                            (:content (last (:messages request))))
+                   {:content "" :tool-calls
+                    [{:id "verify-without-receipt" :name "goal_step_complete"
+                      :input {:step_id "redundant" :summary "claiming another step's work"
+                              :evidence ["the inspection receipts"]}}]})
+               7 (do
+                   (reset! missing-receipt-response
+                           (:content (last (:messages request))))
+                   {:content "" :tool-calls
+                    [{:id "revise-plan" :name "goal_plan"
+                      :input {:steps [{:id "inspect" :title "Inspect repository"}]}}]})
+               8 (do
                    {:content "" :tool-calls
                     [{:id "finish" :name "goal_complete"
                       :input {:summary "inspection completed"
@@ -1747,6 +1760,8 @@
               (is (= 1 (count (filter #{"verifier/step-passed"} kinds)))
                   "verification retries preserve the original receipt and summary")
               (is (str/includes? @verification-retry-response "already verified"))
+              (is (str/includes? @missing-receipt-response "Step redundant has no successful host execution receipt"))
+              (is (str/includes? @missing-receipt-response "goal_plan"))
               (is (some #{"verifier/goal-passed"} kinds)))))))))
 
 (deftest policy-violating-parallel-batch-returns-to-the-model-instead-of-failing-the-turn

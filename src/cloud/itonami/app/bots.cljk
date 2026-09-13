@@ -5338,8 +5338,7 @@
                 (cond
                   (= :verified (:step/state step))
                   ;; A retry cannot revoke an earned verification or replace
-                  ;; its evidence. Returning a generic refusal here made the
-                  ;; live Numbering support Bot retry until its slice ended.
+                  ;; its evidence. A generic refusal hides the earned state.
                   (recur (update run :messages conj
                                  {:role "tool" :tool-call-id (:id call) :name name
                                   :content (str "Step " step-id " is already verified. "
@@ -5366,7 +5365,25 @@
                   :else
                   (recur (update run :messages conj
                                  {:role "tool" :tool-call-id (:id call) :name name
-                                  :content "Step verification requires a dependency-ready plan step, a host execution receipt, summary, and evidence."}))))
+                                  :content
+                                  (cond
+                                    (nil? step)
+                                    (str "Step " step-id " is not in the current plan. "
+                                         "Use a current step id or revise goal_plan.")
+                                    (not (every? verified dependencies))
+                                    (str "Step " step-id " has unverified dependencies: "
+                                         (str/join ", " (sort (remove verified dependencies))) ". "
+                                         "Verify those steps before this one.")
+                                    (empty? receipts)
+                                    (str "Step " step-id " has no successful host execution receipt assigned to it. "
+                                         "Receipts for other steps cannot verify this step. "
+                                         "Run an admitted tool for this pending step before verifying it. "
+                                         "If earlier verified evidence already meets the goal, use goal_plan to remove "
+                                         "this redundant step and keep the existing verified steps unchanged, then goal_complete. "
+                                         "Repeating goal_step_complete without a receipt cannot pass.")
+                                    :else
+                                    (str "Step " step-id " has an execution receipt but needs a non-empty summary "
+                                         "and evidence. Supply both in goal_step_complete."))}))))
 
               (= "goal_complete" name)
               (let [summary (some-> (:summary input) str str/trim)
