@@ -13493,6 +13493,7 @@
             const request = $('#settings-bot-request').value.trim();
             if (!request) throw new Error('変更したいことを入力してください。');
             botsInput.value = [botsInput.value.trim(), request].filter(Boolean).join('\n\n');
+            resizeBotsInput();
             settingsDialog.close(); botsInput.focus();
           } catch (error) { $('#settings-bot-status').textContent = error.message; choose.disabled = false; }
         }); $('#settings-bot-list').append(choose);
