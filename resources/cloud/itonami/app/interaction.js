@@ -11873,6 +11873,9 @@
     };
     const selectBot = async (botId) => {
       botsState.selected = botId;
+      $('#bots-conversations-panel').hidden = true;
+      $('#bots-conversations').setAttribute('aria-expanded', 'false');
+      $('#bots-learning-panel').open = false;
       $('#bots-shell').classList.remove('show-bot-list');
       botsState.routines = [];
       // Both of these belong to the Bot you were just looking at. A rename
@@ -12631,11 +12634,11 @@
     // approves anything — no card, no runnable set, no busy state to cancel.
     // That absence is the feature; if a control for one appears here later,
     // the room grew a capability the ADR says it does not have.
-    const roomsState = {rooms:[], selected:null, bots:[]};
+    const roomsState = {rooms:[], selected:null, bots:[], busy:false, drafts:new Map()};
     const roomStatus = (text) => { $('#room-status').textContent = text || ''; };
     const renderRoomList = () => {
-      const list = $('#room-list');
-      list.replaceChildren();
+      const list = $('#room-list'), shortcuts = $('#bots-room-shortcuts');
+      list.replaceChildren(); shortcuts.replaceChildren(); shortcuts.hidden = !roomsState.rooms.length;
       $('#rooms-count').textContent = String(roomsState.rooms.length);
       if (!roomsState.rooms.length) {
         list.append(make('li', 'empty-state', 'まだBot同士の会話はありません。'));
@@ -12651,10 +12654,22 @@
         button.addEventListener('click', () => selectRoom(room.id));
         row.append(button);
         list.append(row);
+        const shortcut = make('li');
+        const open = make('button', 'bots-rail__item', `◉ ${room.name}`);
+        open.type = 'button';
+        open.addEventListener('click', () => {
+          $('#bots-shell').classList.remove('show-bot-list');
+          setBotConversationsOpen(true); selectRoom(room.id);
+        });
+        shortcut.append(open); shortcuts.append(shortcut);
       });
     };
     const renderRoomThread = (messages) => {
       const thread = $('#room-thread');
+      const version = `${roomsState.selected}:${JSON.stringify(messages)}`;
+      if (roomsState.threadVersion === version) return;
+      const follow = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
+      roomsState.threadVersion = version;
       thread.replaceChildren();
       if (!messages.length) {
         thread.append(make('li', 'empty-state', 'まだ発言はありません。'));
@@ -12665,28 +12680,35 @@
         // Attributed, as in the transcript the members themselves read. A room
         // where the lines are anonymous is a room where nobody can tell which
         // Bot to ask next, which is the only thing a room is for.
-        const who = message.from ? (names.get(message.from) || message.from) : 'あなた';
+        const who = message.from ? (names.get(message.from) || message.from) : (message.source === 'schedule' ? '定期対話' : 'あなた');
         const row = make('li', 'record-list__row');
         row.append(make('div', 'record-list__title', who));
         row.append(make('div', 'record-list__meta', message.text));
         thread.append(row);
       });
+      if (follow) thread.scrollTop = thread.scrollHeight;
     };
     const selectRoom = async (roomId) => {
+      if (roomsState.selected) roomsState.drafts.set(roomsState.selected, $('#room-input').value);
       roomsState.selected = roomId;
+      $('#room-input').value = roomsState.drafts.get(roomId) || '';
       const room = roomsState.rooms.find((entry) => entry.id === roomId);
       $('#room-panel').hidden = false;
       $('#room-title').textContent = room ? room.name : 'ルーム';
       $('#room-members-summary').textContent = room
         ? room.members.map((member) =>
-            member.enabled ? member.name : `${member.name}（停止中）`).join(' · ')
+            (member['enabled?'] ?? member.enabled) ? member.name : `${member.name}（停止中）`).join(' · ')
         : '';
+      $('#room-schedule-enabled').checked = !!room?.schedule?.enabled;
+      $('#room-interval').value = room?.schedule?.['interval-minutes'] || 60;
+      $('#room-topic').value = room?.schedule?.prompt || '';
       renderRoomList();
       roomStatus('読み込み中…');
       try {
         const request = await fetch(`/api/bots/groups/${encodeURIComponent(roomId)}/messages`);
         const data = await request.json();
         if (!request.ok) throw new Error(data?.error?.message || 'ルームを読めませんでした。');
+        if (roomsState.selected !== roomId) return;
         renderRoomThread(data.messages || []);
         roomStatus('');
       } catch (error) {
@@ -12704,6 +12726,15 @@
         }
         roomsState.rooms = roomsData.groups || [];
         roomsState.bots = botsRequest.ok ? (botsData.bots || []) : [];
+        const options = $('#room-bot-options');
+        const checked = new Set(Array.from(options.querySelectorAll('input:checked')).map(x => x.value));
+        options.replaceChildren(make('legend', '', '参加する Bot'));
+        roomsState.bots.forEach(bot => {
+          const label = make('label', 'room-member-option');
+          const input = document.createElement('input');
+          input.type = 'checkbox'; input.value = bot.id; input.checked = checked.has(bot.id);
+          label.append(input, document.createTextNode(bot.name)); options.append(label);
+        });
         renderRoomList();
         if (roomsState.selected
             && !roomsState.rooms.some((room) => room.id === roomsState.selected)) {
@@ -12724,11 +12755,106 @@
         loadRooms();
       }
     };
+    $('#room-create-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const button = event.currentTarget.querySelector('button');
+      if (button.disabled) return;
+      button.disabled = true;
+      try {
+        const name = $('#room-name').value.trim();
+        const members = Array.from($('#room-bot-options').querySelectorAll('input:checked')).map(x => x.value);
+        if (!name || !members.length) throw new Error('名前と参加する Bot を選んでください。');
+        const data = await postJSON('/api/bots/groups', {name, members}, true);
+        roomsState.rooms = data.groups || [];
+        const made = roomsState.rooms.find(x => x.id === data.created);
+        renderRoomList();
+        $('#room-create').open = false;
+        if (made) await selectRoom(made.id);
+      } catch (error) { roomStatus(error.message); }
+      finally { button.disabled = false; }
+    });
+    $('#room-composer').addEventListener('submit', async event => {
+      event.preventDefault();
+      const text = $('#room-input').value.trim(), roomId = roomsState.selected;
+      if (!roomId || !text || roomsState.busy) return;
+      roomsState.busy = true; $('#room-send').disabled = true;
+      roomStatus('Bot が返答しています…');
+      try {
+        const requestId = roomsState.pendingRequest?.roomId === roomId && roomsState.pendingRequest.text === text
+          ? roomsState.pendingRequest.id : crypto.randomUUID();
+        roomsState.pendingRequest = {roomId, text, id:requestId};
+        const data = await postJSON(`/api/bots/groups/${encodeURIComponent(roomId)}/send`, {text, 'request-id':requestId}, true);
+        roomsState.pendingRequest = null;
+        roomsState.drafts.delete(roomId);
+        if (roomsState.selected === roomId) {
+          $('#room-input').value = ''; roomStatus(data.run?.state === 'running' ? 'Bot が返答しています…' : '');
+        }
+      } catch (error) { roomStatus(error.message); }
+      finally { roomsState.busy = false; $('#room-send').disabled = false; }
+    });
+    $('#room-schedule-form').addEventListener('submit', async event => {
+      event.preventDefault(); const id = roomsState.selected;
+      if (!id) return;
+      try {
+        const data = await postJSON(`/api/bots/groups/${encodeURIComponent(id)}/schedule`, {
+          enabled:$('#room-schedule-enabled').checked,
+          'interval-minutes':Number($('#room-interval').value), prompt:$('#room-topic').value.trim()
+        }, true);
+        const room = roomsState.rooms.find(x => x.id === id); if (room) room.schedule = data.schedule;
+        roomStatus(data.schedule.enabled ? '定期対話を保存しました。' : '定期対話を停止しました。');
+      } catch (error) { roomStatus(error.message); }
+    });
+    $('#bots-learning-panel').addEventListener('toggle', async event => {
+      if (!event.currentTarget.open || !botsState.selected) return;
+      const id = botsState.selected, list = $('#bots-learning-list');
+      try {
+        const response = await fetch(`/api/bots/${encodeURIComponent(id)}/skills`);
+        const data = await response.json(); if (!response.ok) throw new Error(data?.error?.message || '読み込めませんでした。');
+        if (botsState.selected !== id) return;
+        list.replaceChildren();
+        for (const skill of data.skills || []) {
+          const row = make('li');
+          row.append(make('strong', '', `${skill.name} · ${{candidate:'候補', validated:'実行検証済み', suspended:'停止'}[skill.status] || skill.status}`));
+          row.append(make('p', '', skill.procedure)); list.append(row);
+        }
+        if (!list.children.length) list.append(make('li', '', 'まだ学習したスキルはありません。'));
+      } catch (error) { list.replaceChildren(make('li', '', error.message)); }
+    });
+    $('#room-input').addEventListener('keydown', event => {
+      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.isComposing) {
+        event.preventDefault(); $('#room-composer').requestSubmit();
+      }
+    });
+    setInterval(async () => {
+      const roomId = roomsState.selected;
+      if (document.hidden || $('#bots-conversations-panel').hidden || !roomId) return;
+      try {
+        const response = await fetch(`/api/bots/groups/${encodeURIComponent(roomId)}/messages`);
+        if (!response.ok) return;
+        const data = await response.json();
+        if (roomsState.selected === roomId) {
+          renderRoomThread(data.messages || []);
+          $('#room-send').disabled = roomsState.busy || data.run?.state === 'running';
+          roomStatus(data.run?.state === 'running' ? 'Bot が返答しています…' : data.run?.state === 'failed' ? '返答が途中で止まりました。ここまでの会話は保存されています。' : '');
+        }
+      } catch (_) { /* Keep the last received conversation while disconnected. */ }
+    }, 5000);
     $('#bots-conversations').addEventListener('click', () =>
       setBotConversationsOpen($('#bots-conversations').getAttribute('aria-expanded') !== 'true'));
     $('#bots-conversations-close').addEventListener('click', () =>
       setBotConversationsOpen(false));
 
+    loadRooms();
+    setInterval(async () => {
+      if (document.hidden) return;
+      try {
+        const response = await fetch('/api/bots/groups'); if (!response.ok) return;
+        const data = await response.json(), rooms = data.groups || [];
+        if (JSON.stringify(rooms) !== JSON.stringify(roomsState.rooms)) {
+          roomsState.rooms = rooms; renderRoomList();
+        }
+      } catch (_) { /* The visible history survives reconnects. */ }
+    }, 15000);
     // ── Wallet: Passkey-owned Smart Accounts; external links optional ───
     let walletState = null;
     let walletBalances = new Map();

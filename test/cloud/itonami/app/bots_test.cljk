@@ -2360,7 +2360,7 @@
                         (first (:bots (bots/overview nil alice))))]
           (is (not-any? #{"gmail_search_messages"} admitted)
               "an unauthorized connector is still not admitted")
-          (is (= (set (map :name commerce/tool-definitions))
+          (is (= (into #{"skill_propose" "skill_use"} (map :name commerce/tool-definitions))
                  (set admitted))
               "the built-in tenant commerce tools remain available"))))))
 
@@ -5722,3 +5722,157 @@
           (is (= :test/admission (:type (ex-data error))))
           (is (empty? @workers))
           (is (= 1 @drained)))))))
+
+(deftest learned-procedures-require-source-evidence-and-an-explicit-later-trial
+  (with-store
+    (fn []
+      (let [b (make-bot alice {:name "learner"}) id (:bot/id b)
+            propose (deref #'bots/propose-skill!)
+            record (deref #'bots/record-turn!)
+            receipt {:sha256 "verified-output" :at "2026-01-01T00:00:00Z"}]
+        (is (thrown? clojure.lang.ExceptionInfo
+                     (propose b {:name "Read" :procedure "List first" :source_turn "missing" :tool "workspace_list"})))
+        (swap! store/state assoc-in [:bots :skill-evidence id "source" "workspace_list"] receipt)
+        (record id "source" {:turn/state :completed})
+        (let [skill (propose b {:name "Read" :procedure "List first" :source_turn "source" :tool "workspace_list"})
+              sid (:id skill) later {:sha256 "later-output" :at "2099-01-01T00:00:00Z"}]
+          (is (= :candidate (:status skill)))
+          (is (thrown? clojure.lang.ExceptionInfo (bots/learned-skills bob id)))
+          (swap! store/state assoc-in [:bots :skill-evidence id "unrelated" "workspace_list"] later)
+          (record id "unrelated" {:turn/state :completed})
+          (is (= :candidate (:status (first (bots/learned-skills alice id))))
+              "an unrelated successful use of the same tool must not validate the procedure")
+          (swap! store/state assoc-in [:bots :runs id] {:id "trial"})
+          ((deref #'bots/use-skill!) b sid)
+          (record id "trial" {:turn/state :completed})
+          (is (= :candidate (:status (first (bots/learned-skills alice id))))
+              "a completed answer without the required tool is not evidence")
+          (swap! store/state assoc-in [:bots :skill-evidence id "trial" "workspace_list"] later)
+          (record id "trial" {:turn/state :completed})
+          (is (= :validated (:status (first (bots/learned-skills alice id)))))
+          (swap! store/state assoc-in [:bots :runs id] {:id "regression"})
+          ((deref #'bots/use-skill!) b sid)
+          (record id "regression" {:turn/state :failed})
+          (is (= :suspended (:status (first (bots/learned-skills alice id)))))
+          (is (thrown? clojure.lang.ExceptionInfo ((deref #'bots/use-skill!) b sid))))))))
+
+(deftest group-schedules-are-owned-and-bounded
+  (with-store
+    (fn []
+      (let [b (make-bot alice {:name "speaker"})
+            g (bots/create-group! alice {:name "Standup" :members [(:bot/id b)]}) id (:group/id g)]
+        (is (thrown? clojure.lang.ExceptionInfo
+                     (bots/configure-group-schedule! bob id {:enabled false})))
+        (is (thrown? clojure.lang.ExceptionInfo
+                     (bots/configure-group-schedule! alice id {:enabled true :interval-minutes 0 :prompt "status"})))
+        (is (true? (:enabled (bots/configure-group-schedule! alice id
+                              {:enabled true :interval-minutes 60 :prompt "status"}))))
+        (is (= 60 (get-in (first (bots/groups alice)) [:schedule :interval-minutes])))
+        (is (false? (:enabled (bots/configure-group-schedule! alice id {:enabled false}))))))))
+
+(deftest group-submission-is-idempotent-and-preserves-attribution
+  (with-store
+    (fn []
+      (in-room
+       (fn []
+         (let [b (make-bot alice {:name "speaker"})
+               g (bots/create-group! alice {:name "Standup" :members [(:bot/id b)]}) id (:group/id g)
+               entered (promise) release (promise)]
+           (with-redefs [provider/agent-turn (fn [_ _] (deliver entered true) @release {:content "Ready" :tool-calls []})]
+             (bots/start-group-turn! nil alice id "status" "request-12345" :schedule)
+             (is (true? (deref entered 5000 false)))
+             (is (= "request-12345" (:id (bots/start-group-turn! nil alice id "status" "request-12345" :schedule))))
+             (is (thrown? clojure.lang.ExceptionInfo
+                          (bots/start-group-turn! nil alice id "again" "request-67890" :person)))
+             (deliver release true)
+             (loop [remaining 500]
+               (when (and (pos? remaining) (= :running (:state (bots/group-run alice id))))
+                 (Thread/sleep 10) (recur (dec remaining))))
+             (is (= :completed (:state (bots/group-run alice id))))
+             (is (= 2 (count (bots/group-messages alice id))))
+             (is (= :schedule (:source (first (bots/group-messages alice id)))))
+             (bots/start-group-turn! nil alice id "status" "request-12345" :schedule)
+             (is (= 2 (count (bots/group-messages alice id)))))))))))
+
+(deftest yielded-resident-work-does-not-jump-a-waiting-bot
+  (with-store
+    (fn []
+      (let [workers (deref #'bots/goal-workers) previous @workers submitted (atom [])
+            job (fn [id status created updated]
+                  {:job/id id :job/resident-workforce? true :job/created-at created
+                   :job/updated-at updated :job/run {:agent.run/status status}})]
+        (try
+          (reset! workers {})
+          (swap! store/state assoc-in [:bots :goal-jobs]
+                 {"yielded" (job "yielded" :checkpointed "2026-01-01T00:00:00Z" "2026-01-01T02:00:00Z")
+                  "waiting" (job "waiting" :queued "2026-01-01T01:00:00Z" "2026-01-01T01:00:00Z")})
+          (with-redefs [bots/enqueue-goal! (fn [_ id] (swap! submitted conj id))]
+            ((deref #'bots/drain-goal-queue!) {:bots {:workforce {:recovery-max-active 1}}})
+            (is (= ["waiting"] @submitted)))
+          (finally (reset! workers previous)))))))
+
+(deftest workforce-can-admit-waiting-work-without-expanding-inference-slots
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root identity]
+        (let [submitted (atom [])
+              new-role (-> (engineer-entry) (assoc :key "cloud-itonami/new-role")
+                           (assoc :role {:id :qa :name "New role" :job :qa}))]
+          (bots/provision-workforce! {} alice (workforce-catalog [(engineer-entry) new-role]))
+          (swap! store/state assoc-in [:bots :goal-jobs "waiting"]
+                 {:job/id "waiting" :job/resident-workforce? true
+                  :job/session alice :job/run {:agent.run/status :queued}})
+          (with-redefs [bots/submit-goal! (fn [_ _ id _ run-id _]
+                                          (swap! submitted conj id) {:id run-id})]
+            (bots/fire-due-workforce! {:bots {:workforce {:max-active 1 :queue-capacity 2
+                                                        :max-starts-per-tick 1}}}
+                                     alice "2099-01-01T00:00:00Z")
+            (is (= 1 (count @submitted)))
+            (reset! submitted [])
+            (bots/fire-due-workforce! {:bots {:workforce {:max-active 0 :queue-capacity 8}}}
+                                     alice "2099-01-01T00:00:00Z")
+            (is (empty? @submitted) "zero still disables admission")))))))
+
+(deftest peer-messages-appear-in-one-shared-conversation
+  (with-store
+    (fn []
+      (let [a (make-bot alice {:name "alpha" :peers? true})
+            b (make-bot alice {:name "beta" :peers? true})
+            mirror (deref #'bots/mirror-peer-conversation!)]
+        (mirror a b "question")
+        (mirror b a "answer")
+        (let [groups (bots/groups alice) messages (bots/group-messages alice (:id (first groups)))]
+          (is (= 1 (count groups)))
+          (is (= ["question" "answer"] (mapv :text messages)))
+          (is (= [(str "bot:" (:bot/id a)) (str "bot:" (:bot/id b))] (mapv :from messages)))
+          (is (empty? (bots/groups bob))))))))
+
+(deftest scheduled-discussions-start-once-per-due-interval
+  (with-store
+    (fn []
+      (let [b (make-bot alice {:name "speaker"})
+            g (bots/create-group! alice {:name "Standup" :members [(:bot/id b)]}) id (:group/id g)
+            calls (atom []) now "2099-01-01T00:00:00Z"]
+        (bots/configure-group-schedule! alice id {:enabled true :interval-minutes 60 :prompt "status"})
+        (with-redefs [bots/start-group-turn! (fn [_ _ id text request-id source]
+                                             (swap! calls conj [id text source]))]
+          ((deref #'bots/fire-due-groups!) {} alice now)
+          ((deref #'bots/fire-due-groups!) {} alice now)
+          (is (= [[id "status" :schedule]] @calls))
+          (is (= "2099-01-01T01:00:00Z" (get-in (first (bots/groups alice)) [:schedule :next-at])))
+          ((deref #'bots/fire-due-groups!) {} alice "2099-01-01T01:00:00Z")
+          (is (= 2 (count @calls))))))))
+
+(deftest a-resident-that-never-verifies-its-step-yields-terminally
+  (with-store
+    (fn []
+      (let [events (mapv (fn [i] {:event/kind :action/finished
+                                 :event/data {:action/id (str i) :step-id "read"}}) (range 8))]
+        (swap! store/state assoc-in [:bots :goal-jobs "stalled"]
+               {:job/resident-workforce? true :job/events events
+                :job/plan [{:step/id "read" :step/state :pending}]})
+        (is (true? ((deref #'bots/resident-stalled?) {} {:id "stalled"})))
+        (swap! store/state assoc-in [:bots :goal-jobs "stalled" :job/plan 0 :step/state] :verified)
+        (is (false? ((deref #'bots/resident-stalled?) {} {:id "stalled"})))
+        (swap! store/state assoc-in [:bots :goal-jobs "stalled" :job/resident-workforce?] false)
+        (is (false? ((deref #'bots/resident-stalled?) {} {:id "stalled"})))))))

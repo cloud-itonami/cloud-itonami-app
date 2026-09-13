@@ -1564,3 +1564,31 @@ kbb -M:lint
 Code in this repository is available under Apache License 2.0. Dependencies
 remain under their respective licenses; see [NOTICE](NOTICE) and
 [the dependency policy](docs/dependencies.md).
+
+### Continuing Bot work and shared conversations
+
+The Bots sidebar includes shared conversations. Create a conversation, select up
+to eight owned Bots, and join through its composer. Peer messages and replies
+between two Bots also appear in a shared thread. A submitted UI message has a
+request id, is persisted, and runs asynchronously; a interrupted discussion keeps
+its partial history instead of replaying the person's message. Each UI or
+scheduled discussion gives each member one turn. Tools still run in the Bot's
+own work conversation, not in the shared discussion.
+
+Each shared conversation can enable a periodic discussion with a topic and an
+interval of 5–10080 minutes. The existing resident controller timer starts due
+discussions and retains their status. The controller must remain running.
+Resident work uses a bounded waiting queue (default eight) independently from
+inference concurrency (default one), yields after three model turns, and stops a
+resident tick after eight actions on the same unverified step. This preserves
+receipts and gives waiting Bots a chance to run; it does not promise every
+schedule can meet its cadence when demand exceeds model capacity.
+
+Bots can retain learned procedures with `skill_propose`, citing a completed turn
+and an actual host tool receipt. `skill_use` explicitly selects a procedure for
+a later trial. Only a completed trial with the named tool's successful receipt
+validates it; failed trials suspend it. The learning disclosure shows candidates,
+validated procedures and suspended procedures. Validation is an execution check,
+not independent proof of every claim in the procedure. Skills never change
+permissions, provider credentials or approval policy. Sources, validation receipts
+and trial outcomes remain associated with the owning Bot.
