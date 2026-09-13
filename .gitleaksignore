@@ -13,8 +13,26 @@
 # and nothing else, and a new DID has to be added here by somebody who looked.
 
 # test/cloud/itonami/app/credential_http_test.cljk:29
-a6b86ad192e4fbfaac43ebd89dd7545340f05b6f:test/cloud/itonami/app/credential_http_test.cljk:generic-api-key:29
+
 # test/cloud/itonami/app/credential_sd_jwt_test.cljk:11
-fd00122126c26eb51f705d9b42cb518759e580e1:test/cloud/itonami/app/credential_sd_jwt_test.cljk:generic-api-key:11
+
 # test/cloud/itonami/app/credential_test.cljk:21
+
+# The same three did:key lines, as they were named BEFORE the cljk rename
+# (4a3a71fc, 2026-09-11). `gitleaks git` scans the whole reachable history,
+# so the pre-rename commits still carry the .clj paths and the .cljk
+# fingerprints above do not match them. Same findings, old names — added
+# 2026-09-13 after every CI run since the rename went red.
+
+8b1dc9f15ce5b5fb8e8a59701152a0927bc41687:test/cloud/itonami/app/credential_test.clj:generic-api-key
+
+# Fingerprint format for gitleaks v8.28 `git` scans: commit:file:ruleID:LINE.
+# (The `:***` suffixes this file carried until 2026-09-13 never matched anything.)
+# did:key DIDs are the identifier itself — no private half; same three lines
+# before and after the cljk rename (4a3a71fc), hence both file names.
+fd00122126c26eb51f705d9b42cb518759e580e1:test/cloud/itonami/app/credential_sd_jwt_test.cljk:generic-api-key:11
+a6b86ad192e4fbfaac43ebd89dd7545340f05b6f:test/cloud/itonami/app/credential_http_test.cljk:generic-api-key:29
 8b1dc9f15ce5b5fb8e8a59701152a0927bc41687:test/cloud/itonami/app/credential_test.cljk:generic-api-key:21
+fd00122126c26eb51f705d9b42cb518759e580e1:test/cloud/itonami/app/credential_sd_jwt_test.clj:generic-api-key:11
+a6b86ad192e4fbfaac43ebd89dd7545340f05b6f:test/cloud/itonami/app/credential_http_test.clj:generic-api-key:29
+8b1dc9f15ce5b5fb8e8a59701152a0927bc41687:test/cloud/itonami/app/credential_test.clj:generic-api-key:21
