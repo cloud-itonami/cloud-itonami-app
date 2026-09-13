@@ -4817,10 +4817,16 @@
            ;; These two go together -- do not set one without the other.
            :disable-thinking? true)
 
-    (and (:goal? run) (= "murakumo-edge" model) (seq (:tools run)))
+    (and (:goal? run) (seq (:tools run))
+         (or (= "murakumo-edge" model)
+             (contains? (set (:require-goal-tool-models provider)) model)))
     ;; Ornith follows llama.cpp's required-tool contract exactly (live direct
     ;; proof, 2026-08-29). Without this it may write a correct completion in
     ;; prose forever while the host waits for goal_complete/goal_blocked.
+    ;; The operator can qualify another serving model for the same contract.
+    ;; On 2026-09-13 b70 repeated identical progress prose five times despite
+    ;; the host's next-action reminder. A goal ends through these admitted
+    ;; tools; selecting one does not grant it permission to execute.
     (assoc :require-tool? true))))
 
 (def ^:private capability-repair-workforce-keys
