@@ -6200,7 +6200,8 @@
       (and (= method "GET") (bot-id-from path #"/api/bots/([^/]+)/skills"))
       (do (require-human-session! exchange)
           (send! exchange 200 {:skills (bots/learned-skills session
-                     (bot-id-from path #"/api/bots/([^/]+)/skills"))}))
+                     (bot-id-from path #"/api/bots/([^/]+)/skills"))
+                               :profile (bots/profile session (bot-id-from path #"/api/bots/([^/]+)/skills"))}))
 
       (and (= method "POST") (= path "/api/bots/suggestions"))
       (let [body (read-json exchange)]

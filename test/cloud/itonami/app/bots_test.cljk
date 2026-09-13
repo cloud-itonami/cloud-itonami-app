@@ -12,6 +12,7 @@
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bots :as bots]
+            [cloud.itonami.app.bot-profile :as profile]
             [cloud.itonami.app.messenger :as messenger]
             [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.commerce :as commerce]
@@ -2361,7 +2362,7 @@
                         (first (:bots (bots/overview nil alice))))]
           (is (not-any? #{"gmail_search_messages"} admitted)
               "an unauthorized connector is still not admitted")
-          (is (= (into #{"skill_propose" "skill_use"} (map :name commerce/tool-definitions))
+          (is (= (into #{"skill_propose" "skill_use" "profile_read" "profile_update"} (map :name commerce/tool-definitions))
                  (set admitted))
               "the built-in tenant commerce tools remain available"))))))
 
@@ -5937,3 +5938,63 @@
         (let [r (messenger/send-message! "org-1" "alice" cid {:sealed "opaque-envelope" :encryption-mode :signal-v1})]
           (is (nil? (bots/queue-messenger-reply! nil alice cid (:message-id r))))
           (is (= ["quarantined secret"] (mapv :message/text ((private-fn 'group-conversation) (:group/id g) id)))))))))
+
+
+(deftest bot-profile-documents-persist-and-are-owner-isolated
+  (with-store
+    (fn []
+      (let [a (make-bot alice {:name "Persona A"}) b (make-bot bob {:name "Persona B"})
+            p (profile/ensure! a "## SOUL.md\n\nImported personality.\n\n## USER.md\n\nPrefer short answers.\n")]
+        (is (str/includes? (get-in p [:files "SOUL.md"]) "Imported personality."))
+        (is (str/includes? (get-in p [:files "USER.md"]) "short answers"))
+        (is (= 3 (count (filter #(.isFile %) (filter #(str/ends-with? (.getName %) ".md")
+                                (file-seq (io/file (config/data-dir) "bot-profiles")))))))
+        (let [updated (profile/apply-update! a 1 {"MEMORY.md" "# Memory\nConfirmed preference: concise."} {:turn "t1"})]
+          (is (= 2 (:revision updated)))
+          (is (= 1 (count (:history updated))))
+          (is (str/includes? (profile/prompt (profile/read-profile a)) "Confirmed preference"))
+          (is (not (str/includes? (profile/prompt (profile/read-profile b)) "Confirmed preference"))))
+        (is (thrown? clojure.lang.ExceptionInfo (profile/apply-update! a 1 {"SOUL.md" "stale"} {})))
+        (is (thrown? clojure.lang.ExceptionInfo (profile/apply-update! a 2 {"../../escape" "bad"} {})))
+        (is (thrown? clojure.lang.ExceptionInfo (profile/apply-update! a 2 {"MEMORY.md" (str "api" "_key=" (apply str (repeat 16 "x")))} {})))
+        (is (thrown? clojure.lang.ExceptionInfo (bots/profile bob (:bot/id a))))))))
+
+(defn- wait-profile-review []
+  (loop [n 1000]
+    (when (and (pos? n) (seq @(deref (ns-resolve 'cloud.itonami.app.bots 'profile-review-workers))))
+      (Thread/sleep 10) (recur (dec n)))))
+
+(deftest completed-conversations-queue-a-deduplicated-background-profile-review
+  (with-store
+    (fn []
+      (in-room
+        (fn []
+          (let [b (make-bot alice {:name "Learning Bot"}) id (:bot/id b) calls (atom 0)]
+            ((private-fn 'append!) id (bot/message {:id "preference" :bot id :role :person :text "Please keep answers concise." :at (store/now)}))
+            ((private-fn 'record-turn!) id "review-me" {:turn/state :completed :turn/phase :completed})
+            ((private-fn 'record-turn!) id "review-me" {:turn/state :completed :turn/phase :completed})
+            (is (= 1 (count (get-in @store/state [:bots :profile-reviews]))))
+            (with-redefs [provider/agent-turn (fn [_ request]
+              (swap! calls inc) (is (empty? (:tools request)))
+              {:content (json/write-str {:updates {"USER.md" "# User\nPrefer concise answers."} :reason "Explicit preference"})})]
+              (bots/dispatch-profile-reviews! {} alice)
+              (wait-profile-review)
+              (is (= 1 @calls))
+              (is (= :completed (:state (first (vals (get-in @store/state [:bots :profile-reviews]))))))
+              (is (str/includes? (get-in (bots/profile alice id) [:files "USER.md"]) "concise answers"))
+              (is (= 1 (count (bots/messages alice id))))
+              (bots/dispatch-profile-reviews! {} alice)
+              (is (= 1 @calls)))))))))
+
+(deftest malformed-background-review-does-not-change-profile
+  (with-store
+    (fn []
+      (in-room
+        (fn []
+          (let [b (make-bot alice {:name "Review rejection"}) before (profile/ensure! b nil)]
+            (profile/enqueue-review! b {:turn/id "bad" :turn/state :failed}
+              [{:message/id "m" :message/role :person :message/text "Keep answers brief"}])
+            (with-redefs [provider/agent-turn (fn [& _] {:content "not json"})]
+              (bots/dispatch-profile-reviews! {} alice) (wait-profile-review))
+            (is (= (:files before) (:files (profile/read-profile b))))
+            (is (= :failed (:state (first (vals (get-in @store/state [:bots :profile-reviews]))))))))))))

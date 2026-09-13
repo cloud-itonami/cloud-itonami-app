@@ -36,3 +36,6 @@ a6b86ad192e4fbfaac43ebd89dd7545340f05b6f:test/cloud/itonami/app/credential_http_
 fd00122126c26eb51f705d9b42cb518759e580e1:test/cloud/itonami/app/credential_sd_jwt_test.clj:generic-api-key:11
 a6b86ad192e4fbfaac43ebd89dd7545340f05b6f:test/cloud/itonami/app/credential_http_test.clj:generic-api-key:29
 8b1dc9f15ce5b5fb8e8a59701152a0927bc41687:test/cloud/itonami/app/credential_test.clj:generic-api-key:21
+
+# Synthetic credential-shaped text used to assert profile rejection; never a key.
+63c42cc3ca1a959c4150dc330afca135739af1f6:test/cloud/itonami/app/bots_test.cljk:generic-api-key:5959

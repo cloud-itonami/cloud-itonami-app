@@ -2847,7 +2847,7 @@
                   [:button {:id "room-send" :type "submit"} "送信"]))]]]
 
            [:details {:id "bots-learning-panel"}
-            [:summary "この Bot の学習したスキル"]
+            [:summary "この Bot のプロフィール・学習"]
             [:p {:class "form-help"} "候補を別の実行で試し、必要なツールの成功と実行完了を検証します。失敗した試行は停止します。"]
             [:ul {:id "bots-learning-list"}]]
            ;; The direct Bot thread is the product's chat surface.

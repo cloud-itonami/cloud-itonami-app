@@ -12882,6 +12882,17 @@
           row.append(make('strong', '', `${skill.name} · ${{candidate:'候補', validated:'実行検証済み', suspended:'停止'}[skill.status] || skill.status}`));
           row.append(make('p', '', skill.procedure)); list.append(row);
         }
+        for (const [name, content] of Object.entries(data.profile?.files || {})) {
+          const row = make('li'), details = document.createElement('details');
+          details.append(make('summary', '', name), make('pre', 'room-message-body', content));
+          row.append(details); list.append(row);
+        }
+        for (const review of (data.profile?.reviews || []).slice(-3).reverse()) {
+          const row = make('li');
+          const status = {queued:'振り返り待ち', running:'振り返り中', completed:'振り返り完了', failed:'振り返り失敗'}[review.state] || review.state;
+          row.append(make('strong', '', status), make('p', '', review.reason || (review['changed-files'] || []).join('・') || review['error-type'] || ''));
+          list.append(row);
+        }
         if (!list.children.length) list.append(make('li', '', 'まだ学習したスキルはありません。'));
       } catch (error) { list.replaceChildren(make('li', '', error.message)); }
     });
