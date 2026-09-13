@@ -1789,7 +1789,7 @@
     .bots-titlebar{flex-wrap:wrap}
     body[data-current-view='bots'] .workspace{display:block}
     body[data-current-view='bots'] .sidebar{position:fixed;top:0;left:0;width:19rem;
-      height:5rem;z-index:40;padding:.5rem 1rem;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+      height:var(--workspace-header-height,5rem);overflow:hidden;z-index:40;padding:.5rem 1rem;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
     body[data-current-view='bots'] .sidebar>:not(.account-entry){display:none}
     body[data-current-view='bots'] .topbar{padding-left:20rem}
     .bots-plugin-link{padding:1rem .75rem;margin-top:auto}
