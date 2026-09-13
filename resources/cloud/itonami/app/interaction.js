@@ -13384,13 +13384,16 @@
           workspaceApps = data.apps; renderWorkspaceApps(); renderMarketplace();
           (installedView ? $('#apps-status') : $('#market-status')).textContent =
             `${app.name}を${app['installed?'] ? '取り外しました。データと接続は保持しています。' : 'インストールしました。'}`;
-          const target = document.querySelector(`[data-app-id='${app.id}'] button`) || $('#market-search');
+          const target = document.querySelector(`.view:not([hidden]) [data-app-id='${app.id}'] button`)
+            || (installedView ? document.querySelector('[data-view-panel=apps] a') : $('#market-search'));
           target?.focus();
         } catch (error) { $('#market-status').textContent = error.message; $('#apps-status').textContent = error.message; toggle.disabled = false; }
       });
       actions.append(toggle); card.append(icon, copy, actions); return card;
     };
     const renderWorkspaceApps = () => {
+      const activeApp = workspaceApps.find((app) => app.id === currentView);
+      if (activeApp) { $('#current-view').textContent = activeApp.name; document.title = `${activeApp.name} | ${document.querySelector('.workspace').dataset.brand}`; }
       const installed = workspaceApps.filter((app) => app['installed?']);
       $$('[data-installed-apps]').forEach((container) => {
         container.replaceChildren();
