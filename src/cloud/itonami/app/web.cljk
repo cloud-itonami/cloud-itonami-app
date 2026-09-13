@@ -315,6 +315,20 @@
      showing, the status reads in flow, under the gate it talks about. */
   body:has(.signin-view:not([hidden])) .global-status{position:static;
     max-width:60rem;box-shadow:none;margin:1rem clamp(1rem,4vw,3rem) 0}
+  body[data-current-view='signin'] .workspace{display:block;min-height:100dvh;padding-bottom:0}
+  body[data-current-view='signin'] .sidebar,
+  body[data-current-view='signin'] .topbar{display:none}
+  body[data-current-view='signin'] #main-content{padding:clamp(1.25rem,5vw,4rem) 1rem}
+  body[data-current-view='signin'] .signin-view{max-width:28rem;margin:0 auto;padding:0}
+  body[data-current-view='signin'] .global-status{max-width:28rem;margin:0 auto 1.25rem;box-sizing:border-box}
+  .signin-view .view-header{margin-bottom:1.5rem}
+  .signin-view .view-header h1{font-size:clamp(1.5rem,4vw,2rem);line-height:1.4}
+  .signin-view .view-lead{font-size:1rem;line-height:1.6;margin:.5rem 0 0}
+  .signin-view .local-actions{display:flex;flex-direction:column;align-items:stretch;gap:.75rem}
+  .signin-view .local-actions a{box-sizing:border-box;text-align:center;min-height:3rem}
+  .signin-view .signin-column{gap:1rem}
+  .signin-help{font-size:.875rem;line-height:1.6}
+  .signin-help summary{cursor:pointer;min-height:2.75rem;display:flex;align-items:center}
   .signin-brand{display:flex;align-items:center;gap:.75rem;margin-bottom:1.25rem}
   .signin-brand img{width:3rem;height:3rem;border-radius:.75rem;display:block}
   .signin-brand span{font-size:1.0625rem;font-weight:700;
@@ -4159,7 +4173,7 @@
           [:div {:class "view-header__copy"}
            (dds/heading 1 "サインイン" {:size "36" :id "registration-title"})
            [:p {:class "view-lead" :id "registration-lead"}
-            "Web3 の本人確認を、パスキーで安全に始めます。"]]]
+            "パスキーを使って続ける"]]]
          [:div {:class "security-callout" :id "passkey-gate-notice"
                 :role "status" :aria-live "polite"}
           [:strong {:id "signin-gate-headline"} "パスキーでサインインしてください。"]
@@ -4178,8 +4192,10 @@
                         {:type :text
                          :id "itonami-enrolment-link"
                          :href "https://itonami.cloud/ja/signin/"})]
-           [:p {:class "form-help"}
-            "鍵は 1Password / Bitwarden / iCloud キーチェーン / Google パスワードマネージャー のいずれかに保存してください。登録は itonami.cloud で行います。"]]
+           [:details {:class "signin-help"}
+            [:summary "パスキーについて"]
+            [:p {:class "form-help"}
+             "スマートフォンやパスワードマネージャーの鍵でサインインします。新しい鍵は itonami.cloud で登録できます。"]]]
           ;; Everything below is still Passkey: device-local recovery,
           ;; device-local registration, and joining by invitation. One fold, so
           ;; the screen shows one decision until someone asks for more. The
