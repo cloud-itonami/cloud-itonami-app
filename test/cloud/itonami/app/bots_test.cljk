@@ -12,6 +12,7 @@
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bots :as bots]
+            [cloud.itonami.app.messenger :as messenger]
             [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.commerce :as commerce]
             [cloud.itonami.app.config :as config]
@@ -5876,3 +5877,63 @@
         (is (false? ((deref #'bots/resident-stalled?) {} {:id "stalled"})))
         (swap! store/state assoc-in [:bots :goal-jobs "stalled" :job/resident-workforce?] false)
         (is (false? ((deref #'bots/resident-stalled?) {} {:id "stalled"})))))))
+
+(deftest bot-history-and-messenger-share-one-admitted-conversation
+  (with-store
+    (fn []
+      (let [b (make-bot alice {:name "history"}) id (:bot/id b)
+            old {:message/id "legacy-a" :message/bot id :message/role :person
+                 :message/text "old question" :message/at "2026-01-01T00:00:00Z"}]
+        (swap! store/state assoc-in [:bots :conversations id] [old])
+        (let [cid (:id (bots/messenger-binding alice :direct id))]
+          (bots/messenger-binding alice :direct id)
+          (is (= ["old question"] (mapv :content (:items (messenger/messages "org-1" "alice" cid {})))))
+          (messenger/send-message! "org-1" "alice" cid {:content "new question" :idempotency-key "new-question"})
+          (is (= ["old question" "new question"] (mapv :text (bots/messages alice id))))
+          (is (thrown? clojure.lang.ExceptionInfo (bots/messenger-binding bob :direct id)))
+          (is (thrown? clojure.lang.ExceptionInfo (bots/messenger-binding (assoc alice :organization-id "org-2") :direct id)))
+          (is (= 2 (count (:items (messenger/messages "org-1" id cid {}))))))))))
+
+(deftest messenger-group-message-replies-in-place-and-retries-once
+  (with-store
+    (fn []
+      (in-room
+        (fn []
+          (let [b (make-bot alice {:name "protocol speaker"})
+                g (bots/create-group! alice {:name "protocol" :members [(:bot/id b)]})
+                cid (:id (bots/messenger-binding alice :group (:group/id g)))
+                calls (atom 0) request {:content "hello over Messenger" :idempotency-key "same-request"}]
+            (with-redefs [provider/agent-turn (fn [_ request] (swap! calls inc)
+                                               (is (some #(= "hello over Messenger" (:content %)) (:messages request)))
+                                               {:content "same conversation reply" :tool-calls []})]
+              (let [receipt (messenger/send-message! "org-1" "alice" cid request)
+                    mid (:message-id receipt)]
+                (bots/queue-messenger-reply! nil alice cid mid)
+                (loop [n 500]
+                  (when (and (pos? n) (#{:queued :running} (:state (bots/messenger-run alice cid))))
+                    (Thread/sleep 10) (recur (dec n))))
+                (is (= :completed (:state (bots/messenger-run alice cid))))
+                (is (= mid (:message-id (messenger/send-message! "org-1" "alice" cid request))))
+                (bots/queue-messenger-reply! nil alice cid mid)
+                (is (= 1 @calls))
+                (is (= ["hello over Messenger" "same conversation reply"]
+                       (mapv :content (:items (messenger/messages "org-1" "alice" cid {})))))
+                (is (= 2 (count (bots/group-messages alice (:group/id g)))))))))))))
+
+(deftest messenger-denial-and-sealed-content-do-not-become-bot-input
+  (with-store
+    (fn []
+      (let [b (make-bot alice {:name "private"}) id (:bot/id b)
+            g (bots/create-group! alice {:name "private group" :members [id]})
+            cid (:id (bots/messenger-binding alice :group (:group/id g)))
+            principals {"alice" {} id {}}]
+        (messenger/set-trust! "org-1" id principals "alice" false)
+        (let [r (messenger/send-message! "org-1" "alice" cid {:content "quarantined secret"})]
+          (is (nil? (bots/queue-messenger-reply! nil alice cid (:message-id r))))
+          (is (empty? ((private-fn 'group-conversation) (:group/id g) id)))
+          (bots/messenger-binding alice :group (:group/id g))
+          (is (false? (get-in @store/state [:messenger :organizations "org-1" :trust id "alice" :allowed?]))))
+        (messenger/set-trust! "org-1" id principals "alice" true)
+        (let [r (messenger/send-message! "org-1" "alice" cid {:sealed "opaque-envelope" :encryption-mode :signal-v1})]
+          (is (nil? (bots/queue-messenger-reply! nil alice cid (:message-id r))))
+          (is (= ["quarantined secret"] (mapv :message/text ((private-fn 'group-conversation) (:group/id g) id)))))))))

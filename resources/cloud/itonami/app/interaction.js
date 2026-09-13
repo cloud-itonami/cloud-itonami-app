@@ -12638,6 +12638,17 @@
     // That absence is the feature; if a control for one appears here later,
     // the room grew a capability the ADR says it does not have.
     const roomsState = {rooms:[], selected:null, bots:[], busy:false, drafts:new Map()};
+    const roomConversationId = id => roomsState.rooms.find(r => r.id === id)?.['messenger-conversation-id'];
+    const roomMessagesUrl = id => {
+      const cid = roomConversationId(id);
+      if (!cid) throw new Error('会話のアドレスを読み込み中です。もう一度開いてください。');
+      return `/api/messenger/conversations/${encodeURIComponent(cid)}/messages`;
+    };
+    const roomProtocolMessages = data => (data.items || []).map(m => ({
+      id:m.id, text:m.content || (m['sealed?'] ? '暗号化されたメッセージです。Messenger で開いてください。' : ''),
+      from:m['sender-kind'] === 'bot' ? `bot:${m['sender-id']}` : null,
+      source:m.source, at:m['created-at'], sender:m.sender
+    }));
     const roomStatus = (text) => { $('#room-status').textContent = text || ''; };
     const renderRoomList = () => {
       const list = $('#room-list'), shortcuts = $('#bots-room-shortcuts');
@@ -12694,7 +12705,7 @@
         // where the lines are anonymous is a room where nobody can tell which
         // Bot to ask next, which is the only thing a room is for.
         const speaker = participants.get(message.from);
-        const who = message.from ? (speaker?.name || message.from) : (message.source === 'schedule' ? '定期対話' : 'あなた');
+        const who = message.from ? (speaker?.name || message.from) : (message.source === 'schedule' ? '定期対話' : (message.sender || 'あなた'));
         if (message.source === 'schedule' && !message.from) {
           const row = make('li', 'room-scheduled');
           const details = document.createElement('details');
@@ -12748,11 +12759,11 @@
       renderRoomList();
       roomStatus('読み込み中…');
       try {
-        const request = await fetch(`/api/bots/groups/${encodeURIComponent(roomId)}/messages`);
+        const request = await fetch(roomMessagesUrl(roomId));
         const data = await request.json();
         if (!request.ok) throw new Error(data?.error?.message || 'ルームを読めませんでした。');
         if (roomsState.selected !== roomId) return;
-        renderRoomThread(data.messages || []);
+        renderRoomThread(roomProtocolMessages(data));
         roomStatus('');
       } catch (error) {
         roomStatus(error.message);
@@ -12828,11 +12839,11 @@
         const requestId = roomsState.pendingRequest?.roomId === roomId && roomsState.pendingRequest.text === text
           ? roomsState.pendingRequest.id : crypto.randomUUID();
         roomsState.pendingRequest = {roomId, text, id:requestId};
-        const data = await postJSON(`/api/bots/groups/${encodeURIComponent(roomId)}/send`, {text, 'request-id':requestId}, true);
+        const data = await postJSON(roomMessagesUrl(roomId), {content:text, 'idempotency-key':requestId, 'encryption-mode':'local-plaintext'}, true);
         roomsState.pendingRequest = null;
         roomsState.drafts.delete(roomId);
         if (roomsState.selected === roomId) {
-          $('#room-input').value = ''; roomStatus(data.run?.state === 'running' ? 'Bot が返答しています…' : '');
+          $('#room-input').value = ''; roomStatus(data.run?.state === 'queued' ? '順番を待っています…' : data.run?.state === 'running' ? 'Bot が返答しています…' : '');
         }
       } catch (error) { roomStatus(error.message); }
       finally { roomsState.busy = false; $('#room-send').disabled = false; }
@@ -12875,13 +12886,13 @@
       const roomId = roomsState.selected;
       if (document.hidden || $('#bots-conversations-panel').hidden || !roomId) return;
       try {
-        const response = await fetch(`/api/bots/groups/${encodeURIComponent(roomId)}/messages`);
+        const response = await fetch(roomMessagesUrl(roomId));
         if (!response.ok) return;
         const data = await response.json();
         if (roomsState.selected === roomId) {
-          renderRoomThread(data.messages || []);
-          $('#room-send').disabled = roomsState.busy || data.run?.state === 'running';
-          roomStatus(data.run?.state === 'running' ? 'Bot が返答しています…' : data.run?.state === 'failed' ? '返答が途中で止まりました。ここまでの会話は保存されています。' : '');
+          renderRoomThread(roomProtocolMessages(data));
+          $('#room-send').disabled = roomsState.busy || ['queued', 'running'].includes(data.run?.state);
+          roomStatus(data.run?.state === 'queued' ? '順番を待っています…' : data.run?.state === 'running' ? 'Bot が返答しています…' : data.run?.state === 'failed' ? '返答が途中で止まりました。ここまでの会話は保存されています。' : '');
         }
       } catch (_) { /* Keep the last received conversation while disconnected. */ }
     }, 5000);
