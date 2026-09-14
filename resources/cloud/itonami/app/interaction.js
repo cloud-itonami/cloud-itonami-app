@@ -13764,6 +13764,20 @@
         workspaceApps = data.apps; renderWorkspaceApps(); renderMarketplace();
       } catch (error) { $('#apps-status').textContent = error.message; $('#market-status').textContent = error.message; }
     };
+    // Public bot catalog (Bot tab of the marketplace). The install endpoint
+    // exists server-side; this loader fills publicBots so the tab renders.
+    const loadPublicBots = async () => {
+      try {
+        const response = await fetch('/api/marketplace/public-bots');
+        const data = await response.json();
+        if (!response.ok) throw new Error(data?.error?.message || '公開 Bot を読み込めませんでした。');
+        publicBots = data.bots || [];
+      } catch (error) {
+        // The catalog is additive: an empty list keeps the tab renderable
+        // instead of throwing from the identity render path.
+        publicBots = [];
+      }
+    };
     const chooseMarketKind = (kind) => {
       marketKind = kind;
       $$('[data-market-tab]').forEach((button) => {
