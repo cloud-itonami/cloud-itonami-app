@@ -8471,7 +8471,8 @@
       // Poll until the person finishes in the system browser. Every refusal
       // comes back as the same {ready?: false} — an early poll, a wrong token
       // and a spent one are one answer — so there is nothing to branch on
-      // here but readiness and the clock.
+      // here but readiness and the clock. The ready answer sets the session
+      // cookie on this polling origin, so loadIdentity() after it is signed in.
       while (Date.now() < deadline) {
         const request = await fetch('/api/auth/itonami/handoff', {
           method:'POST', headers:{'Content-Type':'application/json'},
