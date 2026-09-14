@@ -8766,9 +8766,17 @@
       }
       const onboarding = $('#identity-onboarding');
       const workspace = $('#identity-workspace');
-      onboarding.hidden = data['authenticated?'];
-      workspace.hidden = !data['authenticated?'];
-      $('#registered-auth').hidden = Boolean(data['authenticated?']);
+      // "Signed in, but the account cannot act yet" (a live session whose
+      // user has no enrolled Passkey — measured 2026-09-14: hiding the
+      // onboarding section here left the sign-in view with no entrance at
+      // all: heading + lead text and a blank body below). Keep the
+      // onboarding surface visible until the account can actually act, so
+      // the person can finish Passkey enrolment instead of staring at a
+      // stub.
+      const unlockable = Boolean(data['authenticated?'] && data['may-act?']);
+      onboarding.hidden = unlockable;
+      workspace.hidden = !unlockable;
+      $('#registered-auth').hidden = unlockable;
       const recovery = $('#local-recovery');
       if (recovery) {
         recovery.hidden = Boolean(data['authenticated?']);
@@ -8779,8 +8787,9 @@
       // a User and no enrolled Passkey has nothing to authenticate with, and
       // showing the button there offers a door that cannot open.
       $('#passkey-signin').hidden = !data['device-passkey?'];
-      if (data['registered?'] && !data['authenticated?']) {
-        const pendingPasskey = data['passkey-required?'];
+      const resumeDoor = Boolean(data['registered?'] && !identityReady);
+      if (resumeDoor) {
+        const pendingPasskey = data['passkey-required?'] || Boolean(data['authenticated?'] && !data['may-act?']);
         $('#registration-title').textContent = pendingPasskey
           ? 'Passkey 登録を再開'
           : 'サインイン';
@@ -8790,7 +8799,10 @@
         $('#passkey-signin').textContent = pendingPasskey
           ? 'Passkey 登録を再開'
           : 'Passkey でサインイン';
-        $('#registration-form').hidden = true;
+        // The device has no Passkey (device-passkey? false) → the sign-in
+        // button is hidden and the FORM (Passkey を登録) is the only door.
+        // Hiding it too is what blanked the screen (measured 2026-09-14).
+        $('#registration-form').hidden = Boolean(data['device-passkey?']);
       }
       renderSigninGate(data);
       if (!data['authenticated?']) return;
