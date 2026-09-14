@@ -269,7 +269,7 @@
   "src/cloud/itonami/app/virtual_shell.cljk" ".clj"
   "src/cloud/itonami/app/wallet.cljk" ".clj"
   "src/cloud/itonami/app/wallet_send.cljk" ".cljc"
-  "src/cloud/itonami/app/web.cljk" ".clj"
+  "src/cloud/itonami/app/web.cljk" ".cljc"
   "src/cloud/itonami/app/west_kotoba_refactor.cljk" ".clj"
   "src/cloud/itonami/app/work_approval.cljk" ".clj"
   "src/cloud/itonami/app/work_governance.cljk" ".cljc"
