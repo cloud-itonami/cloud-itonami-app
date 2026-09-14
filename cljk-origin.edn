@@ -541,4 +541,6 @@
   "test/itonami_wave_nbb.cljk" ".cljs"
   "test/kir_amu_parity_nbb.cljk" ".cljs"
   "test/oracle_cases_nbb.cljk" ".cljs"
-  "test/portable_nbb.cljk" ".cljs"}}
+  "test/portable_nbb.cljk" ".cljs"
+  "target/qr-probe.cljk" ".cljc"
+  "target/central-start-probe.cljk" ".cljc"}}

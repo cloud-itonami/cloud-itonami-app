@@ -8776,8 +8776,16 @@
       $('#registration-form').hidden = Boolean(data['registered?']);
       // Gated on a CREDENTIAL existing, not on a User existing. A device with
       // a User and no enrolled Passkey has nothing to authenticate with, and
-      // showing the button there offers a door that cannot open.
-      $('#passkey-signin').hidden = !data['device-passkey?'];
+      // showing the button there offers a door that cannot open. EXCEPT the
+      // interrupted ceremony: when the store's single owner has no Passkey
+      // yet, `passkey-required?` says the resume flow will open, and hiding
+      // the button there hid EVERY entrance at once (measured 2026-09-14:
+      // registered? true / device-passkey? false / passkey-required? false
+      // under the old status left a sign-in screen with no control). The
+      // resume branch in the click handler runs before any WebAuthn call, so
+      // a visible button here is a real door, not a broken one.
+      $('#passkey-signin').hidden =
+        !data['device-passkey?'] && !data['passkey-required?'];
       if (data['registered?'] && !data['authenticated?']) {
         const pendingPasskey = data['passkey-required?'];
         $('#registration-title').textContent = pendingPasskey
