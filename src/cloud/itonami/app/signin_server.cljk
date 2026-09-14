@@ -260,6 +260,34 @@
      "workspace-kind" (some-> (:bot/workspace-kind b) str)
      "browser?" (boolean (:bot/browser? b))
      "computer?" (boolean (:bot/computer? b))
+     "tools" (vec (map str (:bot/tools b)))
+     "admitted-tools" (vec (sort (map str (:bot/tools b))))
+     "writes?" (boolean (:bot/writes? b))
+     "peers?" (boolean (:bot/peers? b))
+     "goal?" (if (contains? b :bot/goal?)
+               (boolean (:bot/goal? b))
+               (boolean (or (:bot/coding? b) (:bot/virtual-shell? b))))
+     "coding?" (boolean (:bot/coding? b))
+     "virtual-shell?" (boolean (:bot/virtual-shell? b))
+     "unread?" (boolean (:bot/unread? b))
+     "hidden?" (boolean (:bot/hidden? b))
+     "omakase?" (boolean (:bot/omakase? b))
+     "own-provider-id" (some-> (:bot/provider-id b) str)
+     "own-model" (some-> (:bot/model b) str)
+     "workspace" (some-> (:bot/workspace b) str)
+     "workforce-key" (some-> (:bot/workforce-key b) str)
+     "resident-job" (when-let [job (get-in state [:bots :workforce-jobs id])]
+                      {"enabled?" (boolean (:workforce.job/enabled? job))
+                       "cadence-minutes" (:workforce.job/cadence-minutes job)
+                       "next-run-at" (some-> (:workforce.job/next-run-at job) str)
+                       "last-submitted-at" (some-> (:workforce.job/last-submitted-at job) str)
+                       "last-run-id" (some-> (:workforce.job/last-run-id job) str)})
+     "last-turn" (when-let [t (bot-last-turn state id)]
+                   {"id" (some-> (:turn/id t) str)
+                    "state" (some-> (:turn/state t) str)
+                    "phase" (some-> (:turn/phase t) str)
+                    "updated-at" (some-> (:turn/updated-at t) str)
+                    "objective" (some-> (:turn/objective t) str)})
      "updated-at" (some-> (:bot/updated-at b) str)
      "activity-at" (some-> activity str)
      "last-message" (when last-msg
@@ -270,6 +298,33 @@
               {"phase" (some-> (:turn/phase turn) str)
                "updated-at" (some-> (:turn/updated-at turn) str)
                "objective" (some-> (:turn/objective turn) str)})}))
+
+(defn- bot-messages [session bot-id]
+  (let [state @state-ref
+        sec (:bots state)
+        b (get (:bots sec) bot-id)]
+    (when (or (nil? b)
+              (not= (:user-id session) (:bot/owner b))
+              (not= (:organization-id session) (:bot/organization b)))
+      (throw (ex-info "この Bot はこのセッションに見えません。"
+                      {:type :bot/not-owned :bot-id bot-id})))
+    {"messages"
+     (mapv (fn [m] {"id" (str (:message/id m))
+                    "role" (some-> (:message/role m) str)
+                    "text" (some-> (:message/text m) str)
+                    "cards" []
+                    "direction" (some-> (:message/direction m) str)
+                    "context-id" (some-> (:message/context-id m) str)
+                    "source" (some-> (:message/source m) str)
+                    "handoff-id" (some-> (:message/handoff-id m) str)
+                    "from-bot" (some-> (:message/from-bot m) str)})
+           (get (:conversations sec) bot-id))
+     "turn" (when-let [t (last (get-in sec [:turn-history bot-id]))]
+              {"id" (some-> (:turn/id t) str)
+               "state" (some-> (:turn/state t) str)
+               "phase" (some-> (:turn/phase t) str)
+               "updated-at" (some-> (:turn/updated-at t) str)})
+     "handoffs" []}))
 
 (defn- bots-overview [session]
   (let [state @state-ref
@@ -900,6 +955,18 @@
                                (println :link-error (str e))
                                (json res 400 {"ok" false
                                               "error" {"message" "コードが拒否されました。iPhone の接続画面でコードを作り直してください。"}}))))))))
+
+    (and (= method "GET") (re-find #"/api/bots/[^/]+/messages$" p))
+    (let [bot-id (second (re-find #"/api/bots/([^/]+)/messages$" p))]
+      (if-not session
+        (json res 401 {"error" {"type" "no-session"
+                                "message" "サインインが必要です。"}})
+        (try
+          (json res 200 (bot-messages session bot-id))
+          (catch :default e
+            (let [d (ex-data e)]
+              (json res 404 {"error" {"type" (str (or (:type d) :bot/not-found))
+                                      "message" (.-message e)}}))))))
 
     (and (= method "GET") (= p "/api/bots"))
     (if-not session
