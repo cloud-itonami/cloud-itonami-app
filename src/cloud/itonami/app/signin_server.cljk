@@ -1,0 +1,939 @@
+(ns signin-server
+  "Plan A: a JVM-free sign-in server on 1338 for the REAL web.cljk surface.
+
+  Serves the real page (web.cljk page-html) and the minimal identity API the
+  page's interaction.js needs to complete a Passkey ceremony against the
+  REAL store (data/state.edn):
+
+    GET  /api/identity                      — identity status JSON
+    POST /api/passkeys/register/start       — WebAuthn creation options
+    POST /api/passkeys/register/finish      — verify + bind credential + session
+    POST /api/passkeys/onboarding/resume    — resume interrupted enrolment
+    POST /api/passkeys/authenticate/start   — assertion options
+    POST /api/passkeys/authenticate/finish  — verify + session
+    GET  /api/auth/itonami/start            — 302 to auth.itonami.cloud (PKCE)
+    GET  /api/auth/itonami/callback         — code+state → claim → session
+    GET  /api/auth/itonami/qr               — hosted entrance as SVG QR
+    GET  /api/auth/itonami/qr-url           — hosted entrance as JSON {url}
+
+  Cryptographic verification is webauthn.adapters.edge (WebCrypto) — the same
+  verifier the Worker uses, on Node's globalThis.crypto (node 19+).
+
+  NOT the production server: 410 of the 414 routes answer 404 here. It exists
+  so the sign-in surface completes against the real store; porting the rest
+  of server.cljk is its own wave.
+
+  Session cookie contract follows server.cljk: `cloud_itonami_identity`,
+  HttpOnly, SameSite=Strict, value = raw token; store keeps the SHA-256
+  digest only."
+  (:require ["node:http" :as http]
+            ["node:child_process" :as cp]
+            ["node:os" :as os]
+            ["node:fs" :as fs]
+            ["node:path" :as path]
+            ["node:crypto" :as crypto]
+            [clojure.edn :as edn]
+            [clojure.set :as set]
+            [kotoba.lang.text :as str]
+            [nbb.core :refer [*file*]]
+            [webauthn.adapters.edge :as edge]
+            [cloud.itonami.app.passkey-options :as options]
+            [cloud.itonami.app.kotoba-oracle :as oracle]))
+            ;; NOTE: [cloud.itonami.app.web :as web] was required here but
+            ;; never used — and web.cljk has top-level (slurp (io/resource …))
+            ;; defs (JVM-only) that cannot load on the kbb engine. The page
+            ;; served is the static target/ui-preview.html. Re-add web only
+            ;; together with its kbb port (Q9 slice). Measured 2026-09-14:
+            ;; with the require, no fresh start of this server is possible
+            ;; on the current engine (0ca6f46, origin-aware loader).
+
+;; The canonical location is src/cloud/itonami/app/ — four levels under
+;; the app root. The target/signin-server.cljk scratch copy sits two
+;; levels under; CLOUD_ITONAMI_APP_DIR wins where they differ.
+(def app-dir
+  (or (when-let [d (some-> js/process.env .-CLOUD_ITONAMI_APP_DIR not-empty)]
+        (.realpathSync fs d))
+      (let [dir (path/dirname *file*)]
+        (if (.existsSync fs (.join path dir ".." ".." ".." ".." "data"))
+          (.realpathSync fs (.resolve path dir ".." ".." ".." ".."))
+          (.realpathSync fs (.resolve path dir ".." ".."))))))
+(def port (or (some-> js/process.env .-CLOUD_ITONAMI_PORT js/parseInt) 1338))
+(def rp-id "localhost")
+(def origin "http://localhost:1338")
+(def cookie-name "cloud_itonami_identity")
+(def session-seconds (* 30 24 60 60))
+
+(def state-file (.join path app-dir "data/state.edn"))
+
+;; ---------- oracle resource loader (page render needs it) ----------
+(oracle/set-resource-loader!
+ (fn [p] (let [full (.join path app-dir "resources" p)]
+           (when (.existsSync fs full) (.readFileSync fs full "utf8")))))
+
+;; ---------- store ----------
+(defn- read-state []
+  (edn/read-string (.readFileSync fs state-file "utf8")))
+
+(defonce state-ref (atom (read-state)))
+
+(defn- iso-now []
+  (let [d (js/Date.)]
+    ;; ISO-8601 UTC with microsecond-ish precision; ordering is what matters.
+    (.toISOString d)))
+
+(defn- persist-state! []
+  ;; Full-snapshot write over the same file the JVM server owns. The real
+  ;; server is NOT running (port 1338 was closed) — single writer.
+  (let [tmp (str state-file ".tmp")]
+    (.writeFileSync fs tmp (pr-str @state-ref))
+    (.renameSync fs tmp state-file)))
+
+(defn- transact! [f]
+  (swap! state-ref f)
+  (persist-state!))
+
+(defn- digest [s]
+  (.digest (doto (.createHash crypto "sha256") (.update (str s) "utf8"))
+           "hex"))
+
+(defn- random-token [size]
+  (.toString (.randomBytes crypto size) "base64url"))
+
+(defn- new-uuid []
+  (.toUpperCase (str (.randomUUID crypto))))
+
+;; ---------- identity ----------
+(defn- identity-state []
+  (merge {:users {} :memberships {} :passkeys {} :webauthn-transactions {}}
+         (:identity @state-ref)))
+
+(defn- registered? []
+  (pos? (count (:users (identity-state)))))
+
+(defn- default-membership [state user-id]
+  (when-let [u (get-in state [:users user-id])]
+    (or (get-in state [:memberships (:default-membership-id u)])
+        (first (vals (into {} (filter (fn [[_ m]] (= user-id (:user-id m))))
+                           (:memberships state)))))))
+
+(defn- user-by-id [user-id]
+  (get-in (identity-state) [:users user-id]))
+
+(defn- live-session-for-token [token]
+  (when token
+    (let [d (digest token)]
+      (first (vals (into {} (filter (fn [[_ s]]
+                                      (and (= (:token-digest s) d)
+                                           (not (:revoked? s))
+                                           (pos? (compare (:expires-at s) (iso-now)))))
+                                    (:sessions (identity-state)))))))))
+
+(defn- issue-session! [user-id]
+  (let [state (identity-state)
+        membership (default-membership state user-id)]
+    (when-not membership
+      (throw (ex-info "組織 membership が見つかりません。" {:type :identity/unauthenticated})))
+    (let [token (random-token 32)
+          session-id (str "session-" (new-uuid))
+          csrf (random-token 24)
+          now (iso-now)
+          expires (.toISOString (js/Date. (+ (.valueOf (js/Date.)) (* 1000 session-seconds))))]
+      (transact! (fn [s]
+                   (assoc-in s [:identity :sessions session-id]
+                             {:id session-id :user-id user-id
+                              :organization-id (:organization-id membership)
+                              :membership-id (:id membership)
+                              :token-digest (digest token)
+                              :csrf csrf :created-at now :expires-at expires
+                              :revoked? false :kind :passkey
+                              :authn-decision :authenticated
+                              :authn-level :phishing-resistant
+                              :authn-factors [:webauthn]})))
+      {:token token :session-id session-id :csrf csrf
+       :organization-id (:organization-id membership)})))
+
+(defn- central-enrolment-url
+  "Same value identity.cljk's default profile carries. Kept literal here so
+  this server stays a single file with no JVM dependency: the /ja/ route is
+  the measured one (owner report 2026-08-21 — the English default read as a
+  different product mid-ceremony)."
+  [] "https://itonami.cloud/ja/signin/")
+
+(defn- onboarding-resumable?
+  "The interrupted-owner-ceremony condition the resume route enforces
+  (route: 1 user, owner, un-enrolled, no passkeys at all). The STATUS must
+  compute the same predicate so the page can show the resume door when it
+  will open — measured 2026-09-14: a store with a User and zero Passkeys
+  answered passkey-required? false while signed out, and the screen then
+  offered no entrance at all."
+  [state]
+  (let [users (vals (:users state))
+        owner-mem (some #(when (= :owner (:role %)) %)
+                        (vals (:memberships state)))
+        owner (when owner-mem (user-by-id (:user-id owner-mem)))]
+    (boolean (and (= 1 (count users)) owner
+                  (not (:passkey-enrolled? owner))
+                  (empty? (:passkeys state))))))
+
+(defn- identity-status-json [session]
+  (let [state (identity-state)
+        user (when session (get-in state [:users (:user-id session)]))
+        authenticated? (boolean session)
+        may-act? (and authenticated? (:passkey-enrolled? user))
+        ;; The page uses `passkey-required?` to decide resume vs sign-in.
+        ;; It is a property of the STORE (a User exists, its Passkey does
+        ;; not), not of the session: a signed-out visitor on a store in the
+        ;; interrupted ceremony must still be told there is a door to
+        ;; resume. Measured 2026-09-14 before this change: the combination
+        ;; (registered? true / device-passkey? false / passkey-required?
+        ;; false) hid the registration form, the device sign-in button and
+        ;; the resume flow at once — a screen with no entrance.
+        passkey-required? (and (not authenticated?)
+                               (onboarding-resumable? state))]
+    {:authenticated? authenticated?
+     :may-act? may-act?
+     :passkey-required? passkey-required?
+     :registered? (registered?)
+     :device-passkey? (pos? (count (:passkeys (identity-state))))
+     :csrf (when session (:csrf session))
+     :auth-methods {:central {:configured? true
+                              :issuer "https://auth.itonami.cloud"
+                              :enrolment-url (central-enrolment-url)}}
+     :user (when user
+             {"id" (str (:id user))
+              "display-name" (str (:display-name user))
+              "account-id" (str (:account-id user))})}))
+
+;; ---------- app data surface (read-only v1) ----------
+;; The app's data API (server.cljk's /api/bots family) belongs to the app
+;; runtime. The JVM run path cannot load the renamed sources (measured
+;; 2026-09-14: `clojure -M:server` cannot read .cljk, and the require graph
+;; is kotoba-flavored — `kotoba.lang.edn`'s :export clause is not JVM
+;; grammar). This surface answers the READ routes the web UI calls on
+;; bootstrap, straight from the same store this process already parsed.
+;; It is a strict subset, read-only, and never invents values it did not
+;; read: no connector catalog rows (empty), no provider readiness beyond
+;; the murakumo default (declared as such), no SLO evaluation.
+(def avatar-colors [:clay :red :orange :amber :green :teal :blue :violet :pink :slate])
+(def avatar-glyphs [:circle :bean :block :wide :wedge :cloud :wave :drop])
+
+(defn- bot-last-turn [state bot-id]
+  (let [th (get-in state [:bots :turn-history bot-id])]
+    (last th)))
+
+(defn- bot-status [state bot-id]
+  (let [t (bot-last-turn state bot-id)
+        phase (:turn/phase t)]
+    (cond
+      (= :running phase) "working"
+      (= :dispatched phase) "working"
+      (:turn/error-type t) "error"
+      :else "idle")))
+
+(defn- classified-messages [state bot-id]
+  (remove (fn [m] (and (= :person (:message/role m))
+                       (= :resident (:message/source m))))
+          (get-in state [:bots :conversations bot-id])))
+
+(defn- public-bot [state session b]
+  (let [id (:bot/id b)
+        msgs (classified-messages state id)
+        last-msg (last msgs)
+        turn (bot-last-turn state id)
+        activity (or (:message/at last-msg)
+                     (:turn/updated-at turn)
+                     (:bot/updated-at b))
+        avatar (:bot/avatar b)]
+    {"id" (str id)
+     "name" (str (:bot/name b))
+     "name-source" (some-> (:bot/name-source b) str)
+     "brief" (some-> (:bot/brief b) str)
+     "avatar" {"color" (some-> (or (:avatar/color avatar) :blue) str)
+               "glyph" (some-> (or (:avatar/glyph avatar) :circle) str)}
+     "status" (bot-status state id)
+     "enabled?" (not (false? (:bot/enabled? b)))
+     "priority?" (boolean (:bot/priority? b))
+     "pinned?" (boolean (:bot/pinned? b))
+     "section" (some-> (:bot/section b) str)
+     "provider-id" (some-> (:bot/provider-id b) str)
+     "model" (some-> (:bot/model b) str)
+     "workspace-kind" (some-> (:bot/workspace-kind b) str)
+     "browser?" (boolean (:bot/browser? b))
+     "computer?" (boolean (:bot/computer? b))
+     "updated-at" (some-> (:bot/updated-at b) str)
+     "activity-at" (some-> activity str)
+     "last-message" (when last-msg
+                      {"at" (some-> (:message/at last-msg) str)
+                       "role" (some-> (:message/role last-msg) str)
+                       "text" (some-> (:message/text last-msg) str)})
+     "turn" (when turn
+              {"phase" (some-> (:turn/phase turn) str)
+               "updated-at" (some-> (:turn/updated-at turn) str)
+               "objective" (some-> (:turn/objective turn) str)})}))
+
+(defn- bots-overview [session]
+  (let [state @state-ref
+        sec (:bots state)
+        mine (->> (vals (:bots sec))
+                  (filter (fn [b] (and (= (:user-id session) (:bot/owner b))
+                                       (= (:organization-id session) (:bot/organization b)))))
+                  (sort-by :bot/updated-at))
+        murakumo {"id" "murakumo"
+                  "name" "murakumo"
+                  "model" "murakumo-main"
+                  "models" ["murakumo-main"]}]
+    {"bots" (mapv (fn [b] (public-bot state session b)) mine)
+     "catalog" []
+     "app-slots" []
+     "app-note" ""
+     "palette" {"colors" (mapv str avatar-colors)
+                "glyphs" (mapv str avatar-glyphs)}
+     "default-workspace" ""
+     "browser-available?" false
+     "computer-available?" false
+     "slo" nil
+     "model-providers" [murakumo]
+     "model-provider-readiness"
+     [(assoc murakumo "allowed?" true "ready" true "reason" nil)]
+     "model-routing" nil}))
+
+;; ---------- cookies ----------
+(defn- cookies [req]
+  (into {}
+        (map (fn [kv] (let [[k v] (str/split kv #"=" 2)] [k v]))
+             (filter some?
+                     (str/split (or (aget (.-headers req) "cookie") "") #"; ")))))
+
+(defn- session-cookie [token]
+  (str cookie-name "=" token "; Path=/; HttpOnly; SameSite=Strict; Max-Age="
+       session-seconds))
+
+;; ---------- HTTP helpers ----------
+(defn- json [res status body & [set-cookie]]
+  (let [headers (cond-> {"content-type" "application/json; charset=utf-8"
+                         "cache-control" "no-store"
+                         "access-control-allow-origin" origin
+                         "vary" "Origin"}
+                  set-cookie (assoc "set-cookie" set-cookie))]
+    (.writeHead res status (clj->js headers))
+    (.end res (js/JSON.stringify (clj->js body)))))
+
+(defn- read-body! [req]
+  (let [acc (atom "")]
+    (js/Promise.
+     (fn [resolve]
+       (.setEncoding req "utf8")
+       (.on req "data" (fn [c] (swap! acc str c)))
+       (.on req "end" (fn []
+                        (resolve
+                         (js->clj (try (js/JSON.parse @acc)
+                                       (catch :default _ {}))
+                                  :keywordize-keys true))))))))
+
+(defn- str-uuid [] (str "webauthn-" (.toUpperCase (str (.randomUUID crypto)))))
+
+;; ---------- hosted sign-in QR (phone → auth.itonami.cloud) ----------
+;;
+;; The QR does NOT encode this server. The phone cannot complete a WebAuthn
+;; ceremony against it: rp-id is "localhost", which names a host only the
+;; Mac itself can reach, and a passkey minted for localhost never answers a
+;; challenge from a phone. The QR encodes the HOSTED identity entrance
+;; (auth.itonami.cloud) — the same hosted ceremony this server's central
+;; path drives from the desktop browser. The phone signs in with its own
+;; hosted passkey over the network, from anywhere; no LAN reachability and
+;; no cross-device transport pairing is involved.
+(def hosted-auth-url "https://auth.itonami.cloud/")
+
+(defn- qr-svg [text]
+  ;; segno is a PYTHON library, vendored under target/pylibs (pip --target,
+  ;; git-ignored). Nothing enters node_modules and there is no global install.
+  ;; Piped to python3 on stdin and written to a temp file, then read back.
+  (let [tmp (str (.tmpdir os) "/itonami-qr-" (.randomUUID crypto) ".svg")]
+    (cp/spawnSync "python3"
+                  #js []
+                  #js {:cwd (str app-dir "/target/pylibs")
+                       :stdio "pipe"
+                       :input (str "import segno\n"
+                                   "segno.make('" text "', error='m')"
+                                   ".save('" tmp "', scale=6, border=2)\n")})
+    (let [svg (.readFileSync fs tmp "utf8")]
+      (.unlinkSync fs tmp)
+      svg)))
+
+(defn- now-iso [] (.toISOString (js/Date.)))
+
+(defn- plus-seconds-iso [s]
+  (.toISOString (js/Date. (+ (.valueOf (js/Date.)) (* 1000 s)))))
+
+;; ---------- central auth (auth.itonami.cloud) ----------
+(def issuer "https://auth.itonami.cloud")
+(def client-id "cloud-itonami-app-native")
+(def auth-scope "identity:read")
+
+(defn- b64url-no-pad [bytes]
+  (.replace (.toString bytes "base64url") "=" ""))
+
+(defn- random-token-32 []
+  (.toString (.randomBytes crypto 32) "base64url"))
+
+(defn- form-encode [params]
+  (str/join "&"
+            (map (fn [[k v]] (str (js/encodeURIComponent (str k)) "=" (js/encodeURIComponent (str v))))
+                 params)))
+
+(defn- open-in-system-browser! [url]
+  (try
+    (when (re-matches #"https://.*" (str url))
+      (let [cp (cp/spawn "/usr/bin/open" (clj->js [url]) #js {:stdio "ignore"})]
+        true))
+    (catch :default _ false)))
+
+(defn- central-start! [session-obj]
+  (let [state-value (random-token-32)
+        verifier (random-token-32)
+        challenge (-> (.digest (doto (.createHash crypto "sha256")
+                                 (.update verifier "utf8"))
+                               "base64url")
+                      (.replace "=" ""))
+        redirect-uri "http://localhost:1338/api/auth/itonami/callback"
+        tid (str "central-auth-" (.toUpperCase (str (.randomUUID crypto))))
+        expires (plus-seconds-iso 600)
+        url (str issuer "/authorize?"
+                 (form-encode {"client_id" client-id
+                               "redirect_uri" redirect-uri
+                               "response_type" "code"
+                               "scope" auth-scope
+                               "state" state-value
+                               "code_challenge" challenge
+                               "code_challenge_method" "S256"}))]
+    (transact!
+     (fn [s]
+       (assoc-in s [:identity :central-auth-transactions state-value]
+                 {:id tid :state state-value :issuer issuer :client-id client-id
+                  :redirect-uri redirect-uri :scope auth-scope
+                  :verifier verifier :mode :authenticate
+                  :created-at (now-iso) :expires-at expires :used? false})))
+    {:url url :state state-value :transaction-id tid}))
+
+(defn- central-exchange! [state-value code]
+  (let [txn (get-in (identity-state) [:central-auth-transactions state-value])]
+    (when-not (and txn (not (:used? txn)) (pos? (compare (:expires-at txn) (now-iso))))
+      (throw (ex-info "中央認証 state が無効です。" {:type :central-auth/invalid-state})))
+    (transact! (fn [s] (assoc-in s [:identity :central-auth-transactions state-value :used?] true)))
+    (let [body (form-encode {"grant_type" "authorization_code"
+                             "code" code
+                             "client_id" client-id
+                             "redirect_uri" (:redirect-uri txn)
+                             "code_verifier" (:verifier txn)})]
+      (-> (js/fetch (str issuer "/oauth/token")
+                    #js {:method "POST"
+                         :headers #js {"Content-Type" "application/x-www-form-urlencoded"
+                                       "Accept" "application/json"
+                                       "User-Agent" "cloud-itonami-app"}
+                         :body body})
+          (.then (fn [r]
+                   (if-not (<= 200 (.-status r) 299)
+                     (throw (ex-info "token endpoint が要求を拒否しました。" {:status (.-status r)}))
+                     (.text r))))
+          (.then (fn [text] (js/JSON.parse text)))))))
+
+(defn- central-complete! [state-value code]
+  ;; A bad/spent/expired state throws synchronously; the callback route's
+  ;; (.catch) can only see REJECTIONS, so lift the first step into a promise
+  ;; body — a throw inside it becomes a rejection and lands on /?auth=failed
+  ;; instead of a 500 (measured 2026-09-14 with a fabricated code+state).
+  (-> (js/Promise. (fn [resolve reject]
+                     (try (resolve (central-exchange! state-value code))
+                          (catch :default e (reject e)))))
+      (.then (fn [tokens]
+               (let [access (aget tokens "access_token")]
+                 (when-not access
+                   (throw (ex-info "token 応答に access_token がありません。" {:status 400})))
+                 (-> (js/fetch (str issuer "/userinfo")
+                               #js {:headers #js {"Authorization" (str "Bearer " access)
+                                                  "Accept" "application/json"
+                                                  "User-Agent" "cloud-itonami-app"}})
+                     (.then (fn [r] (.text r)))
+                     (.then (fn [text] (js/JSON.parse text)))))))))
+
+;; ---------- controller-link (iPhone → Mac, cross-device) ----------
+;; The iPhone completes auth.kotoba.cloud/connect?target=itonami and the
+;; controller-link page shows a one-time 32-char code (control-plane
+;; controller-link.js displays it). This server redeems the code server-to-
+;; server, reads the session it gets back, and claims the same local identity
+;; the callback route claims — then wakes the pending handoff.
+(defn- central-link-complete! [code]
+  (-> (js/fetch (str issuer "/v1/kotoba-link/complete")
+                #js {:method "POST"
+                     :headers #js {"Content-Type" "application/x-www-form-urlencoded"
+                                   "Origin" "https://auth.kotoba.cloud"
+                                   "Accept" "text/html,application/json"
+                                   "User-Agent" "cloud-itonami-app"}
+                     :body (form-encode {"code" code})
+                     :redirect "manual"})
+      (.then (fn [r]
+               (let [setc (.get (.-headers r) "set-cookie")]
+                 (if-not (and (<= 200 (.-status r) 399) setc)
+                   (throw (ex-info "controller-link が拒否されました。"
+                                   {:status (.-status r) :type :controller-link/refused}))
+                   (let [tok (second (re-seq #"__Host-itonami_session=([^;]+)" setc))]
+                     (when-not tok
+                       (throw (ex-info "応答に session cookie がありません。"
+                                       {:type :controller-link/no-cookie})))
+                     tok)))))
+      (.then (fn [session-token]
+               (-> (js/fetch (str issuer "/v1/session")
+                             #js {:headers #js {"Cookie" (str "__Host-itonami_session=" session-token)
+                                                "Accept" "application/json"}})
+                   (.then (fn [r] (.text r)))
+                   (.then (fn [text] (js/JSON.parse text))))))))
+
+(defn- wake-handoff-with-token! [state-value token]
+  (let [handoffs (:handoffs (:identity (identity-state)))]
+    (doseq [[htok h] handoffs]
+      (when (and (or (nil? state-value) (= (:state h) state-value))
+                 (not (:ready? h))
+                 (pos? (compare (:expires-at h) (now-iso))))
+        (transact! (fn [s]
+                     (assoc-in s [:identity :handoffs htok]
+                               (assoc h :ready? true :token token))))))))
+
+(defn- central-claim-identity! [profile]
+  (let [subject (or (aget profile "sub") (aget profile "did"))
+        did (or (aget profile "did") subject)
+        email (aget profile "email")
+        display-name (or (aget profile "display-name") (aget profile "name"))
+        state (identity-state)
+        ;; 本物: login-identities の [provider subject] で既存 User を引く。
+        ;; この store の login-identities は keyed [:itonami-cloud did:key]。
+        matching (first (vals (into {}
+                                    (filter (fn [[k v]]
+                                              (and (= :itonami-cloud (:provider v))
+                                                   (= did (:subject v)))))
+                                    (:login-identities state))))
+        user (when matching (user-by-id (:user-id matching)))]
+    (when-not user
+      (throw (ex-info "この中央 DID に結ばれた User がありません。"
+                      {:type :central-auth/unknown-identity})))
+    ;; 中央面 (auth.itonami.cloud) で passkey 認証が通ったなら、ローカルの
+    ;; device passkey 登録は別要件にしない (owner 決定 09-14: 中央 passkey
+    ;; サインイン 1 回で may-act?)。中央 claim で enrolled を true に上げる。
+    (when-not (:passkey-enrolled? user)
+      (transact! (fn [s]
+                   (assoc-in s [:identity :users (:id user) :passkey-enrolled?] true))))
+    (issue-session! (:id user))))
+
+;; ---------- WebAuthn ceremonies ----------
+(defn- start-registration! [user]
+  (let [challenge (options/random-challenge-b64url)
+        opts (options/creation-options
+              {:rp-id rp-id
+               :user-id (:user-handle user)
+               :user-name (str (:account-id user))
+               :user-display-name (str (:display-name user))
+               :challenge challenge})
+        tid (str-uuid)
+        expires (plus-seconds-iso 300)]
+    (transact! (fn [s]
+                 (assoc-in s [:identity :webauthn-transactions tid]
+                           {:id tid :kind :registration :user-id (:id user)
+                            :challenge challenge :origin origin :rp-id rp-id
+                            :created-at (now-iso) :expires-at expires :used? false})))
+    {:transaction-id tid :options opts :expires-at expires}))
+
+(defn- consume-transaction! [tid kind user-id]
+  (let [t (get-in (identity-state) [:webauthn-transactions tid])]
+    (when-not t (throw (ex-info "transaction が見つかりません。" {:type :passkey/invalid-transaction})))
+    (when-not (and (= kind (:kind t))
+                   (not (:used? t))
+                   (= user-id (:user-id t))
+                   (pos? (compare (:expires-at t) (now-iso))))
+      (throw (ex-info "transaction は使えません。" {:type :passkey/expired-transaction})))
+    (transact! (fn [s] (assoc-in s [:identity :webauthn-transactions tid :used?] true)))
+    t))
+
+(defn- finish-registration! [tid credential user-id]
+  (let [t (consume-transaction! tid :registration user-id)
+        payload {:client-data-json-b64url (get-in credential [:response :clientDataJSON])
+                 :attestation-object-b64url (get-in credential [:response :attestationObject])
+                 :challenge (:challenge t)}
+        config {:rp-id rp-id :origin origin}
+        result-fn (edge/verify-registration! config payload)]
+    (-> (.then result-fn
+               (fn [r]
+                 (if (:ok r)
+                   (do
+                     (transact!
+                      (fn [s]
+                        (-> s
+                            (assoc-in [:identity :passkeys (:credential-id r)]
+                                      {:credential-id (:credential-id r)
+                                       :user-id user-id
+                                       :public-key-b64 (:public-key-b64 r)
+                                       :sign-count (:sign-count r)
+                                       :aaguid-b64 (:aaguid-b64 r)
+                                       :created-at (now-iso)
+                                       :origin origin
+                                       :rp-id rp-id})
+                            (assoc-in [:identity :users user-id :passkey-enrolled?] true))))
+                     {:ok true :result r})
+                   {:ok false :error (:error r) :status (:status r)})))
+        (.catch (fn [e] {:ok false :error (str e) :status 500})))))
+
+(defn- start-authentication! []
+  (let [challenge (options/random-challenge-b64url)
+        creds (vals (into {} (filter (fn [[_ k]] (:user-id k))) (:passkeys (identity-state))))
+        allow (mapv (fn [k] {:type "public-key" :id (:credential-id k)}) creds)
+        opts (options/request-options {:rp-id rp-id :challenge challenge
+                                       :allow-credentials (when (seq allow) allow)})
+        tid (str-uuid)
+        expires (plus-seconds-iso 300)]
+    (transact! (fn [s]
+                 (assoc-in s [:identity :webauthn-transactions tid]
+                           {:id tid :kind :assertion :challenge challenge
+                            :origin origin :rp-id rp-id
+                            :created-at (now-iso) :expires-at expires :used? false})))
+    {:transaction-id tid :options opts :expires-at expires}))
+
+(defn- finish-authentication! [tid credential]
+  (let [t (get-in (identity-state) [:webauthn-transactions tid])
+        _ (when-not (and t (= :assertion (:kind t)) (not (:used? t))
+                         (pos? (compare (:expires-at t) (now-iso))))
+            (throw (ex-info "transaction は使えません。" {:type :passkey/expired-transaction})))
+        pk (do
+             (println :fa-1 "rawId=" (:rawId credential)
+                      "stored=" (mapv :credential-id (vals (:passkeys (identity-state)))))
+             (first (vals (into {}
+                              (filter (fn [[_ k]]
+                                        (= (:rawId credential) (:credential-id k))))
+                              (:passkeys (identity-state))))))
+        _ (when-not pk
+            (throw (ex-info "この端末の credential は登録されていません。"
+                            {:type :passkey/unknown-credential})))
+        payload {:client-data-json-b64url (get-in credential [:response :clientDataJSON])
+                 :authenticator-data-b64url (get-in credential [:response :authenticatorData])
+                 :signature-b64url (get-in credential [:response :signature])
+                 :challenge (:challenge t)
+                 :public-key-b64 (:public-key-b64 pk)}
+        config {:rp-id rp-id :origin origin}
+        result-fn (edge/verify-authentication! config payload)]
+    (-> (.then result-fn
+               (fn [r]
+                 (if-not (:ok r)
+                   {:ok false :error (:error r) :status (:status r)}
+                   (do
+                     (transact! (fn [s]
+                                  (-> s
+                                      (assoc-in [:identity :webauthn-transactions tid :used?] true)
+                                      (assoc-in [:identity :passkeys (:credential-id pk) :sign-count]
+                                                (:sign-count r)))))
+                     (let [session (issue-session! (:user-id pk))]
+                       {:ok true :session session})))))
+        (.catch (fn [e] {:ok false :error (str e) :status 500})))))
+
+;; ---------- router ----------
+(defn- route [req res method p session url]
+  (cond
+    (and (= method "GET") (or (= p "/") (str/starts-with? p "/#")))
+    (let [html (try (.readFileSync fs (.join path app-dir "target/ui-preview.html") "utf8")
+                    (catch :default _ nil))]
+      (.writeHead res 200 #js {"content-type" "text/html; charset=utf-8"})
+      (.end res html))
+
+    (= p "/health")
+    (do (.writeHead res 200 #js {"content-type" "application/json"})
+        (.end res (js/JSON.stringify
+                   (clj->js {:ok true :service "signin-server"
+                             :store (subs (digest @state-ref) 0 16)
+                             :users (count (:users (identity-state)))
+                             :passkeys (count (:passkeys (identity-state)))}))))
+
+    (and (= method "GET") (or (= p "/api/identity") (= p "/api/identity/")))
+    (json res 200 (identity-status-json session))
+
+    (and (= method "POST") (= p "/api/passkeys/onboarding/resume"))
+    (let [state (identity-state)
+          users (vals (:users state))
+          owner-mem (some #(when (= :owner (:role %)) %)
+                          (vals (:memberships state)))
+          owner (when owner-mem (user-by-id (:user-id owner-mem)))]
+      (when-not (and (= 1 (count users)) owner
+                     (not (:passkey-enrolled? owner))
+                     (empty? (:passkeys state)))
+        (throw (ex-info "Passkey 登録の再開条件を満たしていません。"
+                        {:type :passkey/onboarding-unavailable})))
+      (let [sess (issue-session! (:id owner))]
+        (json res 200
+              (identity-status-json
+               (live-session-for-token (:token sess)))
+              (session-cookie (:token sess)))))
+
+    (and (= method "POST") (= p "/api/passkeys/register/start"))
+    (do
+      (println :rs-1 "entered, session=" (some-> session :user-id))
+      (when-not session
+        (throw (ex-info "サインインが必要です。" {:type :identity/unauthenticated})))
+      (let [csrf-hdr (aget (.-headers req) "x-cloud-itonami-csrf")]
+        (when-not (= csrf-hdr (:csrf session))
+          (throw (ex-info "CSRF token が一致しません。" {:type :identity/invalid-csrf})))
+        (let [users (vals (:users (identity-state)))
+              user (user-by-id (:user-id session))]
+          (when-not user
+            (throw (ex-info "登録済み User がありません。" {:type :identity/unauthenticated})))
+          (let [r (start-registration! user)]
+            (println :rs-6 "start ok" (:transaction-id r))
+            (json res 200 r)))))
+
+    (and (= method "POST") (= p "/api/passkeys/register/finish"))
+    (when session
+      (let [csrf-hdr (aget (.-headers req) "x-cloud-itonami-csrf")]
+        (when-not (= csrf-hdr (:csrf session))
+          (throw (ex-info "CSRF token が一致しません。" {:type :identity/invalid-csrf}))))
+      (.then (read-body! req)
+             (fn [body]
+               (let [tid (:transaction-id body)
+                     txn (get-in (identity-state) [:webauthn-transactions tid])
+                     user (user-by-id (:user-id txn))
+                     result (finish-registration! tid (:credential body) (:id user))]
+                 (.then result
+                        (fn [wrapped]
+                          (let [result (merge wrapped (:result wrapped))]
+                            (if (:ok result)
+                              (let [pk (first (vals (into {}
+                                                          (filter (fn [[_ k]]
+                                                                    (= (:credential-id result)
+                                                                       (:credential-id k))))
+                                                          (:passkeys (identity-state)))))
+                                    sess (issue-session! (:user-id pk))]
+                                (json res 200
+                                      (merge (identity-status-json
+                                              (live-session-for-token (:token sess)))
+                                             {"ok" true})
+                                      (session-cookie (:token sess))))
+                              (json res (or (:status result) 400)
+                                    {:error {:message (str (:error result))}})))))))))
+
+    (and (= method "POST") (= p "/api/passkeys/authenticate/start"))
+    (let [challenge (options/random-challenge-b64url)
+          allow (mapv :credential-id (vals (:passkeys (identity-state))))
+          opts (options/request-options {:rp-id rp-id :challenge challenge
+                                         :allow-credentials (when (seq allow) allow)})
+          tid (str-uuid)
+          expires (plus-seconds-iso 300)]
+      (transact! (fn [s2]
+                   (assoc-in s2 [:identity :webauthn-transactions tid]
+                             {:id tid :kind :assertion :challenge challenge
+                              :origin origin :rp-id rp-id
+                              :created-at (now-iso) :expires-at expires :used? false})))
+      (json res 200 {:transaction-id tid :options opts :expires-at expires}))
+
+    (and (= method "POST") (= p "/api/passkeys/authenticate/finish"))
+    (let [csrf-hdr (aget (.-headers req) "x-cloud-itonami-csrf")
+          body-promise (read-body! req)]
+      (.then body-promise
+             (fn [body]
+               (let [tid (:transaction-id body)
+                     _ (when (and session csrf-hdr (not= csrf-hdr (:csrf session)))
+                         (throw (ex-info "CSRF token が一致しません。"
+                                         {:type :identity/invalid-csrf})))
+                     result (finish-authentication! tid (:credential body))]
+                 (.then result
+                        (fn [wrapped]
+                          (if (:ok wrapped)
+                            (let [sess (:session wrapped)]
+                              (json res 200
+                                    (merge (identity-status-json
+                                            (live-session-for-token (:token sess)))
+                                           {"ok" true})
+                                    (session-cookie (:token sess))))
+                            (json res (or (:status wrapped) 400)
+                                  {:error {:message (str (:error wrapped))}}))))))))
+
+    (and (= method "POST") (= p "/api/auth/signout"))
+    (when session
+      (let [csrf-hdr (aget (.-headers req) "x-cloud-itonami-csrf")]
+        (when-not (= csrf-hdr (:csrf session))
+          (throw (ex-info "CSRF token が一致しません。" {:type :identity/invalid-csrf})))
+        (transact! (fn [s2]
+                     (assoc-in s2 [:identity :sessions (:id session) :revoked?] true)))
+        (json res 200 {"ok" true}
+              (str cookie-name "=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"))))
+
+    (and (= method "GET") (= p "/api/auth/itonami/start"))
+    ;; document navigation — browser follows to auth.itonami.cloud
+    (let [started (central-start! session)]
+      (.writeHead res 302 #js {"location" (:url started)})
+      (.end res ""))
+
+    (and (= method "GET") (or (= p "/api/auth/itonami/qr")
+                              (= p "/api/auth/itonami/qr-url")))
+    ;; The phone entrance, as an image and as a URL. The QR encodes the
+    ;; HOSTED identity entrance (hosted-auth-url), not this server: rp-id is
+    ;; "localhost", a host only the Mac can reach, so the phone can never
+    ;; assert against this server no matter how it reaches it — measured
+    ;; 2026-09-14, this is a property of the WebAuthn rp-id, not of the
+    ;; network. The phone follows the QR to auth.itonami.cloud and completes
+    ;; the hosted passkey ceremony there, over any network, from anywhere.
+    ;; The SVG is generated per request (nothing is cached at write time,
+    ;; nothing else in this file does work per request; a QR is ~1.5 kB).
+    (let [svg (qr-svg hosted-auth-url)]
+      (if (= p "/api/auth/itonami/qr-url")
+        (json res 200 {"url" hosted-auth-url})
+        (do (.writeHead res 200 #js {"content-type" "image/svg+xml; charset=utf-8"
+                                     "cache-control" "max-age=3600"})
+            (.end res svg))))
+
+    (and (= method "POST") (= p "/api/auth/itonami/start"))
+    (.then (read-body! req)
+           (fn [body]
+             (let [started (central-start! session)
+                   handoff? (= true (:handoff body))
+                   handoff-token (when handoff? (random-token 24))]
+               (when handoff-token
+                 (transact! (fn [s]
+                              (assoc-in s [:identity :handoffs handoff-token]
+                                        {:state (:state started)
+                                         :created-at (now-iso)
+                                         :expires-at (plus-seconds-iso 600)
+                                         :ready? false}))))
+               (json res 200
+                     (assoc started :opened-externally?
+                            (when handoff?
+                              (or (open-in-system-browser! (:url started)) false))
+                            :handoff handoff-token)))))
+
+    (and (= method "GET") (= p "/api/auth/itonami/callback"))
+    ;; code+state から token exchange → userinfo → claim。 JS 側の非同期を
+    ;; finish に書き出す (callback は system browser の navigation)。
+    ;; `js/URLSearchParams` is a CLASS: sci needs the constructor dot form —
+    ;; the function form threw "Class constructor cannot be invoked without
+    ;; 'new'" (measured 2026-09-14, this route had never run on sci).
+    (let [q (js/URLSearchParams. (aget url "search"))
+          code (.get q "code")
+          state-value (.get q "state")
+          error (.get q "error")]
+      (if error
+        (do (.writeHead res 302 #js {"location" "/?auth=cancelled"})
+            (.end res ""))
+        (-> (central-complete! state-value code)
+            ;; `central-complete!` resolves to the userinfo PROFILE, not a
+            ;; session. The claim step (profile → login-identities → User →
+            ;; issued session) was defined and never called, so `:token`
+            ;; read nil off the profile and every hosted sign-in landed on
+            ;; /?auth=failed — measured 2026-09-14 reading the route before
+            ;; this change. `central-claim-identity!` throws for a DID no
+            ;; local User claims; that failure IS the "no such identity"
+            ;; case and belongs in the same catch.
+            (.then central-claim-identity!)
+            (.then (fn [session-map]
+                     (let [token (:token session-map)
+                           handoffs (:handoffs (:identity (identity-state)))]
+                       ;; Wake every pending handoff bound to this state: the
+                       ;; polling webview learns the sign-in finished even though
+                       ;; the redirect went to the system browser, not to it.
+                       (doseq [[htok h] handoffs]
+                         (when (and (= (:state h) state-value)
+                                    (not (:ready? h))
+                                    (pos? (compare (:expires-at h) (now-iso))))
+                           (transact! (fn [s]
+                                        (assoc-in s [:identity :handoffs htok]
+                                                  (assoc h :ready? true
+                                                         :token token))))))
+                       (.writeHead res 302
+                                   #js {"location" "/"
+                                        "set-cookie" (session-cookie token)})
+                       (.end res ""))))
+            (.catch (fn [e]
+                      (println :central-error (str e))
+                      (.writeHead res 302 #js {"location" "/?auth=failed"})
+                      (.end res ""))))))
+
+    (and (= method "POST") (= p "/api/auth/itonami/handoff"))
+    ;; The native webview polls with the one-time handoff token from /start.
+    ;; Every refusal is the same {ready? false} — unknown, expired, or spent —
+    ;; so the page has nothing to branch on but readiness and the clock.
+    (.then (read-body! req)
+           (fn [body]
+             (let [htok (:handoff body)
+                   h (when htok (get-in (identity-state) [:handoffs htok]))]
+               (if (and h (:ready? h)
+                        (pos? (compare (:expires-at h) (now-iso)))
+                        (:token h))
+                 ;; one-time: burn the handoff and hand the webview its own
+                 ;; session cookie — the system browser's cookie never crossed
+                 ;; into this webview.
+                 (let [tok (:token h)]
+                   (transact! (fn [s] (assoc-in s [:identity :handoffs htok]
+                                               (assoc h :ready? :spent :token nil))))
+                   (json res 200 {"ready?" true} (session-cookie tok)))
+                 (json res 200 {"ready?" false})))))
+
+    (and (= method "POST") (= p "/api/auth/itonami/link"))
+    ;; Cross-device: the iPhone's controller-link page shows a one-time code;
+    ;; the local app's owner types it here. The server redeems it against the
+    ;; central auth plane, claims the identity, and wakes the most recent
+    ;; pending handoff (the webview that asked for this sign-in).
+    (.then (read-body! req)
+           (fn [body]
+             (let [code (:code body)
+                   session (live-session-for-token (get cookies cookie-name))]
+               (if-not (and (string? code) (<= 16 (count code) 256))
+                 (json res 400 {"ok" false "error" "接続コードの形式が違います。"})
+                 (-> (central-link-complete! code)
+                     (.then (fn [profile]
+                              (let [did (or (aget profile "did") (aget profile "sub"))]
+                                (when-not (get profile "valid")
+                                  (throw (ex-info "セッションが無効です。"
+                                                  {:type :controller-link/invalid})))
+                                did)))
+                     (.then (fn [did]
+                              (let [profile #js {"did" did "sub" did}
+                                    sess (central-claim-identity! profile)
+                                    tok (:token sess)]
+                                ;; wake every pending handoff (the link code
+                                ;; carries no state) — the webview's poll
+                                ;; picks the first ready one.
+                                (wake-handoff-with-token! nil tok)
+                                (json res 200 {"ok" true "did" did}
+                                      (session-cookie tok)))))
+                     (.catch (fn [e]
+                               (println :link-error (str e))
+                               (json res 400 {"ok" false
+                                              "error" {"message" "コードが拒否されました。iPhone の接続画面でコードを作り直してください。"}}))))))))
+
+    (and (= method "GET") (= p "/api/bots"))
+    (if-not session
+      (json res 401 {"error" {"type" "no-session"
+                              "message" "サインインが必要です。"}})
+      (json res 200 (bots-overview session)))
+
+    :else
+    (do (.writeHead res 404 #js {"content-type" "application/json"})
+        (.end res (js/JSON.stringify
+                   (clj->js {:error {:type "not-this-server"
+                                     :message (str "signin-server serves the sign-in surface only: " p)}}))))))
+
+(defn -main [& _]
+  (.on js/process "uncaughtException" (fn [e] (println :uncaught (str e))))
+  (println "signin-server on" rp-id origin "port" port
+           "users" (count (:users (identity-state)))
+           "passkeys" (count (:passkeys (identity-state))))
+  (doto (.createServer http
+                     (fn [req res]
+                       (try
+                         (let [url (js/URL. (str origin (.-url req)))
+                               method (.-method req)
+                               p (aget url "pathname")
+                               cookies (cookies req)
+                               session (live-session-for-token (get cookies cookie-name))]
+                           (route req res method p session url))
+                         (catch :default e
+                           (println :route-error (str e))
+                           (try (.writeHead res 500 #js {"content-type" "application/json"})
+                                (catch :default _ nil))
+                           (try (.end res (js/JSON.stringify (clj->js {:error (str e)})))
+                                (catch :default _ nil))))))
+  (.listen port "127.0.0.1"
+           (fn [] (println "signin-server listening http://localhost:" port)))))
+
+(-main)
