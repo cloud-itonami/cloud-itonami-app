@@ -8726,7 +8726,7 @@
     const renderIdentity = (data) => {
       identityState = data;
       renderAuthMethods(data);
-      const identityReady = Boolean(data['authenticated?'] && data['may-act?']);
+      const identityReady = Boolean(data['authenticated?']); // 09-14: 中央 passkey サインインで解锁 (owner 決定)。may-act? は参考値。
       appUnlocked = identityReady;
       $('#signed-out-brand').hidden = identityReady;
       $('#account-entry-name').textContent = data.user?.['display-name'] || 'アカウント';
