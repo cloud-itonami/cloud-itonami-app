@@ -1,7 +1,6 @@
 (ns cloud.itonami.app.web
   "DADS-backed WebKit workspace hosted by kotoba-lang/shell."
-  (:require [clojure.java.io :as io]
-            [kotoba.lang.text :as str]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.appearance :as appearance]
             [hanmen.svg :as hanmen-svg]
             [jp-go-dds.core :as dds]
@@ -1806,8 +1805,39 @@
   (str/replace (page/->page options body) #"(?s)<style>(.*?)</style>"
                (fn [[_ css]] (str "<style>" (two-size-css css) "</style>"))))
 
-(def bot-component-css (slurp (io/resource "cloud_kotoba_dds/bot.css")))
-(def bot-component-js (slurp (io/resource "cloud_kotoba_dds/bot.js")))
+
+(def ^:private resource-roots
+  "Where a classpath resource may live on this runtime. The JVM found
+   `cloud_kotoba_dds/*` and `jp_go_dds/dds.css` through git deps; without a
+   classpath the same files are read from the sibling checkouts beside this
+   one. The first root that holds the path wins, and an empty result is an
+   error, not an empty string."
+  (let [repo (js/process.cwd)
+        orgs (str repo "/../../kotoba-lang")]
+    #js [repo
+         orgs
+         (str orgs "/cloud-kotoba-dds/resources")
+         (str orgs "/jp-go-digital-design-system/resources")]))
+
+(def ^:private fs-read-text
+  "Resource text, read once at load. Replaces JVM (slurp (io/resource ...)):
+   the same paths, resolved against the repository and its sibling library
+   checkouts on any runtime."
+  (let [node-fs (js/require "fs")]
+    (fn [rel]
+      (let [roots (seq resource-roots)
+            alt (if (.startsWith rel "resources/")
+                  (subs rel (count "resources/")) rel)]
+        (loop [roots roots]
+          (when roots
+            (let [root (first roots)
+                  candidates [(.join (js/require "path") root rel)
+                              (.join (js/require "path") root alt)]]
+              (if-let [hit (some (fn [p] (when (.existsSync node-fs p) p)) candidates)]
+                (.readFileSync node-fs hit "utf8")
+                (recur (next roots))))))))))
+(def bot-component-css (fs-read-text "resources/cloud_kotoba_dds/bot.css"))
+(def bot-component-js (fs-read-text "resources/cloud_kotoba_dds/bot.js"))
 
 (def app-css
   "The app's own rules, plus the ones `hanmen` needs for a rendered page to
@@ -1839,13 +1869,13 @@
 
   Read once at load. The page is assembled per request and re-reading a
   third of a megabyte for each one would be work nobody asked for."
-  (slurp (io/resource "cloud/itonami/app/interaction.js")))
+  (fs-read-text "resources/cloud/itonami/app/interaction.js"))
 
 (def signal-js
   "Browser-owned X25519/Ed25519, Double Ratchet, and group sender-key state.
   Loaded before the interaction layer so the messenger never races crypto
   initialization."
-  (slurp (io/resource "cloud/itonami/app/signal.js")))
+  (fs-read-text "resources/cloud/itonami/app/signal.js"))
 
 (defn- nav-item [view title icon badge-id]
   ;; Real `#/name` links (kami-app-nle / ADR-2608080100). The fragment is
@@ -2534,7 +2564,7 @@
         brand (get-in configuration [:brand :name] "Cloud Itonami")
         mode (appearance/resolve-mode configuration)
         residency (appearance/residency-plane configuration)
-        css (two-size-css (slurp (io/resource "jp_go_dds/dds.css")))]
+        css (two-size-css (fs-read-text "resources/jp_go_dds/dds.css"))]
     (page-with-two-size-styles
      {:title (str "Bots | " brand)
       :description "安全第一（緑十字）のAIワークスペース"
