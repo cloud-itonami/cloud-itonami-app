@@ -1,0 +1,117 @@
+(ns cloud.itonami.app.public-bot-catalog
+  "The Marketplace's installable public bots.
+
+  A catalog entry is an OFFER, not an installed thing. Reading this namespace
+  answers 'what could I add'; installing is `install!`, which creates a fresh
+  Bot in the caller's own organization through the same `bots/create!` the
+  new-Bot form uses — one creation path, so an install cannot carry an
+  authority the form cannot.
+
+  The catalog is a hand-written resource (see the header of
+  `resources/itonami-public-bots.edn`), so it can drift. The schema check
+  below fails loudly on drift rather than rendering half-cards: an entry
+  missing what the installer needs is an exception, not a missing card."
+  (:require [clojure.edn :as edn]
+            [kotoba.lang.text :as str])
+  ;; `bots` is the JVM-side creation path. The portable half (parse, validate,
+  ;; `find-bot`) must stay runnable under ClojureScript, where `bots` cannot
+  ;; load — a portable judgement that needed the JVM would be a `.clj` file
+  ;; with a longer name. On the JVM the require is unconditional at load.
+  #?(:clj (:require [cloud.itonami.app.bots :as bots])))
+
+(def ^:private resource-name "itonami-public-bots.edn")
+(def schema "cloud.itonami.app.public-bot-catalog.v1")
+
+(defn- require-field [entry field]
+  (when (str/blank? (str (get entry field)))
+    (throw (ex-info (str "public bot catalog entry is missing " field)
+                    {:type :public-bot-catalog/invalid-entry
+                     :id (:id entry) :field field}))))
+
+(defn- validate-catalog [catalog]
+  (when-not (map? catalog)
+    (throw (ex-info "public bot catalog resource is not a map"
+                    {:type :public-bot-catalog/invalid-catalog})))
+  (when-not (= schema (:schema catalog))
+    (throw (ex-info "public bot catalog schema mismatch"
+                    {:type :public-bot-catalog/schema-mismatch
+                     :expected schema :actual (:schema catalog)})))
+  (let [entries (:bots catalog)]
+    (when-not (and (vector? entries) (seq entries))
+      (throw (ex-info "public bot catalog has no bots"
+                      {:type :public-bot-catalog/empty})))
+    (doseq [entry entries]
+      (doseq [field [:id :name :avatar :role :brief :author :entry-url
+                     :installed-surface :install]]
+        (require-field entry field))
+      (let [defaults (:defaults (:install entry))]
+        (when-not (map? defaults)
+          (throw (ex-info "public bot install defaults must be a map"
+                          {:type :public-bot-catalog/invalid-entry
+                           :id (:id entry) :field :install}))))
+      (when-not (re-matches #"^[a-z0-9][a-z0-9-]{0,63}$" (str (:id entry)))
+        (throw (ex-info "public bot id must be a lowercase slug"
+                        {:type :public-bot-catalog/invalid-entry
+                         :id (:id entry) :field :id}))))
+    (when-not (= (count entries) (count (set (map :id entries))))
+      (throw (ex-info "public bot catalog has duplicate ids"
+                      {:type :public-bot-catalog/duplicate-ids}))))
+  catalog)
+
+(defonce ^:private portable-source (atom nil))
+
+;; JVM hosts read the resource from the classpath; the resource ships with the
+;; release, so this namespace does not depend on a west checkout beside it.
+#?(:clj
+   (defn- read-catalog []
+     (let [loader (.. Thread currentThread getContextClassLoader)]
+       (if-some [url (.getResource loader resource-name)]
+         (validate-catalog (edn/read-string (slurp url)))
+         (throw (ex-info (str "public bot catalog resource missing: " resource-name)
+                         {:type :public-bot-catalog/catalog-missing})))))
+   :cljs
+   (defn- read-catalog []
+     ;; The portable build hands the text in through `set-portable-source!`;
+     ;; reading it here would reach past the host boundary.
+     (if-some [text @portable-source]
+       (validate-catalog (edn/read-string text))
+       (throw (ex-info (str "public bot catalog resource missing: " resource-name)
+                       {:type :public-bot-catalog/catalog-missing})))))
+
+(defn set-portable-source!
+  "Hosts without a classpath hand the catalog text in. Passing nil clears."
+  [text]
+  (reset! portable-source text)
+  nil)
+
+(def catalog
+  "Parsed catalog. Delayed so a malformed resource fails on first use with the
+  validation exception, not at load time where the reader would win."
+  (delay (read-catalog)))
+
+(defn bots [] (:bots @catalog))
+
+(defn find-bot [id]
+  (some #(when (= id (:id %)) %) (bots)))
+
+#?(:clj
+   (defn install!
+     "Create a fresh Bot in the caller's organization from a catalog entry.
+
+  The bot's name, avatar and brief come verbatim from the entry; capability
+  defaults come from the entry but every one of them is a DEFAULT the
+  existing creation path already applies to a hand-made bot — nothing here
+  widens what `bots/create!` can grant. Connectors, accounts and wallet
+  signer stay ungranted, exactly as the form's path leaves them."
+     [configuration session bot-id]
+     (let [entry (or (find-bot bot-id)
+                     (throw (ex-info "public bot is not in the catalog"
+                                     {:type :public-bot-catalog/unknown-bot
+                                      :id bot-id})))
+           defaults (:defaults (:install entry))]
+       (bots/create! configuration session
+                     (merge {:name (:name entry)
+                             :avatar (:avatar entry)
+                             :brief (:brief entry)}
+                            (select-keys defaults [:writes? :browser? :computer?
+                                                   :peers? :omakase? :coding?]))))))
