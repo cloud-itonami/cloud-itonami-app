@@ -4235,7 +4235,20 @@
            [:details {:class "signin-help"}
             [:summary "パスキーについて"]
             [:p {:class "form-help"}
-             "スマートフォンやパスワードマネージャーの鍵でサインインします。新しい鍵は itonami.cloud で登録できます。"]]]
+             "スマートフォンやパスワードマネージャーの鍵でサインインします。新しい鍵は itonami.cloud で登録できます。"]]
+           ;; Cross-device link. The QR entrance finishes on the phone; this
+           ;; card is how the Mac learns the phone finished. The phone's
+           ;; controller-link page (auth.kotoba.cloud/connect?target=itonami)
+           ;; shows a one-time code; typing it here redeems it server-side and
+           ;; the pending handoff wakes the app in place.
+           [:div {:class "settings-form" :id "itonami-link-code-card"}
+            [:p {:class "form-label"} "iPhone とつなげる（接続コード）"]
+            [:div {:class "local-actions"}
+             [:input {:type "text" :id "itonami-link-code"
+                      :autocomplete "off" :placeholder "iPhone に表示された接続コード"
+                      :maxlength "64"}]
+             (dds/button "つなげる" {:type :solid-fill :id "itonami-link-apply"})]
+            [:p {:class "form-help" :id "itonami-link-status" :role "status"}]]]
           ;; Everything below is still Passkey: device-local recovery,
           ;; device-local registration, and joining by invitation. One fold, so
           ;; the screen shows one decision until someone asks for more. The
