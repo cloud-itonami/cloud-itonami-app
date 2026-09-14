@@ -1,0 +1,41 @@
+(ns cloud.itonami.app.public-bot-catalog-test
+  "The portable half of the public-bot catalog tests: every entry carries what
+  the installer needs, ids are unique slugs, the manifest is the single
+  catalog, and `find-bot`/`install!` resolution is honest about unknown ids.
+
+  Runs on ClojureScript (`bin/test-portable-cljs`) AND on the JVM through the
+  leftover suite — which is the point of the namespace being `.cljc`. The
+  HTTP face (authentication, CSRF, organization scoping, persistence) is
+  `public_bots_http_test.clj`, origin `.clj` with the rest of the loopback
+  web tests."
+  (:require #?(:clj [clojure.test :refer [deftest is testing]]
+               :cljs [cljs.test :refer [deftest is testing]])
+            [cloud.itonami.app.public-bot-catalog :as catalog]))
+
+(deftest catalog-is-present-and-single
+  (let [entries (catalog/bots)]
+    (is (pos? (count entries)))
+    (is (= (count entries) (count (distinct (map :id entries)))))))
+
+(deftest every-entry-carries-what-the-installer-needs
+  (doseq [entry (catalog/bots)]
+    (testing (str "entry " (:id entry))
+      (doseq [field [:id :name :avatar :role :brief :author :entry-url
+                     :installed-surface :install]]
+        (is (not (clojure.string/blank? (str (get entry field))))
+            (str field " is present")))
+      (is (map? (:defaults (:install entry))))
+      (is (re-matches #"^[a-z0-9][a-z0-9-]{0,63}$" (str (:id entry)))
+          "id is a lowercase slug"))))
+
+(deftest find-bot-resolves-only-known-ids
+  (let [first-entry (first (catalog/bots))]
+    (is (= first-entry (catalog/find-bot (:id first-entry))))
+    (is (nil? (catalog/find-bot "no-such-public-bot")))))
+
+(deftest the-four-creative-bots-are-offered
+  (let [ids (set (map :id (catalog/bots)))]
+    (is (contains? ids "mangaka"))
+    (is (contains? ids "animeka"))
+    (is (contains? ids "dougaka"))
+    (is (contains? ids "gameka"))))

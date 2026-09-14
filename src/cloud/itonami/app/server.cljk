@@ -9,6 +9,7 @@
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.app-client :as app-client]
             [cloud.itonami.app.app-directory :as app-directory]
+            [cloud.itonami.app.public-bot-catalog :as public-bot-catalog]
             [cloud.itonami.app.authority.api :as authority-api]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.bulky-waste :as bulky-waste]
@@ -6071,6 +6072,22 @@
           (let [body (read-json exchange)]
             (send! exchange 200 (app-directory/set-app-installed!
                                   session (:id body) (:installed? body)))))
+
+      ;; Marketplace public bots: the catalog is public, installing a bot is a
+      ;; creation in the caller's organization, so it needs origin + CSRF like
+      ;; every other mutating Bot action. Read stays behind the human session
+      ;; like the rest of this handler (handler docstring).
+      (and (= method "GET") (= path "/api/marketplace/public-bots"))
+      (send! exchange 200 {:bots (public-bot-catalog/bots)})
+
+      (and (= method "POST") (= path "/api/marketplace/public-bots/install"))
+      (do (require-origin! exchange config)
+          (require-csrf! exchange session)
+          (let [body (read-json exchange)
+                bot (public-bot-catalog/install! config session (:id body))]
+            (send! exchange 200 {:bot {:id (:bot/id bot)
+                                       :name (:bot/name bot)
+                                       :avatar (:bot/avatar bot)}})))
 
       (and (= method "GET") (= path "/api/bots"))
       (send! exchange 200 (bots/overview config session))

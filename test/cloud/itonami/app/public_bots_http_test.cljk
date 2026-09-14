@@ -1,0 +1,110 @@
+(ns cloud.itonami.app.public-bots-http-test
+  "The Marketplace public-bots surface over real HTTP.
+
+  The catalog is public but a session is required to read it (the whole
+  handler is behind `require-human-session!`); installing is a Bot creation in
+  the caller's organization, so it needs origin + CSRF, refuses agent
+  sessions, is scoped per organization, and persists."
+  (:require [clojure.data.json :as json]
+            [clojure.test :refer [deftest is testing]]
+            [cloud.itonami.app.config :as config-loader]
+            [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.public-bot-catalog :as catalog]
+            [cloud.itonami.app.server :as server]
+            [cloud.itonami.app.store :as store])
+  (:import [java.net URI]
+           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
+            HttpResponse$BodyHandlers]))
+
+(def ^:private origin "http://localhost:1338")
+(def ^:private csrf "public-bots-csrf")
+(def ^:private config
+  {:brand {:name "Test"}
+   :server {:host "127.0.0.1" :port 0 :public-origin origin
+            :webauthn-rp-id "localhost"}
+   :routing {:default-provider "ollama" :default-model "test-model"
+             :cloud-enabled? false}
+   :privacy {:allow-cloud-without-review? false :bind-loopback-only? true}
+   :wallet {:chains [{:chain-id 1 :name "Ethereum"}]}
+   :memory {:max-session-messages 10 :max-context-messages 10}
+   :providers [{:id "ollama" :kind :ollama :local? true
+                :base-url "http://127.0.0.1:11434"
+                :reviewed? true :enabled? true}]})
+(defonce ^:private client (HttpClient/newHttpClient))
+(defonce ^:private current-session (atom nil))
+
+(defn- call [method path body with-csrf?]
+  (let [builder (-> (HttpRequest/newBuilder
+                     (URI/create (str "http://127.0.0.1:"
+                                      (.getPort (.getAddress @server/server)) path)))
+                    (.header "Content-Type" "application/json")
+                    (.header "Origin" origin))
+        builder (if with-csrf?
+                  (.header builder "X-CLOUD-ITONAMI-CSRF" csrf)
+                  builder)
+        request (case method
+                  :get (.GET builder)
+                  :post (.POST builder (HttpRequest$BodyPublishers/ofString
+                                        (json/write-str (or body {})))))
+        response (.send client (.build request) (HttpResponse$BodyHandlers/ofString))]
+    {:status (.statusCode response)
+     :body (json/read-str (.body response) :key-fn keyword)}))
+
+(defn- with-server [f]
+  (let [temporary (java.nio.file.Files/createTempDirectory
+                   "cloud-itonami-public-bots-http"
+                   (make-array java.nio.file.attribute.FileAttribute 0))
+        previous @store/state]
+    (try
+      (reset! store/state (store/initial-state))
+      (reset! current-session {:csrf csrf :user-id "alice" :organization-id "org-1"
+                               :kind :passkey :authn-level :phishing-resistant})
+      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+                    identity/session (fn [_] @current-session)
+                    identity/require-passkey! identity
+                    identity/configure! (fn [_] nil)]
+        (server/stop!)
+        (server/start! config)
+        (try (f) (finally (server/stop!))))
+      (finally (server/stop!) (reset! store/state previous)))))
+
+(deftest catalog-validates-loudly
+  (testing "every entry carries what the installer needs"
+    (let [entries (catalog/bots)]
+      (is (pos? (count entries)))
+      (is (= (count entries) (count (set (map :id entries)))))
+      (doseq [entry entries]
+        (is (not (clojure.string/blank? (str (:id entry)))))
+        (is (map? (:defaults (:install entry))))))))
+
+(deftest unknown-install-is-an-error-not-a-creation
+  (is (thrown? Exception
+               (catalog/install! config {} "no-such-public-bot"))))
+
+(deftest public-bots-surface-is-authenticated-scoped-and-persistent
+  (with-server
+    (fn []
+      (let [path "/api/marketplace/public-bots"
+            install "/api/marketplace/public-bots/install"
+            bot-count (fn [session'] (count (:bots session')))]
+        ;; The catalog reads behind the human session, like the handler.
+        (is (= 200 (:status (call :get path nil false))))
+        (is (pos? (bot-count (:body (call :get path nil false)))))
+        (is (= 403 (:status (call :post install {:id "mangaka"} false))))
+        ;; Origin + CSRF + human session: installing creates a bot.
+        (let [response (call :post install {:id "mangaka"} true)]
+          (is (= 200 (:status response)))
+          (is (= "mangaka (漫画家)" (get-in response [:body :bot :name]))))
+        (let [overview (call :get "/api/bots" nil false)]
+          (is (some #(= "mangaka (漫画家)" (:name %))
+                    (get-in overview [:body :bots]))))
+        ;; A different organization does not see the created bot.
+        (swap! current-session assoc :organization-id "other")
+        (let [overview (call :get "/api/bots" nil false)]
+          (is (not (some #(= "mangaka (漫画家)" (:name %))
+                         (get-in overview [:body :bots])))))
+        ;; Agent sessions cannot create.
+        (swap! current-session assoc :organization-id "org-1" :kind :agent)
+        (is (= 403 (:status (call :post install {:id "animeka"} true))))
+        (reset! current-session nil)
+        (is (= 401 (:status (call :get path nil false))))))))
