@@ -251,6 +251,7 @@
             [cloud.itonami.app.wallet-test]
             [cloud.itonami.app.smart-account-owner-test]
             [cloud.itonami.app.wallet-http-test]
+            [cloud.itonami.app.public-bots-http-test]
             [cloud.itonami.app.workspace-apps-http-test]
             [cloud.itonami.app.wallet-send-test]
             [cloud.itonami.app.commerce-test]
@@ -497,6 +498,7 @@
     cloud.itonami.app.smart-account-owner-test
     cloud.itonami.app.wallet-http-test
     cloud.itonami.app.workspace-apps-http-test
+    cloud.itonami.app.public-bots-http-test
     cloud.itonami.app.wallet-send-test
     cloud.itonami.app.commerce-test
     cloud.itonami.app.storefront-http-test])

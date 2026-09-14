@@ -1,0 +1,58 @@
+;; Public bots the Marketplace offers for installation.
+;;
+;; Hand-written, deliberately small. `src/cloud/itonami/app/public_bot_catalog.cljk`
+;; validates this shape and refuses to start on drift, so an entry added here
+;; without the fields the installer needs fails loudly rather than rendering a
+;; half-card.
+;;
+;; What an entry is: a colleague-with-a-role another organization has decided
+;; to offer (ADR-0097: Marketplace Bot = "a colleague with a role and
+;; permissions"). Installing one creates a fresh Bot in the installer's own
+;; organization via the same `bots/create!` path the "new Bot" form uses. It
+;; never copies the original's conversation history, credentials, wallets or
+;; accounts; the declared default capabilities below are recorded as the
+;; catalog's suggestion and stay inert unless the human installer's session
+;; approves them (ADR-0088: default grants stay inert).
+;;
+;; `:author` is the operating organization, `:entry-url` is where its published
+;; work can be seen, `:install {:defaults ...}` is what a fresh install would
+;; carry. `:installed-surface` names the app surface (aozora/isekai) the bot
+;; publishes to — displayed on the card, not granted by it.
+{:schema "cloud.itonami.app.public-bot-catalog.v1"
+ :bots
+ [{:id "mangaka"
+   :name "mangaka (漫画家)"
+   :avatar "✒"
+   :role "漫画制作"
+   :brief "kami engine でコマ割り・キャラ・セリフ付きの漫画ページ (png/webp/html) を生成し aozora.app に投稿する制作 bot。"
+   :author "com-junkawasaki"
+   :entry-url "https://aozora.app"
+   :installed-surface "aozora"
+   :install {:defaults {:writes? true :browser? true :computer? true}}}
+  {:id "animeka"
+   :name "animeka (アニメーター)"
+   :avatar "🎬"
+   :role "アニメーション制作"
+   :brief "kami engine の動画/Effect 基盤でアニメーション作品 (mp4/gif) を生成し aozora.app に投稿する制作 bot。"
+   :author "com-junkawasaki"
+   :entry-url "https://aozora.app"
+   :installed-surface "aozora"
+   :install {:defaults {:writes? true :browser? true :computer? true}}}
+  {:id "dougaka"
+   :name "dougaka (動画師)"
+   :avatar "🎞"
+   :role "3D・動画制作"
+   :brief "kami engine の 3D/video effect ライブラリで動画作品 (mp4/gif/webm) を生成し aozora.app に投稿する制作 bot。"
+   :author "com-junkawasaki"
+   :entry-url "https://aozora.app"
+   :installed-surface "aozora"
+   :install {:defaults {:writes? true :browser? true :computer? true}}}
+  {:id "gameka"
+   :name "gameka (ゲームクリエイター)"
+   :avatar "🕹"
+   :role "ゲーム制作"
+   :brief "kami engine の 3D effect / video / game ライブラリでブラウザで動くゲームを生成し isekai.network と aozora.app に投稿する制作 bot。"
+   :author "com-junkawasaki"
+   :entry-url "https://isekai.network"
+   :installed-surface "isekai"
+   :install {:defaults {:writes? true :browser? true :computer? true}}}]}

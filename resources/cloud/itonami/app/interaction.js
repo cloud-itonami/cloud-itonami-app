@@ -8872,6 +8872,7 @@
       renderMembers(data.organization);
       renderConnectors(data);
       loadWorkspaceApps();
+      loadPublicBots();
       loadCloudAlias(data);
       loadTenantConnections();
       loadMailAccounts();
@@ -13615,6 +13616,7 @@
     // Marketplace installation only controls the launcher. API permissions stay
     // on the underlying Bot, connector and App actions.
     let workspaceApps = [];
+    let publicBots = [];
     let marketKind = 'plugin';
     let appsLoadGeneration = 0;
     const appCard = (app, installedView = false) => {
@@ -13684,12 +13686,34 @@
           grid.append(card);
         });
       } else {
+        const installedIds = new Set(botsState.bots.map((bot) => bot.name));
         botsState.bots.filter((bot) => matches(`${bot.name} ${bot.role || ''}`)).forEach((bot) => {
           const card = make('article', 'market-card'); const copy = make('div', 'market-copy');
           copy.append(make('h3', null, bot.name), make('p', null, bot.role || 'あなたの Bot'));
           const open = make('button', 'tool-button', '会話を開く'); open.type = 'button';
           open.addEventListener('click', async () => { await selectBot(bot.id); showView('bots'); });
           card.append(copy, open); grid.append(card);
+        });
+        publicBots.filter((entry) => (!installedOnly || !installedIds.has(entry.name))
+            && matches(`${entry.name} ${entry.role || ''} ${entry.brief || ''}`)).forEach((entry) => {
+          const card = make('article', 'market-card'); const copy = make('div', 'market-copy');
+          copy.append(make('h3', null, entry.avatar ? `${entry.avatar} ${entry.name}` : entry.name),
+            make('p', null, entry.brief || entry.role || '公開 Bot'),
+            make('p', null, `${entry.author} · ${entry['entry-url'] || ''}`));
+          const add = make('button', 'tool-button', '追加'); add.type = 'button';
+          add.setAttribute('aria-label', `${entry.name}を追加`);
+          add.addEventListener('click', async () => {
+            add.disabled = true;
+            try {
+              const response = await fetch('/api/marketplace/public-bots/install', {method:'POST',
+                headers:identityHeaders(), body:JSON.stringify({id:entry.id})});
+              const data = await response.json();
+              if (!response.ok) throw new Error(data?.error?.message || 'Bot を追加できませんでした。');
+              $('#market-status').textContent = `${data?.bot?.name || entry.name}を追加しました。あなたの Bot に載っています。`;
+            } catch (error) { $('#market-status').textContent = error.message; }
+            finally { add.disabled = false; }
+          });
+          card.append(copy, add); grid.append(card);
         });
         if (!installedOnly) {
           const create = make('button', 'market-card market-create', '＋ 新しい Bot を作る'); create.type = 'button';
