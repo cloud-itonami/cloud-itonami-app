@@ -45,9 +45,10 @@
   "Every appearance the workspace can render. Order is the toggle order.
 
   `dark` sits next to `light` because they are one palette and its inversion.
-  The authored appearances keep the positions they had, so an existing press
-  still lands where it did."
-  ["light" "dark" "8bit" "grok"])
+  The authored appearances (`8bit`, `grok`) are pruned from the toggle cycle —
+  their CSS layers stay in `css` for documents that name them explicitly, but
+  a toggle press is light<->dark only (owner instruction 2026-09-14)."
+  ["light" "dark"])
 
 (def default-mode "light")
 
@@ -396,14 +397,10 @@
               :data-mode (or (normalize mode) default-mode)
               :data-next next
               :aria-pressed (if (not= "light" (normalize mode)) "true" "false")
-              :aria-label "表示モードを切り替え（light / dark / 8-bit / grok）"
+              :aria-label "表示モードを切り替え（light / dark）"
               :title (case next
                        "dark" "ダークにする"
-                       "8bit" "8-BIT MODE にする"
-                       "grok" "grokモードにする"
                        "標準表示に戻す")}
      (case next
        "dark" "DARK"
-       "8bit" "8-BIT"
-       "grok" "GROK"
-       "DADS")]))
+       "LIGHT")]))

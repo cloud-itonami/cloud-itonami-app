@@ -19,6 +19,7 @@
   "target/passkey-e2e.cljk" ".cljc"
   "target/zz-probe.cljk" ".cljc"
   "target/cljk-registry-probe.cljk" ".cljc"
+  "target/appearance-prune-verify.cljk" ".cljc"
   "src/cloud/itonami/app/bot_profile.cljk" ".clj"
  "test/cloud/itonami/app/workspace_apps_http_test.cljk" ".clj"
  "bin/gen_kir_amu.cljk" ".cljs"

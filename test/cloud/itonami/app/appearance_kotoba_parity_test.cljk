@@ -41,19 +41,18 @@
 ;; oracle calls — the cljc's `(case s ...)` is exactly this function of the
 ;; prepared (trimmed, lower-cased) string.
 (defn- original-mode [s]
+  ;; The authored appearances are pruned (owner 2026-09-14): their spellings
+  ;; answer nil, exactly as the core's table does.
   (case s
-    ("8bit" "8-bit" "eightbit" "eight-bit" "pixel" "retro") "8bit"
-    ("grok" "grob" "dark-chat" "chat-dark") "grok"
-    ;; `dark-chat` above names the AUTHORED chat-dark appearance and keeps
-    ;; doing so; `dark` below names the inverted DADS palette. Two different
-    ;; things whose spellings look alike, which is why both rows stay here.
+    ("8bit" "8-bit" "eightbit" "eight-bit" "pixel" "retro") nil
+    ("grok" "grob" "dark-chat" "chat-dark") nil
     ("dark" "night") "dark"
     ("light" "default" "dads") "light"
     nil))
 
 ;; The ORIGINAL toggle cycle, independent of the oracle — the cljc's
 ;; keep-indexed/nth/mod formula over the `modes` vector.
-(def ^:private original-modes ["light" "dark" "8bit" "grok"])
+(def ^:private original-modes ["light" "dark"])
 
 (defn- original-next-mode [current]
   (nth original-modes

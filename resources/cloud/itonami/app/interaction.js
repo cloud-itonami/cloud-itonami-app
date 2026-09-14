@@ -9,7 +9,7 @@
       const workspace = document.querySelector('.workspace');
       const toggle = document.getElementById('appearance-toggle');
       if (!workspace) return;
-      const modes = ['light', '8bit', 'grok'];
+      const modes = ['light', 'dark'];
       const key = 'cloud-itonami-appearance';
       const normalize = (v) => (modes.includes(v) ? v : null);
       const read = () => {
@@ -26,9 +26,8 @@
           toggle.dataset.mode = mode;
           toggle.dataset.next = next;
           toggle.setAttribute('aria-pressed', mode === 'light' ? 'false' : 'true');
-          toggle.textContent = next === '8bit' ? '8-BIT' : (next === 'grok' ? 'GROK' : 'DADS');
-          toggle.title = next === '8bit' ? '8-BIT MODE にする'
-            : (next === 'grok' ? 'grokモードにする' : '標準表示に戻す');
+          toggle.textContent = next === 'dark' ? 'DARK' : 'LIGHT';
+          toggle.title = next === 'dark' ? 'ダークにする' : '標準表示に戻す';
         }
       };
       const fromUrl = normalize(new URLSearchParams(location.search).get('appearance'));

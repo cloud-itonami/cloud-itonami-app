@@ -6,14 +6,13 @@
 (deftest resolution-is-configured-or-light
   (testing "the shipped default"
     (is (= "light" (appearance/resolve-mode{}))))
-  (testing "every spelling an operator is likely to write"
-    (doseq [v [:8bit "8bit" "8-bit" "EIGHTBIT" " pixel " :retro]]
-      (is (= "8bit" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v)))
-    (doseq [v [:grok "grok" "GROK" " chat-dark "]]
-      (is (= "grok" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v))))
   (testing "the inverted-DADS appearance"
     (doseq [v [:dark "dark" "DARK" " night "]]
       (is (= "dark" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v))))
+  (testing "pruned authored appearances answer light (owner 2026-09-14)"
+    (doseq [v [:8bit "8bit" "8-bit" "EIGHTBIT" " pixel " :retro
+               :grok "grok" "GROK" " chat-dark "]]
+      (is (= "light" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v))))
   (testing "a value that names nothing is not an appearance, so light"
     (doseq [v [:neon 8 nil ""]]
       (is (= "light" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v)))))
@@ -35,11 +34,9 @@
   (is (str/includes? appearance/css "button:not(.mobile-nav-backdrop)"))
   (is (str/includes? appearance/css ".tool-button:not([disabled]):hover")))
 
-(deftest the-toggle-cycles-through-every-mode-and-comes-back
+(deftest the-toggle-cycles-light-and-dark
   (is (= "dark" (appearance/next-mode "light")))
-  (is (= "8bit" (appearance/next-mode "dark")))
-  (is (= "grok" (appearance/next-mode "8bit")))
-  (is (= "light" (appearance/next-mode "grok")))
+  (is (= "light" (appearance/next-mode "dark")))
   (is (= "dark" (appearance/next-mode "nonsense"))
       "unknown input restarts the cycle from light")
   (is (= (set appearance/modes)
@@ -99,15 +96,7 @@
     (is (= "false" (:aria-pressed attrs)))
     (is (= "DARK" label)))
   (let [[_ attrs label] (appearance/toggle-button "dark")]
-    (is (= "8bit" (:data-next attrs)))
+    (is (= "light" (:data-next attrs)))
     (is (= "true" (:aria-pressed attrs))
         "dark is not the default, so the control reads as pressed")
-    (is (= "8-BIT" label)))
-  (let [[_ attrs label] (appearance/toggle-button "8bit")]
-    (is (= "grok" (:data-next attrs)))
-    (is (= "true" (:aria-pressed attrs)))
-    (is (= "GROK" label)))
-  (let [[_ attrs label] (appearance/toggle-button "grok")]
-    (is (= "light" (:data-next attrs)))
-    (is (= "true" (:aria-pressed attrs)))
-    (is (= "DADS" label))))
+    (is (= "LIGHT" label))))
