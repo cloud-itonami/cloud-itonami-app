@@ -543,15 +543,30 @@
                    (.then (fn [r] (.text r)))
                    (.then (fn [text] (js/JSON.parse text))))))))
 
-(defn- wake-handoff-with-token! [state-value token]
-  (let [handoffs (:handoffs (:identity (identity-state)))]
+(defn wake-handoff-with-token!
+  "Mark every pending handoff bound to `state-value` (every pending one when
+  nil) ready with `token`, so the poller that started the sign-in learns it
+  finished. Returns how many were woken -- a wake that found nothing must be
+  a number, not silence.
+
+  `identity-state` already IS the `:identity` map. Until 2026-09-15 this and
+  the callback route read `(:identity (identity-state))`, which is nil, so no
+  handoff was ever woken: the browser signed in, a session was issued, and
+  `itonami` polled `/handoff` for three minutes and gave up. Measured that
+  day on state.edn: transaction `used? true`, session issued 08:44:27Z,
+  handoff still `ready? false`, nothing on the log."
+  [state-value token]
+  (let [handoffs (:handoffs (identity-state))
+        woken (atom 0)]
     (doseq [[htok h] handoffs]
       (when (and (or (nil? state-value) (= (:state h) state-value))
                  (not (:ready? h))
                  (pos? (compare (:expires-at h) (now-iso))))
+        (swap! woken inc)
         (transact! (fn [s]
                      (assoc-in s [:identity :handoffs htok]
-                               (assoc h :ready? true :token token))))))))
+                               (assoc h :ready? true :token token))))))
+    @woken))
 
 (defn- central-claim-identity! [profile]
   (let [subject (or (aget profile "sub") (aget profile "did"))
@@ -881,19 +896,15 @@
             ;; case and belongs in the same catch.
             (.then central-claim-identity!)
             (.then (fn [session-map]
-                     (let [token (:token session-map)
-                           handoffs (:handoffs (:identity (identity-state)))]
+                     (let [token (:token session-map)]
                        ;; Wake every pending handoff bound to this state: the
-                       ;; polling webview learns the sign-in finished even though
-                       ;; the redirect went to the system browser, not to it.
-                       (doseq [[htok h] handoffs]
-                         (when (and (= (:state h) state-value)
-                                    (not (:ready? h))
-                                    (pos? (compare (:expires-at h) (now-iso))))
-                           (transact! (fn [s]
-                                        (assoc-in s [:identity :handoffs htok]
-                                                  (assoc h :ready? true
-                                                         :token token))))))
+                       ;; polling webview / `itonami` learns the sign-in
+                       ;; finished even though the redirect went to the system
+                       ;; browser, not to it. One implementation, shared with
+                       ;; the controller-link route (the inline copy here read
+                       ;; the wrong level of the state and woke nothing).
+                       (println :handoff-woken (wake-handoff-with-token! state-value token)
+                                :state state-value)
                        (.writeHead res 302
                                    #js {"location" "/"
                                         "set-cookie" (session-cookie token)})
@@ -1003,4 +1014,7 @@
   (.listen port "127.0.0.1"
            (fn [] (println "signin-server listening http://localhost:" port)))))
 
-(-main)
+;; CLOUD_ITONAMI_SIGNIN_NO_LISTEN=1 loads this namespace without binding the
+;; port, for a test that wants the functions and not a server.
+(when-not (= "1" (some-> js/process.env .-CLOUD_ITONAMI_SIGNIN_NO_LISTEN))
+  (-main))
