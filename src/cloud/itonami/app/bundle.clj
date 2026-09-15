@@ -194,6 +194,8 @@
       (println "embed" (get-in result [:manifest :kotoba.app/embed-url]))
       (println "put" (get-in result [:put :status]) (get-in result [:put :url]))
       (println "get" (get-in result [:get :status]) (get-in result [:get :url])))
+    "latest"
+    ((requiring-resolve 'cloud.itonami.app.latest/-main))
     (let [{:keys [cid size problems manifest]} (snapshot)]
       (println "cid" cid)
       (println "size" size)
