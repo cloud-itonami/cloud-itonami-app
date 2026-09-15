@@ -9,50 +9,11 @@
     "cloud-itonami-launcher-test"
     (make-array java.nio.file.attribute.FileAttribute 0))))
 
-(defn- run-resident-script
-  [launcher explicit-data-dir]
-  (let [home (temporary-directory)
-        app (io/file home ".cloud-itonami" "app")
-        bin (io/file app "bin")
-        fake-bin (io/file home "fake-bin")
-        installed (io/file bin launcher)
-        fake-clojure (io/file fake-bin "clojure")
-        _ (.mkdirs bin)
-        _ (.mkdirs fake-bin)
-        _ (io/copy (io/file "bin" launcher) installed)
-        _ (spit fake-clojure
-                (str "#!/bin/sh\n"
-                     "printf '%s\\n' \"$CLOUD_ITONAMI_APP_DIR\"\n"
-                     "printf '%s\\n' \"$CLOUD_ITONAMI_DATA_DIR\"\n"
-                     "printf '%s\\n' \"$*\"\n"))
-        _ (.setExecutable fake-clojure true)
-        process (ProcessBuilder. ^java.util.List
-                                 (cond-> ["nbb" (.getPath installed)]
-                                   (= launcher "itonami") (conj "--print-data-dir")))
-        environment (.environment process)
-        _ (.put environment "HOME" (.getCanonicalPath home))
-        _ (.put environment "PATH"
-                (str (.getCanonicalPath fake-bin) ":" (get environment "PATH")))
-        _ (if explicit-data-dir
-            (.put environment "CLOUD_ITONAMI_DATA_DIR" explicit-data-dir)
-            (.remove environment "CLOUD_ITONAMI_DATA_DIR"))
-        started (.start process)
-        stdout (slurp (.getInputStream started))
-        stderr (slurp (.getErrorStream started))
-        status (.waitFor started)]
-    {:status status :stderr stderr :lines (str/split-lines stdout)
-     :app (.getCanonicalPath app)
-     :data (.getCanonicalPath (io/file home ".cloud-itonami" "data"))}))
-
-(deftest resident-cli-launcher-answers-from-its-own-file
-  ;; A resident install copies the launcher alone, so --print-data-dir has to be
-  ;; answerable before any sibling is loaded. It still does not spawn clojure.
-  ;; (Renamed 2026-09-03: the CLI is no longer closed -- it dispatches -- but
-  ;; this property is the one the copy actually tests.)
-  (let [{:keys [status stderr lines app data]}
-        (run-resident-script "itonami" nil)]
-    (is (zero? status) stderr)
-    (is (= [data app] lines))))
+;; `resident-cli-launcher-answers-from-its-own-file` and
+;; `an-explicit-data-directory-wins-in-the-resident-launcher` left with
+;; bin/itonami on 2026-09-15: the terminal front end is cloud-itonami-cli
+;; (adr-2609075600 deferred deleting this copy; the copy had drifted), and
+;; its own suite carries those two properties.
 
 (deftest resident-mcp-launcher-does-not-spawn-clojure
   (let [home (temporary-directory)
@@ -91,7 +52,6 @@
 
 (deftest replacement-launchers-are-not-clojure-wraps
   (let [mcp (slurp "bin/itonami-mcp")
-        itonami (slurp "bin/itonami")
         desktop (slurp "bin/cloud-itonami-app")
         server (slurp "bin/cloud-itonami-server")
         macos (slurp "packaging/macos/CloudItonami")
@@ -105,10 +65,6 @@
     ;; measured 2026-09-02, that substring check was already failing on the
     ;; file's own comment about the spawn it had removed, which is a control
     ;; going red for a reason other than the one it names.
-    (is (not (re-find #"spawnSync[^\n]*\"clojure\"" itonami)))
-    (is (not (str/includes? itonami "-M:cli")))
-    ;; It is a front end now, not a refusal: it resolves commands.
-    (is (str/includes? itonami "resolve-invocation"))
     (is (not (str/includes? desktop "clojure -M:server")))
     (is (str/includes? desktop "cloud-itonami-server"))
     (is (str/includes? server "guest-wasm"))
@@ -138,12 +94,6 @@
     (is (contains? aliases :build))
     (is (contains? aliases :repository))
     (is (contains? aliases :ao-messenger))))
-
-(deftest an-explicit-data-directory-wins-in-the-resident-launcher
-  (let [explicit "/tmp/cloud-itonami-explicit-data"
-        {:keys [status stderr lines]} (run-resident-script "itonami" explicit)]
-    (is (zero? status) stderr)
-    (is (= explicit (first lines)))))
 
 (deftest resident-clone-resolves-shell-from-workspace-root
   (let [root (temporary-directory)
