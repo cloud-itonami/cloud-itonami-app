@@ -1,0 +1,72 @@
+;; The callback wakes the handoff that started the sign-in.
+;;
+;;     kbb --backend sci --classpath "src:resources:scripts/nbb_compat:<siblings>" test/signin_server_handoff_nbb.cljk
+;;
+;;   0  checks passed        1  a check failed        2  could not measure
+;;
+;; Measured 2026-09-15: a Passkey sign-in through auth.itonami.cloud issued a
+;; local session (state.edn: transaction used? true, session at 08:44:27Z)
+;; and `itonami` polled /api/auth/itonami/handoff for three minutes reading
+;; {ready? false}. The callback route and `wake-handoff-with-token!` read
+;; `(:identity (identity-state))` -- one level too deep, nil -- and woke
+;; nothing, with nothing on the log. This test loads the server namespace
+;; without binding a port (CLOUD_ITONAMI_SIGNIN_NO_LISTEN) against a scratch
+;; app dir and asserts the wake by reading the state it persisted. On the
+;; pre-fix code every count below is 0.
+(ns signin-server-handoff-nbb
+  (:require ["node:fs" :as fs]
+            ["node:os" :as os]
+            ["node:path" :as path]
+            [clojure.edn :as edn]))
+
+(def dir (fs/mkdtempSync (path/join (os/tmpdir) "signin-handoff-")))
+(fs/mkdirSync (path/join dir "data") #js {:recursive true})
+(fs/mkdirSync (path/join dir "resources") #js {:recursive true})
+
+(def far "2099-01-01T00:00:00.000Z")
+(def past "2000-01-01T00:00:00.000Z")
+
+(fs/writeFileSync
+ (path/join dir "data" "state.edn")
+ (pr-str {:identity {:users {} :memberships {} :passkeys {} :webauthn-transactions {}
+                     :handoffs {"pending-S" {:state "S" :ready? false :expires-at far :created-at past}
+                                "expired-S" {:state "S" :ready? false :expires-at past :created-at past}
+                                "pending-T" {:state "T" :ready? false :expires-at far :created-at past}
+                                "spent-S"   {:state "S" :ready? :spent :expires-at far :created-at past}}}}))
+
+(aset js/process.env "CLOUD_ITONAMI_APP_DIR" dir)
+(aset js/process.env "CLOUD_ITONAMI_SIGNIN_NO_LISTEN" "1")
+(aset js/process.env "CLOUD_ITONAMI_PORT" "0")
+
+;; the file declares (ns signin-server); the path-shaped require loads it
+(require 'cloud.itonami.app.signin-server)
+
+(def failed (atom 0))
+(defn- check! [label ok?]
+  (println (if ok? "PASS" "FAIL") label)
+  (when-not ok? (swap! failed inc)))
+
+(defn- persisted-handoffs []
+  (get-in (edn/read-string (fs/readFileSync (path/join dir "data" "state.edn") "utf8"))
+          [:identity :handoffs]))
+
+(let [n (signin-server/wake-handoff-with-token! "S" "tok-S")
+      hs (persisted-handoffs)]
+  (check! "one pending handoff for state S is woken, and the count says so" (= 1 n))
+  (check! "the woken handoff is ready and carries the token"
+          (= {:ready? true :token "tok-S"} (select-keys (get hs "pending-S") [:ready? :token])))
+  (check! "an expired handoff for the same state stays asleep" (false? (:ready? (get hs "expired-S"))))
+  (check! "a spent handoff is not re-armed" (= :spent (:ready? (get hs "spent-S"))))
+  (check! "a handoff for another state stays asleep" (false? (:ready? (get hs "pending-T")))))
+
+(let [n (signin-server/wake-handoff-with-token! nil "tok-any")
+      hs (persisted-handoffs)]
+  (check! "nil state wakes every remaining pending handoff (the link route's contract)" (= 1 n))
+  (check! "it was the other state's handoff" (= "tok-any" (:token (get hs "pending-T")))))
+
+(let [n (signin-server/wake-handoff-with-token! "S" "again")]
+  (check! "boundary: nothing left to wake answers 0, not an error" (= 0 n)))
+
+(println (str "CHECKS 8 FAILED " @failed))
+(fs/rmSync dir #js {:recursive true :force true})
+(js/process.exit (if (zero? @failed) 0 1))
