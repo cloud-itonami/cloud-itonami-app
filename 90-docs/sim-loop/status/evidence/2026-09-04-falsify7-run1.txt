@@ -1,0 +1,478 @@
+WARNING: reset! already refers to: #'clojure.core/reset! in namespace: cloud.itonami.app.mail-projects-test, being replaced by: #'cloud.itonami.app.mail-projects-test/reset!
+
+Testing cloud.itonami.app.authority-test
+
+Testing cloud.itonami.app.vf-journal-test
+
+Testing cloud.itonami.app.vf-authority-test
+
+Testing cloud.itonami.app.vf-calibrate-test
+
+Testing cloud.itonami.app.a2a-test
+
+Testing cloud.itonami.app.business-test
+
+Testing cloud.itonami.app.agent-session-test
+
+Testing cloud.itonami.app.kaiyu-local-test
+
+Testing cloud.itonami.app.launcher-test
+
+FAIL in (resident-clone-resolves-shell-from-workspace-root) (launcher_test.clj:162)
+expected: (= (.getCanonicalPath shell) (str/trim stdout))
+  actual: (not (= "/private/var/folders/31/st4xq0g12v3cn1b9yg5zcrsm0000gn/T/cloud-itonami-launcher-test8338435570651581354/orgs/kotoba-lang/shell" "/Users/junkawasaki/.hermes/profiles/kotoba-lang/shell"))
+
+Testing cloud.itonami.app.business-http-test
+
+Testing cloud.itonami.app.canvas-test
+
+Testing cloud.itonami.app.capture-test
+
+Testing cloud.itonami.app.capture-http-test
+
+Testing cloud.itonami.app.card-statement-test
+
+Testing cloud.itonami.app.cli-test
+
+Testing cloud.itonami.app.west-kotoba-refactor-test
+
+Testing cloud.itonami.app.cli-aliases-test
+
+Testing cloud.itonami.app.commands-test
+
+Testing cloud.itonami.app.connectors-test
+
+Testing cloud.itonami.app.desktop-test
+SKIPPED window-enumeration-does-not-hide-a-window-that-is-not-composited: {:helper? true, :provider :cua-driver, :accessibility? false, :screen-recording? false, :detail "CuaDriverの操作に失敗しました。"}
+SKIPPED a-tree-digest-is-stable-across-reads: {:helper? true, :provider :cua-driver, :accessibility? false, :screen-recording? false, :detail "CuaDriverの操作に失敗しました。"}
+SKIPPED a-capture-says-which-picture-it-is: {:helper? true, :provider :cua-driver, :accessibility? false, :screen-recording? false, :detail "CuaDriverの操作に失敗しました。"}
+SKIPPED reading-an-application-does-not-move-the-front-window: {:helper? true, :provider :cua-driver, :accessibility? false, :screen-recording? false, :detail "CuaDriverの操作に失敗しました。"}
+
+Testing cloud.itonami.app.device-test
+cloud-itonami: [:devices :local] "two words" は Bot アドレスの device 名として使えません。この install は device 名を持たないものとして続行します。
+
+Testing cloud.itonami.app.decision-method-test
+
+Testing cloud.itonami.app.disk-space-test
+
+Testing cloud.itonami.app.appearance-test
+
+Testing cloud.itonami.app.hokusai-test
+
+Testing cloud.itonami.app.media-tools-test
+
+Testing cloud.itonami.app.git-hygiene-test
+
+Testing cloud.itonami.app.bot-test
+
+Testing cloud.itonami.app.bot-slo-test
+
+Testing cloud.itonami.app.bot-cache-test
+
+Testing cloud.itonami.app.bot-authority-test
+
+Testing cloud.itonami.app.bot-dispatcher-test
+
+Testing cloud.itonami.app.bot-identity-test
+
+Testing cloud.itonami.app.bots-test
+
+Testing cloud.itonami.app.virtual-shell-test
+
+Testing cloud.itonami.app.host-grant-test
+
+Testing cloud.itonami.app.host-store-bound-test
+WARNING state.edn is 100% of its 256 MiB write bound (256.0 MiB). At the bound the write is REFUSED and a process that must write this file will not start. This is the only notice before that.
+WARNING state.edn is 100% of its 16 MiB write bound (16.0 MiB). At the bound the write is REFUSED and a process that must write this file will not start. This is the only notice before that.
+WARNING state.edn is 100% of its 4 MiB write bound (4.0 MiB). At the bound the write is REFUSED and a process that must write this file will not start. This is the only notice before that.
+
+Testing cloud.itonami.app.store-journal-test
+WARNING state journal does not belong to this snapshot -- NOT replaying it. The journal was opened against a 4096-byte snapshot; the snapshot on disk is 4096 bytes. Something without journalling wrote it. Replaying would roll the snapshot back. Moved to state.journal.edn.orphan-2026-09-04T072026370272Z.
+WARNING state journal does not belong to this snapshot -- NOT replaying it. The journal records no base snapshot size (written before this check existed); the snapshot on disk is 4096 bytes. Something without journalling wrote it. Replaying would roll the snapshot back. Moved to state.journal.edn.orphan-2026-09-04T072026380342Z.
+WARNING state journal does not belong to this snapshot -- NOT replaying it. The journal was opened against a 4096-byte snapshot; the snapshot on disk is 4097 bytes. Something without journalling wrote it. Replaying would roll the snapshot back. Moved to state.journal.edn.orphan-2026-09-04T072026382632Z.
+WARNING state.journal.edn is 76% of its 4 MiB write bound (3.1 MiB). At the bound the write is REFUSED and a process that must write this file will not start. This is the only notice before that.
+WARNING state.journal.edn is 85% of its 4 MiB write bound (3.4 MiB). At the bound the write is REFUSED and a process that must write this file will not start. This is the only notice before that.
+WARNING state.journal.edn is 95% of its 4 MiB write bound (3.8 MiB). At the bound the write is REFUSED and a process that must write this file will not start. This is the only notice before that.
+WARNING state journal does not belong to this snapshot -- NOT replaying it. The journal was opened against a 4096-byte snapshot; the snapshot on disk is 31830280 bytes. Something without journalling wrote it. Replaying would roll the snapshot back. Moved to state.journal.edn.orphan-2026-09-04T072028208250Z.
+
+Testing cloud.itonami.app.loops-test
+
+Testing cloud.itonami.app.lawfirm-test
+
+Testing cloud.itonami.app.kotobase-federation-test
+
+Testing cloud.itonami.app.local-query-test
+
+Testing cloud.itonami.app.fax-test
+
+Testing cloud.itonami.app.tenant-capability-test
+
+Testing cloud.itonami.app.freebusy-test
+
+Testing cloud.itonami.app.metrics-test
+
+Testing cloud.itonami.app.portfolio-test
+
+Testing cloud.itonami.app.policy-kotoba-parity-test
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::arrayBaseOffset has been called by com.google.javascript.jscomp.jarjar.com.google.protobuf.UnsafeUtil$MemoryAccessor (file:/Users/junkawasaki/.m2/repository/com/google/javascript/closure-compiler/v20250820/closure-compiler-v20250820.jar)
+WARNING: Please consider reporting this to the maintainers of class com.google.javascript.jscomp.jarjar.com.google.protobuf.UnsafeUtil$MemoryAccessor
+WARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release
+
+Testing cloud.itonami.app.native-canary-test
+native canary: src/cloud/itonami/app/policy.kotoba -- 1 of 2 exports crossed, 3 calls, 3 agreed
+native canary: src/cloud/itonami/app/identity_core.kotoba -- 3 of 3 exports crossed, 9 calls, 9 agreed
+
+Testing cloud.itonami.app.health-kotoba-parity-test
+
+Testing cloud.itonami.app.workforce-cadence-kotoba-parity-test
+
+Testing cloud.itonami.app.health-http-test
+
+Testing cloud.itonami.app.store-core-test
+
+Testing cloud.itonami.app.store-core-kotoba-parity-test
+
+Testing cloud.itonami.app.store-agreement-test
+
+Testing cloud.itonami.app.central-auth-http-test
+
+Testing cloud.itonami.app.oauth-resource-kotoba-parity-test
+
+Testing cloud.itonami.app.oauth-resource-http-test
+
+Testing cloud.itonami.app.did-web-kotoba-parity-test
+
+Testing cloud.itonami.app.did-web-http-test
+
+Testing cloud.itonami.app.trust-discovery-http-test
+
+Testing cloud.itonami.app.humanity-trust-test
+
+Testing cloud.itonami.app.humanity-trust-http-test
+
+Testing cloud.itonami.app.human-work-test
+
+Testing cloud.itonami.app.human-work-assurance-test
+
+Testing cloud.itonami.app.human-work-http-test
+
+Testing cloud.itonami.app.human-work-x402-test
+
+Testing cloud.itonami.app.fleet-core-kotoba-parity-test
+
+Testing cloud.itonami.app.organism-worker-kotoba-parity-test
+
+Testing cloud.itonami.app.kotoba-oracle-test
+
+Testing cloud.itonami.app.oracle-cljs-parity-test
+
+Testing cloud.itonami.app.work-transitions-kotoba-parity-test
+
+Testing cloud.itonami.app.approval-kotoba-parity-test
+
+Testing cloud.itonami.app.routine-kotoba-parity-test
+
+Testing cloud.itonami.app.model-routing-kotoba-parity-test
+
+Testing cloud.itonami.app.bot-turn-guards-test
+
+Testing cloud.itonami.app.model-routing-http-test
+
+Testing cloud.itonami.app.routines-test
+
+Testing cloud.itonami.app.handoff-kotoba-parity-test
+
+Testing cloud.itonami.app.peer-kotoba-parity-test
+
+Testing cloud.itonami.app.session-handoff-kotoba-parity-test
+
+Testing cloud.itonami.app.mail-age-key-test
+
+Testing cloud.itonami.app.mail-authentication-test
+
+Testing cloud.itonami.app.mail-origins-test
+
+Testing cloud.itonami.app.mail-projects-test
+
+Testing cloud.itonami.app.conversation-context-test
+
+Testing cloud.itonami.app.project-repository-test
+
+Testing cloud.itonami.app.project-remote-test
+
+Testing cloud.itonami.app.project-transfer-test
+
+Testing cloud.itonami.app.repos-test
+
+Testing cloud.itonami.app.repository-storage-test
+
+Testing cloud.itonami.app.repository-qualification-test
+
+Testing cloud.itonami.app.repository-invariants-test
+
+Testing cloud.itonami.app.repository-runtime-test
+
+Testing cloud.itonami.app.repository-actor-test
+
+Testing cloud.itonami.app.repository-profile-ci-test
+
+Testing cloud.itonami.app.authority.adapters-test
+
+Testing cloud.itonami.app.authority.api-test
+
+Testing cloud.itonami.app.authority.number-test
+
+Testing cloud.itonami.app.authority.payment-test
+
+Testing cloud.itonami.app.authority.posture-test
+
+Testing cloud.itonami.app.authority-http-test
+
+Testing cloud.itonami.app.authority.transport-test
+
+Testing cloud.itonami.app.config-test
+
+Testing cloud.itonami.app.contracts-test
+
+Testing cloud.itonami.app.chronicle-test
+
+Testing cloud.itonami.app.screen-guest-test
+
+Testing cloud.itonami.app.core-test
+
+Testing cloud.itonami.app.credential-http-test
+
+Testing cloud.itonami.app.credential-rdf-test
+
+  canonical N-Quads of a membership credential:
+    <did:key:zDnaeVN8k7Yc9QKcVXbEXAMPLE> <urn:cloud-itonami:credentials:membership:v1#organization> <did:web:hooks.itonami.cloud:orgs:acme> .
+    <did:key:zDnaeVN8k7Yc9QKcVXbEXAMPLE> <urn:cloud-itonami:credentials:membership:v1#organizationName> "Acme Co" .
+    <did:key:zDnaeVN8k7Yc9QKcVXbEXAMPLE> <urn:cloud-itonami:credentials:membership:v1#role> "auditor" .
+    _:c14n0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/ns/credentials/BitstringStatusListEntry> .
+    _:c14n1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+    _:c14n1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <urn:cloud-itonami:credentials:membership:v1#OrganizationMembershipCredential> .
+    _:c14n1 <https://www.w3.org/2018/credentials#credentialStatus> _:c14n0 .
+    _:c14n1 <https://www.w3.org/2018/credentials#credentialSubject> <did:key:zDnaeVN8k7Yc9QKcVXbEXAMPLE> .
+    _:c14n1 <https://www.w3.org/2018/credentials#issuer> <did:web:hooks.itonami.cloud:orgs:acme> .
+    _:c14n1 <https://www.w3.org/2018/credentials#validFrom> "2026-07-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+
+Testing cloud.itonami.app.presentation-request-test
+
+Testing cloud.itonami.app.credential-sd-jwt-test
+
+Testing cloud.itonami.app.credential-test
+
+Testing cloud.itonami.app.credential-trust-test
+
+Testing cloud.itonami.app.data-isolation-test
+
+Testing cloud.itonami.app.did-test
+
+Testing cloud.itonami.app.acme-test
+
+Testing cloud.itonami.app.binding-sweep-test
+
+Testing cloud.itonami.app.domain-name-test
+
+Testing cloud.itonami.app.domain-binding-kotoba-parity-test
+
+Testing cloud.itonami.app.domain-verification-test
+
+Testing cloud.itonami.app.domain-verification-http-test
+
+Testing cloud.itonami.app.email-login-test
+
+Testing cloud.itonami.app.config-policy-test
+
+Testing cloud.itonami.app.host-bounds-test
+
+Testing cloud.itonami.app.provider-retry-test
+
+Testing cloud.itonami.app.identity-lifecycle-test
+
+Testing cloud.itonami.app.issue-comment-test
+
+Testing cloud.itonami.app.lifecycle-test
+
+Testing cloud.itonami.app.issue-comment-http-test
+
+Testing cloud.itonami.app.loopback-origin-test
+
+Testing cloud.itonami.app.sso-login-test
+
+Testing cloud.itonami.app.documents-test
+
+Testing cloud.itonami.app.drive-crypto-test
+
+Testing cloud.itonami.app.drive-delivery-test
+
+Testing cloud.itonami.app.file-provider-test
+
+Testing cloud.itonami.app.file-provider-http-test
+
+Testing cloud.itonami.app.email-login-test
+
+Testing cloud.itonami.app.workspace-reachability-test
+
+Testing cloud.itonami.app.workspace-tools-test
+
+Testing cloud.itonami.app.web-script-test
+
+Testing cloud.itonami.app.bundle-test
+
+Testing cloud.itonami.app.kotobase-objects-test
+
+Testing cloud.itonami.app.drive-store-migration-test
+
+Testing cloud.itonami.app.drive-fs-test
+
+Testing cloud.itonami.app.latest-test
+
+Testing cloud.itonami.app.graph-test
+
+Testing cloud.itonami.app.work-governance-test
+
+Testing cloud.itonami.app.github-projects-writeback-test
+
+Testing cloud.itonami.app.github-projects-source-test
+
+Testing cloud.itonami.app.work-runtime-test
+
+Testing cloud.itonami.app.work-partition-store-test
+
+Testing cloud.itonami.app.work-approval-test
+
+Testing cloud.itonami.app.work-organism-dispatch-test
+
+Testing cloud.itonami.app.esign-test
+
+Testing cloud.itonami.app.esign-retention-test
+
+Testing cloud.itonami.app.filecoin-test
+
+Testing cloud.itonami.app.fleet-test
+
+Testing cloud.itonami.app.folder-sync-test
+
+Testing cloud.itonami.app.gc-test
+gc: pressure=ok goal-jobs dropped=1 compacted=0 runs-dropped=1 turns-archived=0 archived-records=2 mail-bodies-evicted=0 (~0.0 MiB) config-backups-deleted=0
+
+Testing cloud.itonami.app.operator-test
+
+Testing cloud.itonami.app.funding-test
+
+Testing cloud.itonami.app.mcp-test
+
+Testing cloud.itonami.app.mcp-http-test
+
+Testing cloud.itonami.app.namespaces-test
+
+Testing cloud.itonami.app.fleet-tools-test
+
+Testing cloud.itonami.app.openai-compat-test
+
+Testing cloud.itonami.app.hermes-compat-test
+
+Testing cloud.itonami.app.hermes-migration-test
+
+Testing cloud.itonami.app.hermes-carry-over-test
+
+Testing cloud.itonami.app.hermes-compat-http-test
+
+Testing cloud.itonami.app.provider-test
+
+Testing cloud.itonami.app.pageview-test
+
+Testing cloud.itonami.app.passkey-test
+
+Testing cloud.itonami.app.payment-settlement-actor-test
+
+Testing cloud.itonami.app.mailbox-test
+
+Testing cloud.itonami.app.mailbox-http-test
+
+Testing cloud.itonami.app.mail-sync-test
+
+Testing cloud.itonami.app.mail-account-test
+
+Testing cloud.itonami.app.mail-domain-authority-test
+
+Testing cloud.itonami.app.mail-domain-records-test
+
+Testing cloud.itonami.app.tls-binding-test
+
+Testing cloud.itonami.app.tls-certificate-test
+
+Testing cloud.itonami.app.mail-gmail-test
+
+Testing cloud.itonami.app.mail-imap-test
+
+Testing cloud.itonami.app.mail-pop3-test
+
+Testing cloud.itonami.app.mail-send-test
+
+Testing cloud.itonami.app.messenger-test
+
+Testing cloud.itonami.app.messenger-http-test
+
+Testing cloud.itonami.app.organism-messenger-transport-test
+
+Testing cloud.itonami.app.signal-browser-test
+
+Testing cloud.itonami.app.scheduler-test
+
+Testing cloud.itonami.app.scheduler-http-test
+
+Testing cloud.itonami.app.bulky-waste-test
+
+Testing cloud.itonami.app.bulky-waste-http-test
+
+Testing cloud.itonami.app.sites-test
+
+Testing cloud.itonami.app.payment-tools-test
+
+Testing cloud.itonami.app.paypay-bank-test
+
+Testing cloud.itonami.app.storj-node-test
+
+Testing cloud.itonami.app.store-test
+
+Testing cloud.itonami.app.storj-test
+
+Testing cloud.itonami.app.tenant-connection-test
+
+Testing cloud.itonami.app.tenant-connection-http-test
+
+Testing cloud.itonami.app.tenant-repository-test
+
+Testing cloud.itonami.app.updater-test
+
+Testing cloud.itonami.app.oauth-resource-test
+
+Testing cloud.itonami.app.org-root-did-test
+
+Testing cloud.itonami.app.domain-tools-test
+
+Testing cloud.itonami.app.bot-import-test
+
+Testing cloud.itonami.app.did-webvh-http-test
+
+Testing cloud.itonami.app.oauth-did-binding-test
+
+Testing cloud.itonami.app.worker-http-test
+
+Testing cloud.itonami.app.wallet-test
+
+Testing cloud.itonami.app.smart-account-owner-test
+
+Testing cloud.itonami.app.wallet-http-test
+
+Testing cloud.itonami.app.wallet-send-test
+
+Testing cloud.itonami.app.commerce-test
+
+Testing cloud.itonami.app.storefront-http-test
+
+Ran 2291 tests containing 13862 assertions.
+1 failures, 0 errors.

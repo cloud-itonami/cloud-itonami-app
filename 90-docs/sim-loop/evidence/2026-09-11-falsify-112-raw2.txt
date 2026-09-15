@@ -1,0 +1,5 @@
+Fri Sep 11 14:45:06 JST 2026
+Filesystem     1M-blocks   Used Available Capacity iused      ifree %iused  Mounted on
+/dev/disk3s1s1    948584  16455    183048     9%  458115 1874418360    0%   /
+junkawasaki      61573   0.0  0.0 443520768   7584   ??  S<   12:42PM   0:00.25 node /opt/homebrew/bin/nbb /Users/junkawasaki/.gftd/bin/itonami-app-resident.cljs
+rc=0
