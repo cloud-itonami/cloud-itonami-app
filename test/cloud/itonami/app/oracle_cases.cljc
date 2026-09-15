@@ -763,7 +763,21 @@
     ;; authority returns, because what holds now is asked first.
     {:oracle :domain-binding :export 'mail-state
      :args [(mail-facts (assoc mail-proven :previously-authorized true))]
-     :expect 1 :read oracle/i64-value}]))
+     :expect 1 :read oracle/i64-value}
+    ;; Identity DID-axis (ADR-0064 / ADR-0065). Bool facts only.
+    {:oracle :identity :export 'may-adopt-user-did?
+     :args [true true] :expect true}
+    {:oracle :identity :export 'may-adopt-user-did?
+     :args [false true] :expect false}
+    {:oracle :identity :export 'may-fill-user-did-on-passkey?
+     :args [true] :expect true}
+    {:oracle :identity :export 'may-fill-user-did-on-passkey?
+     :args [false] :expect false}
+    {:oracle :identity :export 'may-backfill-legacy-user-did?
+     :args [true true] :expect true}
+    {:oracle :identity :export 'may-backfill-legacy-user-did?
+     :args [true false] :expect false}
+]))
 
 (defn run-case
   "Execute one case through the seam. Returns {:ok? :actual}.

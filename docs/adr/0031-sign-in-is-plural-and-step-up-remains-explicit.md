@@ -44,8 +44,10 @@ Ordinary authenticated sessions may enter the workspace. Operations that
 already carry higher authority—payment completion, document signature,
 federation, and outward approval—keep their dedicated WebAuthn ceremony and do
 not infer Passkey assurance from an Email or SSO session. A User created without
-a Passkey receives no invented DID; enrolling a Passkey remains the route to
-Passkey-backed identity and step-up.
+a Passkey still receives a DID at creation (hosted `did:` subject, or a local
+Ed25519 `did:key` — ADR-0064). Enrolling a Passkey binds an authenticator to
+that DID; it is not the route that invents identity. Step-up for payment,
+esign, approval, and `may-act?` remains the Passkey ceremony.
 
 ## Consequences
 

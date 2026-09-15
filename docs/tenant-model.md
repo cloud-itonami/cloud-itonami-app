@@ -25,10 +25,13 @@ differs is who may be in one. See ADR-0023.
 
 ## User
 
-A User is created provisionally, then activated by a verified Passkey
-registration. Its first P-256 public key determines its `did:key`. Display
-name, mail address, membership, and Organization changes do not change that
-DID.
+A User is created with a DID: a hosted `did:` subject when that is who they
+already are, otherwise a local Ed25519 `did:key` minted at creation
+(ADR-0064). A verified Passkey registration *activates* the User for
+this-device acting and binds the credential to that DID. The first P-256
+public key names the Passkey, not the person. Display name, mail address,
+membership, Organization, and adding or replacing a Passkey do not change
+the User DID.
 
 ## Tenant
 
@@ -164,14 +167,14 @@ holder can carry elsewhere:
 
 ```text
 issuer   = organization did:web (or the issuer did:key until it resolves)
-subject  = User did:key            (P-256, from the Passkey)
+subject  = User DID (Ed25519 did:key, or hosted did:web — not the Passkey)
 proof    = DataIntegrityProof / eddsa-jcs-2022   (Ed25519, the app's issuer key)
 status   = BitstringStatusListEntry -> /credentials/status/1
 ```
 
-The subject's key and the signing key are different curves on purpose: a subject
-is *named*, not a signer, so a P-256 Passkey DID is a perfectly good subject. The
-consequence is recorded rather than hidden — a **holder-signed Verifiable
+The subject's key and the signing key may share a curve when the User DID is
+Ed25519, and still must not be confused: a subject is *named*, not a signer.
+The Passkey's P-256 `did:key` is the credential. A **holder-signed Verifiable
 Presentation is not implemented**, because WebAuthn signs its own
 `authenticatorData || clientDataHash` and cannot produce a Data Integrity proof
 over a canonicalized document at all. See

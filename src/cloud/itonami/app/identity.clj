@@ -3,8 +3,10 @@
 
   Public state contains metadata and Keychain references only. OAuth access
   and refresh tokens are written to macOS Keychain and never enter state.edn."
-  (:require [cloud.itonami.app.connectors :as connectors]
+  (:require [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.connectors :as connectors]
             [cloud.itonami.app.did :as did]
+            [cloud.itonami.app.identity-axis :as axis]
             [cloud.itonami.app.email-login :as email-login]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.passkey :as passkey]
@@ -15,7 +17,9 @@
             [authorization.model :as authz-model]
             [authorization.ports :as authz-ports]
             [clojure.data.json :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
+            [ed25519.core :as ed]
             [identity.directory :as directory]
             [identity.model :as identity]
             [oauth.model :as oauth])
@@ -555,15 +559,60 @@
                           [:id :organization-id :name :domain :did])))))))
 
 (defn user-did
-  "The `did:key` of a local User — the identity this application actually has.
+  "The DID of a local User — the identity axis, not a Passkey.
 
-  A User's DID comes from the first P-256 public key its Passkey established
-  (`docs/tenant-model.md`), so holding one is the same statement as 'this
-  person has proved who they are on this machine'. Display name, mail address
-  and Organization can all change without changing it, which is what makes it
-  the right thing to bind an external account to."
+  Assigned at User creation: a hosted `did:` subject is accepted as-is, and a
+  local-only User mints an Ed25519 `did:key`. Display name, mail address,
+  Organization, and adding or revoking a Passkey do not change it. A Passkey's
+  COSE `did:key` is the credential's name and lives on the Passkey record."
   [state user-id]
   (get-in state [:users user-id :did]))
+
+(defn- did-subject? [value]
+  (and (string? value)
+       (str/starts-with? value "did:")
+       (not (str/blank? (subs value 4)))))
+
+(defn- user-seed-file [user-id]
+  (io/file (config/data-dir) "identity" (str user-id ".ed25519")))
+
+(defn- write-user-seed! [user-id ^bytes seed]
+  (let [f (user-seed-file user-id)]
+    (.mkdirs (.getParentFile f))
+    (spit f (.encodeToString (Base64/getEncoder) seed))
+    (doto f (.setReadable false false) (.setReadable true true)
+             (.setWritable false false) (.setWritable true true))
+    seed))
+
+(defn- mint-local-did!
+  "A new Ed25519 `did:key` for this User. The seed is a 0600 file beside
+  state, never state.edn and never a Passkey."
+  [user-id]
+  (let [seed (byte-array 32)]
+    (.nextBytes (SecureRandom.) seed)
+    (write-user-seed! user-id seed)
+    (ed/did-key-from-seed seed)))
+
+(defn- person-did-for!
+  "The DID this User will carry. A `did:` subject from hosted auth is the
+  axis when we already have one. Otherwise mint a local Ed25519 did:key.
+  Never derived from a Passkey."
+  [user-id {:keys [did root]}]
+  (or (when (did-subject? did) did)
+      (let [from-root (str (second root))]
+        (when (did-subject? from-root) from-root))
+      (mint-local-did! user-id)))
+
+(defn- adopt-did-if-blank!
+  "First DID wins. A hosted `did:` subject fills a User that still has none.
+  Linking never moves an axis that already exists. Judgement: identity_core."
+  [user-id candidate]
+  (store/transact!
+   (fn [current]
+     (let [held (get-in current [:identity :users user-id :did])]
+       (if (axis/may-adopt-user-did? held candidate)
+         (assoc-in current [:identity :users user-id :did] candidate)
+         current)))))
 
 (defn- derive-user-did [state user]
   (some (fn [credential]
@@ -577,6 +626,10 @@
   "Fill in DIDs that a store written by an older version does not carry:
   Users, Organizations, and — since connections became person-bound — the
   connections themselves.
+
+  User backfill from a Passkey COSE key is legacy only: a store that created
+  the person as the first P-256 credential. New Users receive a DID at
+  creation, and enrolling a Passkey must not overwrite it.
 
   Public because `public-state` is not the only entry that depends on it: a
   caller resolving a token by DID needs the legacy connections stamped first,
@@ -602,7 +655,8 @@
                with-users
                (reduce
                 (fn [result [user-id user]]
-                  (if (and (:passkey-enrolled? user) (nil? (:did user)))
+                  (if (axis/may-backfill-legacy-user-did?
+                       (:passkey-enrolled? user) (:did user))
                     (if-let [user-did (derive-user-did identity-state user)]
                       (-> result
                           (assoc-in [:identity :users user-id :did] user-did)
@@ -787,7 +841,7 @@
         membership (get-in state [:memberships (:membership-id session)])
         organization (get-in state [:organizations (:organization-id session)])]
     (when-not (:did user)
-      (throw (ex-info "Credential を発行するには Passkey の登録が必要です。"
+      (throw (ex-info "Credential を発行するには User の DID が必要です。"
                       {:type :credential/no-subject-did})))
     (when-not (:role membership)
       (throw (ex-info "この session に有効な membership がありません。"
@@ -1223,8 +1277,10 @@
              :domain-source :managed
              :status (if organization-slug :active :pending-profile)
              :subject organization-subject :created-at now})
-          user-subject (identity/subject user-id :person
-                                        {:labels #{:local :owner}})
+          person-did (mint-local-did! user-id)
+          user-subject (identity/subject person-did :person
+                                        {:did person-did
+                                         :labels #{:local :owner}})
           user-handle (random-token 32)
           ;; Resolved against the organization this same call is about to
           ;; create, so a registration that names the owner's handle and the
@@ -1257,7 +1313,7 @@
                           :organization-id personal-tenant-id
                           :user-id user-id :role :owner :created-at now})
                (assoc-in [:identity :users user-id]
-                         {:id user-id :did nil
+                         {:id user-id :did person-did
                           :account-id account-id :email canonical-address
                           :contact-email contact-email
                           :display-name owner-name
@@ -1293,13 +1349,15 @@
 (defn- create-personal-user!
   "Create an active personal User rooted in a verified external proof.
 
-  Passkey onboarding remains available as step-up; a normal sign-up does not
-  invent a DID or pretend that an email/OAuth proof was WebAuthn."
-  [{:keys [email display-name root]}]
+  The person gets a real DID here: a hosted `did:` subject is the axis, and a
+  local-only User mints Ed25519. Passkey onboarding remains step-up. A normal
+  sign-up still does not pretend that an email/OAuth proof was WebAuthn."
+  [{:keys [email display-name root did]}]
   (let [state (identity-state (store/snapshot))
         account-id (available-account-id state email display-name)
         canonical-address (canonical-email account-id)
         user-id (str "user-" (UUID/randomUUID))
+        person-did (person-did-for! user-id {:did did :root root})
         tenant-id (str "org-" (UUID/randomUUID))
         membership-id (str "membership-" (UUID/randomUUID))
         now (store/now)
@@ -1321,14 +1379,15 @@
                      {:id membership-id :organization-id tenant-id
                       :user-id user-id :role :owner :created-at now})
            (assoc-in [:identity :users user-id]
-                     {:id user-id :did nil :account-id account-id
+                     {:id user-id :did person-did :account-id account-id
                       :email canonical-address :contact-email email
                       :display-name user-name :user-handle (random-token 32)
                       :passkey-enrolled? false :status :active
                       :default-membership-id membership-id
                       :authentication-roots #{root}
-                      :subject (identity/subject user-id :person
-                                                 {:labels #{:local :person}})
+                      :subject (identity/subject person-did :person
+                                                 {:did person-did
+                                                  :labels #{:local :person}})
                       :created-at now})
            (update :events conj
                    {:type :identity/signed-up :at now :user-id user-id
@@ -2110,12 +2169,11 @@
   "Begin binding an external account (Microsoft 365 / Google / GitHub) to the
   signed-in person.
 
-  The connection is bound to that person's `did:key`, so it cannot begin before
-  there is one: a User without an enrolled Passkey has not proved who they are,
-  and an external grant attached to them would belong to whoever reached the
-  loopback server first. Refusing here rather than at the callback means the
-  consent screen never appears, so nobody hands Microsoft a password for a link
-  this app was never going to make."
+  The connection is bound to that person's DID. A User can exist without having
+  proved presence — the DID is minted at creation — so mere DID presence is not
+  the gate. `may-act?` is: a loopback grant attached to a half-enrolled browser
+  session would belong to whoever reached this server first. Refusing here
+  rather than at the callback means the consent screen never appears."
   ([session provider origin] (start-oauth! session provider origin nil))
   ([session provider origin {:keys [add-account?]}]
   (let [{:keys [configured? client-id authorization-endpoint scopes
@@ -2127,9 +2185,12 @@
     (when-not configured?
       (throw (ex-info "OAuth クライアントが未設定です。"
                       {:type :oauth/not-configured :provider provider})))
-    (when (str/blank? (str did))
-      (throw (ex-info "外部アカウントを接続する前に Passkey の登録が必要です。接続は did:key に結ばれます。"
+    (when-not (may-act? session)
+      (throw (ex-info "外部アカウントを接続する前に本人確認が必要です。接続は DID に結ばれます。"
                       {:type :passkey/required :provider provider})))
+    (when (str/blank? (str did))
+      (throw (ex-info "外部アカウントを接続するには User の DID が必要です。"
+                      {:type :identity/no-did :provider provider})))
     (let [state-value (random-token 32)
           nonce (random-token 24)
           verifier (random-token 48)
@@ -2530,10 +2591,12 @@
                       (when empty-install?
                         (create-personal-user!
                          {:display-name "Itonami User"
-                          :root [:itonami-cloud subject]})))
+                          :root [:itonami-cloud subject]
+                          :did subject})))
           _ (bind-login-identity!
              user-id {:provider :itonami-cloud :subject subject
                       :display-name "auth.itonami.cloud"})
+          _ (adopt-did-if-blank! user-id subject)
           authn-level (if passkey-proof? :phishing-resistant :single-factor)
           authn-factors (mapv keyword amr)
           session-opts {:kind :federated :issued-via :itonami-cloud

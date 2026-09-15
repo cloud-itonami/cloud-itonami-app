@@ -10,8 +10,8 @@
 ;; opt-in `:native` alias is never invoked.
 ;;
 ;; It does NOT make a full sweep unnecessary, and it does NOT flip the
-;; production seam. `native-exec` explains both. This file must not grow into
-;; a second sweep.
+;; production seam. `native-exec` explains both. A second *one-core* canary
+;; (identity) is allowed (ADR-0067); a full sweep of every core is not.
 ;;
 ;; A missing C toolchain fails rather than skips. A native execution test that
 ;; does not execute has verified nothing, and a quiet skip is indistinguishable
@@ -29,12 +29,18 @@
   takes a record and is counted as refused, not skipped."
   "src/cloud/itonami/app/policy.kotoba")
 
-(deftest the-native-backend-still-agrees-on-one-core-every-run
-  (is (some #{canary-core} (native/core-sources))
-      (str canary-core " must still be a shipped core; if it was renamed or "
+(def ^:private identity-canary-core
+  "DID-axis judgements (ADR-0064 / ADR-0067). Pure `:bool` → `:bool`, so every
+  export crosses a kexe boundary. Second one-core canary — not a sweep."
+  "src/cloud/itonami/app/identity_core.kotoba")
+
+(defn- assert-native-agreement!
+  [module]
+  (is (some #{module} (native/core-sources))
+      (str module " must still be a shipped core; if it was renamed or "
            "removed, point this canary at another native-crossable one"))
-  (let [{:keys [module calls agreed both-refused crossing exported disagreements]}
-        (native/run-core (native/native-host) canary-core)]
+  (let [{:keys [calls agreed both-refused crossing exported disagreements]}
+        (native/run-core (native/native-host) module)]
     (println (format "native canary: %s -- %d of %d exports crossed, %d calls, %d agreed"
                      module crossing exported calls agreed))
     (is (pos? crossing)
@@ -48,3 +54,9 @@
              (str/join "\n" (map pr-str disagreements))))
     (is (= calls (+ agreed both-refused))
         "every call is either an agreement or a mutual refusal")))
+
+(deftest the-native-backend-still-agrees-on-one-core-every-run
+  (assert-native-agreement! canary-core))
+
+(deftest identity-core-agrees-on-the-host-isa
+  (assert-native-agreement! identity-canary-core))

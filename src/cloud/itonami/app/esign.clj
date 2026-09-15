@@ -150,15 +150,20 @@
 ;; ── signers ──────────────────────────────────────────────────────────────────
 
 (defn- passkey-of
-  "The enrolled credential whose `did:key` is `did`, or nil.
+  "A live Passkey belonging to the User whose DID is `did`, or nil.
 
-  Keyed on the DID rather than the user id because that is what a commitment
-  names, and a user with two Passkeys has two DIDs — resolving by user would
-  pick one of them arbitrarily and then verify a signature against a key that
-  did not make it."
+  A commitment names the person. The credential's COSE `did:key` is a
+  different identity — a user with two Passkeys has two credential DIDs and
+  one person DID. Resolving by credential DID would miss the signer the
+  envelope named. Verification still uses the `credential-id` from the
+  ceremony, so picking any live Passkey here is only \"can this person sign\"."
   [state did]
-  (some #(when (= did (:did %)) %)
-        (vals (get-in state [:identity :passkeys] {}))))
+  (let [user-id (some (fn [user]
+                        (when (= did (:did user)) (:id user)))
+                      (vals (get-in state [:identity :users] {})))]
+    (when user-id
+      (some #(when (= user-id (:user-id %)) %)
+            (vals (get-in state [:identity :passkeys] {}))))))
 
 (defn- membership-role
   "The signer's role in the organization, or `:member`.
@@ -445,15 +450,18 @@
             (refuse! "役割 credential が発行されていません。"
                      :esign/no-role-credential {:signer-did signer-did}))
         passkey-credential (get-in state [:identity :passkeys (:credential-id finished)])
+        owner-did (get-in state [:identity :users
+                                 (:user-id passkey-credential) :did])
         ;; Recomputed from the envelope rather than carried through the
         ;; ceremony, so there is exactly one definition of what was signed and
         ;; nowhere for a second copy to disagree with it.
         recomputed (commitment-for envelope signer-did
                                    (get role-credential "id"))
-        _ (when-not (= signer-did (:did passkey-credential))
+        _ (when-not (= signer-did owner-did)
             (refuse! "署名に使われた Passkey は署名者の鍵ではありません。"
                      :esign/key-not-the-signers
-                     {:signer-did signer-did :key-did (:did passkey-credential)}))
+                     {:signer-did signer-did :owner-did owner-did
+                      :key-did (:did passkey-credential)}))
         verification (assertion/verify
                       {:client-data-json (get-in response [:response :clientDataJSON])
                        :authenticator-data (get-in response [:response :authenticatorData])

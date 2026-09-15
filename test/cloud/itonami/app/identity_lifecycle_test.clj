@@ -163,6 +163,10 @@
           (is (= :federated (:kind session)))
           (is (= :itonami-cloud (:issued-via session)))
           (is (true? (identity/may-act? session)))
+          (is (= "did:web:kotobase.net:person:one"
+                 (get-in (store/snapshot)
+                         [:identity :users (:user-id finished) :did]))
+              "hosted DID is the User DID, not a later Passkey")
           (is (not (str/includes? (pr-str (store/snapshot))
                                   "central-access-token")))
           (try

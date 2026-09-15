@@ -9,7 +9,8 @@
   without running two mutating shells in the same repository at once."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [cloud.itonami.app.workspace-tools :as workspace-tools])
+            [cloud.itonami.app.workspace-tools :as workspace-tools]
+            [cloud.itonami.app.host :as host])
   (:import [java.security MessageDigest]
            [java.util.concurrent ConcurrentHashMap Semaphore TimeUnit]
            [java.util.concurrent.locks ReentrantLock]))
@@ -76,11 +77,17 @@
                        :workspace root})))
     root))
 
+(defn- host-process []
+  (host/process {"id" "/usr/bin/id"
+                 "docker" (docker-bin)}))
+
 (defn- host-number [flag fallback]
   (try
-    (let [process (.start (ProcessBuilder. ^java.util.List ["/usr/bin/id" flag]))
-          value (str/trim (slurp (.getInputStream process)))]
-      (if (and (zero? (.waitFor process)) (re-matches #"[0-9]+" value))
+    (let [{:keys [exit output]} (host/spawn! (host-process) ["id" flag]
+                                             :timeout-ms 5000
+                                             :max-stdout-bytes 4096)
+          value (str/trim output)]
+      (if (and (zero? exit) (re-matches #"[0-9]+" value))
         value fallback))
     (catch Exception _ fallback)))
 
@@ -90,7 +97,7 @@
   (let [name (container-name bot-id)
         uid (or uid (host-number "-u" "1000"))
         gid (or gid (host-number "-g" "1000"))]
-    [(docker-bin) "create"
+    ["docker" "create"
      "--name" name
      "--hostname" name
      "--label" (str "cloud.itonami.bot=" (sha256 bot-id))
@@ -111,16 +118,23 @@
      image "sleep" "infinity"]))
 
 (defn exec-argv [container command timeout-seconds]
-  [(docker-bin) "exec" "-i" container
+  ["docker" "exec" "-i" container
    "/usr/bin/timeout" "-s" "TERM" (str timeout-seconds "s")
    "/bin/bash" "-lc" command])
 
 (defn- run-capture [argv]
   (try
-    (let [process (.start (doto (ProcessBuilder. ^java.util.List argv)
-                            (.redirectErrorStream true)))
-          output (slurp (.getInputStream process))]
-      {:exit (.waitFor process) :output (bounded-output output)})
+    (let [argv (vec argv)
+          cmd (first argv)
+          ;; Accept legacy absolute argv0 from call sites still being migrated.
+          basename (if (and (string? cmd) (str/includes? cmd "/"))
+                     (last (str/split cmd #"/"))
+                     cmd)
+          argv' (into [basename] (rest argv))
+          {:keys [exit output]} (host/spawn! (host-process) argv'
+                                             :timeout-ms (* max-timeout-seconds 1000)
+                                             :max-stdout-bytes 65536)]
+      {:exit exit :output (bounded-output output)})
     (catch Exception error
       {:exit -1 :output (bounded-output (.getMessage error))})))
 

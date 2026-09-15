@@ -130,23 +130,21 @@
       (is (nil? (:access-token-ref c)))
       (is (nil? (:refresh-token-ref c))))))
 
-;; ── Passkey が先。DID が無い人には接続させない ──────────────────────────
+;; ── 本人確認が先。DID があっても may-act? しない人には接続させない ────────
 
 (deftest connecting-requires-an-enrolled-passkey
-  (testing "Passkey を登録していない User は自分が誰かを証明していない。
-            そこへ外部 grant を結ぶと、loopback サーバに最初に到達した誰かの
-            ものになる。callback ではなく開始時に拒否するので、同意画面自体が
-            出ない —— 作られない link のために Microsoft へパスワードを
-            渡させない"
+  (testing "DID は作成時に付く。loopback に最初に到達した誰かに外部 grant を
+            結ぶのは別の問題で、`may-act?` がそれを止める。callback ではなく
+            開始時に拒否するので、同意画面自体が出ない"
     (with-state (fixture {})
       (try
         (identity/start-oauth! {:user-id "user-new" :organization-id "org-a"}
                                :microsoft "http://localhost:1337")
         (is false "should have thrown")
         (catch clojure.lang.ExceptionInfo e
-          ;; 未設定 OAuth クライアントより先に DID の不在で落ちてもよいし、
+          ;; 未設定 OAuth クライアントより先に本人確認の不在で落ちてもよいし、
           ;; その逆でもよい。要点は「接続が始まらない」こと。
-          (is (contains? #{:passkey/required :oauth/not-configured}
+          (is (contains? #{:passkey/required :oauth/not-configured :identity/no-did}
                          (:type (ex-data e)))))))))
 
 ;; ── 移行 ────────────────────────────────────────────────────────────────

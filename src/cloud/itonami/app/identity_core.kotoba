@@ -1,0 +1,33 @@
+;; Identity DID-axis judgements (ADR-0064 / ADR-0065).
+;;
+;; The host derives the facts. This file decides. Passkey enrolment, hosted
+;; subject adoption, and legacy COSE backfill all ask the same question in
+;; different clothes: may this DID become the User axis?
+;;
+;; Authority lives here and RUNS from the shipped KIR
+;; (`resources/cloud/itonami/app/oracle/identity.kir.edn`). `identity_axis.cljc`
+;; is the host half. `identity.clj` / `passkey.clj` must not re-implement these
+;; rules as conditionals of their own.
+;;
+;; Native word-typed slice: `:bool` facts only. No strings, no sets.
+
+(ns cloud.itonami.app.identity-core
+  (:export [may-adopt-user-did?
+            may-fill-user-did-on-passkey?
+            may-backfill-legacy-user-did?]))
+
+(defn may-adopt-user-did?
+  "Hosted `did:` subject (or any candidate) fills a blank User DID. First wins."
+  [held-blank :bool candidate-is-did :bool] :bool
+  (and held-blank candidate-is-did))
+
+(defn may-fill-user-did-on-passkey?
+  "Passkey enrolment may write the User DID only when it is still blank.
+  Overwrite is refused here so a replacement authenticator cannot rename the person."
+  [held-blank :bool] :bool
+  held-blank)
+
+(defn may-backfill-legacy-user-did?
+  "Pre-ADR-0064 stores: Passkey enrolled, User DID nil. Repair only."
+  [passkey-enrolled :bool held-blank :bool] :bool
+  (and passkey-enrolled held-blank))

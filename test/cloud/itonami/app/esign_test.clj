@@ -581,6 +581,39 @@
       (is (false? (:qualified-timestamp?
                    (esign/envelope-view envelope {:principal alice})))))))
 
+(deftest signing-names-the-person-not-the-credential
+  (let [object-store (memory/store)
+        auth (authenticator)
+        person-did "did:key:zPersonAxisNotThePasskey"]
+    (store/transact!
+     (fn [current]
+       (-> current
+           (assoc-in [:identity :users alice]
+                     {:id alice :did person-did
+                      :email "user-alice@example.test"})
+           (assoc-in [:identity :memberships (str "m-" alice)]
+                     {:id (str "m-" alice) :user-id alice
+                      :organization-id "org-1" :role :admin})
+           (assoc-in [:identity :passkeys (str "cred-" alice)]
+                     {:id (str "cred-" alice)
+                      :credential-id (str "cred-" alice)
+                      :user-id alice
+                      :did (:did auth)
+                      :public-key-cose (:public-key-cose auth)
+                      :user-verified? true
+                      :aaguid "adce0002-35bc-c60a-648b-0b25f1f05503"
+                      :attachment "platform"
+                      :attestation-trusted? false}))))
+    (let [document (fixture-document! object-store)
+          envelope (esign/create! {:document-id (:id document)
+                                   :purpose :contract/execute
+                                   :signer-dids [person-did]
+                                   :actor alice
+                                   :object-store object-store})]
+      (is (not= person-did (:did auth)))
+      (is (= person-did (get-in envelope [:esign/signers 0 :signer/did])))
+      (is (= alice (get-in envelope [:esign/signers 0 :signer/user-id]))))))
+
 (deftest evidence-survives-a-json-round-trip
   ;; The record is handed to a counterparty as JSON and comes back as JSON. The
   ;; commitment inside it is RFC 8785 JSON whose keys must stay strings — this is

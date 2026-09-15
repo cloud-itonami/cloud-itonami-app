@@ -45,8 +45,9 @@ existing Worker.
 - A person who bookmarks `127.0.0.1:1338` lands on `localhost:1338` for the
   document. Sign-in itself no longer depends on that (ADR-0042): starting
   hosted auth is a GET navigation that always uses the localhost callback.
-- Local Passkey DID minting is still implemented. It is no longer the card
-  a first-time person meets.
+- Local User DID minting is Ed25519 at account creation (ADR-0064). Passkey
+  registration binds a credential; it does not mint the person. It is no
+  longer the card a first-time person meets.
 - Isolated servers on other ports still derive `redirect_uri` from origin.
   Production `app-auth` accepts only the 1338 localhost callback; a 1348
   isolate cannot complete live OAuth, which was already true.
