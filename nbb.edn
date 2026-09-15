@@ -1,1 +1,6 @@
-{:paths ["." "src" "resources" "target" "scripts/nbb_compat"]}
+;; The kbb engine reads THIS file and not deps.edn (measured 2026-09-15:
+;; dev/gen_commands.cljk died in `Could not find namespace: kotoba.lang.text`
+;; because the coordinate was declared only there). The sha is COPIED from
+;; deps.edn, not chosen here.
+{:paths ["." "src" "resources" "target" "scripts/nbb_compat"]
+ :deps {io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}}}

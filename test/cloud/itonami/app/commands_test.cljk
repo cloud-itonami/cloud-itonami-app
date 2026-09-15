@@ -40,8 +40,10 @@
   (testing "the checked-in registry is what the current server.clj serves"
     (let [fresh (scan/registry (source) server-file)]
       (is (= (:commands fresh) (commands/all))
-          (str "resources/" commands/resource-name
-               " is stale. Run `kbb --backend sci --classpath src dev/gen_commands.cljk`."))
+          (str commands/resource-name
+               " at the cloud-itonami-commands sha deps.edn pins is stale."
+               " Run `kbb --backend sci --classpath src dev/gen_commands.cljk` (writes into"
+               " ../cloud-itonami-commands), land it there, then advance the sha here."))
       (is (= (:counts fresh) (commands/counts))))))
 
 (deftest every-agent-reachable-route-has-a-command

@@ -262,10 +262,10 @@ do not start the app server and never edit a checkout.
 > the reason, so the gap is a named entry rather than a silence.
 
 ```bash
-bin/itonami bots refactor scan --root /path/to/com-junkawasaki --limit 25
-bin/itonami bots refactor inspect --root /path/to/com-junkawasaki \
+itonami bots refactor scan --root /path/to/com-junkawasaki --limit 25
+itonami bots refactor inspect --root /path/to/com-junkawasaki \
   --repo itonami --limit 8
-bin/itonami bots refactor start --root /path/to/com-junkawasaki \
+itonami bots refactor start --root /path/to/com-junkawasaki \
   --repo itonami --id bot-...
 ```
 
@@ -319,9 +319,21 @@ does not falsely mark it configured.
 
 ## `itonami` — the command line, without opening the app
 
-`bin/itonami` runs any of the app's operations from any directory. It starts no
-JVM: it is an nbb client that resolves a command to a method and a path, carries
-the agent session, and prints what the server said.
+`itonami` runs any of the app's operations from any directory. It starts no
+JVM: it is a client on the kbb engine that resolves a command to a method and a
+path, carries the agent session, and prints what the server said.
+
+It lives in [cloud-itonami-cli](https://github.com/cloud-itonami/cloud-itonami-cli)
+(`bin/itonami` there), not here: the copy this repository carried after the
+2026-09-07 split was deleted on 2026-09-15, once it had drifted from the one that
+ships. What the CLI and this app share — `cloud.itonami.app.commands`,
+`cloud.itonami.app.repo-profile` and the three tables — is
+[cloud-itonami-commands](https://github.com/cloud-itonami/cloud-itonami-commands),
+a dependency both pin by sha (`deps.edn` here, `nbb.edn` there). Adding a route
+here means regenerating the registry into that repository
+(`kbb --backend sci --classpath src dev/gen_commands.cljk`, writes into
+`../cloud-itonami-commands`), landing it, and advancing the sha in `deps.edn`;
+`commands-test` fails until the sha is advanced.
 
 It does **not** start a server. `up` / `down` do not supervise the controller.
 
@@ -356,17 +368,17 @@ Exit codes are the contract: **0** answered, **1** the server refused or a flag
 is missing, **2** could not answer — no server, no session, no such command.
 
 ```bash
-bin/itonami status                # where the server is, and whether you can act
-bin/itonami commands              # every command, with the coverage counts
-bin/itonami commands drive        # just the ones matching "drive"
+itonami status                # where the server is, and whether you can act
+itonami commands              # every command, with the coverage counts
+itonami commands drive        # just the ones matching "drive"
 
-bin/itonami auth login --label claude-code
-bin/itonami bots list
-bin/itonami bots task --id bot-1 --text "調べて"
-bin/itonami workspace inbox
-bin/itonami workspace drive search --q invoice
-bin/itonami workspace drive documents rename --document doc-1 --title "New"
-bin/itonami esign envelopes show env-1          # positional path parameters work too
+itonami auth login --label claude-code
+itonami bots list
+itonami bots task --id bot-1 --text "調べて"
+itonami workspace inbox
+itonami workspace drive search --q invoice
+itonami workspace drive documents rename --document doc-1 --title "New"
+itonami esign envelopes show env-1          # positional path parameters work too
 ```
 
 For a local MCP client, configure the stdio command as `bin/itonami-mcp`.
@@ -470,21 +482,21 @@ reads GitHub Projects v2 through `gh`. Mail is filed against them by
 deterministic rules (ADR-0019).
 
 ```bash
-bin/itonami projects create --project finance --title "Finance"
-bin/itonami projects list
+itonami projects create --project finance --title "Finance"
+itonami projects list
 
 # rules: sender, sender domain, subject substring, or a classify label.
 # every clause must hold; the first matching rule wins.
-bin/itonami mail projects rules --project finance --label finance
-bin/itonami mail projects rules --project travel  --from-domain jal.com
+itonami mail projects rules --project finance --label finance
+itonami mail projects rules --project travel  --from-domain jal.com
 
-bin/itonami mail projects apply        # -> {:assigned 20 :unmatched 88 …}
-bin/itonami mail projects              # rules + per-project counts
-bin/itonami mail projects unassigned   # the pile no rule caught, senders ranked
-bin/itonami projects mail --project finance
+itonami mail projects apply        # -> {:assigned 20 :unmatched 88 …}
+itonami mail projects              # rules + per-project counts
+itonami mail projects unassigned   # the pile no rule caught, senders ranked
+itonami projects mail --project finance
 
-bin/itonami mail projects assign --message <id> --project travel
-bin/itonami mail projects unassign --message <id>
+itonami mail projects assign --message <id> --project travel
+itonami mail projects unassign --message <id>
 ```
 
 Nothing is moved and nothing is deleted: assignment is a third plane over the
@@ -535,8 +547,8 @@ needs `chmod -R u+w` before `rm -rf`.
 The annexed bodies exist on one disk until you push them (ADR-0022):
 
 ```bash
-bin/itonami projects push --project finance     # git annex copy --to b2
-bin/itonami projects remote --project finance   # annexed / pushed / unpushed
+itonami projects push --project finance     # git annex copy --to b2
+itonami projects remote --project finance   # annexed / pushed / unpushed
 ```
 
 The special remote is `encryption=none` **because the content is already age
