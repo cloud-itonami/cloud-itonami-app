@@ -364,7 +364,7 @@
       (is (re-find #"id=\"worker-prompt\"" html))
       (is (re-find #"id=\"worker-list\"" html))
       (is (re-find #"id=\"worker-detail\"" html))
-      (is (re-find #"color-scheme\" content=\"light\"" html))
+      (is (re-find #"color-scheme\" content=\"light dark\"" html) "the page offers both; the theme contract decides")
       (is (re-find #"id=\"request-status\"[^>]*role=\"status\"" html))
       (doseq [view ["Worker" "Inbox" "Projects" "Sites" "Drive" "Scheduler"]]
         (is (re-find (re-pattern (str ">" view "<")) html)))
@@ -542,7 +542,7 @@
     (is (seq referenced))
     (is (empty? missing)
         (str "dark-css references tokens nothing defines: " (pr-str (sort missing))))
-    (is (str/includes? dark ":root:has(.workspace[data-appearance=\"dark\"])")
+    (is (str/includes? dark ":root:root[data-theme=\"dark\"]")
         "the dark block has to outrank the plain :root that a11y-css writes")))
 
 (deftest chat-session-ids-are-isolated-by-organization-user-and-project

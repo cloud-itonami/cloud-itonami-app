@@ -8,8 +8,10 @@
             [jp-go-dds.tokens :as tokens]
             [cloud-kotoba-dds.chat :as chat]
             [cloud-kotoba-dds.bots :as bots]
+            [cloud-kotoba-dds.switch :as switch]
             [cloud-kotoba-dds.styles :as chat-styles]
             [shinkansen.interaction :as interaction]
+            [shinkansen.theme :as theme]
             [cloud.itonami.app.app-directory :as app-directory]))
 
 (def base-css
@@ -1696,7 +1698,7 @@
   body[data-current-view='bots'] #current-view{display:none}body[data-current-view='bots'] #bots-titlebar-context{flex:1;min-width:0}
   .topbar{min-width:0}.topbar__title{white-space:nowrap}.topbar>button{flex-shrink:0}
   .bots-composer.go-composer{max-width:52rem;width:100%;margin-inline:auto;box-sizing:border-box}.bots-composer__label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
-  @media(width < 48rem){.market-grid{grid-template-columns:minmax(0,1fr)}.market-card{gap:.75rem;padding:.75rem}.bots-titlebar__status{font-size:.75rem}.topbar #bots-new{font-size:.75rem;padding:.25rem}.topbar #bots-context-button{font-size:.75rem;padding:.25rem}.topbar>.appearance-toggle,.topbar>.comment-mode-toggle{display:none}}
+  @media(width < 48rem){.market-grid{grid-template-columns:minmax(0,1fr)}.market-card{gap:.75rem;padding:.75rem}.bots-titlebar__status{font-size:.75rem}.topbar #bots-new{font-size:.75rem;padding:.25rem}.topbar #bots-context-button{font-size:.75rem;padding:.25rem}.topbar>.comment-mode-toggle{display:none}}
 
   @media(width >= 48rem){
     .workspace{grid-template-columns:14rem minmax(0,1fr)}
@@ -1760,8 +1762,14 @@
 (defn- page-with-two-size-styles [options body]
   ;; page/->page also inserts DADS extension CSS. Adapt only style blocks,
   ;; including that layer; never rewrite message text or scripts.
-  (str/replace (page/->page options body) #"(?s)<style>(.*?)</style>"
-               (fn [[_ css]] (str "<style>" (two-size-css css) "</style>"))))
+  (let [html (str/replace (page/->page options body) #"(?s)<style>(.*?)</style>"
+                          (fn [[_ css]] (str "<style>" (two-size-css css) "</style>")))]
+    ;; A configured `[:ui :appearance] dark` is the server-rendered theme:
+    ;; `<html data-theme="dark">`, which the stored choice (theme/head-script)
+    ;; then overrides. jp-go-dds.page owns the <html> tag, so it is stamped here.
+    (if (= "dark" (:theme-default options))
+      (str/replace-first html "<html " "<html data-theme=\"dark\" ")
+      html)))
 
 
 (def ^:private resource-roots
@@ -1810,7 +1818,7 @@
   The 8-bit appearance layer (`cloud.itonami.app.appearance/css`) is
   concatenated LAST so that its overrides win, and so that the same token
   guard covers it: every `--eightbit-*` it references it also declares."
-  (str tokens/bridge-css "\n" bot-component-css "\n" (two-size-css chat-styles/css) "\n" (two-size-css chat-styles/bots-css) "\n" base-css "\n" bot-workspace-css "\n  " hanmen-svg/stylesheet "\n" appearance/css "\n"))
+  (str tokens/bridge-css "\n" bot-component-css "\n" (two-size-css chat-styles/css) "\n" (two-size-css chat-styles/bots-css) "\n" (two-size-css switch/css) "\n" base-css "\n" bot-workspace-css "\n  " hanmen-svg/stylesheet "\n" appearance/css "\n"))
 
 (def interaction-js
   "The page's interaction layer, which is JavaScript and now lives in a
@@ -2239,7 +2247,10 @@
            [:button {:class "tool-button" :type "button" :data-ask-settings "モデルと実行環境"} "モデル・実行環境"]]]
          [:details {:class "settings-manual" :id "settings-manual"}
           [:summary "アカウント・権限を確認 / 自分で設定する"]
-          [:div {:class "button-row"} (comment-mode-toggle) (appearance/toggle-button mode)]
+          [:div {:class "button-row"} (comment-mode-toggle)
+           ;; light / dark / system — the shinkansen contract, answered by
+           ;; its runtime; the 8-bit appearance is reached by ?appearance=8bit
+           (switch/theme-switch {:id "theme-switch" :current :system})]
         [:a {:class "workspace-wallet authenticated-only" :id "workspace-wallet"
              :href "#/wallet" :hidden true :aria-label "ウォレットを開く"}
          [:span {:id "workspace-wallet-label"} "ウォレットを確認"]]
@@ -2526,20 +2537,24 @@
     (page-with-two-size-styles
      {:title (str "Bots | " brand)
       :description "安全第一（緑十字）のAIワークスペース"
-      ;; The dark layer is appended here rather than folded into `app-css`
-      ;; because it is DERIVED from `css` — it inverts the vendored ramps, so
-      ;; it cannot be a load-time `def` the way the authored appearances are.
-      ;; Last, so its `:root:has(…)` block sits after everything that declares
-      ;; a `--color-*`.
-      :css css :app-css (str app-css "\n" (appearance/dark-css css))
+      :theme-default mode
+      ;; `:dark? true`: jp-go-dds emits its dark layer (snapshot, the inverted
+      ;; ramps under `:root:root[data-theme="dark"]` and under the OS media
+      ;; block, light written back under `[data-theme="light"]`) and both
+      ;; theme-color metas. The theme is the shinkansen contract since
+      ;; 2026-09-16; this app draws no dark of its own any more.
+      :css css :app-css app-css :dark? true
       :head [[:link {:rel "icon" :type "image/png" :href "/icon.png"}]
              [:link {:rel "apple-touch-icon" :href "/icon.png"}]
+             ;; the stored theme lands before paint — a flash on every load otherwise
+             [:script theme/head-script]
              [:script signal-js] [:script interaction/runtime] [:script bot-component-js]
-             [:script bots/script] [:script interaction-js]]}
+             [:script bots/script] [:script switch/script] [:script interaction-js]]}
      ;; `data-appearance` is the whole of a mode (ADR-0091): the server renders
      ;; the configured default, `interaction.js` flips it to the device's
      ;; remembered choice, and the stylesheet reads it. Nothing else differs.
-     [:div {:class "workspace" :data-brand brand :data-appearance mode
+     [:div {:class "workspace" :data-brand brand
+            :data-appearance (if (= "dark" mode) "light" mode)
             :data-residency (name residency)}
       (comment-layer)
       (workspace-navigation brand cloud? residency)

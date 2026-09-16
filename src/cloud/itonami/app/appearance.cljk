@@ -1,10 +1,18 @@
 (ns cloud.itonami.app.appearance
-  "Appearance modes of the loopback workspace — today `light` (DADS as
-  shipped), `dark` (DADS inverted), `8bit` and `grok`.
+  "Appearance modes of the loopback workspace — `light` (DADS as shipped),
+  `dark` (DADS inverted) and the authored `8bit`. `grok` was removed
+  2026-09-16 (owner: 「grok mode はテーマカラーとして除去」) — its shape lives
+  on as cloud-kotoba-dds's Bots workspace pattern, its darkness is `dark`.
+
+  The theme itself (light / dark / system) is the shinkansen contract since
+  the same day: `<html data-theme>` from `kotoba-theme`, switched by
+  cloud-kotoba-dds.switch/theme-switch, painted by jp-go-dds.dark. What this
+  namespace still decides is the configured server default (`resolve-mode`)
+  and the 8bit layer.
 
   ## `dark` is not a fourth palette
 
-  The other two appearances are DRAWN: `8bit` and `grok` each carry a palette
+  The authored appearance is DRAWN: `8bit` carries a palette
   written out entry by entry, and each needs a per-component rule for every
   surface it changes. `dark` carries none. `jp-go-dds.dark` inverts the
   upstream ramps at the PRIMITIVE layer, so `--color-key-*`,
@@ -45,7 +53,7 @@
   "Every appearance the workspace can render. Order is the toggle order.
 
   `dark` sits next to `light` because they are one palette and its inversion.
-  The authored appearances (`8bit`, `grok`) are pruned from the toggle cycle —
+  The authored appearance (`8bit`) is pruned from the toggle cycle —
   their CSS layers stay in `css` for documents that name them explicitly, but
   a toggle press is light<->dark only (owner instruction 2026-09-14)."
   ["light" "dark"])
@@ -123,88 +131,6 @@
   (str/join ""
             (for [[k v] (sort-by key palette)]
               (str "--eightbit-" (name k) ":" v ";"))))
-
-;; ── the grok palette ─────────────────────────────────────────────────────
-;; Modelled on the Grok Bot desktop client's dark chat surfaces: a near-black
-;; window, a slightly lighter rail, raised cards, one accent. Eight entries;
-;; a palette that keeps growing stops being one.
-(def ^:private grok-palette
-  {:base   "#0d0d0d"   ; window background
-   :rail   "#161616"   ; sidebar / bots rail
-   :raised "#1f1f21"   ; cards, bubbles, inputs
-   :hover  "#2a2a2d"   ; hover, selected, chips
-   :border "#2e2e30"   ; hairlines
-   :text   "#f2f2f2"   ; primary text
-   :muted  "#9b9b9f"   ; secondary text, metadata
-   :accent "#3b82f6"}) ; the one accent (person bubbles, primary actions)
-
-(defn- root-tokens-grok []
-  (str/join ""
-            (for [[k v] (sort-by key grok-palette)]
-              (str "--grok-" (name k) ":" v ";"))))
-
-(def ^:private grok-css
-  (str
-   ".workspace[data-appearance=\"grok\"]{" (root-tokens-grok)
-   "--grok-radius:12px;--grok-radius-lg:16px;"
-   "font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans','Hiragino Kaku Gothic ProN',sans-serif;"
-   "font-size:14px;line-height:1.6;"
-   "color:var(--grok-text);background:var(--grok-base)}\n"
-   ;; chrome
-   ".workspace[data-appearance=\"grok\"] .sidebar{background:var(--grok-rail);color:var(--grok-text);"
-   "border-right:1px solid var(--grok-border)}\n"
-   ".workspace[data-appearance=\"grok\"] .brand__eyebrow{color:var(--grok-muted)}\n"
-   ".workspace[data-appearance=\"grok\"] .brand__name{color:var(--grok-text)}\n"
-   ".workspace[data-appearance=\"grok\"] .brand__mark{background:var(--grok-accent);color:#fff;border-radius:8px}\n"
-   ".workspace[data-appearance=\"grok\"] .local-nav__item{color:var(--grok-muted);border-radius:8px}\n"
-   ".workspace[data-appearance=\"grok\"] .local-nav__item:hover{background:var(--grok-hover);color:var(--grok-text)}\n"
-   ".workspace[data-appearance=\"grok\"] .local-nav__item[aria-current=\"page\"]{background:var(--grok-hover);color:var(--grok-text)}\n"
-   ".workspace[data-appearance=\"grok\"] .sidebar__status{color:var(--grok-muted)}\n"
-   ".workspace[data-appearance=\"grok\"] .topbar{background:var(--grok-base);border-bottom:1px solid var(--grok-border);color:var(--grok-text)}\n"
-   ;; controls
-   ".workspace[data-appearance=\"grok\"] button:not(.mobile-nav-backdrop),"
-   ".workspace[data-appearance=\"grok\"] .tool-button,"
-   ".workspace[data-appearance=\"grok\"] .context-button,"
-   ".workspace[data-appearance=\"grok\"] .composer-button:not(.composer-button--stop){"
-   "border-radius:8px;border:1px solid transparent;background:var(--grok-hover);color:var(--grok-text);font:inherit;font-weight:600}\n"
-   ".workspace[data-appearance=\"grok\"] .tool-button:not([disabled]):hover,"
-   ".workspace[data-appearance=\"grok\"] .local-nav__item:hover{background:var(--grok-hover)}\n"
-   ".workspace[data-appearance=\"grok\"] .primary-action,"
-   ".workspace[data-appearance=\"grok\"] button[type=\"submit\"]{"
-   "background:var(--grok-accent);color:#fff}\n"
-   ".workspace[data-appearance=\"grok\"] button[disabled],"
-   ".workspace[data-appearance=\"grok\"] .tool-button[disabled]{background:var(--grok-hover);color:var(--grok-muted)}\n"
-   ".workspace[data-appearance=\"grok\"] input,"
-   ".workspace[data-appearance=\"grok\"] select,"
-   ".workspace[data-appearance=\"grok\"] textarea{"
-   "border-radius:8px;border:1px solid var(--grok-border);background:var(--grok-raised);color:var(--grok-text);font:inherit}\n"
-   ".workspace[data-appearance=\"grok\"] :focus-visible{outline:2px solid var(--grok-accent);outline-offset:2px}\n"
-   ;; surfaces
-   ".workspace[data-appearance=\"grok\"] .local-card,.workspace[data-appearance=\"grok\"] .data-card,"
-   ".workspace[data-appearance=\"grok\"] .connector-card,.workspace[data-appearance=\"grok\"] .suggestion-card,"
-   ".workspace[data-appearance=\"grok\"] .settings-card,.workspace[data-appearance=\"grok\"] .bots-card{"
-   "border-radius:var(--grok-radius);border:1px solid var(--grok-border);background:var(--grok-raised)}\n"
-   ".workspace[data-appearance=\"grok\"] .settings-notice{border-radius:var(--grok-radius);border:1px solid var(--grok-border);background:var(--grok-raised)}\n"
-   ".workspace[data-appearance=\"grok\"] .req-row__state,.workspace[data-appearance=\"grok\"] .bots-chip,"
-   ".workspace[data-appearance=\"grok\"] .bots-card__state,.workspace[data-appearance=\"grok\"] .matrix__state{"
-   "border-radius:999px;border:1px solid var(--grok-border);background:var(--grok-hover)}\n"
-   ;; chat: quiet grey bubbles, muted metadata, pill composer
-   ".workspace[data-appearance=\"grok\"] .bots-msg__bubble{"
-   "border-radius:var(--grok-radius-lg);border:1px solid var(--grok-border);background:var(--grok-raised)}\n"
-   ".workspace[data-appearance=\"grok\"] .bots-msg[data-role='person'] .bots-msg__bubble{"
-   "background:var(--grok-accent);color:#fff;border-color:transparent}\n"
-   ".workspace[data-appearance=\"grok\"] .bots-msg__resident{color:var(--grok-muted)}\n"
-   ".workspace[data-appearance=\"grok\"] .bots-msg__resident-at{color:var(--grok-muted)}\n"
-   ".workspace[data-appearance=\"grok\"] .bots-msg__bubble code{background:var(--grok-hover)}\n"
-   ".workspace[data-appearance=\"grok\"] .bots-msg__bubble pre{background:var(--grok-rail);border:1px solid var(--grok-border)}\n"
-   ".workspace[data-appearance=\"grok\"] .composer{border-radius:999px;border:1px solid var(--grok-border);background:var(--grok-raised)}\n"
-   ".workspace[data-appearance=\"grok\"] .composer textarea{border:0;background:transparent}\n"
-   ;; the rail is cloud-kotoba-dds's Bots workspace pattern (styles/bots-css):
-   ;; rounded rows, raised surfaces and the dot come from its tokens on top
-   ;; of the primitive inversion grok stands on — nothing to redraw here.
-   ;; the toggle itself shows what it will do
-   ".appearance-toggle[data-next=\"grok\"]::before{content:\"◍ \"}\n"
-   "@media(prefers-reduced-motion:reduce){.workspace[data-appearance=\"grok\"] *{animation:none}}\n"))
 
 (def css
   "The 8-bit layer. Scoped under the `data-appearance` attribute so that the
@@ -305,106 +231,25 @@
    "background:repeating-linear-gradient(0deg,rgba(24,20,37,.06) 0 1px,transparent 1px 4px)}\n"
    ".workspace[data-appearance=\"8bit\"] .main>*{position:relative;z-index:1}\n"
    ;; the toggle itself shows what it will do
-   ".appearance-toggle[data-next=\"8bit\"]::before{content:\"▣ \"}\n"
-   ".appearance-toggle[data-next=\"light\"]::before{content:\"◻ \"}\n"
    "@media(prefers-reduced-motion:reduce){.workspace[data-appearance=\"8bit\"] .bot-avatar[data-status='working']{animation:none}}\n"
-   ;; ── the grok layer ─────────────────────────────────────────────────────
-   ;; A dark, chat-first appearance modelled on the Grok Bot desktop client:
-   ;; near-black surfaces, a conversation-list rail, quiet grey bubbles on a
-   ;; dark raised card, muted centred metadata, and one pill composer. Same
-   ;; document, same ids, same reading order — colour and shape only.
-   grok-css))
+   ;; the former `grok` layer is gone (owner 2026-09-16: 「grok mode は
+   ;; テーマカラーとして除去」): its rounded, raised look is the Bots workspace
+   ;; pattern in cloud-kotoba-dds now, and its darkness is `dark`.
+   ))
 
 (defn- declarations->css [decls]
   (str/join "" (for [[k v] decls] (str k ":" v ";"))))
 
 (defn dark-css
-  "The `dark` appearance: DADS with its primitive ramps inverted — and the
-  floor under `grok`, which draws its own surfaces on top of this inversion.
+  "The dark layer, exactly as jp-go-dds draws it: the light literals snapshot
+  to `--dds-light-*`, the inverted ramps under `:root:root[data-theme=\"dark\"]`
+  and under `@media (prefers-color-scheme: dark)`, light written back under
+  `[data-theme=\"light\"]`. Since 2026-09-16 the theme is the shinkansen
+  contract (light / dark / system on `<html data-theme>`, absent = system)
+  and this app no longer keeps its own `:root:has(.workspace[data-appearance])`
+  scope: one attribute, one stylesheet, the same as every other kotoba page.
 
-  Takes the vendored `dds.css` rather than reading it, so this stays portable
-  — `test/portable_nbb.cljk` executes this namespace and cannot slurp a
-  resource. `web/page-html` already holds the string for `->page`.
-
-  ## Why the scope is `:root:has(…)` and not `.workspace[…]`
-
-  The other appearances scope to `.workspace`, and for them that is right:
-  every rule they write targets something inside it. This one writes no rules
-  — it redefines custom properties and lets inheritance carry them. Two things
-  follow.
-
-  `body` is the first. `base-css` paints the page ground with
-  `background:var(--color-neutral-solid-gray-50)`, and `body` is NOT inside
-  `.workspace`. Declared on `.workspace`, the inverted tokens would leave the
-  ground light while everything on it went dark, and no rule would be wrong
-  anywhere — the failure would be a white margin around a dark workspace.
-
-  Specificity is the second. `jp-go-dds.tokens/a11y-css` declares
-  `:root{color-scheme:light}`, and `dark-declarations` carries
-  `color-scheme:dark`; a plain `:root` here would tie and lose on order.
-  `:root:has(…)` is (0,2,0) against (0,1,0), so it wins without depending on
-  where this string lands in the concatenation.
-
-  ## The snapshot block is not optional
-
-  Inversion is an involution, so writing `--color-primitive-red-800:
-  var(--color-primitive-red-400)` beside its mirror is a custom-property
-  CYCLE, and CSS answers a cycle by making both invalid. `jp-go-dds.dark`
-  avoids it by first copying the light literals to `--dds-light-*`, which the
-  dark block alone references. That copy has to be emitted, and emitted
-  unconditionally — it is what light mode is restored FROM."
+  `jp-go-dds.page` emits this itself when `:dark? true`; the function stays
+  here for the tests that pin the declarations against the ramps."
   [dds-css]
-  (str
-   ":root{" (declarations->css (dark/snapshot-declarations dds-css)) "}\n"
-   ;; `grok` inherits the inversion. It is a DRAWN appearance (a palette and
-   ;; per-component rules for the rail, the cards, the composer) and a drawn
-   ;; layer misses surfaces — measured 2026-09-16 on the live #/bots view:
-   ;; 27 light surfaces in grok (the group label band, the launcher, the
-   ;; account and action menus, the workspace switcher) where its rules did
-   ;; not reach. Putting the primitive inversion under it means every surface
-   ;; grok does not name follows dark, and grok's own rules stay what they
-   ;; are: the rounded, raised layer on top. Two selectors rather than one
-   ;; `:has(a, b)` so the plain `dark` selector stays a literal substring for
-   ;; `core_test/dark-css-only-references-design-system-tokens-that-exist`.
-   ":root:has(.workspace[data-appearance=\"dark\"]),:root:has(.workspace[data-appearance=\"grok\"]){"
-   (declarations->css (dark/dark-declarations dds-css)) "}\n"
-   ".appearance-toggle[data-next=\"dark\"]::before{content:\"◐ \"}\n"))
-
-;; Measured 2026-09-10, because the obvious next rule here is a mistake:
-;;
-;;   --color-neutral-solid-gray-50   (the page ground in `base-css`)  #1a1a1a
-;;   --color-neutral-white           (every card, rail and topbar)     #1a1a1a
-;;
-;; The ground and the raised surfaces land on the SAME value in dark, and no
-;; darker one exists to move the ground to — `jp-go-dds.dark` deliberately
-;; keeps pure black out (`--color-neutral-black` inverts to white), so the
-;; darkest grey step is the floor and the surfaces already stand on it.
-;;
-;; This is flat rather than broken: `base-css` gives cards and the sidebar
-;; `1px solid var(--color-neutral-solid-gray-200)`, which inverts to #4d4d4d,
-;; so every edge is still drawn. Separation is carried by the borders, not by
-;; a fill difference.
-;;
-;; An override was written here first and it set `body` to
-;; `var(--dds-light-neutral-solid-gray-900)` — which is #1a1a1a, the value it
-;; already had. It changed nothing while reading as though it fixed the
-;; collision. Lifting the surfaces instead is a design decision (it means
-;; per-component rules, which is exactly what this layer does not have), so it
-;; is left to be asked for rather than made here.
-
-(defn toggle-button
-  "The topbar control. `data-next` is what one press moves to, so the label and
-  the glyph are derived from the same fact the script flips."
-  [mode]
-  (let [next (next-mode mode)]
-    [:button {:class "tool-button appearance-toggle" :id "appearance-toggle" :type "button"
-              :data-mode (or (normalize mode) default-mode)
-              :data-next next
-              :aria-pressed (if (not= "light" (normalize mode)) "true" "false")
-              :aria-label "表示モードを切り替え（light / dark）"
-              :title (case next
-                       "dark" "ダークにする"
-                       "標準表示に戻す")}
-     (case next
-       "dark" "DARK"
-       "LIGHT")]))
+  (dark/dark-css dds-css))
