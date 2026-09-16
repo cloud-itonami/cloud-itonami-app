@@ -11,6 +11,7 @@
       (is (= "dark" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v))))
   (testing "pruned authored appearances answer light (owner 2026-09-14)"
     (doseq [v [:8bit "8bit" "8-bit" "EIGHTBIT" " pixel " :retro
+               ;; grok: removed as a theme 2026-09-16; its spelling still names nothing
                :grok "grok" "GROK" " chat-dark "]]
       (is (= "light" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v))))
   (testing "a value that names nothing is not an appearance, so light"
@@ -61,14 +62,10 @@
                          (remove #(re-find #"^\d+%$" %)))]
       (is (seq selectors))
       (is (every? #(or (str/includes? % "data-appearance=\"8bit\"")
-                       (str/includes? % "data-appearance=\"grok\"")
-                       (str/starts-with? % ".appearance-toggle")
                        ;; keyframe steps inside @keyframes blocks
                        (re-find #"^(0|100)%" %))
                   selectors)
           (pr-str (remove #(or (str/includes? % "data-appearance=\"8bit\"")
-                               (str/includes? % "data-appearance=\"grok\"")
-                               (str/starts-with? % ".appearance-toggle")
                                (re-find #"^(0|100)%" %))
                           selectors)))))
   (testing "8-bit is shape and colour, never a hidden element"
@@ -88,34 +85,18 @@
   (is (= "#8bd450" (:grass appearance/palette)))
   (is (= 16 (count appearance/palette)) "sixteen colours is the whole system"))
 
-(deftest the-toggle-says-what-it-will-do
-  (let [[tag attrs label] (appearance/toggle-button "light")]
-    (is (= :button tag))
-    (is (= "appearance-toggle" (:id attrs)))
-    (is (= "dark" (:data-next attrs)))
-    (is (= "false" (:aria-pressed attrs)))
-    (is (= "DARK" label)))
-  (let [[_ attrs label] (appearance/toggle-button "dark")]
-    (is (= "light" (:data-next attrs)))
-    (is (= "true" (:aria-pressed attrs))
-        "dark is not the default, so the control reads as pressed")
-    (is (= "LIGHT" label))))
-
-(deftest grok-stands-on-the-inversion
-  ;; grok is drawn per component and a drawn layer misses surfaces (measured
-  ;; 2026-09-16: 27 light surfaces in grok on #/bots). The primitive inversion
-  ;; is scoped under grok too, so what grok does not name follows dark. The
-  ;; sample is a ramp small enough to read, not the vendored sheet: the
-  ;; assertion is about the SCOPE, and the JVM core_test already proves the
-  ;; declarations against the real ramps.
+(deftest dark-is-the-shinkansen-theme-contract
+  ;; Since 2026-09-16 the theme is `<html data-theme>` (light / dark / absent
+  ;; = system) and the layer is jp-go-dds's own: no `:root:has(.workspace…)`
+  ;; scope, no grok. The sample is a ramp small enough to read; the JVM
+  ;; core_test proves the declarations against the real ramps.
   (let [sample (str ":root {\n  --color-neutral-white: #ffffff;\n  --color-neutral-black: #000000;\n"
                     "  --color-neutral-solid-gray-50: #f2f2f2;\n  --color-neutral-solid-gray-900: #1a1a1a;\n"
                     "  --color-primitive-blue-50: #e8f1fe;\n  --color-primitive-blue-1200: #000060;\n}\n")
         dark (appearance/dark-css sample)]
-    (is (str/includes? dark ":root:has(.workspace[data-appearance=\"dark\"])"))
-    (is (str/includes? dark ":root:has(.workspace[data-appearance=\"grok\"])")
-        "grok inherits the inversion instead of drawing every surface itself")
-    (is (= 1 (count (re-seq #"color-scheme:dark" dark)))
-        "one inverted block serves both selectors — the declarations are not duplicated")
-    (is (not (str/includes? dark "data-appearance=\"8bit\""))
-        "8bit stays fully drawn: cream paper is its ground, not an inverted grey")))
+    (is (str/includes? dark ":root:root[data-theme=\"dark\"]"))
+    (is (str/includes? dark ":root:root[data-theme=\"light\"]") "light is written back so an OS-dark device can choose light")
+    (is (str/includes? dark "prefers-color-scheme: dark") "system = the OS decides")
+    (is (not (str/includes? dark "data-appearance")) "the appearance attribute no longer scopes the theme")
+    (is (not (str/includes? dark "grok")))
+    (is (not (str/includes? appearance/css "grok")) "grok is removed as a theme colour (owner 2026-09-16)")))

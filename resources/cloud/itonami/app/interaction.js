@@ -1,19 +1,30 @@
 
   document.addEventListener('DOMContentLoaded', () => {
-    // Appearance (ADR-0091). One attribute on `.workspace` is the whole mode;
-    // the stylesheet reads it, nothing below cares. Precedence: `?appearance=`
-    // in the URL, then this device's remembered choice, then what the server
-    // rendered from configuration. The URL form exists so a link can open the
-    // 8-bit floor for someone who has never pressed the toggle.
+    // Appearance (ADR-0091) — the authored 8-bit layer only. The THEME
+    // (light / dark / system) is the shinkansen contract since 2026-09-16:
+    // `<html data-theme>` from `kotoba-theme`, applied before paint by the
+    // head script, switched by cloud-kotoba-dds.switch/theme-switch, answered
+    // by the shinkansen runtime — nothing here touches it. `grok` is gone
+    // (owner 2026-09-16). Precedence for the appearance: `?appearance=` in the
+    // URL, then this device's remembered choice, then what the server
+    // rendered. A remembered `dark` or `grok` from before the cutover maps to
+    // the theme once (dark → theme dark) and is forgotten.
     (() => {
       const workspace = document.querySelector('.workspace');
-      const toggle = document.getElementById('appearance-toggle');
       if (!workspace) return;
-      const modes = ['light', '8bit', 'grok'];
+      const modes = ['light', '8bit'];
       const key = 'cloud-itonami-appearance';
       const normalize = (v) => (modes.includes(v) ? v : null);
       const read = () => {
-        try { return normalize(localStorage.getItem(key)); } catch (_) { return null; }
+        try {
+          const v = localStorage.getItem(key);
+          if ((v === 'dark' || v === 'grok') && globalThis.shinkansen) {
+            shinkansen.theme.set('dark');
+            localStorage.removeItem(key);
+            return null;
+          }
+          return normalize(v);
+        } catch (_) { return null; }
       };
       const remember = (mode) => {
         try { localStorage.setItem(key, mode); } catch (_) { /* private window: not remembered */ }
@@ -21,27 +32,11 @@
       const apply = (mode) => {
         workspace.dataset.appearance = mode;
         document.documentElement.dataset.appearance = mode;
-        if (toggle) {
-          const next = modes[(modes.indexOf(mode) + 1) % modes.length];
-          toggle.dataset.mode = mode;
-          toggle.dataset.next = next;
-          toggle.setAttribute('aria-pressed', mode === 'light' ? 'false' : 'true');
-          toggle.textContent = next === '8bit' ? '8-BIT' : (next === 'grok' ? 'GROK' : 'DADS');
-          toggle.title = next === '8bit' ? '8-BIT MODE にする'
-            : (next === 'grok' ? 'grokモードにする' : '標準表示に戻す');
-        }
       };
       const fromUrl = normalize(new URLSearchParams(location.search).get('appearance'));
       const initial = fromUrl || read() || normalize(workspace.dataset.appearance) || 'light';
       apply(initial);
       if (fromUrl) remember(fromUrl);
-      if (toggle) {
-        toggle.addEventListener('click', () => {
-          const next = toggle.dataset.next || 'light';
-          apply(next);
-          remember(next);
-        });
-      }
     })();
     const $ = (selector, root = document) => root.querySelector(selector);
     const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];

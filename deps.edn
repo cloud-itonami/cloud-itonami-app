@@ -4,12 +4,12 @@
   ;; the Bots workspace pattern (bots.cljk + styles/bots-css + the renderer)
   ;; that #/bots is built on since 2026-09-16
   {:git/url "https://github.com/kotoba-lang/cloud-kotoba-dds.git"
-   :git/sha "cfd706b3d6cf39faec6f80a70ba9d9cd07faa02a"}
+   :git/sha "e69e78bd20471b8f11784329c8d75fabf60eaaf7"}
   ;; the browser contract the rail's rows dispatch through (data-action /
   ;; shinkansen.on) and the runtime web.cljk inlines
   io.github.kotoba-lang/shinkansen
   {:git/url "https://github.com/kotoba-lang/shinkansen.git"
-   :git/sha "2cf0841ba8463cc341eefd14bda4f3906c2840a3"}
+   :git/sha "a79c874f0b0c2ed3d26a2e19b9d7cc89ddaa1fa6"}
 
         ;; kotoba.lang.text, not clojure.string. Pinned as an explicit floor:
         ;; tools.deps takes the NEWEST sha it is shown, so without a floor here
