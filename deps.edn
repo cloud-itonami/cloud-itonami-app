@@ -4,7 +4,7 @@
   ;; the Bots workspace pattern (bots.cljk + styles/bots-css + the renderer)
   ;; that #/bots is built on since 2026-09-16
   {:git/url "https://github.com/kotoba-lang/cloud-kotoba-dds.git"
-   :git/sha "e69e78bd20471b8f11784329c8d75fabf60eaaf7"}
+   :git/sha "623ebdc7b49535a16a7a162ebc6b0c0944717ecc"}
   ;; the browser contract the rail's rows dispatch through (data-action /
   ;; shinkansen.on) and the runtime web.cljk inlines
   io.github.kotoba-lang/shinkansen

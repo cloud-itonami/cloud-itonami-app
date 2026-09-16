@@ -10023,8 +10023,10 @@
       const state = outcome === 'blocked' ? '前提待ち' : status;
       return `${state} · 次回 ${next}`;
     };
-    const botsSetStatus = (message) => {
-      $('#bots-thread-status-line').textContent = message || '';
+    // The status line is cloud-kotoba-dds.status (role=status, live). ttl 0
+    // keeps the app's previous behaviour: a message stays until replaced.
+    const botsSetStatus = (message, tone = 'info') => {
+      cloudKotobaStatus.say($('#bots-thread-status-line'), message || '', {tone, ttl: 0});
     };
     const botsGateLabels = {
       'sample-size':'24時間の標本数',
@@ -11959,21 +11961,6 @@
       } catch (error) { botsSetStatus(error.message); }
       finally { if (typeof resizeBotsInput === 'function') resizeBotsInput(); }
     };
-    const botsRailMenuIcon = (path) => {
-      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      svg.setAttribute('viewBox', '0 0 24 24');
-      svg.setAttribute('aria-hidden', 'true');
-      svg.setAttribute('class', 'bots-rail-menu__icon');
-      const el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      el.setAttribute('d', path);
-      el.setAttribute('fill', 'none');
-      el.setAttribute('stroke', 'currentColor');
-      el.setAttribute('stroke-width', '1.75');
-      el.setAttribute('stroke-linecap', 'round');
-      el.setAttribute('stroke-linejoin', 'round');
-      svg.append(el);
-      return svg;
-    };
     const botsCopyText = async (value) => {
       const text = String(value || '');
       if (navigator.clipboard?.writeText) {
@@ -11996,40 +11983,16 @@
       renderBotsRail();
       renderBotsThread();
     };
-    const closeBotsRailMenu = () => {
-      const menu = $('#bots-rail-menu');
-      if (menu) menu.hidden = true;
-    };
+    const closeBotsRailMenu = () => cloudKotobaMenu.close();
+    // The menu is cloud-kotoba-dds.menu (cloudKotobaMenu): structure, icons,
+    // placement, keyboard, close and focus return are its; the items and
+    // what they do are this app's. `item` keeps the old call shape so the
+    // list below reads as it did.
     const openBotsRailMenu = (event, bot) => {
-      closeBotsRailMenu();
-      let menu = $('#bots-rail-menu');
-      if (!menu) {
-        menu = make('ul', 'bots-rail-menu');
-        menu.id = 'bots-rail-menu';
-        menu.setAttribute('role', 'menu');
-        menu.setAttribute('aria-label', 'Botの操作');
-        document.body.append(menu);
-      }
-      const item = (label, path, action, danger = false) => {
-        const button = make('button',
-          danger ? 'bots-rail-menu__item bots-rail-menu__item--danger'
-                 : 'bots-rail-menu__item',
-          null);
-        button.type = 'button';
-        button.setAttribute('role', 'menuitem');
-        button.append(botsRailMenuIcon(path), document.createTextNode(label));
-        button.addEventListener('click', async (click) => {
-          click.stopPropagation();
-          closeBotsRailMenu();
-          try { await action(); }
-          catch (error) { botsSetStatus(error.message); }
-        });
-        const row = make('li');
-        row.append(button);
-        return row;
-      };
-      const sep = () => make('li', 'bots-rail-menu__sep');
-      menu.replaceChildren(
+      const item = (label, path, action, danger = false) =>
+        ({label, icon: path, danger, onSelect: action});
+      const sep = () => 'separator';
+      const items = [
         item('ピン留め',
           'M12 17v5 M9 10.76V7a3 3 0 1 1 6 0v3.76l1.8 8.1A2 2 0 0 1 14.84 21H9.16a2 2 0 0 1-1.96-2.14z',
           async () => {
@@ -12148,29 +12111,17 @@
             }
             botsSetStatus(`${bot.name} を削除しました。`);
           }, true)
-      );
-      const pointX = Number.isFinite(event.clientX)
-        ? event.clientX
-        : (event.currentTarget?.getBoundingClientRect().right || 8);
-      const pointY = Number.isFinite(event.clientY)
-        ? event.clientY
-        : (event.currentTarget?.getBoundingClientRect().bottom || 8);
-      menu.hidden = false;
-      const box = menu.getBoundingClientRect();
-      const left = Math.min(Math.max(8, pointX), window.innerWidth - box.width - 8);
-      const top = Math.min(Math.max(8, pointY), window.innerHeight - box.height - 8);
-      menu.style.left = `${left}px`;
-      menu.style.top = `${top}px`;
+      ];
+      const at = Number.isFinite(event.clientX)
+        ? {x: event.clientX, y: event.clientY}
+        : null;
+      cloudKotobaMenu.open({
+        label: 'Botの操作', items,
+        ...(at ? {at} : {anchor: event.currentTarget}),
+        opener: event.currentTarget,
+        onError: (error) => botsSetStatus(error.message, 'error')
+      });
     };
-    document.addEventListener('pointerdown', (event) => {
-      const menu = $('#bots-rail-menu');
-      if (!menu || menu.hidden || menu.contains(event.target)) return;
-      closeBotsRailMenu();
-    });
-    document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') closeBotsRailMenu();
-    });
-    document.addEventListener('scroll', closeBotsRailMenu, true);
     const stopBotsRealtime = () => {
       if (botsState.syncTimer) window.clearTimeout(botsState.syncTimer);
       botsState.syncTimer = null;
