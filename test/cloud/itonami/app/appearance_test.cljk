@@ -30,7 +30,7 @@
   ;; Review finding 2026-09-02: a rule for a class combination that never
   ;; occurs styles nothing, and a generic `button` rule reaches the
   ;; full-viewport backdrop, which is a <button>.
-  (is (str/includes? appearance/css ".bots-msg[data-role='person'] .bots-msg__bubble"))
+  (is (str/includes? appearance/css ".ck-bots__bubble[data-role='person']"))
   (is (not (str/includes? appearance/css ".message-row--user")))
   (is (str/includes? appearance/css "button:not(.mobile-nav-backdrop)"))
   (is (str/includes? appearance/css ".tool-button:not([disabled]):hover")))

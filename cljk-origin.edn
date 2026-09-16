@@ -145,6 +145,7 @@
   "src/cloud/itonami/app/hermes_compat.cljk" ".clj"
   "src/cloud/itonami/app/hermes_gateway.cljk" ".cljc"
   "scripts/render-ui-preview.cljk" ".cljs"
+  "scripts/verify-runtime-strings.cljk" ".cljs"
   "src/cloud/itonami/app/hermes_import_data.cljk" ".clj"
   "src/cloud/itonami/app/hermes_migration.cljk" ".clj"
   "src/cloud/itonami/app/hokusai.cljk" ".cljc"

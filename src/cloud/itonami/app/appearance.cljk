@@ -207,11 +207,12 @@
    ".workspace[data-appearance=\"8bit\"] .req-row__state[data-tone='ok']{background:var(--eightbit-leaf);color:var(--eightbit-night)}\n"
    ".workspace[data-appearance=\"8bit\"] .req-row__state[data-tone='warn']{background:var(--eightbit-orange);color:var(--eightbit-night)}\n"
    ;; chat
-   ;; Person messages are `.bots-msg[data-role='person']` (interaction.js);
+   ;; A message bubble is cloud-kotoba-dds's `.ck-bots__bubble[data-role]`
+   ;; (cloudKotobaThread.bubble, 2026-09-16); person bubbles carry the role;
    ;; the sky bubble must target that, or both sides render the same colour.
-   ".workspace[data-appearance=\"8bit\"] .bots-msg__bubble{"
+   ".workspace[data-appearance=\"8bit\"] .ck-bots__bubble{"
    "border-radius:0;border:var(--eightbit-border);box-shadow:var(--eightbit-shadow);background:var(--eightbit-white)}\n"
-   ".workspace[data-appearance=\"8bit\"] .bots-msg[data-role='person'] .bots-msg__bubble{background:var(--eightbit-sky)}\n"
+   ".workspace[data-appearance=\"8bit\"] .ck-bots__bubble[data-role='person']{background:var(--eightbit-sky)}\n"
    ".workspace[data-appearance=\"8bit\"] .composer{border-radius:0;border:var(--eightbit-border);background:var(--eightbit-white)}\n"
    ;; the floor: the Bots rail becomes the office, each Bot a sprite on grass
    ".workspace[data-appearance=\"8bit\"] .ck-bots__rail{background-color:var(--eightbit-grass);border:var(--eightbit-border);"
