@@ -40,6 +40,11 @@
     })();
     const $ = (selector, root = document) => root.querySelector(selector);
     const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+    // Strings built at runtime go through shinkansen.locale.format: the
+    // pattern is an ordinary quoted literal (so the render-time locale table
+    // translates it — a template literal never exists as one string), and
+    // the {holes} are filled here, numbers in <html lang>'s Intl format.
+    const fmt = (pattern, params) => shinkansen.locale.format(pattern, params);
     const make = (tag, className, text) => {
       const node = document.createElement(tag);
       if (className) node.className = className;
@@ -206,8 +211,12 @@
     const workspaceOverlay = $('#workspace-overlay');
     const overlayViews = new Set(['apps', 'marketplace', 'settings',
       ...workspaceOverlay.dataset.appViews.split(' ')]);
-    let overlayOrigin = null;
     const botsVisible = () => currentView === 'bots' || workspaceOverlay.open;
+    // The overlay is a DADS modal-dialog on jp-go-dds.behavior: it owns the
+    // focus trap, Escape, the backdrop click and focus return to the opener.
+    // Its close button (command=close) and Escape close the <dialog>; the
+    // `close` event is where this app learns the App view is gone.
+    const dialogs = () => globalThis.jpGoDds?.behavior;
     const accountMenu = $('#bots-account-menu');
     const accountSummary = $('#bots-account-summary');
     const accountEntry = $('#account-entry');
@@ -217,12 +226,11 @@
     accountEntry.replaceChildren(document.createTextNode('アカウント設定'));
     accountEntry.setAttribute('aria-label', 'アカウント設定');
     accountMenu.append(accountEntry, $('.workspace-switcher'));
-    $('#workspace-overlay-close').addEventListener('click', () => showView('bots'));
-    workspaceOverlay.addEventListener('cancel', event => { event.preventDefault(); showView('bots'); });
-    workspaceOverlay.addEventListener('click', event => {
-      if (event.target !== workspaceOverlay) return;
-      const rect = workspaceOverlay.getBoundingClientRect();
-      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) showView('bots');
+    workspaceOverlay.addEventListener('close', () => {
+      if (overlayViews.has(currentView)) showView('bots');
+      // the behavior layer refocused the opener if it is still there; a
+      // vanished opener leaves focus on <body>, so the rail's filter takes it
+      if (document.activeElement === document.body || document.activeElement === null) $('#bots-filter')?.focus();
     });
     const showView = (name) => {
       if (!appUnlocked && !publicViews.has(name)) name = 'signin';
@@ -231,7 +239,6 @@
       const overlay = appUnlocked && overlayViews.has(name);
       const wasOpen = workspaceOverlay.open;
       if (overlay) {
-        if (!wasOpen) overlayOrigin = document.activeElement;
         const panel = $(`.view[data-view-panel='${name}']`);
         if (panel) $('#workspace-overlay-content').append(panel);
       }
@@ -253,12 +260,9 @@
       const brand = document.querySelector('.workspace')?.dataset.brand || 'Cloud Itonami';
       document.title = `${viewTitle} | ${brand}`;
       document.body.dataset.currentView = overlay ? 'bots' : name;
-      if (overlay && !wasOpen) workspaceOverlay.showModal();
-      if (overlay && wasOpen && name !== currentView) $('#workspace-overlay-close').focus();
-      if (!overlay && wasOpen) {
-        workspaceOverlay.close();
-        if (name === 'bots') (overlayOrigin?.isConnected && !overlayOrigin.closest('dialog') ? overlayOrigin : $('#bots-filter'))?.focus();
-      }
+      if (overlay && !wasOpen) dialogs().openDialog(workspaceOverlay, document.activeElement);
+      if (overlay && wasOpen && name !== currentView) workspaceOverlay.querySelector('.dads-modal-dialog__heading')?.focus();
+      if (!overlay && wasOpen) dialogs().closeDialog(workspaceOverlay);
       $('#bots-account').open = false;
       currentView = name;
       onViewChange(name);
@@ -363,7 +367,7 @@
         const request = await fetch(`/api/session?${params}`);
         const data = await request.json();
         chatContextRefs = data['context-refs'] || [];
-        $('#chat-context-button').textContent = `参照 ${chatContextRefs.length}`;
+        $('#chat-context-button').textContent = fmt('参照 {length}', {length: chatContextRefs.length});
         thread.querySelectorAll('.message-row').forEach((node) => node.remove());
         data.messages.forEach((message) => {
           if (message.role === 'user') lastPrompt = message.content;
@@ -380,7 +384,7 @@
         empty.hidden = data.messages.length > 0;
         announce(data.messages.length ? '会話を復元しました。' : 'ローカルモデルの準備ができています。');
       } catch (error) {
-        announce(`履歴を読み込めませんでした: ${error.message}`);
+        announce(fmt('履歴を読み込めませんでした: {message}', {message: error.message}));
       }
     };
     const parseStream = async (response, assistant, promptValue) => {
@@ -404,7 +408,7 @@
             scrollToEnd();
           } else if (event.type === 'done') {
             addAssistantActions(assistant, promptValue);
-            announce(`${event.provider} / ${event.model} から応答しました。`);
+            announce(fmt('{provider} / {model} から応答しました。', {provider: event.provider, model: event.model}));
           } else if (event.type === 'error') {
             throw new Error(event.message);
           }
@@ -444,7 +448,7 @@
         assistant.text.replaceChildren();
         assistant.text.textContent = error.name === 'AbortError'
           ? '生成を停止しました。'
-          : `応答を生成できませんでした: ${error.message}`;
+          : fmt('応答を生成できませんでした: {message}', {message: error.message});
         addAction(assistant.actions, '再試行', () => {
           prompt.value = value; resizePrompt(); form.requestSubmit();
         });
@@ -482,7 +486,7 @@
     });
     modelSelect.addEventListener('change', () => {
       $('#active-model-label').textContent = `${modelSelect.dataset.provider} / ${modelSelect.value}`;
-      announce(`${modelSelect.value} を選択しました。`);
+      announce(fmt('{value} を選択しました。', {value: modelSelect.value}));
     });
     fetch('/v1/models').then((request) => request.json()).then((data) => {
       const selected = modelSelect.value;
@@ -730,7 +734,7 @@
           const textarea = $('#capture-text');
           const quote = chronicleQuote(frame);
           textarea.value = [textarea.value, quote].filter(Boolean).join(textarea.value ? '\n\n' : '');
-          $('#capture-chronicle-selection').textContent = `${frame.application || '画面'}を選択済み`;
+          $('#capture-chronicle-selection').textContent = fmt('{v1}を選択済み', {v1: frame.application || '画面'});
           $('#capture-chronicle-clear').disabled = false;
           status.textContent = 'OCR抜粋を本文へ追加し、出典として選択しました。不要なら出典を外してください。';
           textarea.focus();
@@ -810,7 +814,7 @@
         }
         $('#capture-text').value = [startingText, finalText + interim].filter(Boolean).join(startingText ? '\n' : '');
       };
-      recognition.onerror = (event) => { status.textContent = `音声文字起こしを続けられません: ${event.error}`; };
+      recognition.onerror = (event) => { status.textContent = fmt('音声文字起こしを続けられません: {error}', {error: event.error}); };
       recognition.onend = () => {
         captureRecognition = null; button.textContent = '音声を文字にする';
         button.classList.remove('capture-recording');
@@ -866,8 +870,8 @@
                 'sender-id':principal.id, 'allowed?':!principal.trusted
               }, true);
               messengerStatus(principal.trusted
-                ? `${principal.name} の今後のmessageを隔離します。`
-                : `${principal.name} をallowlistに追加しました。`);
+                ? fmt('{name} の今後のmessageを隔離します。', {name: principal.name})
+                : fmt('{name} をallowlistに追加しました。', {name: principal.name}));
               await loadMessenger();
             } catch (error) { messengerStatus(error.message); }
             finally { trust.disabled = false; }
@@ -881,8 +885,8 @@
                 const count = await window.ItonamiSignal.verifyPrincipal(principal.id,
                   async ({deviceId, fingerprint, changed}) => window.confirm(
                     `${principal.name} / ${deviceId}\n${changed ? '警告: 以前と異なる端末鍵です。\n' : ''}` +
-                    `安全番号: ${fingerprint}\n\n別経路で本人と照合しましたか？`));
-                messengerStatus(`${principal.name} の ${count} 端末を確認しました。`);
+                    fmt('安全番号: {fingerprint}\n\n別経路で本人と照合しましたか？', {fingerprint})));
+                messengerStatus(fmt('{name} の {count} 端末を確認しました。', {name: principal.name, count}));
               } catch (error) { messengerStatus(error.message); }
               finally { verify.disabled = false; }
             });
@@ -904,12 +908,12 @@
       (data.items || []).forEach((held) => {
         const item = make('li');
         item.append(make('strong', null, held.sender),
-          make('div', 'messenger-kind', `${formatDate(held['created-at'])} · 本文非表示`),
+          make('div', 'messenger-kind', fmt('{v1} · 本文非表示', {v1: formatDate(held['created-at'])})),
           make('div', 'messenger-kind', held['content-digest']));
         list.append(item);
       });
       if (!(data.items || []).length) list.append(make('li', 'empty-state', '隔離messageはありません。'));
-      $('#messenger-quarantine-count').textContent = `${data.count || 0} 件 · agent contextへ未投入`;
+      $('#messenger-quarantine-count').textContent = fmt('{v1} 件 · agent contextへ未投入', {v1: data.count || 0});
     };
     const loadMessengerMessages = async () => {
       const list = $('#messenger-messages');
@@ -941,7 +945,7 @@
                 sealed:message.sealed, sender:message['sender-id'], conversationId:selectedMessengerConversation,
                 conversation:messengerData.conversations.find((item) => item.id === selectedMessengerConversation)
               });
-            } catch (error) { body.textContent = `復号保留: ${error.message}`; }
+            } catch (error) { body.textContent = fmt('復号保留: {message}', {message: error.message}); }
           }
           const encryption = message.encryption || {};
           const security = make('span', 'messenger-message__security',
@@ -1142,7 +1146,7 @@
         if (!label) return;
         field.value = '';
         inboxAction(messagePath(item.id, 'label'), {label, 'on?':true},
-          `${label} を付けました。`);
+          fmt('{label} を付けました。', {label}));
       });
       filing.append(field, file);
       box.append(filing);
@@ -1152,9 +1156,9 @@
         others.forEach((label) => {
           const chip = make('button', 'tool-button', `${label} ✕`);
           chip.type = 'button';
-          chip.setAttribute('aria-label', `${label} を外す`);
+          chip.setAttribute('aria-label', fmt('{label} を外す', {label}));
           chip.addEventListener('click', () => inboxAction(messagePath(item.id, 'label'),
-            {label, 'on?':false}, `${label} を外しました。`));
+            {label, 'on?':false}, fmt('{label} を外しました。', {label})));
           chips.append(chip);
         });
         box.append(chips);
@@ -1170,7 +1174,7 @@
             const rest = (data.items || []).filter((m) => m.id !== item.id);
             if (!rest.length) return;
             conversation.append(make('p', 'record-detail__eyebrow',
-              `このやり取り（${rest.length + 1} 通）`));
+              fmt('このやり取り（{v1} 通）', {v1: rest.length + 1})));
             rest.forEach((m) => {
               const line = make('button', 'tool-button', `${m.from || m['from-email']}: ${m.subject}`);
               line.type = 'button';
@@ -1206,7 +1210,7 @@
           places.append(chip(label === 'inbox' ? null : label, label, current === label));
         });
         const unread = make('button', 'tool-button',
-          `未読だけ${data.unread ? `（${data.unread}）` : ''}`);
+          fmt('未読だけ{v1}', {v1: data.unread ? fmt('（{unread}）', {unread: data.unread}) : ''}));
         unread.type = 'button';
         unread.setAttribute('aria-pressed', inboxUnreadOnly ? 'true' : 'false');
         unread.addEventListener('click', () => {
@@ -1232,9 +1236,9 @@
       }
       else $('#inbox-detail').replaceChildren(make('div', 'empty-state', 'メールを選択してください。'));
       if (!$('#mail-compose-account')?.options.length) composeAccounts();
-      $('#inbox-visible-count').textContent = `${items.length} 件を表示`;
+      $('#inbox-visible-count').textContent = fmt('{length} 件を表示', {length: items.length});
       setAppBadge('inbox-count', data.count);
-      $('#inbox-source').textContent = `${data.source} · ${data.count} 件`;
+      $('#inbox-source').textContent = fmt('{source} · {count} 件', {source: data.source, count: data.count});
     };
 
     const mailKindNames = {gmail:'Gmail', microsoft:'Microsoft 365', imap:'IMAP', pop3:'POP3'};
@@ -1256,7 +1260,7 @@
         select.replaceChildren();
         accounts.forEach((account) => {
           const option = make('option', null,
-            `${account.address || account.id}（${mailKindNames[account.kind] || account.kind}）`);
+            fmt('{v1}（{v2}）', {v1: account.address || account.id, v2: mailKindNames[account.kind] || account.kind}));
           option.value = account.id;
           select.append(option);
         });
@@ -1312,7 +1316,7 @@
         // thing to say rather than an error.
         const copy = result['sent-copy'];
         status.textContent = copy && copy['appended?'] === false
-          ? `送信しました（送信済みフォルダへの保存は失敗: ${copy.error || copy.reason}）`
+          ? fmt('送信しました（送信済みフォルダへの保存は失敗: {v1}）', {v1: copy.error || copy.reason})
           : '送信しました。';
         $('#mail-compose-form').reset();
         $('#mail-compose-in-reply-to').value = '';
@@ -1368,11 +1372,11 @@
       nav.append(crumb);
       if (folderData.owner && folderData.owner !== folderData.you) {
         nav.append(make('span', 'surface-note',
-          `${folderData.owner} のドライブです。ここで作成したものはその人のドライブに入ります。`));
+          fmt('{owner} のドライブです。ここで作成したものはその人のドライブに入ります。', {owner: folderData.owner})));
       }
       const openable = (folder, shared) => {
         const button = make('button', 'tool-button drive-folder',
-          `${shared ? '共有 · ' : ''}${folder.name}（${folder.count}）`);
+          fmt('{v1}{name}（{count}）', {v1: shared ? '共有 · ' : '', name: folder.name, count: folder.count}));
         button.type = 'button';
         button.addEventListener('click', () => goToFolder(folder.id));
         return button;
@@ -1419,10 +1423,10 @@
       // Nothing this Drive can read: there is no question to ask.
       if (!kind) { uploadFile(); return; }
       const status = $('#drive-create-status');
-      status.textContent = `${file.name} は${kind}として読み込めます。`;
+      status.textContent = fmt('{name} は{kind}として読み込めます。', {name: file.name, kind});
       const choice = $('#drive-import-choice');
       if (!choice) { uploadFile(); return; }
-      const asDocument = make('button', 'tool-button', `${kind}として読み込む`);
+      const asDocument = make('button', 'tool-button', fmt('{kind}として読み込む', {kind}));
       asDocument.type = 'button';
       asDocument.addEventListener('click', () => importFile(format));
       const asFile = make('button', 'tool-button', 'ファイルのまま保存');
@@ -1436,7 +1440,7 @@
       const file = input?.files?.[0];
       if (!file) return;
       const status = $('#drive-create-status');
-      status.textContent = `${file.name} を読み込んでいます…`;
+      status.textContent = fmt('{name} を読み込んでいます…', {name: file.name});
       try {
         // The name without its extension: the extension said what the bytes
         // were, and a workbook called 売上.xlsx is a workbook called 売上.
@@ -1452,7 +1456,7 @@
           body:await file.arrayBuffer()});
         const data = await response.json();
         if (!response.ok) throw new Error(data?.error?.message || '読み込めませんでした。');
-        status.textContent = `${data.item.name} を読み込みました。`;
+        status.textContent = fmt('{name} を読み込みました。', {name: data.item.name});
         input.value = '';
         clearImportChoice();
         await loadFolders();
@@ -1466,7 +1470,7 @@
       const file = input?.files?.[0];
       if (!file) return;
       const status = $('#drive-create-status');
-      status.textContent = `${file.name} をアップロードしています…`;
+      status.textContent = fmt('{name} をアップロードしています…', {name: file.name});
       try {
         // The body is the file and the name is in the query — the same
         // shape import uses, and no multipart parser for a boundary string.
@@ -1483,7 +1487,7 @@
           body:await file.arrayBuffer()});
         const data = await response.json();
         if (!response.ok) throw new Error(data?.error?.message || 'アップロードできませんでした。');
-        status.textContent = `${data.item.name} をアップロードしました。`;
+        status.textContent = fmt('{name} をアップロードしました。', {name: data.item.name});
         input.value = '';
         clearImportChoice();
         await loadFolders();
@@ -1499,7 +1503,7 @@
       try {
         const made = await postJSON('/api/workspace/drive/folders',
           {title:name || '無題のフォルダ', folder:driveFolder}, true);
-        status.textContent = `${made.item.name} を作成しました。`;
+        status.textContent = fmt('{name} を作成しました。', {name: made.item.name});
         // Cleared, or the next folder silently gets the same name.
         if ($('#drive-folder-name')) $('#drive-folder-name').value = '';
         await loadFolders();
@@ -1591,7 +1595,7 @@
             : 'この Drive で作成した Kotoba ドキュメントです。',
           [['種類', selectedDrive['resource-kind']],
            ['権限', selectedDrive['own?'] ? '所有者'
-             : `${selectedDrive.role || '—'}（${selectedDrive.owner || '不明'} から共有）`],
+             : fmt('{v1}（{v2} から共有）', {v1: selectedDrive.role || '—', v2: selectedDrive.owner || '不明'})],
            ['形式', selectedDrive['media-type']],
            ['保存時暗号', selectedDrive['encrypted?'] ? 'client-side encrypted' : '旧形式 / 未移行'],
            ['同期', selectedDrive['sync-schedule'] || 'continuous'],
@@ -1625,9 +1629,9 @@
       renderDriveTrash(data.trash || []);
       const quota = data.quota;
       $('#drive-quota').textContent = quota
-        ? `${bytes(quota['used-bytes'])} / ${bytes(quota['quota-bytes'])} を使用`
+        ? fmt('{v1} / {v2} を使用', {v1: bytes(quota['used-bytes']), v2: bytes(quota['quota-bytes'])})
         : '';
-      $('#drive-visible-count').textContent = `${items.length} 件を表示`;
+      $('#drive-visible-count').textContent = fmt('{length} 件を表示', {length: items.length});
       setAppBadge('drive-count', data.count || data.items.length);
       $('#drive-source').textContent = data.source;
     };
@@ -1638,21 +1642,21 @@
       const section = $('#drive-trash'); if (!section) return;
       section.hidden = !trash.length;
       const list = $('#drive-trash-list'); list.replaceChildren();
-      $('#drive-trash-count').textContent = `${trash.length} 件`;
+      $('#drive-trash-count').textContent = fmt('{length} 件', {length: trash.length});
       trash.forEach((item) => {
         const row = make('li', 'trash-row');
-        row.append(make('span', 'trash-row__name', `${item.name}（${item.label}）`),
+        row.append(make('span', 'trash-row__name', fmt('{name}（{label}）', {name: item.name, label: item.label})),
           make('span', 'trash-row__size', bytes(item['held-bytes'])));
         const restore = make('button', 'tool-button', '復元');
         restore.type = 'button';
         restore.addEventListener('click', () => driveAction(
           `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/restore`, {},
-          `${item.name} を復元しました。`));
+          fmt('{name} を復元しました。', {name: item.name})));
         const purge = make('button', 'tool-button', '完全に削除');
         purge.type = 'button';
         purge.addEventListener('click', () => driveAction(
           `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/purge`, {},
-          `${item.name} を削除しました。`));
+          fmt('{name} を削除しました。', {name: item.name})));
         row.append(restore, purge);
         list.append(row);
       });
@@ -1663,7 +1667,7 @@
       try {
         const result = await postJSON(path, body, true);
         status.textContent = result['freed-bytes']
-          ? `${done}（${bytes(result['freed-bytes'])} を回収）`
+          ? fmt('{done}（{v1} を回収）', {done, v1: bytes(result['freed-bytes'])})
           : done;
         await loadWorkspace('drive', renderDrive);
       } catch (error) {
@@ -1679,7 +1683,7 @@
       if (bar.dataset.rendered === String(kinds.length) && kinds.length) return;
       bar.replaceChildren();
       kinds.forEach((kind) => {
-        const button = make('button', 'tool-button', `${kind.label}を作成`);
+        const button = make('button', 'tool-button', fmt('{label}を作成', {label: kind.label}));
         button.type = 'button';
         button.addEventListener('click', () => createDocument(kind));
         bar.append(button);
@@ -1688,11 +1692,11 @@
     };
     const createDocument = async (kind) => {
       const status = $('#drive-create-status');
-      status.textContent = `${kind.label}を作成しています…`;
+      status.textContent = fmt('{label}を作成しています…', {label: kind.label});
       try {
         const created = await postJSON('/api/workspace/drive/documents',
           {kind:kind.kind, folder:driveFolder}, true);
-        status.textContent = `${created.item.name} を作成しました。`;
+        status.textContent = fmt('{name} を作成しました。', {name: created.item.name});
         selectedDrive = created.item;
         await loadWorkspace('drive', renderDrive);
       } catch (error) {
@@ -1846,12 +1850,12 @@
           // Labelled by name, valued by id — nobody navigates by uuid.
           Array.from(picker.options).forEach((option) => {
             const hit = targets.find((t) => t.id === option.value);
-            option.textContent = hit ? `${hit.name}（${hit.label}）` : '選択してください';
+            option.textContent = hit ? fmt('{name}（{label}）', {name: hit.name, label: hit.label}) : '選択してください';
           });
           row.append(field('参照先', picker));
           const hit = targets.find((t) => t.id === block['docs/target']);
           row.append(make('span', 'surface-note',
-            hit ? `→ ${hit.name}` : `→ ${block['docs/target'] || '未設定'}（解決できません）`));
+            hit ? `→ ${hit.name}` : fmt('→ {v1}（解決できません）', {v1: block['docs/target'] || '未設定'})));
           row.append(field('ID を直接指定', textInput(block['docs/target'],
             (value) => { block['docs/target'] = value; changed(false); })));
         } else if ('docs/text' in block || block['docs/kind'] === 'heading'
@@ -1964,7 +1968,7 @@
                   .join('・');
                 const chip = make('button', 'tool-button', `${names}: ${covered} ✕`);
                 chip.type = 'button';
-                chip.setAttribute('aria-label', `${covered} の${names}を外す`);
+                chip.setAttribute('aria-label', fmt('{covered} の{names}を外す', {covered, names}));
                 chip.addEventListener('click', () => {
                   block['docs/text-runs'].splice(runIndex, 1);
                   changed(true);
@@ -1977,7 +1981,7 @@
         } else if (block['docs/kind'] === 'image') {
           const stored = String(block['docs/image-data'] || '').length;
           row.append(make('span', 'surface-note',
-            `画像（${block['docs/media-type'] || '形式不明'}）${stored ? ` · ${bytes(Math.floor(stored * 3 / 4))}` : ' · データなし'}`));
+            fmt('画像（{v1}）{v2}', {v1: block['docs/media-type'] || '形式不明', v2: stored ? ` · ${bytes(Math.floor(stored * 3 / 4))}` : ' · データなし'})));
           // The alternative text, which the validator asks for: a document
           // read aloud has a hole where a picture with none is.
           row.append(field('説明文', textInput(block['docs/alt'],
@@ -2040,7 +2044,7 @@
               const input = make('input', 'surface-cell');
               input.type = 'text';
               input.value = cells[c] ?? '';
-              input.setAttribute('aria-label', `${r + 1}行${c + 1}列`);
+              input.setAttribute('aria-label', fmt('{v1}行{v2}列', {v1: r + 1, v2: c + 1}));
               input.addEventListener('change', () => {
                 while (block['docs/rows'][r].length < width) block['docs/rows'][r].push('');
                 block['docs/rows'][r][c] = input.value;
@@ -2113,13 +2117,13 @@
         const note = $('#drive-create-status');
         if (!picker.accept.split(',').includes(file.type)) {
           if (note) {
-            note.textContent = `${file.type || 'この形式'} は貼れません。PNG・JPEG・GIF・WebP のいずれかにしてください。`;
+            note.textContent = fmt('{v1} は貼れません。PNG・JPEG・GIF・WebP のいずれかにしてください。', {v1: file.type || 'この形式'});
           }
           return;
         }
         const limit = 2 * 1024 * 1024;
         if (file.size > limit) {
-          if (note) note.textContent = `画像は 2 MB までです（${bytes(file.size)}）。`;
+          if (note) note.textContent = fmt('画像は 2 MB までです（{v1}）。', {v1: bytes(file.size)});
           return;
         }
         try {
@@ -2139,7 +2143,7 @@
             // becomes one, and the validator asks for it.
             'docs/alt': file.name.replace(/\.[^.]*$/, '')
           });
-          if (note) note.textContent = `${file.name} を貼りました。説明文を入れてください。`;
+          if (note) note.textContent = fmt('{name} を貼りました。説明文を入れてください。', {name: file.name});
           changed(true);
         } catch (error) {
           if (note) note.textContent = error.message;
@@ -2174,7 +2178,7 @@
         let n = Object.keys(payload['sheets/tabs']).length + 1;
         while (payload['sheets/tabs'][`sheet${n}`]) n += 1;
         const id = `sheet${n}`;
-        payload['sheets/tabs'][id] = {'sheets/id':id, 'sheets/title':`シート${n}`,
+        payload['sheets/tabs'][id] = {'sheets/id':id, 'sheets/title':fmt('シート{n}', {n}),
                                       'sheets/cells':{}};
         driveEditor.tab = id;
         changed(true);
@@ -2237,7 +2241,7 @@
           const input = make('input', 'surface-cell');
           input.type = 'text';
           input.value = shown;
-          input.setAttribute('aria-label', `${row}行${col}列`);
+          input.setAttribute('aria-label', fmt('{row}行{col}列', {row, col}));
           if (formula !== undefined) {
             input.classList.add('surface-cell--computed');
             input.title = `=${formula}`;
@@ -2314,7 +2318,7 @@
       } else {
         const style = styleOf();
         styleBar.append(make('span', 'surface-note',
-          `${columnName(at[1])}${at[0]} の書式`));
+          fmt('{v1}{v2} の書式', {v1: columnName(at[1]), v2: at[0]})));
         [['太字', 'bold'], ['斜体', 'italic'], ['下線', 'underline']].forEach(([label, key]) => {
           const button = make('button', 'tool-button', label);
           button.type = 'button';
@@ -2429,7 +2433,7 @@
         const ids = new Set(payload['sheets/charts'].map((c) => c['sheets/id']));
         while (ids.has(`chart${n}`)) n += 1;
         payload['sheets/charts'].push({'sheets/id':`chart${n}`,
-                                       'sheets/title':`グラフ${n}`,
+                                       'sheets/title':fmt('グラフ{n}', {n}),
                                        'sheets/tab':tab['sheets/title'] || current,
                                        'sheets/chart-type':'bar',
                                        'sheets/data-range':'A1:B3'});
@@ -2481,7 +2485,7 @@
             input.type = 'number';
             input.step = '0.1';
             input.value = shape[`slides/${key}`] ?? '';
-            input.setAttribute('aria-label', `${shape['slides/id']} の${label}`);
+            input.setAttribute('aria-label', fmt('{v1} の{label}', {v1: shape['slides/id'], label}));
             input.addEventListener('change', () => {
               const n = Number(input.value);
               // A blank or unparseable box is left alone rather than
@@ -2507,7 +2511,7 @@
             url.type = 'url';
             url.value = shape['slides/hyperlink'] ?? '';
             url.placeholder = 'リンク先（https://…）';
-            url.setAttribute('aria-label', `${shape['slides/id']} のリンク先`);
+            url.setAttribute('aria-label', fmt('{v1} のリンク先', {v1: shape['slides/id']}));
             url.addEventListener('change', () => {
               const value = url.value.trim();
               if (!value) { delete shape['slides/hyperlink']; changed(true); return; }
@@ -2530,7 +2534,7 @@
             return row;
           };
           if (kind === 'text') {
-            card.append(field(`テキスト（${shape['slides/id']}）`,
+            card.append(field(fmt('テキスト（{v1}）', {v1: shape['slides/id']}),
               textInput(shape['slides/text'],
                 (value) => { shape['slides/text'] = value; changed(false); },
                 'surface-input--wide')));
@@ -2596,7 +2600,7 @@
             card.append(box(shape));
             card.append(field('リンク', shapeLink()));
           } else if (kind === 'rect') {
-            card.append(make('span', 'surface-note', `図形（${shape['slides/id']}）`));
+            card.append(make('span', 'surface-note', fmt('図形（{v1}）', {v1: shape['slides/id']})));
             card.append(field('塗り', textInput(shape['slides/fill'],
               (value) => { shape['slides/fill'] = value; changed(true); })));
             card.append(box(shape));
@@ -2615,7 +2619,7 @@
                 const input = make('input', 'surface-cell');
                 input.type = 'text';
                 input.value = (cells || [])[c] ?? '';
-                input.setAttribute('aria-label', `${r + 1}行${c + 1}列`);
+                input.setAttribute('aria-label', fmt('{v1}行{v2}列', {v1: r + 1, v2: c + 1}));
                 input.addEventListener('change', () => {
                   // Filled out to the width on the way in, so a row nobody
                   // has touched stays short and one somebody typed into is
@@ -2656,7 +2660,7 @@
             });
             tableRow.append(addRow, addCol);
             tableBox.append(tableRow);
-            card.append(make('span', 'surface-note', `表（${shape['slides/id']}）`),
+            card.append(make('span', 'surface-note', fmt('表（{v1}）', {v1: shape['slides/id']})),
                         tableBox, box(shape), field('リンク', shapeLink()));
           } else if (kind === 'image') {
             // The size, because a picture is the one shape that makes a
@@ -2664,7 +2668,7 @@
             // four characters per three bytes.
             const stored = String(shape['slides/image-data'] || '').length;
             card.append(make('span', 'surface-note',
-              `画像（${shape['slides/id']}）${stored ? ` · ${bytes(Math.floor(stored * 3 / 4))}` : ''}`));
+              fmt('画像（{v1}）{v2}', {v1: shape['slides/id'], v2: stored ? ` · ${bytes(Math.floor(stored * 3 / 4))}` : ''})));
             card.append(box(shape), field('リンク', shapeLink()));
             card.append(removeButton(() => {
               const shapes = slide['slides/shapes'];
@@ -2676,7 +2680,7 @@
             // position could be edited, and moving a shape nobody can see
             // is worse than handing it over.
             card.append(make('span', 'surface-note',
-              `${kind || '?'}（${shape['slides/id']}）は JSON で編集してください。`));
+              fmt('{v1}（{v2}）は JSON で編集してください。', {v1: kind || '?', v2: shape['slides/id']})));
           }
         });
         // Speaker notes. `slides.pptx` has written them as a real
@@ -2687,7 +2691,7 @@
         const notes = make('textarea', 'form-control form-control--area');
         notes.value = slide['slides/notes'] ?? '';
         notes.placeholder = '発表者ノート（スライドには映りません）';
-        notes.setAttribute('aria-label', `${slide['slides/id']} の発表者ノート`);
+        notes.setAttribute('aria-label', fmt('{v1} の発表者ノート', {v1: slide['slides/id']}));
         notes.addEventListener('change', () => {
           const text = notes.value;
           // Absent rather than empty: `slides.pptx` writes a notesSlide
@@ -2738,7 +2742,7 @@
           // know is written as `.png` and PowerPoint opens a file whose
           // bytes are not what its name says.
           if (!imagePicker.accept.split(',').includes(file.type)) {
-            if (note) note.textContent = `${file.type || 'この形式'} は貼れません。PNG・JPEG・GIF・WebP のいずれかにしてください。`;
+            if (note) note.textContent = fmt('{v1} は貼れません。PNG・JPEG・GIF・WebP のいずれかにしてください。', {v1: file.type || 'この形式'});
             return;
           }
           // Every save rewrites the whole deck, so a large picture is a
@@ -2747,7 +2751,7 @@
           // different bytes from the ones that were chosen.
           const limit = 2 * 1024 * 1024;
           if (file.size > limit) {
-            if (note) note.textContent = `画像は 2 MB までです（${bytes(file.size)}）。`;
+            if (note) note.textContent = fmt('画像は 2 MB までです（{v1}）。', {v1: bytes(file.size)});
             return;
           }
           try {
@@ -2789,7 +2793,7 @@
               'slides/image-data': data,
               'slides/media-type': file.type
             });
-            if (note) note.textContent = `${file.name} を貼りました。`;
+            if (note) note.textContent = fmt('{name} を貼りました。', {name: file.name});
             changed(true);
           } catch (error) {
             if (note) note.textContent = error.message;
@@ -2842,7 +2846,7 @@
         payload['slides/slides'] = payload['slides/slides'] || [];
         const n = payload['slides/slides'].length + 1;
         payload['slides/slides'].push({
-          'slides/id': `slide${n}`, 'slides/title': `スライド ${n}`, 'slides/shapes': []
+          'slides/id': `slide${n}`, 'slides/title': fmt('スライド {n}', {n}), 'slides/shapes': []
         });
         changed(true);
       });
@@ -3002,7 +3006,7 @@
           const wrap = make('p');
           wrap.append(make('span', `doc-ref${hit ? '' : ' doc-ref--dangling'}`,
             hit ? `${hit.label}: ${hit.name}`
-                : `${kind} → ${target || '未設定'}（解決できません）`));
+                : fmt('{kind} → {v1}（解決できません）', {kind, v1: target || '未設定'})));
           page.append(wrap);
         } else {
           const para = make('p');
@@ -3020,7 +3024,7 @@
       const comments = (payload['docs/comments'] || []).filter((c) => c && typeof c === 'object');
       if (comments.length) {
         const aside = make('div', 'doc-aside');
-        aside.append(make('h2', null, `コメント ${comments.length} 件`));
+        aside.append(make('h2', null, fmt('コメント {length} 件', {length: comments.length})));
         comments.forEach((comment) => aside.append(make('p', null,
           `${comment['docs/author'] || '不明'}: ${comment['docs/text'] ?? ''}`)));
         page.append(aside);
@@ -3222,8 +3226,8 @@
         // frame says what is there and the .pptx export carries the bytes.
         return make('div', 'deck-shape deck-shape--placeholder',
           kind === 'image'
-            ? `画像（${shape['slides/id'] ?? ''}）· pptx に出力されます`
-            : `${kind || '?'}（${shape['slides/id'] ?? ''}）`);
+            ? fmt('画像（{v1}）· pptx に出力されます', {v1: shape['slides/id'] ?? ''})
+            : fmt('{v1}（{v2}）', {v1: kind || '?', v2: shape['slides/id'] ?? ''}));
       })();
       node.style.left = `${(inches(shape['slides/x']) / deckWidthIn) * 100}%`;
       node.style.top = `${(inches(shape['slides/y']) / deckHeightIn) * 100}%`;
@@ -3252,14 +3256,14 @@
       const shown = slides[index];
       stage.append(deckSlide(shown, 'deck-canvas'));
       stage.append(make('p', 'deck-caption',
-        `${index + 1} / ${slides.length}・${shown['slides/title'] || shown['slides/id'] || ''}`));
+        fmt('{v1} / {length}・{v2}', {v1: index + 1, length: slides.length, v2: shown['slides/title'] || shown['slides/id'] || ''})));
       const film = make('div', 'deck-film');
       slides.forEach((slide, n) => {
         const thumb = make('button', 'deck-thumb');
         thumb.type = 'button';
         thumb.setAttribute('aria-pressed', n === index ? 'true' : 'false');
         thumb.setAttribute('aria-label',
-          `スライド ${n + 1}: ${slide['slides/title'] || slide['slides/id'] || ''}`);
+          fmt('スライド {v1}: {v2}', {v1: n + 1, v2: slide['slides/title'] || slide['slides/id'] || ''}));
         thumb.append(deckSlide(slide, 'deck-thumb__frame'),
           make('span', 'deck-thumb__label',
             `${n + 1}. ${slide['slides/title'] || slide['slides/id'] || ''}`));
@@ -3394,7 +3398,7 @@
         restore.type = 'button';
         restore.addEventListener('click', () => driveAction(
           `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/restore`, {},
-          `${item.name} を復元しました。`));
+          fmt('{name} を復元しました。', {name: item.name})));
         row.append(restore);
         actions.append(row, status);
         return actions;
@@ -3449,7 +3453,7 @@
       titleField.setAttribute('aria-label', '名前');
       const editor = make('textarea', 'document-preview');
       editor.spellcheck = false;
-      editor.setAttribute('aria-label', `${item.name} の内容（JSON）`);
+      editor.setAttribute('aria-label', fmt('{name} の内容（JSON）', {name: item.name}));
       // Every keystroke, so the text survives the next render rather than
       // only the next save.
       editor.addEventListener('input', () => { driveEditor.text = editor.value; });
@@ -3511,7 +3515,7 @@
           driveEditor.payload = JSON.parse(driveEditor.text);
           return true;
         } catch (error) {
-          status.textContent = `JSON として読めないので切り替えられません: ${error.message}`;
+          status.textContent = fmt('JSON として読めないので切り替えられません: {message}', {message: error.message});
           return false;
         }
       };
@@ -3555,7 +3559,7 @@
       // that fills up and says so.
       if (item.role === 'owner' && (item.versions || 0) > 1) {
         const prune = make('button', 'tool-button',
-          `古い版を削除（最新 ${item.versions > 10 ? 10 : 1} 件を残す・${bytes(item['held-bytes'])} 使用中）`);
+          fmt('古い版を削除（最新 {v1} 件を残す・{v2} 使用中）', {v1: item.versions > 10 ? 10 : 1, v2: bytes(item['held-bytes'])}));
         prune.type = 'button';
         prune.addEventListener('click', async () => {
           prune.disabled = true; status.textContent = '古い版を削除しています…';
@@ -3566,7 +3570,7 @@
             selectedDrive = out.item;
             await loadWorkspace('drive', renderDrive);
             $('#drive-create-status').textContent =
-              `${out.deleted} 件の版を削除し、${bytes(out['freed-bytes'])} を回収しました。`;
+              fmt('{deleted} 件の版を削除し、{v1} を回収しました。', {deleted: out.deleted, v1: bytes(out['freed-bytes'])});
           } catch (error) {
             status.textContent = error.message;
           } finally {
@@ -3581,16 +3585,16 @@
         // change you are about to open.
         const wrote = (item.history || [])[n - 1];
         const current = n === (item.versions || 0);
-        const label = [`版 ${n}`, wrote?.author,
+        const label = [fmt('版 {n}', {n}), wrote?.author,
                        wrote ? bytesDelta(wrote['delta-bytes'] ?? 0) : null,
                        current ? '（現在）' : null].filter(Boolean).join('・');
         const version = make('button', 'tool-button', label);
         version.type = 'button';
         if (!current && item['writable?']) {
-          const restore = make('button', 'tool-button', `版 ${n} に戻す`);
+          const restore = make('button', 'tool-button', fmt('版 {n} に戻す', {n}));
           restore.type = 'button';
           restore.addEventListener('click', async () => {
-            restore.disabled = true; status.textContent = `版 ${n} に戻しています…`;
+            restore.disabled = true; status.textContent = fmt('版 {n} に戻しています…', {n});
             try {
               const out = await postJSON(
                 `/api/workspace/drive/documents/${encodeURIComponent(item.id)}`
@@ -3601,7 +3605,7 @@
               selectedDrive = out.item;
               await loadWorkspace('drive', renderDrive);
               $('#drive-create-status').textContent =
-                `版 ${out['restored-from']} の内容を版 ${out.item.versions} として保存しました。`;
+                fmt('版 {restoredFrom} の内容を版 {versions} として保存しました。', {restoredFrom: out['restored-from'], versions: out.item.versions});
             } catch (error) {
               status.textContent = error.message;
             } finally {
@@ -3611,7 +3615,7 @@
           versions.append(restore);
         }
         version.addEventListener('click', async () => {
-          status.textContent = `版 ${n} を読み込んでいます…`;
+          status.textContent = fmt('版 {n} を読み込んでいます…', {n});
           try {
             const request = await fetch(
               `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/versions/${n}`);
@@ -3632,7 +3636,7 @@
             // Loaded into the editor rather than restored behind the user's
             // back: saving it is what makes it current, and that is a new
             // version like any other.
-            status.textContent = `版 ${n}（${data['created-at'] || '日時不明'}）を表示中。`
+            status.textContent = fmt('版 {n}（{v1}）を表示中。', {n, v1: data['created-at'] || '日時不明'})
               + '保存すると新しい版になります。';
           } catch (error) {
             status.textContent = error.message;
@@ -3678,7 +3682,7 @@
           } catch (error) {
             // Refused here rather than sent: a body that is not JSON is not a
             // document the server can say anything useful about.
-            status.textContent = `JSON として読めません: ${error.message}`;
+            status.textContent = fmt('JSON として読めません: {message}', {message: error.message});
             return;
           }
         } else {
@@ -3695,8 +3699,8 @@
           selectedDrive = saved.item;
           await loadWorkspace('drive', renderDrive);
           $('#drive-create-status').textContent = warnings
-            ? `保存しました（版 ${saved.item.versions}）。注意: ${warnings}`
-            : `保存しました（版 ${saved.item.versions}）。`;
+            ? fmt('保存しました（版 {versions}）。注意: {warnings}', {versions: saved.item.versions, warnings})
+            : fmt('保存しました（版 {versions}）。', {versions: saved.item.versions});
         } catch (error) {
           // A refused save keeps the editor open with the text intact. The
           // work is not lost and not applied; the person decides.
@@ -3734,7 +3738,7 @@
       trash.addEventListener('click', () => {
         driveEditor = closedEditor(null);
         driveAction(`/api/workspace/drive/documents/${encodeURIComponent(item.id)}/trash`, {},
-          `${item.name} をゴミ箱へ移動しました。`);
+          fmt('{name} をゴミ箱へ移動しました。', {name: item.name}));
       });
       // A viewer or commenter gets the document and not the verbs. The
       // server refuses them anyway — `writable?` is `can-write?`'s answer,
@@ -3751,7 +3755,7 @@
       copy.type = 'button';
       copy.addEventListener('click', () => driveAction(
         `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/copy`,
-        {folder:driveFolder}, `${item.name} のコピーを作成しました。`));
+        {folder:driveFolder}, fmt('{name} のコピーを作成しました。', {name: item.name})));
       row.append(copy);
       if (item.role === 'owner') {
         // Owner only, because moving into a shared folder shares what was
@@ -3767,7 +3771,7 @@
               await postJSON(
                 `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/move`,
                 {folder:value}, true);
-              status.textContent = `${item.name} を移動しました。`;
+              status.textContent = fmt('{name} を移動しました。', {name: item.name});
               await loadFolders();
               await loadWorkspace('drive', renderDrive);
             } catch (error) { status.textContent = error.message; }
@@ -3847,7 +3851,7 @@
         .filter((format) => item.role === 'owner' || !ownerOnly.includes(format))
         .forEach((format) => {
         const label = ownerOnly.includes(format)
-          ? `回答を ${format.toUpperCase()} で書き出す` : `${format.toUpperCase()} で書き出す`;
+          ? fmt('回答を {v1} で書き出す', {v1: format.toUpperCase()}) : fmt('{v1} で書き出す', {v1: format.toUpperCase()});
         const link = make('a', 'tool-button', label);
         link.href = `/api/workspace/drive/documents/${encodeURIComponent(item.id)}`
           + `/export?format=${encodeURIComponent(format)}`;
@@ -3876,7 +3880,7 @@
         });
         exportNotes.append(
           make('p', 'surface-note',
-               `この文書を ${format.toUpperCase()} で書き出すと失われるもの:`),
+               fmt('この文書を {v1} で書き出すと失われるもの:', {v1: format.toUpperCase()})),
           list);
       });
       // Sorting a range. In this panel rather than beside the grid because
@@ -4006,7 +4010,7 @@
         snapshot.type = 'button';
         snapshot.addEventListener('click', () => driveAction(
           `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/responses-sheet`,
-          {}, `${item.name} の回答をスプレッドシートにしました。`));
+          {}, fmt('{name} の回答をスプレッドシートにしました。', {name: item.name})));
         exports.append(snapshot);
         // Said on the screen rather than left to be discovered: it is the
         // answers as of now, and asking again makes a second one.
@@ -4054,16 +4058,16 @@
           panel.append(make('h3', 'sharing__title', '参照'));
           refs.forEach((ref) => {
             const row = make('li', 'sharing__entry');
-            row.append(make('span', 'sharing__who', `${ref.kind}（${ref.block}）→`));
+            row.append(make('span', 'sharing__who', fmt('{kind}（{block}）→', {kind: ref.kind, block: ref.block})));
             if (ref['resolved?']) {
               row.append(jump(ref.target, ref.name));
               if (ref['expected?'] === false) {
                 row.append(make('span', 'surface-note',
-                  `${ref.label} は ${ref.kind} の想定と異なります`));
+                  fmt('{label} は {kind} の想定と異なります', {label: ref.label, kind: ref.kind})));
               }
             } else {
               row.append(make('span', 'surface-note',
-                `${ref.target || '未設定'} は見つかりません`));
+                fmt('{v1} は見つかりません', {v1: ref.target || '未設定'})));
             }
             out.append(row);
           });
@@ -4073,7 +4077,7 @@
             incoming.forEach((from) => {
               const row = make('li', 'sharing__entry');
               row.append(jump(from.id, from.name),
-                make('span', 'sharing__who', `${from.kind}（${from.block}）`));
+                make('span', 'sharing__who', fmt('{kind}（{block}）', {kind: from.kind, block: from.block})));
               back.append(row);
             });
             panel.append(back);
@@ -4115,7 +4119,7 @@
           list.replaceChildren();
           (data.suggestions || []).forEach((s) => {
             const row = make('li', 'sharing__entry');
-            row.append(make('span', 'sharing__who', `${s.author}（${s.block}）`));
+            row.append(make('span', 'sharing__who', fmt('{author}（{block}）', {author: s.author, block: s.block})));
             row.append(make('span', 'sharing__role', s.text));
             if (s.status !== 'open') {
               row.append(make('span', 'surface-note',
@@ -4124,7 +4128,7 @@
               // Said before anyone presses accept, because accepting is
               // what the server will refuse.
               row.append(make('span', 'surface-note',
-                `この提案のあとに本文が変わりました（現在: ${s.current}）`));
+                fmt('この提案のあとに本文が変わりました（現在: {current}）', {current: s.current})));
             }
             if (s.status === 'open') {
               const act = async (verb, message) => {
@@ -4228,7 +4232,7 @@
           head.append(entryRow(entry));
           if (entry['resolved-at']) {
             head.append(make('li', 'surface-note',
-              `${entry['resolved-by']} が解決済みにしました（${entry['resolved-at']}）`));
+              fmt('{resolvedBy} が解決済みにしました（{resolvedAt}）', {resolvedBy: entry['resolved-by'], resolvedAt: entry['resolved-at']})));
           }
           (entry.replies || []).forEach((reply) => head.append(entryRow(reply, {root:entry})));
           thread.append(head);
@@ -4248,7 +4252,7 @@
               const replyText = make('input', 'workspace-search surface-input--wide');
               replyText.type = 'text';
               replyText.placeholder = '返信';
-              replyText.setAttribute('aria-label', `${entry.text} への返信`);
+              replyText.setAttribute('aria-label', fmt('{text} への返信', {text: entry.text}));
               const send = make('button', 'tool-button', '返信');
               send.type = 'button';
               send.addEventListener('click', () => submit(
@@ -4277,7 +4281,7 @@
           // The count worth seeing before opening the panel: an unresolved
           // thread is one somebody is still waiting on.
           heading.textContent = data.unresolved
-            ? `コメント（未解決 ${data.unresolved}）` : 'コメント';
+            ? fmt('コメント（未解決 {unresolved}）', {unresolved: data.unresolved}) : 'コメント';
         } catch (error) { /* the panel simply stays empty */ }
       };
       const submit = async (suffix, body, done) => {
@@ -4328,7 +4332,7 @@
           const data = await request.json();
           if (!request.ok) return;
           responses.replaceChildren(make('h3', 'sharing__title',
-            `回答 ${(data.submissions || []).length} 件`));
+            fmt('回答 {v1} 件', {v1: (data.submissions || []).length})));
           (data.submissions || []).forEach((entry) => {
             const row = make('div', 'surface-row');
             row.append(make('span', 'surface-note',
@@ -4346,7 +4350,7 @@
           const sent = await postJSON(
             `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/submissions`,
             {answers}, true);
-          status.textContent = `送信しました（${sent.submission['submitted-at']}）。`;
+          status.textContent = fmt('送信しました（{submittedAt}）。', {submittedAt: sent.submission['submitted-at']});
           await loadResponses();
         } catch (error) {
           // The surface's own validator answered — a missing required field
@@ -4544,11 +4548,11 @@
         current.replaceChildren();
         (data.grants || []).forEach((grant) => {
           const entry = make('li', 'sharing__entry');
-          entry.append(make('span', 'sharing__who', `${grant.principal}（${grant.role}）`));
+          entry.append(make('span', 'sharing__who', fmt('{principal}（{role}）', {principal: grant.principal, role: grant.role})));
           const revoke = make('button', 'tool-button', '解除');
           revoke.type = 'button';
           revoke.addEventListener('click', () => submit(
-            {action:'revoke', principal:grant.principal}, `${grant.principal} の共有を解除しました。`));
+            {action:'revoke', principal:grant.principal}, fmt('{principal} の共有を解除しました。', {principal: grant.principal})));
           entry.append(revoke);
           current.append(entry);
         });
@@ -4560,9 +4564,9 @@
             : '暗号鍵はこのブラウザに残っていません。リンクを無効化して再作成してください。';
           const field = make('input', 'workspace-search sharing__token');
           field.type = 'text'; field.readOnly = true; field.value = url;
-          field.setAttribute('aria-label', `共有リンク（${link.role}）`);
+          field.setAttribute('aria-label', fmt('共有リンク（{role}）', {role: link.role}));
           entry.append(make('span', 'sharing__who',
-            `リンク（${link.role}・${link['expires-at'] ? '期限あり' : '期限なし'}）`), field);
+            fmt('リンク（{role}・{v1}）', {role: link.role, v1: link['expires-at'] ? '期限あり' : '期限なし'})), field);
           const revoke = make('button', 'tool-button', '無効化');
           revoke.type = 'button';
           revoke.addEventListener('click', async () => {
@@ -4592,7 +4596,7 @@
         }
       };
       share.addEventListener('click', () => submit(
-        {principal:who.value, role:role.value}, `${who.value} と共有しました。`));
+        {principal:who.value, role:role.value}, fmt('{value} と共有しました。', {value: who.value})));
       makeLink.addEventListener('click', () => submit(
         {action:'link', role:linkRole.value,
          'expires-in-hours':expiry.value ? Number(expiry.value) : null},
@@ -4615,7 +4619,7 @@
           const url = `${window.location.origin}${data.url}`;
           const field = make('input', 'workspace-search sharing__token');
           field.type = 'text'; field.readOnly = true; field.value = url;
-          field.setAttribute('aria-label', `${audience} 専用の配信 CID`);
+          field.setAttribute('aria-label', fmt('{audience} 専用の配信 CID', {audience}));
           const copy = make('button', 'tool-button', 'URLをコピー');
           copy.type = 'button';
           copy.addEventListener('click', async () => {
@@ -4649,7 +4653,7 @@
     };
     const renderFilecoin = (data) => {
       const list = $('#storage-list'); list.replaceChildren();
-      const val = (v) => (v && typeof v === 'object' && v.error) ? `取得失敗: ${v.error}` : String(v ?? '—');
+      const val = (v) => (v && typeof v === 'object' && v.error) ? fmt('取得失敗: {error}', {error: v.error}) : String(v ?? '—');
       const rows = [
         ['Chain height', val(data['chain-height']), 'live'],
         ['Network', `${val(data['chain-network-name'])} · chainId ${val(data['chain-id'])}`, 'live'],
@@ -4657,7 +4661,7 @@
         ['Challenge finality', `${val(data['pdp-challenge-finality'])} epochs`, 'live'],
         ['Staged pieces', String((data['staged-pieces'] || []).length), 'local'],
         ['Read-through', (data['retrieval-urls'] || []).length
-          ? `${(data['retrieval-urls'] || []).join(' · ')} · PieceCID 検証あり`
+          ? fmt('{v1} · PieceCID 検証あり', {v1: (data['retrieval-urls'] || []).join(' · ')})
           : '未設定', (data['retrieval-urls'] || []).length ? 'local' : 'warn'],
         ['Deals', '未実装', 'warn']
       ];
@@ -4685,7 +4689,7 @@
              + 'を設定すると有効になります。既定値は推測しません。']]);
       setAppBadge('storage-count', rows.filter(([, , k]) => k === 'live').length);
       $('#storage-source').textContent =
-        `${val(data['chain-network-name'])} · height ${val(data['chain-height'])} · StateCall (無料・オンチェーン書き込みなし)`;
+        fmt('{v1} · height {v2} · StateCall (無料・オンチェーン書き込みなし)', {v1: val(data['chain-network-name']), v2: val(data['chain-height'])});
       $('#storage-write-notice').hidden = data['write-status'] !== 'not-implemented';
     };
     // Loaded outside bootstrapApp on purpose: bootstrapApp only runs once a
@@ -4717,7 +4721,7 @@
         const exp = fmt.resolvedOptions().maximumFractionDigits;
         return fmt.format(minor / Math.pow(10, exp));
       } catch (_) {
-        return `${minor} ${currency}（最小単位）`;
+        return fmt('{minor} {currency}（最小単位）', {minor, currency});
       }
     };
     const money = (amount) => {
@@ -4748,28 +4752,28 @@
             : '計算できません（金額か周期が未記録）');
       const days = c['days-to-charge'];
       row('次回課金', c['next-charge'].status === 'recorded'
-            ? `${c['next-charge'].value}（あと ${days.value} 日）`
+            ? fmt('{value}（あと {value2} 日）', {value: c['next-charge'].value, value2: days.value})
             : '未記録');
       const deadline = c.notice && c.notice.deadline;
       const toDeadline = c.notice && c.notice['days-to-deadline'];
       if (deadline && deadline.status === 'recorded') {
         const late = toDeadline.status === 'recorded' && toDeadline.value < 0;
         row('予告期限', late
-              ? `${deadline.value}（${Math.abs(toDeadline.value)} 日過ぎています）`
-              : `${deadline.value}（あと ${toDeadline.value} 日）`, late);
+              ? fmt('{value}（{v1} 日過ぎています）', {value: deadline.value, v1: Math.abs(toDeadline.value)})
+              : fmt('{value}（あと {value2} 日）', {value: deadline.value, value2: toDeadline.value}), late);
       } else {
         row('予告期限', '予告日数が未記録のため計算できません');
       }
       root.append(rows);
       if (c.procedure) {
         const p = make('section', 'local-card');
-        p.append(make('h4', null, `解約手順 · ${tierLabel(c.procedure.tier)}`));
+        p.append(make('h4', null, fmt('解約手順 · {v1}', {v1: tierLabel(c.procedure.tier)})));
         const steps = make('ol', 'data-list');
         (c.procedure.steps || []).forEach((s) => steps.append(make('li', null, s)));
         p.append(steps);
         if (c.procedure['notice-days'] || c.procedure['penalty-jpy']) {
           p.append(make('p', 'data-list__meta',
-            `予告 ${c.procedure['notice-days']} 日 · 違約金 ${c.procedure['penalty-jpy']} 円（開示された解約コスト。回避しません）`));
+            fmt('予告 {noticeDays} 日 · 違約金 {penaltyJpy} 円（開示された解約コスト。回避しません）', {noticeDays: c.procedure['notice-days'], penaltyJpy: c.procedure['penalty-jpy']})));
         }
         // G6: the catalog holds a disclosed shape, not a live assertion. Saying
         // so on the screen is the difference between a hint and a promise.
@@ -4812,7 +4816,7 @@
           make('p', 'data-list__meta',
             data.vault.status === 'locked'
               ? 'unlock するまで契約は読めません。0 件という意味ではありません。'
-              : `kagi init で作成するか、別の端末から kagi pull で復元してください（${data.vault.home}）。`));
+              : fmt('kagi init で作成するか、別の端末から kagi pull で復元してください（{home}）。', {home: data.vault.home})));
         list.append(empty);
         $('#contracts-detail').replaceChildren(
           make('div', 'empty-state', '契約を読むには vault を開いてください。'));
@@ -4820,7 +4824,7 @@
       }
       badge.textContent = data.contracts.length;
       $('#contracts-source').textContent =
-        `${data.vault.home} · ${data['as-of']} 時点`;
+        fmt('{home} · {asOf} 時点', {home: data.vault.home, asOf: data['as-of']});
       const t = data.totals || {};
       const monthly = t['monthly-minor'] || {};
       const currencies = Object.keys(monthly);
@@ -4836,7 +4840,7 @@
       }
       if (t.unpriced) {
         card.append(make('p', 'data-list__meta',
-          `${t.unpriced} 件は金額が未記録のため合計に含まれていません。`));
+          fmt('{unpriced} 件は金額が未記録のため合計に含まれていません。', {unpriced: t.unpriced})));
       }
       totals.append(card);
       data.contracts.forEach((c) => {
@@ -4896,8 +4900,8 @@
           `${envelope.intent}`));
       const digests = make('div', 'local-card');
       digests.append(make('h4', null, '署名の対象'),
-        make('p', 'wallet-address', `文書 digest: ${envelope['document-digest']}`),
-        make('p', 'wallet-address', `表示 digest: ${envelope['presentation-digest']}`),
+        make('p', 'wallet-address', fmt('文書 digest: {documentDigest}', {documentDigest: envelope['document-digest']})),
+        make('p', 'wallet-address', fmt('表示 digest: {presentationDigest}', {presentationDigest: envelope['presentation-digest']})),
         make('p', 'form-help',
           'この 2 つが commitment に入り、その SHA-256 が challenge になります。' +
           '文書を後から編集しても、この envelope が指す版は変わりません。'));
@@ -4933,7 +4937,7 @@
             (signer.at ? ` · ${signer.at}` : '')));
         if (signer.assurance) {
           row.append(make('p', 'form-help',
-            `鍵の保証: ${esignAssuranceText[signer.assurance] || signer.assurance}`));
+            fmt('鍵の保証: {v1}', {v1: esignAssuranceText[signer.assurance] || signer.assurance})));
         }
         if (signer.reason) row.append(make('p', 'form-help', signer.reason));
         if (signer.status === 'pending' && signer.did === esignData['my-did']) {
@@ -4982,7 +4986,7 @@
       const waiting = data.envelopes.filter(
         (e) => e.status === 'awaiting-signatures').length;
       $('#esign-source').textContent =
-        `${data.envelopes.length} 件 · 署名待ち ${waiting} 件`;
+        fmt('{length} 件 · 署名待ち {waiting} 件', {length: data.envelopes.length, waiting});
       // The WEAKEST attestation across every envelope shown. One envelope
       // without a qualified timestamp is one the measure does not cover, and the
       // banner is read as a statement about the screen.
@@ -5103,7 +5107,7 @@
           const card = make('article', 'project-issue');
           card.append(make('strong', null, `#${issue.number} ${issue.title}`));
           const move = make('select');
-          move.setAttribute('aria-label', `${issue.title} の状態`);
+          move.setAttribute('aria-label', fmt('{title} の状態', {title: issue.title}));
           (data.columns || []).forEach((optionColumn) => {
             const option = make('option', null, optionColumn.name);
             option.value = optionColumn.id;
@@ -5264,7 +5268,7 @@
           const migrated = await postJSON('/api/session/context', {session:sessionId,
             refs:[{kind:'project', target:legacyChatContextProjectId}]}, true);
           chatContextRefs = migrated['context-refs'] || [];
-          $('#chat-context-button').textContent = `参照 ${chatContextRefs.length}`;
+          $('#chat-context-button').textContent = fmt('参照 {length}', {length: chatContextRefs.length});
           localStorage.removeItem('cloud-itonami-chat-context-project');
         }
         return true;
@@ -5343,7 +5347,7 @@
         link.href = site.url; link.target = '_blank'; link.rel = 'noopener';
         $('#site-editor-status').append(link);
         await loadSites();
-        $('#site-editor-meta').textContent = `${site.title} · 公開中 · ${site.url}`;
+        $('#site-editor-meta').textContent = fmt('{title} · 公開中 · {url}', {title: site.title, url: site.url});
       } catch (error) { $('#site-editor-status').textContent = error.message; }
       finally { event.currentTarget.disabled = false; }
     });
@@ -5763,7 +5767,7 @@
           attendees:($('#scheduler-attendees')?.value || '')
             .split(/[,、\s]+/).map((s) => s.trim()).filter(Boolean)
         }, true);
-        status.textContent = `${made.event.title} を作成しました。`;
+        status.textContent = fmt('{title} を作成しました。', {title: made.event.title});
         ['#scheduler-title', '#scheduler-attendees'].forEach((id) => {
           if ($(id)) $(id).value = '';
         });
@@ -5810,7 +5814,7 @@
           button.setAttribute('aria-pressed', event['your-rsvp'] === status ? 'true' : 'false');
           button.addEventListener('click', () => appointmentAction(
             `/api/workspace/scheduler/events/${encodeURIComponent(event.id)}/respond`,
-            {status}, `「${event.title}」に${label}と答えました。`));
+            {status}, fmt('「{title}」に{label}と答えました。', {title: event.title, label})));
           answers.append(button);
         });
         box.append(answers);
@@ -5829,7 +5833,7 @@
           field.value = '';
           appointmentAction(
             `/api/workspace/scheduler/events/${encodeURIComponent(event.id)}/invite`,
-            {person}, `${person} を招きました。`);
+            {person}, fmt('{person} を招きました。', {person}));
         });
         const cancel = make('button', 'tool-button', 'この予定を取り消す');
         cancel.type = 'button';
@@ -5837,7 +5841,7 @@
           selectedEvent = null;
           appointmentAction(
             `/api/workspace/scheduler/events/${encodeURIComponent(event.id)}/cancel`,
-            {}, `「${event.title}」を取り消しました。`);
+            {}, fmt('「{title}」を取り消しました。', {title: event.title}));
         });
         invite.append(field, ask, cancel);
         box.append(invite);
@@ -5855,7 +5859,7 @@
           // appointment is a report on a question nobody asked.
           if (found.length) {
             clashes.textContent =
-              `重なっています: ${found.map((c) => c.title).join('、')}`;
+              fmt('重なっています: {v1}', {v1: found.map((c) => c.title).join('、')});
           }
         })
         .catch(() => { /* the line simply stays empty */ });
@@ -5881,7 +5885,7 @@
         button.setAttribute('aria-pressed', day.date === selectedDay ? 'true' : 'false');
         button.append(make('span', null, new Intl.DateTimeFormat('ja-JP', {weekday:'short'}).format(date)),
           make('strong', null, String(date.getDate())),
-          make('span', null, `${day.items.length} 件`));
+          make('span', null, fmt('{length} 件', {length: day.items.length})));
         button.addEventListener('click', () => {
           selectedDay = day.date; selectedEvent = null; renderCalendar(calendarData);
         });
@@ -5898,7 +5902,7 @@
             title:item.title,
             time:item['all-day?'] ? '終日' : formatDate(item.start, true),
             meta:item.calendar || 'Calendar',
-            snippet:item['all-day?'] ? '終日の予定' : `${formatDate(item.end, true)} まで`
+            snippet:item['all-day?'] ? '終日の予定' : fmt('{v1} まで', {v1: formatDate(item.end, true)})
           }));
       });
       if (!items.length) list.append(make('li', 'empty-state', data.message || 'この日の予定はありません。'));
@@ -5941,7 +5945,7 @@
       try {
         const request = await fetch(`/api/workspace/${name}`);
         const data = await request.json();
-        if (!request.ok) throw new Error(data?.error?.message || `${name} を読み込めませんでした。`);
+        if (!request.ok) throw new Error(data?.error?.message || fmt('{name} を読み込めませんでした。', {name}));
         // The tree the Drive list is scoped by. Fetched here rather than
         // inside renderDrive, which runs on every keystroke in the search
         // box — that would be a request per character.
@@ -6000,7 +6004,7 @@
                + (r.bytes ? ` · ${bytes(r.bytes)}` : '')}));
         });
       }
-      $('#resources-visible-count').textContent = `${visible.length} 件を表示`;
+      $('#resources-visible-count').textContent = fmt('{length} 件を表示', {length: visible.length});
       setAppBadge('resources-count', rows.length);
     };
     const loadResources = async () => {
@@ -6083,7 +6087,7 @@
         list.append(make('li', 'empty-state', 'intent receiptはまだありません。'));
       }
       $('#organism-receipt-state').textContent =
-        `${organismReceipts.length} receipts · effect完了とは別です`;
+        fmt('{length} receipts · effect完了とは別です', {length: organismReceipts.length});
     };
     const loadOrganismReceipts = async () => {
       if (!selectedOrganism) {
@@ -6193,7 +6197,7 @@
         const issued = await postJSON(
           `/api/organism-workers/${encodeURIComponent(selectedOrganism.id)}/messenger-transport`, {}, true);
         $('#organism-messenger-state').textContent =
-          `発行済み: ${issued['credential-file']} · clear tokenは0600 file内だけです。`;
+          fmt('発行済み: {credentialFile} · clear tokenは0600 file内だけです。', {credentialFile: issued['credential-file']});
       } catch (error) { $('#organism-messenger-state').textContent = error.message; }
       finally { button.disabled = false; }
     });
@@ -6229,7 +6233,7 @@
         });
         event.currentTarget.reset();
         $('#organism-intent-state').textContent =
-          `${receipt.intent} をadmitしました。effectは未実行です。`;
+          fmt('{intent} をadmitしました。effectは未実行です。', {intent: receipt.intent});
         await loadOrganismReceipts();
       } catch (error) {
         $('#organism-intent-state').textContent = error.message;
@@ -6247,7 +6251,7 @@
           summary:'Human operator requested a governed stop.'
         });
         $('#organism-intent-state').textContent =
-          `${receipt.intent} のstop requestをadmitしました。`;
+          fmt('{intent} のstop requestをadmitしました。', {intent: receipt.intent});
         await loadOrganismReceipts();
       } catch (error) {
         $('#organism-intent-state').textContent = error.message;
@@ -6290,7 +6294,7 @@
         loadPortfolio()
       ]).then((results) => {
         const connected = results.filter(Boolean).length;
-        $('#workspace-status').textContent = `${connected} / ${results.length} サービス接続`;
+        $('#workspace-status').textContent = fmt('{connected} / {length} サービス接続', {connected, length: results.length});
       });
     };
     $('#esign-request-form').addEventListener('submit', async (event) => {
@@ -6390,7 +6394,7 @@
         box.append(ul);
         const ad = d.adoption;
         box.append(make('p', 'form-help', ad
-          ? `参与: ${String(ad.stage).replace(/^:/,'')}（${ad['declared-by']} / ${ad['declared-on']}）`
+          ? fmt('参与: {v1}（{declaredBy} / {declaredOn}）', {v1: String(ad.stage).replace(/^:/,''), declaredBy: ad['declared-by'], declaredOn: ad['declared-on']})
           : 'まだ参与を表明していません。事業者タブから表明できます。'));
 
         // ── 接続（ADR-2608093000 D4）────────────────────────────────────
@@ -6451,7 +6455,7 @@
       const list = $('#fleet-list'); if (!list) return;
       list.replaceChildren();
       (data.actors || []).forEach((a) => {
-        const fit = a.fit && a.fit.score ? ` · 適合 ${a.fit.score}` : '';
+        const fit = a.fit && a.fit.score ? fmt(' · 適合 {score}', {score: a.fit.score}) : '';
         const item = listItem(a.name || a.repo,
           [a.role, a.domain, a.maturity].filter(Boolean).join(' · ') + fit,
           a.endpoint ? '稼働' : (a['deploy-config'] ? 'deploy可' : ''));
@@ -6465,8 +6469,8 @@
       // 1,213 reads as a complete answer.
       const fs = $('#fleet-source');
       if (fs) fs.textContent = data.total > data.shown
-        ? `${data.total} 件中 ${data.shown} 件を表示`
-        : `${data.total} 件`;
+        ? fmt('{total} 件中 {shown} 件を表示', {total: data.total, shown: data.shown})
+        : fmt('{total} 件', {total: data.total});
       // Guarded like every other lookup in these two renderers: the badge
       // lives in the sidebar, and a renderer that assumes its own chrome is
       // present cannot be reused anywhere the chrome is not.
@@ -6519,7 +6523,7 @@
       const oc = document.getElementById('operator-count'); if (oc) oc.textContent = s.adoptions || 0;
       const os_ = $('#operator-source');
       if (os_) os_.textContent = d.profile
-        ? `${d.profile.name} として参与しています`
+        ? fmt('{name} として参与しています', {name: d.profile.name})
         : '事業者プロファイルが未登録です。';
       const cv = $('#operator-licence-caveat'); if (cv && d.caveat) cv.textContent = d.caveat;
 
@@ -6538,7 +6542,7 @@
         (d.matches || []).forEach((a) => {
           const item = listItem(a.name || a.repo,
             [a.role, a.domain, a.maturity].filter(Boolean).join(' · '),
-            `適合 ${a.fit?.score ?? 0}`);
+            fmt('適合 {v1}', {v1: a.fit?.score ?? 0}));
           item.addEventListener('click', () => {
             document.querySelector('[data-view=fleet]')?.click();
             fleetDetail(a.repo);
@@ -6642,8 +6646,8 @@
       // 解決数 is what the workspace can confirm. A single percentage would
       // hide which of the two is missing.
       box.append(make('p', 'record-detail__body',
-        `${c.bound ?? 0}/${c.faces ?? 0} 面を紐付け · ${c.resolved ?? 0} 面を解決`
-        + (c.unresolvable ? ` · ${c.unresolvable} 面は workspace 未設定のため解析不能` : '')));
+        fmt('{v1}/{v2} 面を紐付け · {v3} 面を解決', {v1: c.bound ?? 0, v2: c.faces ?? 0, v3: c.resolved ?? 0})
+        + (c.unresolvable ? fmt(' · {unresolvable} 面は workspace 未設定のため解析不能', {unresolvable: c.unresolvable}) : '')));
       if (b.note) box.append(make('p', 'req-row__caveat', b.note));
       const list = make('ul', 'record-list__items');
       (b.faces || []).forEach((f) => list.append(faceRow(f)));
@@ -6677,7 +6681,7 @@
       if (badge) badge.textContent = counts.businesses || 0;
       const src = $('#portfolio-source');
       if (src) src.textContent = rows.length
-        ? `${rows.length} 件の事業`
+        ? fmt('{length} 件の事業', {length: rows.length})
         : '事業がまだありません。';
 
       // The workspace notice is the difference between 「測って空だった」 and
@@ -6701,8 +6705,8 @@
         rows.forEach((b) => {
           const c = b.coverage || {};
           const item = listItem(b.name || b.slug,
-            `${c.bound ?? 0}/${c.faces ?? 0} 面を紐付け`,
-            `解決 ${c.resolved ?? 0}`,
+            fmt('{v1}/{v2} 面を紐付け', {v1: c.bound ?? 0, v2: c.faces ?? 0}),
+            fmt('解決 {v1}', {v1: c.resolved ?? 0}),
             (c.resolved ?? 0) === 0);
           item.addEventListener('click', () => {
             selectedBusinessId = b.id;
@@ -6786,7 +6790,7 @@
       if (counts) {
         const c = (d && d.counts) || {};
         counts.textContent = rows.length
-          ? `${c.businesses} 事業 × ${cols.length} 面 = ${c.cells} セル — `
+          ? fmt('{businesses} 事業 × {length} 面 = {cells} セル — ', {businesses: c.businesses, length: cols.length, cells: c.cells})
             + Object.entries(c)
                 .filter(([k]) => matrixStateLabel[k])
                 .map(([k, v]) => `${matrixStateLabel[k]} ${v}`).join(' · ')
@@ -6839,7 +6843,7 @@
           // The server's own refusal text, not a generic one: slug-taken and
           // slug-invalid need different corrections.
           if (status) status.textContent = body?.error?.message
-            || body?.error?.type || `保存できません (${r.status})`;
+            || body?.error?.type || fmt('保存できません ({status})', {status: r.status});
           return;
         }
         if (status) status.textContent = '追加しました。';
@@ -6902,7 +6906,7 @@
       const gs = bare(h['gate-status'] ?? '');
       if (gs) {
         const line = make('p', 'req-row__caveat',
-          `測定: ${gs}` + (h['gate-distance'] ? ` — ${h['gate-distance']}` : '')
+          fmt('測定: {gs}', {gs}) + (h['gate-distance'] ? ` — ${h['gate-distance']}` : '')
           + (h['gate-evidence'] ? ` — ${h['gate-evidence']}` : ''));
         li.append(line);
       } else {
@@ -6958,7 +6962,7 @@
       list.replaceChildren();
       (mt.dims || []).forEach((dm) => list.append(maturityDimRow(dm)));
       if (note && (mt.unrecorded || []).length) {
-        note.textContent = `未記録: ${mt.unrecorded.join('・')} — `
+        note.textContent = fmt('未記録: {v1} — ', {v1: mt.unrecorded.join('・')})
           + '生成器は未記録の判断を 0 として採点するので、これらは「評価されて低い」ではなく「未評価」です。';
       }
     };
@@ -6974,18 +6978,18 @@
         if (c.detail) note.append(document.createTextNode(c.detail));
         if (state === 'resolved') {
           note.append(document.createTextNode(
-            `投影 ${c.source || ''}（as-of ${c['as-of'] || '不明'}）`));
+            fmt('投影 {v1}（as-of {v2}）', {v1: c.source || '', v2: c['as-of'] || '不明'})));
           // A projection whose file disagrees with its own header is truncated;
           // saying so beats rendering eight of nine blocks as the canvas.
           if (c.counts && c.counts['complete?'] === false) {
             note.append(make('strong', null,
-              ` 投影が宣言した件数と一致しません（block ${c.counts.blocks}/${c.counts['declared-blocks']}）`));
+              fmt(' 投影が宣言した件数と一致しません（block {blocks}/{declaredBlocks}）', {blocks: c.counts.blocks, declaredBlocks: c.counts['declared-blocks']})));
           }
         }
       }
       const meta = $('#canvas-meta');
       if (meta) meta.textContent = state === 'resolved'
-        ? `${(c.blocks || []).length} block · ${(c.hypotheses || []).length} 仮説`
+        ? fmt('{v1} block · {v2} 仮説', {v1: (c.blocks || []).length, v2: (c.hypotheses || []).length})
         : '';
       const src = $('#canvas-source');
       if (src) src.textContent = d && d.business
@@ -7137,7 +7141,7 @@
         const body = await r.json().catch(() => null);
         if (!r.ok) {
           if (status) status.textContent = body?.error?.message
-            || body?.error?.type || `記録できません (${r.status})`;
+            || body?.error?.type || fmt('記録できません ({status})', {status: r.status});
           return;
         }
         if (status) status.textContent = '提案を記録しました。ledger へは governor が入れます。';
@@ -7227,13 +7231,13 @@
       if (note) {
         note.replaceChildren();
         if (state === 'resolved') {
-          note.append(make('strong', null, `モデル ${m.name || m['simulated-model'] || ''} `));
+          note.append(make('strong', null, fmt('モデル {v1} ', {v1: m.name || m['simulated-model'] || ''})));
           note.append(document.createTextNode(m.source || ''));
           // Which model ran, when a document declares several. Picking the first
           // is a choice, so it is stated rather than hidden.
           if ((m.models || []).length > 1) {
             note.append(make('strong', null,
-              ` ${m.models.length} 個のモデルのうち「${m['simulated-model']}」を実行`));
+              fmt(' {length} 個のモデルのうち「{simulatedModel}」を実行', {length: m.models.length, simulatedModel: m['simulated-model']})));
           }
           if (bare(traj.state) !== 'simulated') {
             note.append(make('strong', null, ' シミュレーションできません: '));
@@ -7367,8 +7371,8 @@
         // rendered as 0, and not omitted either.
         strength.textContent = !s ? ''
           : (bare(s.state) === 'computed'
-             ? `構造的強度: ${Number(s.value).toPrecision(4)}`
-             : `構造的強度: — ${s.detail || ''}`);
+             ? fmt('構造的強度: {v1}', {v1: Number(s.value).toPrecision(4)})
+             : fmt('構造的強度: — {v1}', {v1: s.detail || ''}));
       }
       const bands = $('#loops-bands');
       if (bands) {
@@ -7376,7 +7380,7 @@
         (d?.bands || []).forEach((b) => bands.append(
           listItem(`${bare(b.band)} — ${b.label}`,
                    `Meadows tier ${(b.tiers || []).join(', ')}`,
-                   `重み ${b.weight}`)));
+                   fmt('重み {weight}', {weight: b.weight}))));
       }
       const badge = document.getElementById('loops-count');
       if (badge) badge.textContent = (lv.ranked || []).length || '—';
@@ -7402,7 +7406,7 @@
       li.append(head);
       li.append(make('p', 'req-row__detail',
         `baseline ${p.baseline}`
-        + (p['referenced-by']?.length ? ` · 参照元: ${p['referenced-by'].join('・')}` : '')));
+        + (p['referenced-by']?.length ? fmt(' · 参照元: {v1}', {v1: p['referenced-by'].join('・')}) : '')));
       if (p.detail) li.append(make('p', 'req-row__caveat', p.detail));
       (p.effects || []).forEach((e) => {
         const row = make('div', 'axis-row');
@@ -7420,7 +7424,7 @@
         } else {
           row.append(make('div', 'axis-row__unscored'));
           row.append(make('span', 'axis-row__value',
-            `未定義 (${bare(e.reason)})`));
+            fmt('未定義 ({v1})', {v1: bare(e.reason)})));
         }
         li.append(row);
       });
@@ -7433,7 +7437,7 @@
       list.replaceChildren();
       if (!sens || bare(sens.state) !== 'computed') {
         list.append(make('li', 'empty-state',
-          sens?.reason ? `感度を計算できません: ${sens.reason}` : 'モデルがありません。'));
+          sens?.reason ? fmt('感度を計算できません: {reason}', {reason: sens.reason}) : 'モデルがありません。'));
         if (note) note.textContent = 'モデルを再実行して測ります（介入の実行しやすさを点数化しません）。';
         return;
       }
@@ -7627,10 +7631,10 @@
         if (state === 'resolved') {
           const fs = bare(f.state);
           note.append(make('strong', null,
-            `測定 ${freshnessLabel[fs] || fs}: ${f['as-of'] || '不明'} `));
+            fmt('測定 {v1}: {v2} ', {v1: freshnessLabel[fs] || fs, v2: f['as-of'] || '不明'})));
           if (typeof f['age-days'] === 'number') {
             note.append(document.createTextNode(
-              `（${f['age-days'].toFixed(1)} 日前 / 上限 ${f['max-age-days']} 日）`));
+              fmt('（{v1} 日前 / 上限 {maxAgeDays} 日）', {v1: f['age-days'].toFixed(1), maxAgeDays: f['max-age-days']})));
           }
           if (fs === 'stale') {
             note.append(make('strong', null,
@@ -7725,7 +7729,7 @@
           repos: splitList('portfolio-bind-repos')
         })
       }).then((r) => {
-        if (!r.ok) { if (status) status.textContent = `保存できません (${r.status})`; return; }
+        if (!r.ok) { if (status) status.textContent = fmt('保存できません ({status})', {status: r.status}); return; }
         if (status) status.textContent = '紐付けを保存しました。';
         return loadPortfolio();
       }).catch(() => { if (status) status.textContent = '保存できません。'; });
@@ -7791,11 +7795,11 @@
         panel.replaceChildren();
         if (!inside.length) { panel.hidden = true; return; }
         panel.hidden = false;
-        panel.append(make('h3', 'sharing__title', `本文に一致 ${inside.length} 件`));
+        panel.append(make('h3', 'sharing__title', fmt('本文に一致 {length} 件', {length: inside.length})));
         const list = make('ul', 'sharing__list');
         inside.forEach((hit) => {
           const row = make('li', 'sharing__entry');
-          const open = make('button', 'tool-button', `${hit.name}（${hit.label}）`);
+          const open = make('button', 'tool-button', fmt('{name}（{label}）', {name: hit.name, label: hit.label}));
           open.type = 'button';
           open.addEventListener('click', () => {
             const item = (driveData.items || []).find((i) => i.id === hit.id);
@@ -7938,8 +7942,8 @@
           : 'ステータス: この環境では画面収録権限を確認できません';
       const counts = data.counts || {};
       $('#memory-counts').replaceChildren(
-        make('span', 'memory-stat', `画面 ${counts.frames || 0} 件`),
-        make('span', 'memory-stat', `記憶 ${counts.memories || 0} 件`),
+        make('span', 'memory-stat', fmt('画面 {v1} 件', {v1: counts.frames || 0})),
+        make('span', 'memory-stat', fmt('記憶 {v1} 件', {v1: counts.memories || 0})),
         make('span', 'memory-stat', data.runtime?.['ocr-available?']
           ? 'OCR 利用可能' : 'OCR 未導入'));
       const recent = $('#memory-recent-list');
@@ -7955,7 +7959,7 @@
         make('li', null, `${formatDate(entry.at)}  ${entry.text}`)));
       const lastError = data['last-error'];
       $('#memory-status').textContent = lastError
-        ? `直近の取得エラー: ${lastError.message}` : '';
+        ? fmt('直近の取得エラー: {message}', {message: lastError.message}) : '';
     };
     const loadChronicle = async () => {
       const response = await fetch('/api/chronicle', {headers:identityHeaders()});
@@ -8020,18 +8024,18 @@
       if (!computer['accessibility?']) missing.push('アクセシビリティ未許可');
       if (!computer['screen-recording?']) missing.push('画面収録未許可');
       $('#agent-machine-computer-help').textContent = missing.length
-        ? `未接続: ${missing.join(' / ')}`
-        : `${computerHost}接続済み。フォーカスを奪わず、画面digestと要素tokenで操作対象を固定します。`;
+        ? fmt('未接続: {v1}', {v1: missing.join(' / ')})
+        : fmt('{computerHost}接続済み。フォーカスを奪わず、画面digestと要素tokenで操作対象を固定します。', {computerHost});
       const enabled = Boolean(settings['enabled?']);
       $('#agent-machine-status').textContent =
-        `実行基盤 ${enabled ? 'ON' : 'OFF'} / 分離ブラウザー ${browser['available?'] ? 'ready' : '未接続'} / Computer Use ${computer['available?'] ? 'ready' : '未接続'}`;
+        fmt('実行基盤 {v1} / 分離ブラウザー {v2} / Computer Use {v3}', {v1: enabled ? 'ON' : 'OFF', v2: browser['available?'] ? 'ready' : '未接続', v3: computer['available?'] ? 'ready' : '未接続'});
       const needs = [];
       if (settings.browser?.['enabled?'] && !browser['available?']) needs.push('分離ブラウザーの導入');
       if (settings.computer?.['enabled?'] && !computer['available?']) needs.push('Computer UseのmacOS権限');
       const permissionBar = $('#agent-permission-bar');
       permissionBar.hidden = !needs.length || sessionStorage.getItem('agent-permission-dismissed') === needs.join('|');
       $('#agent-permission-message').textContent = needs.length
-        ? `${needs.join('と')}が必要です。通常モードを使える状態にします。` : '';
+        ? fmt('{v1}が必要です。通常モードを使える状態にします。', {v1: needs.join('と')}) : '';
       permissionBar.dataset.request = needs.join('|');
     };
     const permissionBar = $('#agent-permission-bar');
@@ -8114,7 +8118,7 @@
           : Boolean(routingBotPair(row.id));
         if (assigned) chip.append(make('span', 'routing-scope__mark', '●'));
         chip.setAttribute('aria-label',
-          assigned ? `${row.label}（割り当て済み）` : `${row.label}（既定に従う）`);
+          assigned ? fmt('{label}（割り当て済み）', {label: row.label}) : fmt('{label}（既定に従う）', {label: row.label}));
         chip.addEventListener('click', () => {
           routingState.scope = row.id;
           renderRouting();
@@ -8367,7 +8371,7 @@
         form.remove();
         const domain = target === 'murakumo' ? 'murakumo.cloud' : 'kotobase.net';
         $('#identity-status').textContent =
-          `開いた認証画面で ${domain} 用の Passkey を作成してください。`;
+          fmt('開いた認証画面で {domain} 用の Passkey を作成してください。', {domain});
       } catch (error) {
         if (targetWindow) targetWindow.close();
         $('#identity-status').textContent = error.message;
@@ -8410,7 +8414,7 @@
       const query = $('#plugin-filter').value.trim().toLocaleLowerCase('ja');
       const cards = Array.from($('#connector-list').children);
       cards.forEach((card) => { card.hidden = !card.textContent.toLocaleLowerCase('ja').includes(query); });
-      $('#plugin-summary').textContent = `${cards.filter((card) => !card.hidden).length} 件表示 / ${cards.length} 件`;
+      $('#plugin-summary').textContent = fmt('{v1} 件表示 / {length} 件', {v1: cards.filter((card) => !card.hidden).length, length: cards.length});
     };
     $('#plugin-filter').addEventListener('input', filterPlugins);
     const renderConnectors = (data) => {
@@ -8425,9 +8429,9 @@
         const copy = make('div');
         copy.append(make('h3', null, provider.name));
         const description = connection
-          ? `${connection['display-name'] || connection.email || '接続済み'} · ${connection.scopes?.length || 0} 権限`
+          ? fmt('{v1} · {v2} 権限', {v1: connection['display-name'] || connection.email || '接続済み', v2: connection.scopes?.length || 0})
           : provider['configured?']
-            ? `${provider.scopes.length} 個の読み取り権限を確認して接続`
+            ? fmt('{length} 個の読み取り権限を確認して接続', {length: provider.scopes.length})
             : 'OAuth クライアント設定が必要です';
         copy.append(make('p', null, description));
         const button = make('button', 'tool-button',
@@ -8532,7 +8536,7 @@
       const provider = session['authn-provider'];
       const issuedVia = session['issued-via'];
       $('#current-auth-method').textContent = provider
-        ? `${authProviderLabels[provider] || provider}でサインイン中`
+        ? fmt('{v1}でサインイン中', {v1: authProviderLabels[provider] || provider})
         : issuedVia === 'email-magic-link' ? 'Emailでサインイン中'
         : issuedVia === 'passkey' ? 'Passkeyでサインイン中'
         : 'サインイン済み';
@@ -8551,14 +8555,14 @@
           const unlink = make('button', 'tool-button', '解除');
           unlink.type = 'button';
           unlink.addEventListener('click', async () => {
-            if (!window.confirm(`${label}の接続を解除しますか？`)) return;
+            if (!window.confirm(fmt('{label}の接続を解除しますか？', {label}))) return;
             unlink.disabled = true;
             try {
               await postJSON('/api/auth/identities/unlink', {
                 provider:identity.provider, subject:identity.subject
               }, true);
               await loadIdentity();
-              $('#identity-status').textContent = `${label}の接続を解除しました。`;
+              $('#identity-status').textContent = fmt('{label}の接続を解除しました。', {label});
             } catch (error) {
               unlink.disabled = false;
               $('#identity-status').textContent = error.message;
@@ -8629,10 +8633,10 @@
       const status = verification.status;
       const domain = verification.domain;
       const messages = {
-        pending: `${domain} のTXTレコードをDNSへ追加してから「DNSを確認」を押してください。`,
-        claimed: `${domain} の所有権は確認できました。まだこのOrganizationの名前ではありません — DNSをこの deployment に向けてから「有効化」を押してください。`,
-        live: `${domain} はこのOrganizationの名前です。`,
-        lapsed: `${domain} は応答しなくなったため、名前を管理ドメインへ戻しました。発行済みの証明書は取り消していません。`,
+        pending: fmt('{domain} のTXTレコードをDNSへ追加してから「DNSを確認」を押してください。', {domain}),
+        claimed: fmt('{domain} の所有権は確認できました。まだこのOrganizationの名前ではありません — DNSをこの deployment に向けてから「有効化」を押してください。', {domain}),
+        live: fmt('{domain} はこのOrganizationの名前です。', {domain}),
+        lapsed: fmt('{domain} は応答しなくなったため、名前を管理ドメインへ戻しました。発行済みの証明書は取り消していません。', {domain}),
       };
       state.textContent = messages[status] || `${domain}: ${status}`;
       record.hidden = status !== 'pending';
@@ -8640,7 +8644,7 @@
       $('#domain-verification-record-name').textContent = verification['record-name'] || '—';
       $('#domain-verification-record-value').textContent = verification['record-value'] || '—';
       $('#domain-verification-expiry').textContent = verification['expires-at']
-        ? `有効期限: ${formatDate(verification['expires-at'])}` : '—';
+        ? fmt('有効期限: {v1}', {v1: formatDate(verification['expires-at'])}) : '—';
       $('#domain-verification-activation-url').textContent =
         verification['activation-url'] || '—';
       // The measurement, not just the verdict. Which of DNS, TLS and routing is
@@ -8648,8 +8652,8 @@
       // guess at all three.
       const probe = verification.probe || {};
       $('#domain-verification-probe').textContent = probe.error
-        ? `前回の確認: ${probe.error}`
-        : (probe.at ? `前回の確認: ${formatDate(probe.at)} に応答を確認しました。` : '—');
+        ? fmt('前回の確認: {error}', {error: probe.error})
+        : (probe.at ? fmt('前回の確認: {v1} に応答を確認しました。', {v1: formatDate(probe.at)}) : '—');
       if (domain) $('#company-domain').value = domain;
     };
     const loadDomainVerifications = async () => {
@@ -8824,7 +8828,7 @@
       const personalTenant = data.organization?.kind === 'personal';
       $('#organization-name').textContent =
         organizationReady
-          ? (personalTenant ? `${data.organization.name} · 個人`
+          ? (personalTenant ? fmt('{name} · 個人', {name: data.organization.name})
              : data.organization.name)
           : (personalTenant ? '個人テナント ID 未設定' : 'Organization ID 未設定');
       $('#organization-domain').textContent = organizationReady
@@ -8840,7 +8844,7 @@
         const label = organization.name || organization['organization-id']
           || organization.id;
         option.textContent = organization.kind === 'personal'
-          ? `${label} · 個人` : label;
+          ? fmt('{label} · 個人', {label}) : label;
         option.selected = Boolean(organization['active?']);
         organizationSwitcher.append(option);
       });
@@ -8858,13 +8862,13 @@
         const label = organization.name || organization['organization-id']
           || organization.id;
         option.textContent = organization.kind === 'personal'
-          ? `${label} · 個人` : label;
+          ? fmt('{label} · 個人', {label}) : label;
         transferTargets.append(option);
       });
       $('#project-transfer-form').hidden = !eligible.length;
       const invitations = data['organization-invitations'] || [];
       $('#organization-invitation-state').textContent = invitations.length
-        ? `${invitations.length}件の参加待ち招待があります。コードを入力して参加できます。`
+        ? fmt('{length}件の参加待ち招待があります。コードを入力して参加できます。', {length: invitations.length})
         : '参加待ちの招待はありません。';
       $('#organization-form').hidden = organizationReady;
       $('#organization-submit').textContent = personalTenant
@@ -8890,12 +8894,12 @@
     const mailStatusText = (account) => {
       const sync = account.sync || {};
       if (account.status === 'error' || sync['last-error']) {
-        return `同期エラー: ${sync['last-error'] || '原因不明'}`;
+        return fmt('同期エラー: {v1}', {v1: sync['last-error'] || '原因不明'});
       }
       if (account.status === 'never-synced' || !sync['last-synced-at']) {
         return 'まだ同期していません';
       }
-      return `${sync['message-count'] || 0} 件 · 最終同期 ${sync['last-synced-at']}`;
+      return fmt('{v1} 件 · 最終同期 {lastSyncedAt}', {v1: sync['message-count'] || 0, lastSyncedAt: sync['last-synced-at']});
     };
     const renderMailAccounts = (data) => {
       const list = $('#mail-account-list');
@@ -8904,7 +8908,7 @@
       const accounts = data.accounts || [];
       list.replaceChildren();
       state.textContent = accounts.length
-        ? `${accounts.length} 個のメールボックスを統合しています。`
+        ? fmt('{length} 個のメールボックスを統合しています。', {length: accounts.length})
         : 'メールボックスはまだありません。';
       accounts.forEach((account) => {
         const item = make('li', 'member-list__item');
@@ -9031,7 +9035,7 @@
             `${connection.status} · ${connection['expires-at'] || '未承認'}`));
         if (outbound.length) {
           copy.append(make('p', 'form-help',
-            `⚠ 外部の app に渡します: ${outbound.map((d) => d.label).join('、')}`));
+            fmt('⚠ 外部の app に渡します: {v1}', {v1: outbound.map((d) => d.label).join('、')})));
         }
         const actions = make('div', 'worker-actions');
         const needsApproval = connection.status === 'pending-approval'
@@ -9072,7 +9076,7 @@
       });
       if (!connections.length)
         list.append(make('li', 'empty-state', 'Agentからの接続申請はありません。'));
-      state.textContent = `${connections.length}件のtenant connection`;
+      state.textContent = fmt('{length}件のtenant connection', {length: connections.length});
     };
     const loadTenantConnections = async () => {
       if (!identityState?.['authenticated?']) return;
@@ -9108,7 +9112,7 @@
         const alias = data.alias;
         state.textContent = data.found
           ? `${alias.address} · ${alias.status}`
-          : `${identity.user.email} はグローバル未予約です。`;
+          : fmt('{email} はグローバル未予約です。', {email: identity.user.email});
         button.disabled = data.found && alias.status === 'active';
       } catch (error) {
         state.textContent = error.message;
@@ -9129,7 +9133,7 @@
       const status = $('#desktop-update-status');
       const action = $('#desktop-update-action');
       if (data['restart-required?']) {
-        status.textContent = `${data['staged-version'] || data['available-version']} を検証済みです。更新すると現在のウインドウを閉じ、安全に適用して開き直します。`;
+        status.textContent = fmt('{v1} を検証済みです。更新すると現在のウインドウを閉じ、安全に適用して開き直します。', {v1: data['staged-version'] || data['available-version']});
         action.textContent = 'アプリを閉じて更新';
         action.dataset.updateReady = 'true';
         return;
@@ -9137,18 +9141,18 @@
       delete action.dataset.updateReady;
       action.textContent = '更新を確認';
       if (data.status === 'error') {
-        status.textContent = `更新を確認できません: ${data.error}`;
+        status.textContent = fmt('更新を確認できません: {error}', {error: data.error});
         return;
       }
       if (data['available?']) {
-        status.textContent = `${data['installed-version']} → ${data['available-version']} を利用できます。`;
+        status.textContent = fmt('{installedVersion} → {availableVersion} を利用できます。', {installedVersion: data['installed-version'], availableVersion: data['available-version']});
         action.textContent = '検証して更新を準備';
         return;
       }
       status.textContent = data['installed-version']
         ? (data['last-applied']?.version === data['installed-version']
-          ? `${data['installed-version']} に更新しました。更新前: ${data['last-applied']['from-version']}。`
-          : `${data['installed-version']} は最新です。`)
+          ? fmt('{installedVersion} に更新しました。更新前: {fromVersion}。', {installedVersion: data['installed-version'], fromVersion: data['last-applied']['from-version']})
+          : fmt('{installedVersion} は最新です。', {installedVersion: data['installed-version']}))
         : '更新状態をまだ確認していません。';
     };
     const loadDesktopUpdate = async (refresh = false) => {
@@ -9210,7 +9214,7 @@
         try { await registerCurrentPasskey(); }
         catch (passkeyError) {
           $('#identity-status').textContent =
-            `アカウントは登録済みです。Passkey 登録: ${passkeyError.message}`;
+            fmt('アカウントは登録済みです。Passkey 登録: {message}', {message: passkeyError.message});
         }
       } catch (error) {
         $('#identity-status').textContent = error.message;
@@ -9226,7 +9230,7 @@
         const data = await postJSON('/api/identity/organization', fields, true);
         renderIdentity(data);
         $('#identity-status').textContent =
-          `${data.organization.domain} と ${data.user.email} を設定しました。`;
+          fmt('{domain} と {email} を設定しました。', {domain: data.organization.domain, email: data.user.email});
       } catch (error) {
         $('#identity-status').textContent = error.message;
         button.disabled = false; button.textContent = 'Organization ID を設定';
@@ -9242,7 +9246,7 @@
         event.currentTarget.reset();
         renderIdentity(data);
         $('#identity-status').textContent =
-          `${fields['organization-name'] || fields['organization-id']} を追加しました。`;
+          fmt('{v1} を追加しました。', {v1: fields['organization-name'] || fields['organization-id']});
       } catch (error) {
         $('#identity-status').textContent = error.message;
       } finally {
@@ -9260,7 +9264,7 @@
           '/api/identity/domain-verifications', {domain}, true);
         renderDomainVerifications({verifications:[verification]});
         $('#identity-status').textContent =
-          `${verification.domain} のTXTレコードを発行しました。`;
+          fmt('{domain} のTXTレコードを発行しました。', {domain: verification.domain});
       } catch (error) {
         $('#domain-verification-state').textContent = error.message;
       } finally {
@@ -9301,15 +9305,15 @@
     runDomainStep('#domain-verification-claim',
                   '/api/identity/domain-verifications/claim',
                   'DNSを確認', '確認中…',
-                  (v) => `${v.domain} の所有権を確認しました。次にDNSをこの deployment へ向けてください。`);
+                  (v) => fmt('{domain} の所有権を確認しました。次にDNSをこの deployment へ向けてください。', {domain: v.domain}));
     runDomainStep('#domain-verification-activate',
                   '/api/identity/domain-verifications/activate',
                   '有効化', '有効化中…',
-                  (v) => `${v.domain} をこのOrganizationの名前にしました。`);
+                  (v) => fmt('{domain} をこのOrganizationの名前にしました。', {domain: v.domain}));
     runDomainStep('#domain-verification-recheck',
                   '/api/identity/domain-verifications/recheck',
                   '再確認', '再確認中…',
-                  (v) => `${v.domain} を再確認しました（${v.status}）。`);
+                  (v) => fmt('{domain} を再確認しました（{status}）。', {domain: v.domain, status: v.status}));
     $('#project-transfer-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const button = $('#project-transfer-submit');
@@ -9327,9 +9331,9 @@
         const stayed = data['stayed-behind'] || {};
         const left = (stayed['filed-messages'] || 0) + (stayed['filing-rules'] || 0);
         $('#identity-status').textContent =
-          `${data['project-id']} を ${data.to.name} へ移動しました。`
-          + (left ? ` メール ${stayed['filed-messages'] || 0} 件と振り分け規則 `
-             + `${stayed['filing-rules'] || 0} 件は移動元に残ります。` : '');
+          fmt('{projectId} を {name} へ移動しました。', {projectId: data['project-id'], name: data.to.name})
+          + (left ? fmt(' メール {v1} 件と振り分け規則 ', {v1: stayed['filed-messages'] || 0})
+             + fmt('{v1} 件は移動元に残ります。', {v1: stayed['filing-rules'] || 0}) : '');
       } catch (error) {
         $('#identity-status').textContent = error.message;
       } finally {
@@ -9349,7 +9353,7 @@
         renderIdentity(data);
         await Promise.all([loadOrganisms(), loadWorkGovernance(), loadLocalProjects()]);
         $('#identity-status').textContent =
-          `${data.organization.name} に切り替えました。`;
+          fmt('{name} に切り替えました。', {name: data.organization.name});
       } catch (error) {
         $('#identity-status').textContent = error.message;
         renderIdentity(identityState);
@@ -9374,8 +9378,8 @@
         const code = existing
           ? invitation['invitation-code'] : invitation['enrollment-code'];
         result.textContent = existing
-          ? `${invitation.email} のOrganization招待コード: ${code}（24時間・1回限り）`
-          : `${invitation.email} のenrollment code: ${code}（24時間・1回限り）`;
+          ? fmt('{email} のOrganization招待コード: {code}（24時間・1回限り）', {email: invitation.email, code})
+          : fmt('{email} のenrollment code: {code}（24時間・1回限り）', {email: invitation.email, code});
         $('#identity-status').textContent = existing
           ? '既存UserへOrganization参加招待を発行しました。'
           : '組織Userとenrollment codeを発行しました。';
@@ -9398,7 +9402,7 @@
         renderIdentity(data);
         await Promise.all([loadOrganisms(), loadLocalProjects()]);
         $('#identity-status').textContent =
-          `${data.organization.name} に参加して切り替えました。`;
+          fmt('{name} に参加して切り替えました。', {name: data.organization.name});
       } catch (error) {
         $('#identity-status').textContent = error.message;
       } finally {
@@ -9425,7 +9429,7 @@
         const data = await request.json();
         if (!request.ok) throw new Error(data?.error?.message || 'グローバル予約に失敗しました。');
         $('#cloud-alias-state').textContent =
-          `${data.address} を予約しました。転送先の確認メールを送信しました。`;
+          fmt('{address} を予約しました。転送先の確認メールを送信しました。', {address: data.address});
       } catch (error) {
         $('#cloud-alias-state').textContent = error.message;
         button.disabled = false;
@@ -9648,8 +9652,8 @@
         summary.append(make('span', 'state-chip', 'ジョブなし'));
       }
       setAppBadge('worker-count', data.active || 0);
-      $('#worker-source').textContent = `${data.source} · 同時実行 ${data['max-concurrency']}`
-        + ` · 保持 ${items.length} / ${data['max-runs']} 件`;
+      $('#worker-source').textContent = fmt('{source} · 同時実行 {maxConcurrency}', {source: data.source, maxConcurrency: data['max-concurrency']})
+        + fmt(' · 保持 {length} / {maxRuns} 件', {length: items.length, maxRuns: data['max-runs']});
       $('#worker-clear').disabled = items.length === (data.active || 0);
       scheduleWorkerPoll();
     };
@@ -9673,7 +9677,7 @@
       credentialIssueStatus('失効させています…');
       try {
         await postJSON(`/api/credentials/${encodeURIComponent(index)}/revoke`, {}, true);
-        credentialIssueStatus(`#${index} を失効させました。提示されたどこでも honour されません。`);
+        credentialIssueStatus(fmt('#{index} を失効させました。提示されたどこでも honour されません。', {index}));
         await loadCredentials();
       } catch (error) {
         credentialIssueStatus(error.message);
@@ -9687,7 +9691,7 @@
       setAppBadge('credentials-count', issued.length);
       const live = issued.filter((record) => !record['revoked?']).length;
       $('#credentials-source').textContent = issued.length
-        ? `${issued.length} 件発行済み・${issued.length - live} 件失効`
+        ? fmt('{length} 件発行済み・{v1} 件失効', {length: issued.length, v1: issued.length - live})
         : 'まだ発行していません。';
       if (!issued.length) {
         list.append(make('li', 'empty-state',
@@ -9711,7 +9715,7 @@
           const button = make('button', 'tool-button', '失効させる');
           button.type = 'button';
           button.setAttribute('aria-label',
-            `#${record['status-index']} の credential を失効させる`);
+            fmt('#{statusIndex} の credential を失効させる', {statusIndex: record['status-index']}));
           button.addEventListener('click', () => revokeCredential(record['status-index']));
           side.append(button);
         }
@@ -9762,12 +9766,12 @@
           detail.push('失効しています。honour してはいけません。');
         }
       }
-      if (result.reason) detail.push(`理由: ${result.reason}`);
-      if (result.subject) detail.push(`主体: ${result.subject}`);
-      if (result.role) detail.push(`役割: ${credentialRoleText[result.role] || result.role}`);
-      if (result.issuer) detail.push(`発行体: ${result.issuer}`);
+      if (result.reason) detail.push(fmt('理由: {reason}', {reason: result.reason}));
+      if (result.subject) detail.push(fmt('主体: {subject}', {subject: result.subject}));
+      if (result.role) detail.push(fmt('役割: {v1}', {v1: credentialRoleText[result.role] || result.role}));
+      if (result.issuer) detail.push(fmt('発行体: {issuer}', {issuer: result.issuer}));
       if (result['verification-method']) {
-        detail.push(`鍵: ${result['verification-method']}`);
+        detail.push(fmt('鍵: {verificationMethod}', {verificationMethod: result['verification-method']}));
       }
       detail.forEach((line) => target.append(make('p', 'data-list__meta', line)));
     };
@@ -9843,16 +9847,16 @@
         target.replaceChildren();
         target.append(make('p', 'data-list__title',
           r['valid?'] ? '有効です。' : '検証できませんでした。'));
-        if (r.reason) target.append(make('p', 'data-list__meta', `理由: ${r.reason}`));
+        if (r.reason) target.append(make('p', 'data-list__meta', fmt('理由: {reason}', {reason: r.reason})));
         if (r['valid?']) {
           // The distinction this format exists for, said explicitly rather than
           // left to be inferred from a missing field.
           target.append(make('p', 'data-list__meta',
             r['subject-disclosed?']
-              ? `主体を開示: ${r.subject}`
+              ? fmt('主体を開示: {subject}', {subject: r.subject})
               : '主体は伏せられています（role と組織のみ証明されています）'));
           if (r.role) target.append(make('p', 'data-list__meta',
-            `役割: ${credentialRoleText[r.role] || r.role}`));
+            fmt('役割: {v1}', {v1: credentialRoleText[r.role] || r.role})));
           if (r['bearer-presentable?']) {
             target.append(make('p', 'form-help',
               'この形式は所持者拘束を持たないため、提示者が主体本人であることは'
@@ -9870,7 +9874,7 @@
       try {
         const issued = await postJSON('/api/credentials/membership', {}, true);
         credentialIssueStatus(
-          `#${issued['status-index']} を発行しました。credential 本体は保存していないので、`
+          fmt('#{statusIndex} を発行しました。credential 本体は保存していないので、', {statusIndex: issued['status-index']})
           + 'この結果を holder へ渡してください。');
         $('#credential-verify-input').value = JSON.stringify(issued.credential, null, 2);
         await loadCredentials();
@@ -9916,7 +9920,7 @@
       const selected = botsState.bots.find((bot) => bot.id === botsState.selected);
       const refs = selected?.['context-refs'] || [];
       button.disabled = !selected;
-      button.textContent = `参照 ${refs.length}`;
+      button.textContent = fmt('参照 {length}', {length: refs.length});
     };
     const contextState = {mode:null, sources:[], refs:[]};
     const contextKey = (ref) => `${ref.kind}:${ref.target}`;
@@ -9937,7 +9941,7 @@
           checkbox.addEventListener('change', () => {
             if (checkbox.checked) contextState.refs.push({kind:source.kind, target:source.target});
             else contextState.refs = contextState.refs.filter((ref) => contextKey(ref) !== contextKey(source));
-            $('#context-status').textContent = `${contextState.refs.length}件を選択中`;
+            $('#context-status').textContent = fmt('{length}件を選択中', {length: contextState.refs.length});
           });
           row.append(checkbox, make('strong', null, source.label || source.target),
             make('span', 'context-source__detail',
@@ -9967,7 +9971,7 @@
         if (!request.ok) throw new Error(data?.error?.message || 'Contextを読み込めませんでした。');
         contextState.sources = data.sources || [];
         renderContextSources();
-        $('#context-status').textContent = `${contextState.refs.length}件を選択中`;
+        $('#context-status').textContent = fmt('{length}件を選択中', {length: contextState.refs.length});
       } catch (error) { $('#context-status').textContent = error.message; }
     };
     $('#chat-context-button').addEventListener('click', () => openContextPanel('chat'));
@@ -9992,7 +9996,7 @@
           const data = await postJSON('/api/session/context',
             {session:sessionId, refs:contextState.refs}, true);
           chatContextRefs = data['context-refs'] || [];
-          $('#chat-context-button').textContent = `参照 ${chatContextRefs.length}`;
+          $('#chat-context-button').textContent = fmt('参照 {length}', {length: chatContextRefs.length});
           await loadSession();
         }
         closeContextPanel();
@@ -10021,7 +10025,7 @@
       });
       const outcome = job.continuation?.outcome;
       const state = outcome === 'blocked' ? '前提待ち' : status;
-      return `${state} · 次回 ${next}`;
+      return fmt('{state} · 次回 {next}', {state, next});
     };
     // The status line is cloud-kotoba-dds.status (role=status, live). ttl 0
     // keeps the app's previous behaviour: a message stays until replaced.
@@ -10061,7 +10065,7 @@
       const statusText = status === 'pass' ? 'PASS' : status === 'fail' ? 'FAIL' : '計測不足';
       const badge = make('span', 'bots-quality-status__badge', statusText);
       badge.dataset.status = status;
-      statusNode.append(badge, make('span', null, `評価時点 ${slo['as-of'] || '—'}`));
+      statusNode.append(badge, make('span', null, fmt('評価時点 {v1}', {v1: slo['as-of'] || '—'})));
       [['S', '安定性', 'stability'], ['Q', '成功時品質', 'quality'],
        ['E', '実効品質', 'effective']].forEach(([symbol, label, key]) => {
         const card = make('div', 'bots-quality-score');
@@ -10078,12 +10082,12 @@
         markNode.dataset.state = state;
         row.append(markNode,
                    make('strong', null, `${botsGateLabels[gate.id] || gate.id} · ${stateText}`),
-                   make('span', 'bots-quality-gate__target', `基準: ${gate.target}`));
+                   make('span', 'bots-quality-gate__target', fmt('基準: {target}', {target: gate.target})));
         gatesNode.append(row);
       });
       const quality = slo.quality;
       noteNode.textContent = quality
-        ? `出力品質の固定評価: ${quality['sample-size']} / ${quality['required-sample-size']}タスク。` +
+        ? fmt('出力品質の固定評価: {sampleSize} / {requiredSampleSize}タスク。', {sampleSize: quality['sample-size'], requiredSampleSize: quality['required-sample-size']}) +
           (quality.state === 'measured' ? '合格判定に使用中です。' : '完了するまでは暫定値です。')
         : '出力品質は未計測です。未計測は合格として扱いません。';
     };
@@ -10112,7 +10116,7 @@
       if (minutes === 60) return '1時間ごと';
       if (minutes === 1440) return '毎日';
       if (minutes === 10080) return '毎週';
-      return `${minutes}分ごと`;
+      return fmt('{minutes}分ごと', {minutes});
     };
     const routineStateText = {
       idle:'実行可能', disabled:'停止中', stale:'権限の見直しが必要',
@@ -10140,7 +10144,7 @@
         const enabled = make('input');
         enabled.type = 'checkbox';
         enabled.checked = Boolean(routine['enabled?']);
-        enabled.setAttribute('aria-label', `${routine.name}を有効にする`);
+        enabled.setAttribute('aria-label', fmt('{name}を有効にする', {name: routine.name}));
         enabled.addEventListener('change', async () => {
           enabled.disabled = true;
           try {
@@ -10155,18 +10159,18 @@
         head.append(dot, title, enabled);
         row.append(head,
           make('div', 'bots-routine__meta',
-            `${routineStateText[routine.status] || routine.status} · ${routineCadence(routine)} · 次回 ${routineNext(routine['next-run-at'])} · 最終 ${routineDate(routine['last-run-at'])}`));
+            fmt('{v1} · {v2} · 次回 {v3} · 最終 {v4}', {v1: routineStateText[routine.status] || routine.status, v2: routineCadence(routine), v3: routineNext(routine['next-run-at']), v4: routineDate(routine['last-run-at'])})));
         const actions = make('div', 'bots-routine__actions');
         const run = make('button', 'tool-button', '今すぐ実行');
         run.type = 'button';
         run.disabled = !routine['may-start?'];
         run.addEventListener('click', async () => {
           run.disabled = true;
-          $('#bots-routines-status').textContent = `${routine.name}を実行しています…`;
+          $('#bots-routines-status').textContent = fmt('{name}を実行しています…', {name: routine.name});
           try {
             await postJSON(`/api/bots/${botsState.selected}/routines/${routine.id}/start`, {}, true);
             await Promise.all([loadBotRoutines(), refreshBotsThread()]);
-            $('#bots-routines-status').textContent = `${routine.name}を実行しました。`;
+            $('#bots-routines-status').textContent = fmt('{name}を実行しました。', {name: routine.name});
           } catch (error) {
             $('#bots-routines-status').textContent = error.message;
           } finally { run.disabled = false; }
@@ -10179,7 +10183,7 @@
             option.selected = value === routine.schedule?.['every-minutes'];
             cadence.append(option);
           });
-        cadence.setAttribute('aria-label', `${routine.name}の繰り返し`);
+        cadence.setAttribute('aria-label', fmt('{name}の繰り返し', {name: routine.name}));
         cadence.addEventListener('change', async () => {
           cadence.disabled = true;
           try {
@@ -10192,7 +10196,7 @@
         const forget = make('button', 'tool-button', '削除');
         forget.type = 'button';
         forget.addEventListener('click', async () => {
-          if (!window.confirm(`定期ジョブ「${routine.name}」を削除しますか？`)) return;
+          if (!window.confirm(fmt('定期ジョブ「{name}」を削除しますか？', {name: routine.name}))) return;
           forget.disabled = true;
           try {
             await postJSON(`/api/bots/${botsState.selected}/routines/${routine.id}/forget`, {}, true);
@@ -10241,8 +10245,8 @@
     const botsPhaseText = (phase, tool = null) => ({
       accepted:'依頼を受け付けました。',
       model:'モデルの応答を待っています…',
-      'tool-proposed':tool ? `${tool} を確認しています…` : 'ツールを確認しています…',
-      'tool-executed':tool ? `${tool} を実行しました。` : 'ツールを実行しました。',
+      'tool-proposed':tool ? fmt('{tool} を確認しています…', {tool}) : 'ツールを確認しています…',
+      'tool-executed':tool ? fmt('{tool} を実行しました。', {tool}) : 'ツールを実行しました。',
       continuing:'Goal を継続しています…',
       verifying:'完了条件を確認しています…',
       'waiting-approval':'承認を待っています。',
@@ -10377,14 +10381,14 @@
       const tokens = usage.total_tokens ?? usage.totalTokens ?? 0;
       status.textContent =
         `${data.state}${data.phase && data.state === 'running' ? ` · ${data.phase}` : ''}` +
-        ` · ${counts.actions || 0} 手` +
-        `${counts.running ? ` · 実行中 ${counts.running}` : ''}` +
-        `${counts.failed ? ` · 失敗 ${counts.failed}` : ''}` +
-        `${counts.artifacts ? ` · 成果物 ${counts.artifacts}` : ''}` +
+        fmt(' · {v1} 手', {v1: counts.actions || 0}) +
+        (counts.running ? fmt(' · 実行中 {running}', {running: counts.running}) : '') +
+        (counts.failed ? fmt(' · 失敗 {failed}', {failed: counts.failed}) : '') +
+        (counts.artifacts ? fmt(' · 成果物 {artifacts}', {artifacts: counts.artifacts}) : '') +
         `${tokens ? ` · ${tokens} tokens` : ''}` +
-        `${data['at-cap?']
-            ? ` · 台帳上限 ${data['ledger-cap']} に達しており、古い手は失われています`
-            : ''}`;
+        (data['at-cap?']
+            ? fmt(' · 台帳上限 {ledgerCap} に達しており、古い手は失われています', {ledgerCap: data['ledger-cap']})
+            : '');
       if (!data.steps.length) {
         list.append(make('li', 'bots-trajectory__detail',
                          'この run はまだ 1 手も記録していません。'));
@@ -10406,10 +10410,10 @@
         if (step['error-type']) detail.push(`${step['error-type']}${step.message ? `: ${step.message}` : ''}`);
         else if (step.message) detail.push(step.message);
         if (step['output-sha256']) {
-          detail.push(`出力 sha256 ${String(step['output-sha256']).slice(0, 12)}…`);
+          detail.push(fmt('出力 sha256 {v1}…', {v1: String(step['output-sha256']).slice(0, 12)}));
         }
         (step.artifacts || []).forEach((artifact) => {
-          detail.push(`書き込み: ${artifact.path || (artifact.paths || []).join(', ')}`);
+          detail.push(fmt('書き込み: {v1}', {v1: artifact.path || (artifact.paths || []).join(', ')}));
         });
         if (step.kind !== 'action' && step.data && !detail.length) {
           detail.push(Object.keys(step.data).length
@@ -10472,7 +10476,7 @@
       const tokens = usage.total_tokens ?? usage.totalTokens ?? 0;
       const provider = [turn.provider, turn.model].filter(Boolean).join(' / ');
       row.append(make('span', 'bots-run__meta',
-        `${turn['elapsed-seconds'] || 0}秒 · ${turn['tool-count'] || 0} tools · ${tokens} tokens`));
+        fmt('{v1}秒 · {v2} tools · {tokens} tokens', {v1: turn['elapsed-seconds'] || 0, v2: turn['tool-count'] || 0, tokens})));
       if (provider) row.append(make('span', 'bots-run__meta', provider));
       // Open the steps from the run they belong to, at whatever stage it is
       // in. Offered for every run: a run without a ledger says so itself,
@@ -10553,7 +10557,7 @@
           id: bot.id, name: bot.name, meta: preview,
           time: botsCompactTime(bot['activity-at'] || bot['last-message']?.at),
           unread: true, status: bot.status,
-          label: `${bot.name}、${statusSummary}、${preview}`
+          label: fmt('{name}、{statusSummary}、{preview}', {name: bot.name, statusSummary, preview})
         }, {current, avatar: () => botAvatar(make('span', 'bot-avatar'), bot.avatar, bot.status, bot.id),
             unreadLabel: statusSummary});
         const item = li.querySelector('.ck-bots__item');
@@ -10627,7 +10631,7 @@
           chip.append(make('span', null, candidate.name));
           const remove = make('button', 'bots-slot__remove', '×');
           remove.type = 'button';
-          remove.setAttribute('aria-label', `${candidate.name} を外す`);
+          remove.setAttribute('aria-label', fmt('{name} を外す', {name: candidate.name}));
           remove.addEventListener('click', () => {
             botsState.picked.delete(candidate.id);
             renderBotsPicks();
@@ -10640,7 +10644,7 @@
         // in the list, disabled and carrying its reason — dropping it would
         // answer "this app does not exist here", which is not what is true.
         const select = make('select', 'bots-slot__select');
-        select.setAttribute('aria-label', `${slot.title}に追加するアプリ`);
+        select.setAttribute('aria-label', fmt('{title}に追加するアプリ', {title: slot.title}));
         const placeholder = make('option', null, 'アプリを追加');
         placeholder.value = '';
         select.append(placeholder);
@@ -10675,7 +10679,7 @@
       });
       $('#bots-slot-note').textContent =
         botsState.picked.size
-          ? `${botsState.picked.size} 個のアプリを追加します。あとから変えられます。`
+          ? fmt('{size} 個のアプリを追加します。あとから変えられます。', {size: botsState.picked.size})
           : 'まだアプリを追加していません。何も選ばずに進められます。';
     };
     // Both renderings, in one call. They are two views of one set, so they are
@@ -10703,7 +10707,7 @@
         copy.append(make('span', 'bots-tile__name', service.name),
                     make('span', 'bots-tile__meta',
                          usable
-                           ? `${service['enabled-tool-count']} 個のツール${service['connected?'] ? '・接続済み' : ''}`
+                           ? fmt('{enabledToolCount} 個のツール{v1}', {enabledToolCount: service['enabled-tool-count'], v1: service['connected?'] ? '・接続済み' : ''})
                            : (service['availability-note'] || '')));
         tile.append(copy);
         if (botsState.picked.has(service.id)) {
@@ -10891,7 +10895,7 @@
         meta.append(revision);
         const paths = card.paths || [];
         if (paths.length) {
-          meta.append(make('span', 'bots-card__count', `${paths.length}件のファイル`));
+          meta.append(make('span', 'bots-card__count', fmt('{length}件のファイル', {length: paths.length})));
         }
         node.append(meta);
         paths.forEach((path) => node.append(make('code', 'bots-card__path', path)));
@@ -10923,9 +10927,9 @@
     const botsSecretSourceLabel = (card) => {
       const requirement = card.requirement || {};
       if (card.source === 'environment') {
-        return `環境変数 ${requirement.environment || ''} から読んでいます`;
+        return fmt('環境変数 {v1} から読んでいます', {v1: requirement.environment || ''});
       }
-      return `${requirement.holder || 'この端末'}に保存済み`;
+      return fmt('{v1}に保存済み', {v1: requirement.holder || 'この端末'});
     };
     const botsSecretCard = (card, botId) => {
       const node = make('div', 'bots-card');
@@ -11048,7 +11052,7 @@
       const shield = make('div', 'bots-card__shield');
       shield.append(make('span', null, '\u{1F6E1}'),
                     make('span', null,
-                         `${requirement.holder || 'この端末'}に保存され、Bot には渡りません。`));
+                         fmt('{v1}に保存され、Bot には渡りません。', {v1: requirement.holder || 'この端末'})));
       node.append(shield);
       return node;
     };
@@ -11182,7 +11186,7 @@
         .replace(/```[\s\S]*?```/g, ' コード省略 ')
         .replace(/[#*_`>\[\]()]/g, ' ')
         .replace(/\s+/g, ' ').trim();
-      return value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
+      return value.length > limit ? fmt('{v1}…', {v1: value.slice(0, limit - 1)}) : value;
     };
     const botsAttentionStatuses = new Set(['waiting-approval', 'waiting-connection',
                                            'blocked']);
@@ -11208,7 +11212,7 @@
         // writes its own state into its first clause often enough that the
         // naive prefix produced `前提待ち：前提待ち: Either…` on screen.
         if (!said) return need;
-        return said.startsWith(need) ? said : `${need}：${said}`;
+        return said.startsWith(need) ? said : fmt('{need}：{said}', {need, said});
       }
       return said || statusSummary;
     };
@@ -11263,7 +11267,7 @@
         return runs;
       })();
     const renderBotsResidentRun = (run) => {
-      const entry = make('li', 'bots-msg');
+      const entry = make('div', 'bots-msg');
       entry.dataset.role = 'resident-result';
       const results = run.messages.filter((message) => residentResultKey(message));
       // The LATEST result heads the card. A run is read top-down as one item,
@@ -11276,7 +11280,7 @@
       summary.append(
         make('strong', null, '自動確認の結果'),
         make('span', 'bots-msg__resident-state',
-             repeats > 1 ? `${residentResultState(latest.text)} ×${repeats}`
+             repeats > 1 ? fmt('{v1} ×{repeats}', {v1: residentResultState(latest.text), repeats})
                          : residentResultState(latest.text)),
         make('span', 'bots-msg__resident-preview', residentResultPreview(latest.text)),
         make('span', 'bots-msg__resident-open', '全文を見る'));
@@ -11318,7 +11322,7 @@
           return;
         }
         const message = run.messages[0];
-        const entry = make('li', 'bots-msg');
+        const entry = make('div', 'bots-msg');
         entry.dataset.role = message.role;
         if (message.text && message.source === 'resident' && message.role === 'person') {
           // A resident objective is host runtime input, not something the
@@ -11335,10 +11339,9 @@
           // every one of them, so `renderBotsResidentRun` renders it -- a run of
           // one included. Two implementations of that card would drift, and the
           // one reached less often would be the one nobody noticed drifting.
-          const bubble = make('div', 'bots-msg__bubble');
-          if (message.role === 'bot') renderMarkdown(bubble, message.text);
-          else bubble.textContent = message.text;
-          entry.append(bubble);
+          entry.append(cloudKotobaThread.bubble(null, message.role === 'bot'
+            ? {role:'bot', markdown:message.text, render:renderMarkdown}
+            : {role:message.role, text:message.text}));
         }
         appendBotsCards(entry, [message], bot.id);
         holder.append(entry);
@@ -11397,7 +11400,7 @@
       $('#bots-titlebar-name').hidden = false;
       try {
         applyBotsOverview(await postJSON(`/api/bots/${botId}/name`, {name:next}, true));
-        botsSetStatus(`名前を「${next}」に変更しました。`);
+        botsSetStatus(fmt('名前を「{next}」に変更しました。', {next}));
       } catch (error) {
         botsSetStatus(error.message);
         renderBotsThread();
@@ -11428,7 +11431,7 @@
       $('#bots-mobile-name').textContent = bot.name;
       $('#bots-mobile-status').textContent = botsStatusSummary(bot);
       $('#bots-mobile-context').hidden = false;
-      $('#bots-input').placeholder = `${bot.name} に頼む`;
+      $('#bots-input').placeholder = fmt('{name} に頼む', {name: bot.name});
       $('#bots-titlebar-identity').hidden = false;
       $('#bots-thread-tools').hidden = false;
       const panel = $('#bots-thread-panel');
@@ -11442,7 +11445,7 @@
       nameCard.append(make('div', null, bot.name));
       nameCard.append(make('div', 'bots-permission__help',
         bot['name-source'] === 'bot'
-          ? `別の Bot が付けた名前です${bot['named-by'] ? `（${bot['named-by']}）` : ''}。`
+          ? fmt('別の Bot が付けた名前です{v1}。', {v1: bot['named-by'] ? fmt('（{namedBy}）', {namedBy: bot['named-by']}) : ''})
           : bot['name-source'] === 'person'
             ? 'あなたが付けた名前です。職務Botの照合でも上書きされません。'
             : bot['workforce-key']
@@ -11450,7 +11453,7 @@
               : '作成時に付けた名前です。'));
       if (bot['projected-name']) {
         nameCard.append(make('div', 'bots-permission__help',
-          `登録簿の名前: ${bot['projected-name']}`));
+          fmt('登録簿の名前: {projectedName}', {projectedName: bot['projected-name']})));
         const restore = make('button', 'tool-button', '登録簿の名前に戻す');
         restore.type = 'button';
         restore.addEventListener('click', botsRenameRestore);
@@ -11458,7 +11461,7 @@
       }
       panel.append(nameCard);
       panel.append(make('div', null,
-        `届く範囲: ${bot['admitted-tools'].length} 個のツール` +
+        fmt('届く範囲: {length} 個のツール', {length: bot['admitted-tools'].length}) +
         `${bot['writes?']
           ? (bot['omakase?'] ? '（おまかせで書き込み）' : '（書き込みは承認のうえで実行）')
           : '（読み取りのみ）'}`));
@@ -11483,10 +11486,10 @@
             const result = await postJSON(`/api/bots/${bot.id}/workspace/sync`, {}, true);
             const changed = ['pushed', 'pulled', 'remote-trashed', 'local-trashed', 'conflicts']
               .reduce((total, key) => total + (result[key] || []).length, 0);
-            workspaceState.textContent = `同期済み · 変更 ${changed}件`;
+            workspaceState.textContent = fmt('同期済み · 変更 {changed}件', {changed});
             await loadBots({keepSelection:true});
           } catch (error) {
-            workspaceState.textContent = `同期エラー · ${error.message}`;
+            workspaceState.textContent = fmt('同期エラー · {message}', {message: error.message});
           } finally { syncNow.disabled = false; }
         });
         workspaceCard.append(make('strong', null, 'Cloud Itonami workspace'),
@@ -11501,7 +11504,7 @@
         make('strong', null, 'Commerce'),
         make('div', 'bots-card__summary', commerceReadiness['ready?']
           ? 'DID・x402・住所・発送の開設準備が揃っています。公開はまだ実行していません。'
-          : `開設準備: ${(commerceReadiness.checks || []).filter((check) => check['ready?']).length}` +
+          : fmt('開設準備: {v1}', {v1: (commerceReadiness.checks || []).filter((check) => check['ready?']).length}) +
             ` / ${(commerceReadiness.checks || []).length}`));
       if (commerceStore['merchant-did']) {
         commerceCard.append(make('div', 'bots-card__summary',
@@ -11511,7 +11514,7 @@
         .filter((check) => !check['ready?'])
         .map((check) => check.label);
       if (missing.length) {
-        commerceCard.append(make('div', 'bots-card__summary', `次に必要: ${missing.join('、')}`));
+        commerceCard.append(make('div', 'bots-card__summary', fmt('次に必要: {v1}', {v1: missing.join('、')})));
       }
       const commercePrompt = make('button', 'tool-button',
         commerce.status === 'not-configured' ? 'ショップ開設を始める' : 'Commerce設定を会話で進める');
@@ -11554,11 +11557,11 @@
           const next = job['next-run-at']
             ? new Date(job['next-run-at']).toLocaleString('ja-JP') : '未設定';
           workforceCard.append(make('div', 'bots-card__state',
-            `${job['enabled?'] ? '常駐中' : '停止中'} · ${job['cadence-minutes']}分周期 · 次回 ${next}`));
+            fmt('{v1} · {cadenceMinutes}分周期 · 次回 {next}', {v1: job['enabled?'] ? '常駐中' : '停止中', cadenceMinutes: job['cadence-minutes'], next})));
           const continuation = job.continuation;
           if (continuation?.outcome === 'blocked') {
             workforceCard.append(make('div', 'bots-card__summary',
-              `前提待ち: ${continuation.summary || '必要な情報が不足しています'}`));
+              fmt('前提待ち: {v1}', {v1: continuation.summary || '必要な情報が不足しています'})));
           }
         }
         workforceCard.append(make('div', 'form-help',
@@ -11579,7 +11582,7 @@
           const request = await fetch(`/api/bots/${bot.id}/mailbox`);
           const data = await request.json();
           if (!request.ok) throw new Error(data?.error?.message || 'Mailbox を読めませんでした。');
-          mailboxStatus.textContent = `受信 ${data.inbound.length} 件 / 送信 ${data.sent.length} 件`;
+          mailboxStatus.textContent = fmt('受信 {length} 件 / 送信 {length2} 件', {length: data.inbound.length, length2: data.sent.length});
           const list = make('ul');
           data.inbound.slice(0, 10).forEach((mail) =>
             list.append(make('li', null, `${mail.subject || '(件名なし)'} — ${mail['from-email'] || ''}`)));
@@ -11745,7 +11748,7 @@
       authorityEditor.append(make('summary', 'bots-settings__title',
         normalCapabilities === 5
           ? '通常モード — 5つの自律機能がオン'
-          : `制限モード — ${5 - normalCapabilities}項目をオフ`));
+          : fmt('制限モード — {v1}項目をオフ', {v1: 5 - normalCapabilities})));
       authorityEditor.append(make('p', 'bots-permission__help',
         '通常はすべてオンです。特別な目的のBotだけ、ここで使わない機能を制限します。'));
       const writesBox = make('input');
@@ -11863,7 +11866,7 @@
       panel.append(codingEditor);
       panel.append(make('div', null,
         bot['virtual-shell?']
-          ? `仮想shell: Bot専用・networkなし・全command承認${bot['virtual-shell-ready?'] ? '（ready）' : '（image未準備）'}`
+          ? fmt('仮想shell: Bot専用・networkなし・全command承認{v1}', {v1: bot['virtual-shell-ready?'] ? '（ready）' : '（image未準備）'})
           : 'Local coding: 読み取りは自動、ファイル変更と commit は毎回承認。'));
       if (bot['grant-widens?']) {
         // Surfaced rather than repaired: the two readings need different
@@ -12010,7 +12013,7 @@
               section:name.trim()
             }, true));
             botsSetStatus(name.trim()
-              ? `「${name.trim()}」へ移動しました。`
+              ? fmt('「{v1}」へ移動しました。', {v1: name.trim()})
               : '日時の一覧に戻しました。');
           }),
         item('未読にする',
@@ -12035,7 +12038,7 @@
           'M8 8h12v12H8z M4 16V4h12',
           async () => {
             const data = await postJSON('/api/bots', {
-              name:`コピー — ${bot.name}`.slice(0, 60),
+              name:fmt('コピー — {name}', {name: bot.name}).slice(0, 60),
               avatar:bot.avatar,
               brief:bot.brief,
               tools:bot.tools,
@@ -12098,7 +12101,7 @@
         item('1個のBotを削除',
           'M4 7h16 M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2 M10 11v6 M14 11v6 M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12',
           async () => {
-            if (!window.confirm(`${bot.name} を削除しますか？会話の記録は残ります。`)) return;
+            if (!window.confirm(fmt('{name} を削除しますか？会話の記録は残ります。', {name: bot.name}))) return;
             applyBotsOverview(await postJSON(`/api/bots/${bot.id}/archive`, {}, true));
             if (botsState.selected === bot.id) {
               botsState.selected = (botsState.bots.find((candidate) =>
@@ -12109,7 +12112,7 @@
                 renderBotsThread();
               }
             }
-            botsSetStatus(`${bot.name} を削除しました。`);
+            botsSetStatus(fmt('{name} を削除しました。', {name: bot.name}));
           }, true)
       ];
       const at = Number.isFinite(event.clientX)
@@ -12279,7 +12282,7 @@
         const status = await postJSON('/api/bots/workforce/provision', {}, true);
         await loadBots({keepSelection:true});
         botsSetStatus(
-          `${status.businesses}事業 / ${status.bots}職務Botを常駐化しました。` +
+          fmt('{businesses}事業 / {bots}職務Botを常駐化しました。', {businesses: status.businesses, bots: status.bots}) +
           '既存の会話と実行履歴は保持されています。');
       } catch (error) {
         botsSetStatus(error.message);
@@ -12377,22 +12380,17 @@
     const botsInput = $('#bots-input');
     const botsCancel = $('#bots-cancel');
     const selectedBotsRun = () => botsState.activeRuns.get(botsState.selected) || null;
-    const resizeBotsInput = () => {
-      botsInput.style.height = 'auto';
-      botsInput.style.height = `${Math.min(botsInput.scrollHeight, 192)}px`;
-      const active = selectedBotsRun();
-      $('#bots-send').disabled = !botsInput.value.trim() || botsState.shellBusy;
-      $('#bots-send').textContent = active ? '追加で伝える' : '送信';
-      botsCancel.hidden = !(active || botsState.shellBusy);
-    };
-    botsInput.addEventListener('input', resizeBotsInput);
-    botsInput.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)
-          && !event.isComposing && event.keyCode !== 229) {
-        event.preventDefault();
-        $('#bots-form').requestSubmit();
-      }
+    // The composer's behaviour (Enter newline / ⌘⏎ send with the IME guard,
+    // autosize, the send label while a run is active, stop while running or
+    // busy, Escape → stop) is cloud-kotoba-dds.composer; this app supplies
+    // the two predicates and answers bots/send / bots/stop below.
+    const botsComposer = cloudKotobaComposer.attach($('#bots-form'), {
+      running: () => Boolean(selectedBotsRun()),
+      busy: () => botsState.shellBusy
     });
+    const resizeBotsInput = () => botsComposer.refresh();
+    // Opens the run stream. Authentication and the CSRF retry are this app's
+    // (identityHeaders); the reading is cloudKotobaThread.run → shinkansen.
     const openBotsStream = async (botId, text, runId, goal, signal) => {
       if (!identityState?.csrf) await refreshIdentityForWrite();
       const send = () => fetch(`/api/bots/${botId}/messages/stream`, {
@@ -12413,67 +12411,40 @@
       }
       return request;
     };
-    const readBotsStream = async (request, run, onPhase) => {
-      const reader = request.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      while (true) {
-        const {value, done} = await reader.read();
-        buffer += decoder.decode(value || new Uint8Array(), {stream:!done});
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          const frame = JSON.parse(line);
-          if (frame.type === 'delta') {
-            run.provisional.dataset.markdown =
-              (run.provisional.dataset.markdown || '') + (frame.content || '');
-            renderMarkdown(run.provisional, run.provisional.dataset.markdown);
-            if (botsState.selected === run.botId) botsSetStatus('応答中…');
-          } else if (frame.type === 'phase') {
-            onPhase(frame);
-            run.turn = {...(run.turn || {}), state:'running', phase:frame.phase,
-              tool:frame.tool || run.turn?.tool,
-              'tool-count':frame['tool-count'] || run.turn?.['tool-count'] || 0};
-            if (botsState.selected === run.botId && botsState.latestTurn) {
-              botsState.latestTurn = run.turn;
-              renderBotsRun(botsState.latestTurn);
-            }
-            if (botsState.selected === run.botId) {
-              botsSetStatus(botsPhaseText(frame.phase, frame.tool));
-            }
-          } else if (frame.type === 'followup-applied') {
-            if (botsState.selected === run.botId) {
-              const followupIds = new Set((frame.followups || []).map((item) => item.id));
-              const anchors = [...$('#bots-messages').querySelectorAll('[data-followup-id]')]
-                .filter((node) => followupIds.has(node.dataset.followupId));
-              const entry = make('li', 'bots-msg');
-              entry.dataset.role = 'bot';
-              run.provisional = make('div', 'bots-msg__bubble');
-              entry.append(run.provisional);
-              const anchor = anchors[anchors.length - 1];
-              if (anchor) anchor.after(entry); else $('#bots-messages').append(entry);
-              botsSetStatus('追加メッセージを次のステップに反映しました。');
-            } else {
-              run.provisional = make('div', 'bots-msg__bubble');
-            }
-          } else if (frame.type === 'done') {
-            run.messages = frame.messages || [];
-            run.turn = frame.turn || run.turn;
-            if (botsState.selected === run.botId) {
-              botsState.messages = run.messages;
-              botsState.latestTurn = run.turn || botsState.latestTurn;
-            }
-          } else if (frame.type === 'error') {
-            run.turn = frame.turn || run.turn;
-            if (botsState.selected === run.botId) {
-              botsState.latestTurn = run.turn || botsState.latestTurn;
-              renderBotsRun(botsState.latestTurn);
-            }
-            throw new Error(frame.message || 'Bot の実行に失敗しました。');
-          }
+    // What a run's frames mean to THIS app (phases, tools, the turn): the
+    // bubble growth, follow-up anchoring and done/error are the thread's.
+    const onBotsFrame = (run, onPhase) => (frame) => {
+      if (frame.type === 'delta') {
+        if (botsState.selected === run.botId) botsSetStatus('応答中…');
+      } else if (frame.type === 'phase') {
+        onPhase(frame);
+        run.turn = {...(run.turn || {}), state:'running', phase:frame.phase,
+          tool:frame.tool || run.turn?.tool,
+          'tool-count':frame['tool-count'] || run.turn?.['tool-count'] || 0};
+        if (botsState.selected === run.botId && botsState.latestTurn) {
+          botsState.latestTurn = run.turn;
+          renderBotsRun(botsState.latestTurn);
         }
-        if (done) break;
+        if (botsState.selected === run.botId) {
+          botsSetStatus(botsPhaseText(frame.phase, frame.tool));
+        }
+      } else if (frame.type === 'followup-applied') {
+        if (botsState.selected === run.botId) {
+          botsSetStatus('追加メッセージを次のステップに反映しました。');
+        }
+      } else if (frame.type === 'done') {
+        run.messages = frame.messages || [];
+        run.turn = frame.turn || run.turn;
+        if (botsState.selected === run.botId) {
+          botsState.messages = run.messages;
+          botsState.latestTurn = run.turn || botsState.latestTurn;
+        }
+      } else if (frame.type === 'error') {
+        run.turn = frame.turn || run.turn;
+        if (botsState.selected === run.botId) {
+          botsState.latestTurn = run.turn || botsState.latestTurn;
+          renderBotsRun(botsState.latestTurn);
+        }
       }
     };
     const followDetachedGoal = async (run, signal) => {
@@ -12495,9 +12466,8 @@
       }
       throw new Error('Goal は background で継続しています。後でこの Bot を開いて確認してください。');
     };
-    $('#bots-form').addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const text = botsInput.value.trim();
+    shinkansen.on('bots/send', async () => {
+      const text = botsComposer.value();
       if (!text || !botsState.selected || botsState.shellBusy) return;
       const botId = botsState.selected;
       const active = botsState.activeRuns.get(botId);
@@ -12506,15 +12476,11 @@
           const queued = await postJSON(
             `/api/bots/${botId}/messages/${encodeURIComponent(active.runId)}/followups`,
             {text}, true);
-          botsInput.value = '';
-          resizeBotsInput();
+          botsComposer.clear();
           if (botsState.selected === botId) {
-            const personEntry = make('li', 'bots-msg');
-            personEntry.dataset.role = 'person';
-            personEntry.dataset.followupId = queued.id;
-            personEntry.append(make('div', 'bots-msg__bubble', text));
-            $('#bots-messages').append(personEntry);
-            botsSetStatus(`追加メッセージを受け付けました（待機 ${queued.queued}件）。`);
+            // the anchor a streamed follow-up answer is placed after
+            cloudKotobaThread.bubble($('#bots-messages'), {role:'person', text, followupId:queued.id});
+            botsSetStatus(fmt('追加メッセージを受け付けました（待機 {queued}件）。', {queued: queued.queued}));
           }
         } catch (error) {
           botsSetStatus(error.message);
@@ -12533,21 +12499,19 @@
         state:'running', phase:'accepted', 'elapsed-seconds':0,
         'tool-count':0, 'followup-count':0, usage:null
       };
+      botsComposer.clear();
+      // run.stream is the thread's handle: abort(), bubble() (the answer as
+      // it grows). The bot bubble is appended only while this Bot is on
+      // screen (feed is asked per frame); the person's goes in first.
+      // run.controller is what stop pulls: it aborts the stream and the
+      // detached-goal poll together.
       const controller = new AbortController();
-      botsInput.value = '';
-      const entry = make('li', 'bots-msg');
-      entry.dataset.role = 'bot';
-      const provisional = make('div', 'bots-msg__bubble');
-      entry.append(provisional);
-      const run = {botId, runId, goal, controller, provisional, turn, messages:[]};
+      const run = {botId, runId, goal, stream:null, controller, turn, messages:[]};
       botsState.activeRuns.set(botId, run);
       botsState.latestTurn = turn;
       renderBotsRun(turn);
       resizeBotsInput();
-      const personEntry = make('li', 'bots-msg');
-      personEntry.dataset.role = 'person';
-      personEntry.append(make('div', 'bots-msg__bubble', text));
-      $('#bots-messages').append(personEntry, entry);
+      cloudKotobaThread.bubble($('#bots-messages'), {role:'person', text});
       const elapsed = window.setInterval(() => {
         const seconds = Math.floor((Date.now() - startedAt) / 1000);
         if (run.turn?.id === runId) {
@@ -12557,20 +12521,25 @@
             renderBotsRun(run.turn);
           }
         }
-        if (run.provisional.textContent || botsState.selected !== botId) return;
+        if (run.stream?.bubble().textContent || botsState.selected !== botId) return;
         const phase = botsPhaseText(progress.phase, progress.tool);
         botsSetStatus(seconds >= 30
-          ? `${phase} 通常より時間がかかっています… ${seconds}秒`
-          : `${phase} ${seconds}秒`);
+          ? fmt('{phase} 通常より時間がかかっています… {seconds}秒', {phase, seconds})
+          : fmt('{phase} {seconds}秒', {phase, seconds}));
       }, 1000);
-      botsSetStatus(`${botsPhaseText(progress.phase)} 0秒`);
+      botsSetStatus(fmt('{v1} 0秒', {v1: botsPhaseText(progress.phase)}));
       try {
-        const request = await openBotsStream(botId, text, runId, goal,
-                                             controller.signal);
-        await readBotsStream(request, run, (frame) => {
-          progress.phase = frame.phase;
-          progress.tool = frame.tool || null;
+        run.stream = cloudKotobaThread.run({
+          feed: () => botsState.selected === botId ? $('#bots-messages') : null,
+          source: (init) => openBotsStream(botId, text, runId, goal, init.signal),
+          render: renderMarkdown,
+          onFrame: onBotsFrame(run, (frame) => {
+            progress.phase = frame.phase;
+            progress.tool = frame.tool || null;
+          })
         });
+        controller.signal.addEventListener('abort', () => run.stream.abort('stop'));
+        await run.stream.promise;
         if (goal && run.turn?.state === 'running') {
           await followDetachedGoal(run, controller.signal);
         }
@@ -12586,7 +12555,8 @@
         await loadBots({keepSelection:true});
       } catch (error) {
         if (botsState.selected === botId) {
-          botsSetStatus(error.name === 'AbortError' ? '中止しました。' : error.message);
+          botsSetStatus(error.name === 'AbortError' ? '中止しました。'
+            : (error.frame && !error.frame.message) ? 'Bot の実行に失敗しました。' : error.message);
           await refreshBotsThread().catch(() => {});
         }
       } finally {
@@ -12597,7 +12567,7 @@
         if (botsState.selected === botId) resizeBotsInput();
       }
     });
-    botsCancel.addEventListener('click', async () => {
+    shinkansen.on('bots/stop', async () => {
       const botId = botsState.selected;
       const active = botsState.activeRuns.get(botId);
       const runId = active?.runId;
@@ -12623,11 +12593,7 @@
         botsCancel.disabled = false;
       }
     });
-    document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && (selectedBotsRun() || botsState.shellBusy)) {
-        botsCancel.click();
-      }
-    });
+    // Escape → stop is the composer runtime's (outside a <dialog>).
 
     // ── rooms (ADR-0063) ────────────────────────────────────────────────
     //
@@ -12651,7 +12617,7 @@
     const roomRailItem = (room) => {
         const open = make('button', 'ck-bots__item');
         open.dataset.ckBots = 'item';
-        open.setAttribute('aria-label', `${room.name}、あなたと${room.members.length}体の Bot`);
+        open.setAttribute('aria-label', fmt('{name}、あなたと{length}体の Bot', {name: room.name, length: room.members.length}));
         open.setAttribute('aria-current', String(roomsState.selected === room.id && !$('#bots-conversations-panel').hidden));
         const faces = make('span', 'group-chat-avatars');
         room.members.slice(0, 2).forEach(member => {
@@ -12663,7 +12629,7 @@
         headline.append(make('span', 'ck-bots__name', room.name));
         const time = botsCompactTime(room['activity-at']);
         if (time) headline.append(make('time', 'ck-bots__time', time));
-        copy.append(headline, make('span', 'ck-bots__meta', room['last-message']?.text || `あなたと${room.members.length}体の Bot`));
+        copy.append(headline, make('span', 'ck-bots__meta', room['last-message']?.text || fmt('あなたと{length}体の Bot', {length: room.members.length})));
         open.append(faces, copy);
         open.type = 'button';
         open.addEventListener('click', () => {
@@ -12684,7 +12650,7 @@
       roomsState.rooms.forEach((room) => {
         const row = make('li');
         const button = make('button', 'record-button',
-          `${room.name} · ${room.members.length}体`);
+          fmt('{name} · {length}体', {name: room.name, length: room.members.length}));
         button.type = 'button';
         button.setAttribute('aria-pressed',
           roomsState.selected === room.id ? 'true' : 'false');
@@ -12716,11 +12682,11 @@
           const row = make('li', 'room-scheduled');
           const details = document.createElement('details');
           const at = message.at && Number.isFinite(Date.parse(message.at)) ? new Date(message.at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
-          details.append(make('summary', '', `${at} · 定期チェックイン`), make('p', '', message.text));
+          details.append(make('summary', '', fmt('{at} · 定期チェックイン', {at})), make('p', '', message.text));
           row.append(details); thread.append(row); return;
         }
         const row = make('li', 'bots-msg'); row.dataset.role = message.from ? 'bot' : 'person';
-        const bubble = make('div', 'bots-msg__bubble');
+        const bubble = make('div', 'ck-bots__bubble');
         const heading = make('div', 'room-message-heading');
         if (speaker) heading.append(botAvatar(make('span', 'bot-avatar'), speaker.avatar, speaker.status, speaker.id));
         heading.append(make('strong', '', who));
@@ -12747,7 +12713,7 @@
       $('#room-title').textContent = room ? room.name : 'ルーム';
       $('#room-members-summary').textContent = room
         ? room.members.map((member) =>
-            (member['enabled?'] ?? member.enabled) ? member.name : `${member.name}（停止中）`).join(' · ')
+            (member['enabled?'] ?? member.enabled) ? member.name : fmt('{name}（停止中）', {name: member.name})).join(' · ')
         : '';
       const faces = $('#group-chat-avatars'), participants = $('#room-participants');
       faces.replaceChildren(); participants.replaceChildren();
@@ -12757,11 +12723,11 @@
         if (index < 3) faces.append(botAvatar(make('span', 'bot-avatar'), b.avatar, b.status, b.id));
         const row = make('li'); row.append(botAvatar(make('span', 'bot-avatar'), b.avatar, b.status, b.id), document.createTextNode(member.name)); participants.append(row);
       });
-      $('#room-input').placeholder = `${room?.name || 'グループ'} にメッセージ`;
+      $('#room-input').placeholder = fmt('{v1} にメッセージ', {v1: room?.name || 'グループ'});
       $('#room-schedule-enabled').checked = !!room?.schedule?.enabled;
       $('#room-interval').value = room?.schedule?.['interval-minutes'] || 60;
       $('#room-topic').value = room?.schedule?.prompt || '';
-      $('#room-schedule-label').textContent = room?.schedule?.enabled ? `定期対話 · ${room.schedule['interval-minutes']}分ごと` : '定期対話';
+      $('#room-schedule-label').textContent = room?.schedule?.enabled ? fmt('定期対話 · {intervalMinutes}分ごと', {intervalMinutes: room.schedule['interval-minutes']}) : '定期対話';
       renderRoomList();
       roomStatus('読み込み中…');
       try {
@@ -12861,7 +12827,7 @@
           'interval-minutes':Number($('#room-interval').value), prompt:$('#room-topic').value.trim()
         }, true);
         const room = roomsState.rooms.find(x => x.id === id); if (room) room.schedule = data.schedule;
-        $('#room-schedule-label').textContent = data.schedule.enabled ? `定期対話 · ${data.schedule['interval-minutes']}分ごと` : '定期対話';
+        $('#room-schedule-label').textContent = data.schedule.enabled ? fmt('定期対話 · {intervalMinutes}分ごと', {intervalMinutes: data.schedule['interval-minutes']}) : '定期対話';
         roomStatus(data.schedule.enabled ? '定期対話を保存しました。' : '定期対話を停止しました。');
       } catch (error) { roomStatus(error.message); }
     });
@@ -12945,7 +12911,7 @@
     const announcedWalletProviders = new Map();
     let selectedWalletProviderId = '';
     const shortAddress = (address) => address
-      ? `${address.slice(0, 8)}…${address.slice(-6)}` : '準備中';
+      ? fmt('{v1}…{v2}', {v1: address.slice(0, 8), v2: address.slice(-6)}) : '準備中';
     const weiToEth = (value) => {
       const wei = BigInt(value || '0');
       const whole = wei / (10n ** 18n);
@@ -13065,7 +13031,7 @@
         ['awaiting-wallet', 'awaiting-passkey-user-operation'].includes(transfer.status));
       setAppBadge('wallet-count', passkeyWallets.length || '');
       $('#wallet-source').textContent = data['private-keys-stored?']
-        ? '秘密鍵を保存しています' : `${passkeyWallets.length}個のPasskey Smart Account`;
+        ? '秘密鍵を保存しています' : fmt('{length}個のPasskey Smart Account', {length: passkeyWallets.length});
       $('#wallet-summary').replaceChildren(
         make('span', null, String(passkeyWallets.length)),
         make('span', null, String(activeAccounts.length)),
@@ -13124,7 +13090,7 @@
         body.append(make('p', 'data-list__title', `${weiToEth(transfer['value-wei'])} ETH`),
           make('p', 'data-list__meta wallet-address', `${shortAddress(transfer.from)} → ${shortAddress(transfer.to)}`),
           make('p', 'data-list__meta', transfer.status === 'submitted'
-            ? `送信済み · ${shortAddress(transfer['tx-hash'])}`
+            ? fmt('送信済み · {v1}', {v1: shortAddress(transfer['tx-hash'])})
             : transfer.status === 'awaiting-passkey-user-operation'
               ? 'Passkey UserOperation対応待ち' : '外部Walletの署名待ち'));
         row.append(body);
@@ -13166,7 +13132,7 @@
           make('p', 'data-list__title', ownerLabel),
           make('p', 'data-list__meta', state === 'initial-owner'
             ? '最初のowner'
-            : state === 'active-on-chain' ? `Chain ${chain?.['chain-id']} のowner`
+            : state === 'active-on-chain' ? fmt('Chain {v1} のowner', {v1: chain?.['chain-id']})
               : 'ログイン用Passkey（on-chain owner未追加）'));
         row.append(body);
         if (state === 'requires-add-owner-user-operation') {
@@ -13182,7 +13148,7 @@
               try {
                 const confirmed = await pollWalletOwnerReceipt(pending.id);
                 $('#wallet-owner-status').textContent =
-                  `owner追加をchain上で確認しました: ${shortAddress(confirmed['transaction-hash'])}`;
+                  fmt('owner追加をchain上で確認しました: {v1}', {v1: shortAddress(confirmed['transaction-hash'])});
                 await loadWallet();
               } catch (error) {
                 $('#wallet-owner-status').textContent = error.message;
@@ -13213,7 +13179,7 @@
           {}, true);
         if (result.status === 'confirmed') return result;
         $('#wallet-owner-status').textContent =
-          `送信済みです。chain receiptを確認中… (${attempt + 1}/30)`;
+          fmt('送信済みです。chain receiptを確認中… ({v1}/30)', {v1: attempt + 1});
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
       throw new Error('UserOperationは送信済みです。receipt確認を再開してください。');
@@ -13238,7 +13204,7 @@
         }, true);
         status.textContent = 'UserOperationを送信しました。receiptを確認しています…';
         const receipt = await pollWalletOwnerReceipt(submitted.id);
-        status.textContent = `owner追加をchain上で確認しました: ${shortAddress(receipt['transaction-hash'])}`;
+        status.textContent = fmt('owner追加をchain上で確認しました: {v1}', {v1: shortAddress(receipt['transaction-hash'])});
         await loadWallet();
       } catch (error) {
         status.textContent = error.message;
@@ -13300,11 +13266,11 @@
         const provider = requireInjectedWallet();
         const accounts = await provider.request({method:'eth_requestAccounts'});
         if (!accounts.some((address) => address.toLowerCase() === transfer.from.toLowerCase())) {
-          throw new Error(`選択したWalletで送信元 ${shortAddress(transfer.from)} を選択してください。`);
+          throw new Error(fmt('選択したWalletで送信元 {v1} を選択してください。', {v1: shortAddress(transfer.from)}));
         }
         const chainId = Number(BigInt(await provider.request({method:'eth_chainId'})));
         if (chainId !== transfer['chain-id']) {
-          throw new Error(`Chain ${transfer['chain-id']} に切り替えてください。`);
+          throw new Error(fmt('Chain {chainId} に切り替えてください。', {chainId: transfer['chain-id']}));
         }
         const txHash = await provider.request({method:'eth_sendTransaction', params:[{
           from:transfer.from, to:transfer.to,
@@ -13325,7 +13291,7 @@
             const opened = await postJSON('/api/wallet/open', {}, true);
             status.textContent = opened['opened-externally?']
               ? 'Wallet拡張のある既定ブラウザでWallet画面を開きました。'
-              : `既定ブラウザで ${opened.url} を開いてください。`;
+              : fmt('既定ブラウザで {url} を開いてください。', {url: opened.url});
           } else {
             status.textContent = 'このブラウザに外部Wallet拡張はありません。Passkey Walletはそのまま利用できます。';
           }
@@ -13420,7 +13386,7 @@
             if (chain !== '0x2105') throw new Error('WalletをBaseへ切り替えられませんでした。');
           }
           from = accounts[0];
-          status.textContent = `${order['amount-usdc']} USDCの送金をWalletで確認してください。`;
+          status.textContent = fmt('{amountUsdc} USDCの送金をWalletで確認してください。', {amountUsdc: order['amount-usdc']});
           transaction = await provider.request({method:'eth_sendTransaction', params:[{
             from, to:requirements.asset,
             data:erc20TransferData(requirements.payTo, BigInt(requirements.maxAmountRequired)),
@@ -13432,7 +13398,7 @@
           button.dataset.payer = from;
           button.textContent = '同じtransactionを再確認する';
         } else {
-          status.textContent = `送金済み ${transaction} を再確認しています…`;
+          status.textContent = fmt('送金済み {transaction} を再確認しています…', {transaction});
         }
         await waitForBaseConfirmations(provider, transaction, status);
         status.textContent = 'x402.nexusでオンチェーン決済を検証しています…';
@@ -13453,8 +13419,8 @@
         card.replaceChildren(
           make('strong', null, '決済確認済み'),
           make('p', null, `${paid['amount-usdc']} USDC · ${paid.status}`),
-          make('p', 'form-help', `注文 ${paid.id}`),
-          make('p', 'form-help', `発送状態 ${paid.fulfillment.status}`));
+          make('p', 'form-help', fmt('注文 {id}', {id: paid.id})),
+          make('p', 'form-help', fmt('発送状態 {status}', {status: paid.fulfillment.status})));
         const explorer = make('a', null, 'Basescanでtransactionを確認');
         explorer.href = `https://basescan.org/tx/${transaction}`;
         explorer.target = '_blank'; explorer.rel = 'noopener noreferrer';
@@ -13497,7 +13463,7 @@
         const row = make('li', 'storefront-cart__item');
         const copy = make('div');
         copy.append(make('strong', null, product.name),
-          make('div', 'form-help', `${quantity}点 · ${formatUsdc(usdcAtomic(product['price-usdc']) * BigInt(quantity))}`));
+          make('div', 'form-help', fmt('{quantity}点 · {v1}', {quantity, v1: formatUsdc(usdcAtomic(product['price-usdc']) * BigInt(quantity))})));
         const remove = make('button', 'tool-button', '減らす');
         remove.type = 'button';
         remove.addEventListener('click', () => {
@@ -13517,7 +13483,7 @@
         make('strong', null, product.name),
         make('p', 'form-help', product.description),
         make('p', 'storefront-product__price', `${product['price-usdc']} USDC`),
-        make('p', 'form-help', product.inventory > 0 ? `在庫 ${product.inventory}` : '在庫なし'));
+        make('p', 'form-help', product.inventory > 0 ? fmt('在庫 {inventory}', {inventory: product.inventory}) : '在庫なし'));
       const add = make('button', 'primary-action', 'カートに追加');
       add.type = 'button'; add.disabled = product.inventory < 1;
       add.addEventListener('click', () => {
@@ -13536,8 +13502,8 @@
       storefrontState.data = data;
       $('#storefront-state').textContent = '公開中';
       $('#storefront-name').textContent = data.store['display-name'];
-      $('#storefront-lead').textContent = `${data.products.length}商品 · ${data.payment.asset} / ${data.payment.network}`;
-      $('#storefront-merchant-did').textContent = `販売者 DID: ${data.store['merchant-did']}`;
+      $('#storefront-lead').textContent = fmt('{length}商品 · {asset} / {network}', {length: data.products.length, asset: data.payment.asset, network: data.payment.network});
+      $('#storefront-merchant-did').textContent = fmt('販売者 DID: {merchantDid}', {merchantDid: data.store['merchant-did']});
       renderStorefrontProducts(data.products);
       renderStorefrontCart();
     };
@@ -13572,7 +13538,7 @@
       const matches = storefrontProductsFor(query);
       renderStorefrontProducts(matches);
       addStorefrontMessage(matches.length
-        ? `公開カタログから${matches.length}件見つけました。商品カードで価格と在庫を確認してください。`
+        ? fmt('公開カタログから{length}件見つけました。商品カードで価格と在庫を確認してください。', {length: matches.length})
         : '公開カタログには条件に合う商品がありません。条件を変えてください。');
     });
     $('#storefront-checkout-form').addEventListener('submit', async (event) => {
@@ -13594,9 +13560,9 @@
         const card = $('#storefront-order'); card.hidden = false; card.replaceChildren();
         card.append(make('strong', null, 'x402 支払い内容'),
           make('p', null, `${order['amount-usdc']} USDC · ${order.status}`),
-          make('p', 'form-help', `注文 ${order.id}`),
-          make('p', 'form-help', `受取先 ${requirements.payTo}`),
-          make('p', 'form-help', `在庫予約期限 ${order.reservation['expires-at']}`),
+          make('p', 'form-help', fmt('注文 {id}', {id: order.id})),
+          make('p', 'form-help', fmt('受取先 {payTo}', {payTo: requirements.payTo})),
+          make('p', 'form-help', fmt('在庫予約期限 {expiresAt}', {expiresAt: order.reservation['expires-at']})),
           make('p', 'form-help', '支払いボタンは外部Walletの確認画面を開きます。秘密鍵やseed phraseは入力しないでください。'));
         const pay = make('button', 'primary-action', 'Base WalletでUSDCを支払う');
         pay.type = 'button';
@@ -13626,7 +13592,7 @@
         actions.append(open);
       }
       const toggle = make('button', 'tool-button', app['installed?'] ? '取り外す' : 'インストール');
-      toggle.type = 'button'; toggle.setAttribute('aria-label', `${app.name}を${toggle.textContent}`);
+      toggle.type = 'button'; toggle.setAttribute('aria-label', fmt('{name}を{textContent}', {name: app.name, textContent: toggle.textContent}));
       toggle.addEventListener('click', async () => {
         toggle.disabled = true;
         const generation = appsLoadGeneration;
@@ -13638,7 +13604,7 @@
           if (generation !== appsLoadGeneration || !appUnlocked) return;
           workspaceApps = data.apps; renderWorkspaceApps(); renderMarketplace();
           (installedView ? $('#apps-status') : $('#market-status')).textContent =
-            `${app.name}を${app['installed?'] ? '取り外しました。データと接続は保持しています。' : 'インストールしました。'}`;
+            fmt('{name}を{v1}', {name: app.name, v1: app['installed?'] ? '取り外しました。データと接続は保持しています。' : 'インストールしました。'});
           const target = document.querySelector(`.view:not([hidden]) [data-app-id='${app.id}'] button`)
             || (installedView ? document.querySelector('[data-view-panel=apps] a') : $('#market-search'));
           target?.focus();
@@ -13662,7 +13628,7 @@
       });
       const grid = $('#installed-app-grid'); grid.replaceChildren();
       installed.forEach((app) => grid.append(appCard(app, true)));
-      $('#apps-status').textContent = installed.length ? `${installed.length} 件インストール済み` : 'マーケットプレイスから App を追加できます。';
+      $('#apps-status').textContent = installed.length ? fmt('{length} 件インストール済み', {length: installed.length}) : 'マーケットプレイスから App を追加できます。';
     };
     const renderMarketplace = () => {
       const grid = $('#market-results'); grid.replaceChildren();
@@ -13696,7 +13662,7 @@
             make('p', null, entry.brief || entry.role || '公開 Bot'),
             make('p', null, `${entry.author} · ${entry['entry-url'] || ''}`));
           const add = make('button', 'tool-button', '追加'); add.type = 'button';
-          add.setAttribute('aria-label', `${entry.name}を追加`);
+          add.setAttribute('aria-label', fmt('{name}を追加', {name: entry.name}));
           add.addEventListener('click', async () => {
             add.disabled = true;
             try {
@@ -13704,7 +13670,7 @@
                 headers:identityHeaders(), body:JSON.stringify({id:entry.id})});
               const data = await response.json();
               if (!response.ok) throw new Error(data?.error?.message || 'Bot を追加できませんでした。');
-              $('#market-status').textContent = `${data?.bot?.name || entry.name}を追加しました。あなたの Bot に載っています。`;
+              $('#market-status').textContent = fmt('{v1}を追加しました。あなたの Bot に載っています。', {v1: data?.bot?.name || entry.name});
             } catch (error) { $('#market-status').textContent = error.message; }
             finally { add.disabled = false; }
           });
@@ -13717,13 +13683,13 @@
            ['設定サポート','設定の現状を確認し、変更案と必要な本人操作を案内する'],
            ['プロジェクト担当','プロジェクトの進行と資料を整理する']].forEach(([name, brief]) => {
             if (!matches(name + brief)) return;
-            const starter = make('button', 'market-card market-create', `${name} を作る`); starter.type = 'button';
+            const starter = make('button', 'market-card market-create', fmt('{name} を作る', {name})); starter.type = 'button';
             starter.addEventListener('click', () => { showView('bots'); $('#bots-new').click(); $('#bots-name').value = name; $('#bots-brief').value = brief; $('#bots-name').focus(); });
             grid.append(starter);
           });
         }
       }
-      $('#market-status').textContent = grid.children.length ? `${grid.children.length} 件` : '一致する項目がありません。検索条件を変えてください。';
+      $('#market-status').textContent = grid.children.length ? fmt('{length} 件', {length: grid.children.length}) : '一致する項目がありません。検索条件を変えてください。';
       grid.setAttribute('aria-labelledby', `market-tab-${marketKind}`);
     };
     const loadWorkspaceApps = async () => {
@@ -13768,12 +13734,14 @@
     chooseMarketKind(marketKind);
     $('#market-search').addEventListener('input', renderMarketplace);
     $('#market-installed-only').addEventListener('change', renderMarketplace);
-    const settingsDialog = $('#settings-bot-dialog'); let settingsOrigin = null;
-    settingsDialog.addEventListener('close', () => settingsOrigin?.focus());
+    // cloud-kotoba-dds.sheet on the behavior layer: focus returns to the
+    // button that opened it when it closes
+    const settingsDialog = $('#settings-bot-dialog');
+    const settingsStatus = (text, tone = 'info') => cloudKotobaStatus.say($('#settings-bot-status'), text, {tone, ttl:0});
     $$('[data-ask-settings]').forEach((button) => button.addEventListener('click', async () => {
-      settingsOrigin = button; settingsDialog.showModal();
-      $('#settings-bot-request').value = `${button.dataset.askSettings}の設定を見直したい。現在の状態を調べ、変更案と必要な本人操作を教えてください。`;
-      $('#settings-bot-status').textContent = 'Bot を読み込んでいます…';
+      dialogs().openDialog(settingsDialog, button);
+      $('#settings-bot-request').value = fmt('{askSettings}の設定を見直したい。現在の状態を調べ、変更案と必要な本人操作を教えてください。', {askSettings: button.dataset.askSettings});
+      settingsStatus('Bot を読み込んでいます…');
       $('#settings-bot-list').replaceChildren();
       await loadBots({keepSelection:true});
       botsState.bots.filter((bot) => bot['enabled?'] !== false).forEach((bot) => {
@@ -13786,11 +13754,15 @@
             if (!request) throw new Error('変更したいことを入力してください。');
             botsInput.value = [botsInput.value.trim(), request].filter(Boolean).join('\n\n');
             resizeBotsInput();
-            settingsDialog.close(); botsInput.focus();
-          } catch (error) { $('#settings-bot-status').textContent = error.message; choose.disabled = false; }
+            // the draft went to the composer, so the composer takes focus —
+            // after the behavior layer's return-to-opener (its listener is
+            // capture-phase on document; this one runs on the dialog itself)
+            settingsDialog.addEventListener('close', () => botsInput.focus(), {once:true});
+            dialogs().closeDialog(settingsDialog);
+          } catch (error) { settingsStatus(error.message, 'error'); choose.disabled = false; }
         }); $('#settings-bot-list').append(choose);
       });
-      $('#settings-bot-status').textContent = $('#settings-bot-list').children.length ? '' : '有効な Bot がありません。Bot を作成してから依頼できます。';
+      settingsStatus($('#settings-bot-list').children.length ? '' : '有効な Bot がありません。Bot を作成してから依頼できます。', 'warn');
     }));
 
     onViewChange = () => {
@@ -13862,7 +13834,7 @@
         $('#worker-prompt').value = '';
         $('#worker-title').value = '';
         selectedWorker = data;
-        workerHelp(`${data.title} をバックグラウンドで実行しています。`);
+        workerHelp(fmt('{title} をバックグラウンドで実行しています。', {title: data.title}));
         await loadWorkspace('worker', renderWorker);
       } catch (error) {
         workerHelp(error.message);
@@ -13895,8 +13867,8 @@
       notice.hidden = false;
       notice.className = `settings-notice${connected ? '' : ' settings-notice--error'}`;
       notice.textContent = connected
-        ? `${initialParams.get('provider')} を接続しました。`
-        : `${initialParams.get('provider')} の接続を完了できませんでした。`;
+        ? fmt('{v1} を接続しました。', {v1: initialParams.get('provider')})
+        : fmt('{v1} の接続を完了できませんでした。', {v1: initialParams.get('provider')});
     }
     if (initialParams.get('setup-domain')) {
       $('#company-domain').value = initialParams.get('setup-domain');
@@ -14037,7 +14009,7 @@
         if (!node) return {svg:null, reason:'選択範囲に要素がありません'};
         const count = node.querySelectorAll('*').length;
         if (count > MAX_NODES) {
-          return {svg:null, reason:`範囲が大きすぎます（${count} 要素）`};
+          return {svg:null, reason:fmt('範囲が大きすぎます（{count} 要素）', {count})};
         }
         const clone = node.cloneNode(true);
         // The crop is a clone of the LIVE DOM, which shows mail, Bot messages
@@ -14150,7 +14122,7 @@
       commentPopover.hidden = false;
       $('#comment-target').textContent = commentState.target
         ? commentState.target.selector
-        : `範囲 ${Math.round(rect.width)}×${Math.round(rect.height)}`;
+        : fmt('範囲 {v1}×{v2}', {v1: Math.round(rect.width), v2: Math.round(rect.height)});
       commentBotOptions();
       commentStatus.dataset.state = '';
       commentStatus.textContent = '';
@@ -14159,11 +14131,11 @@
       commentState.shot = svg;
       commentShot.hidden = !svg;
       if (svg) {
-        commentShot.textContent = `切り抜きを保存します（${Math.round(svg.length / 1024)} KB）`;
+        commentShot.textContent = fmt('切り抜きを保存します（{v1} KB）', {v1: Math.round(svg.length / 1024)});
       } else {
         // Says which of the two it was. "No picture" and "the picture failed"
         // must not arrive looking the same.
-        commentStatus.textContent = `切り抜きなしで送ります（${reason}）`;
+        commentStatus.textContent = fmt('切り抜きなしで送ります（{reason}）', {reason});
       }
     };
     if (commentLayer && commentToggle) {
@@ -14295,8 +14267,8 @@
           $('#bots-form').requestSubmit();
           announce('画面コメントを Goal として送りました。');
         } catch (error) {
-          announce(`コメントは記録しました（${recorded.id}）が、`
-                   + `Goal を開始できませんでした: ${error.message}`);
+          announce(fmt('コメントは記録しました（{id}）が、', {id: recorded.id})
+                   + fmt('Goal を開始できませんでした: {message}', {message: error.message}));
         }
       });
     }

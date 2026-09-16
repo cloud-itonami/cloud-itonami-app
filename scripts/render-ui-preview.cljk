@@ -29,7 +29,8 @@
   of string → string). The resident serves the variant the
   shinkansen_locale cookie negotiates. Coverage is MEASURED and printed:
   the Japanese text nodes, attribute values and script literals left in the
-  English variant (template literals are expected to remain)."
+  English variant (runtime-built strings go through fmt → shinkansen.locale.format,
+  so they are translated too; scripts/verify-runtime-strings.cljk guards it)."
   (:require ["node:fs" :as fs]
             ["node:path" :as path]
             [clojure.edn :as edn]
@@ -73,8 +74,8 @@
 
 (defn- japanese-left
   "Counts of Japanese still in a rendered document: text nodes, attribute
-  values, script literals ('…' / \"…\"), and template literals (`…`, which
-  substitution does not touch)."
+  values, script literals ('…' / \"…\"). Template literals are the
+  tokenised guard's (scripts/verify-runtime-strings.cljk)."
   [html]
   (let [body (subs html (max 0 (or (str/index-of html "<body") 0)))
         no-script (-> body (str/replace #"(?s)<script.*?</script>" "") (str/replace #"(?s)<style.*?</style>" ""))
@@ -85,8 +86,13 @@
         scripts (str/join "\n" (map second (re-seq #"(?s)<script[^>]*>(.*?)</script>" html)))
         literals (->> (re-seq #"'((?:[^'\\\n]|\\.)*)'|\"((?:[^\"\\\n]|\\.)*)\"" scripts)
                       (map #(or (nth % 1) (nth % 2))) (filter jp?) count)
-        templates (->> (re-seq #"(?s)`((?:[^`\\]|\\.)*)`" scripts) (map second) (filter jp?) count)]
-    {:text-nodes texts :attributes attrs :script-literals literals :template-literals templates}))
+        ;; template literals are NOT counted here: pairing backticks with a
+        ;; regex over-counts (119 → really 369, 2026-09-16) and a quoted string
+        ;; holding a backtick breaks it the other way. The tokenised guard is
+        ;; scripts/verify-runtime-strings.cljk (exit 1 on a template literal
+        ;; with Japanese text; 0 since runtime strings go through fmt).
+        ]
+    {:text-nodes texts :attributes attrs :script-literals literals}))
 
 (defn- write! [out html]
   (fs/mkdirSync (path/dirname out) #js {:recursive true})
@@ -112,4 +118,4 @@
       (println (str "RENDERED\t" (count en) "\tbytes -> " en-out " (en, " (count strings) " strings) left " (pr-str left)))
       (println (str "SCANNED\t" (count strings) "\tstrings substituted; japanese left in en: "
                     (:text-nodes left) " text nodes, " (:attributes left) " attributes, "
-                    (:script-literals left) " script literals, " (:template-literals left) " template literals (not substituted by design)")))))
+                    (:script-literals left) " script literals (template literals: scripts/verify-runtime-strings.cljk)")))))

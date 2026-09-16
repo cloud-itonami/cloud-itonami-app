@@ -303,17 +303,20 @@
     (println "\n── a turn that needs Gmail, and the card it comes back with ──")
     (p/let [_ (.fill page "#bots-input" "受信箱を見て、返事が要るものを教えて")
             _ (.waitForTimeout page 200)
+            ;; send is never greyed for an empty prompt any more (shinkansen.audit
+            ;; :idle-disabled, cloud-kotoba-dds.composer 2026-09-16); an empty
+            ;; submit is a no-op the handler ignores
             send-disabled (.isDisabled page "#bots-send")
             _ (.click page "#bots-send")
             _ (.waitForTimeout page 3000)
-            messages (.count (.locator page ".bots-msg"))
-            person (.count (.locator page ".bots-msg[data-role='person']"))
+            messages (.count (.locator page "#bots-messages .ck-bots__bubble"))
+            person (.count (.locator page "#bots-messages .ck-bots__bubble[data-role='person']"))
             card-count (.count (.locator page ".bots-card"))
             card-title (.textContent page ".bots-card__title")
             scopes (.count (.locator page ".bots-card__scopes li"))
             button-label (.textContent page ".bots-card .tool-button")
             status (.textContent page "#bots-titlebar-status")]
-      (check! "Send enables once there is text" (not send-disabled))
+      (check! "Send is enabled (never greyed for an empty prompt)" (not send-disabled))
       (check! "both turns are in the thread" (and (= 2 messages) (= 1 person)))
       (check! "the Bot came back with a card, not just prose" (= 1 card-count))
       (check! "the card names the service" (str/includes? (or card-title "") "Gmail"))
@@ -339,7 +342,7 @@
             _ (.waitForTimeout page 1200)
             probe (.evaluate page "window.__botsProbe")
             thread-name (.textContent page "#bots-titlebar-name")
-            messages (.count (.locator page ".bots-msg"))]
+            messages (.count (.locator page "#bots-messages .ck-bots__bubble"))]
       (check! "crossing views did not reload the document" (= "kept" probe))
       (check! "the Bot is still selected after crossing"
               (= "workspace worker" (str/trim (or thread-name ""))))

@@ -4,12 +4,12 @@
   ;; the Bots workspace pattern (bots.cljk + styles/bots-css + the renderer)
   ;; that #/bots is built on since 2026-09-16
   {:git/url "https://github.com/kotoba-lang/cloud-kotoba-dds.git"
-   :git/sha "623ebdc7b49535a16a7a162ebc6b0c0944717ecc"}
+   :git/sha "af6169d4aee90ed2e8654e547c20b8a767e8c270"}
   ;; the browser contract the rail's rows dispatch through (data-action /
   ;; shinkansen.on) and the runtime web.cljk inlines
   io.github.kotoba-lang/shinkansen
   {:git/url "https://github.com/kotoba-lang/shinkansen.git"
-   :git/sha "339226743fa95cfa3c93da1dc396479f443b9dae"}
+   :git/sha "301e50d8f75ada14edf6ec4bba7c01e70e624c30"}
 
         ;; kotoba.lang.text, not clojure.string. Pinned as an explicit floor:
         ;; tools.deps takes the NEWEST sha it is shown, so without a floor here
@@ -600,9 +600,11 @@
   ;; else in this closure names this library, so a fix upstream never arrives
   ;; until this line moves. `manifest/west.yml` pins the same sha, so the
   ;; checkout and this coordinate agree; west pins are gated, this one is not.
+  ;; 2026-09-16: 4a315c5 for `jp-go-dds.behavior` (the dialogs' focus trap /
+  ;; focus return that the App overlay and the settings sheet stand on).
   io.github.kotoba-lang/jp-go-digital-design-system
   {:git/url "https://github.com/kotoba-lang/jp-go-digital-design-system.git"
-   :git/sha "581b68cb7699e4017d3532bc17e134a41be00fef"}
+   :git/sha "4a315c581569b8d8a60e1ceaa421d8413f35398e"}
 
   ;; Filecoin: PieceCID v2 addressing + the on-chain read surface + the
   ;; provider transfer surface. Deliberately NOT a storage backend — see

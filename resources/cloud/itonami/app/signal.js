@@ -7,6 +7,10 @@
  */
 (() => {
   'use strict';
+  // Error text built at runtime goes through shinkansen.locale.format (the
+  // interaction runtime is on the page by the time any of these can throw);
+  // the pattern is a plain literal the render-time locale table translates.
+  const fmt = (pattern, params) => globalThis.shinkansen.locale.format(pattern, params);
   const PROTOCOL = 'itonami-signal-v1';
   const DB_NAME = 'cloud-itonami-signal-v1';
   const STORE = 'keys';
@@ -158,13 +162,13 @@
   };
   const verifyPrincipal = async (principal, approve) => {
     const directory = await api.postJSON(`${api.prefix}/device-directory`, {principal}, true);
-    if (!directory.devices?.length) throw new Error(`${principal} はSignal端末を登録していません。`);
+    if (!directory.devices?.length) throw new Error(fmt('{principal} はSignal端末を登録していません。', {principal}));
     for (const device of directory.devices) {
       const fingerprint = await fingerprintFor(device);
       const old = await dbGet(verifiedKey(principal, device.id));
       if (old !== fingerprint) {
         const accepted = await approve({principal, deviceId:device.id, fingerprint, changed:Boolean(old)});
-        if (!accepted) throw new Error(`${principal} / ${device.id} の端末確認を中止しました。`);
+        if (!accepted) throw new Error(fmt('{principal} / {id} の端末確認を中止しました。', {principal, id: device.id}));
         await dbPut(verifiedKey(principal, device.id), fingerprint);
         await dbDelete(sessionKey(principal, device.id));
       }
@@ -179,7 +183,7 @@
       unb64(bundle['signed-prekey-signature']), unb64(bundle['signed-prekey']));
     if (!ok) throw new Error('signed prekey の署名が一致しません。');
     if (!(await verified(bundle.principal, bundle))) {
-      throw new Error(`${bundle.principal} / ${bundle['device-id']} の端末鍵が未確認です。`);
+      throw new Error(fmt('{principal} / {deviceId} の端末鍵が未確認です。', {principal: bundle.principal, deviceId: bundle['device-id']}));
     }
   };
   const x3dhSender = async (device, bundle) => {
@@ -283,7 +287,7 @@
       const pseudoBundle = {principal:sender, 'device-id':packet.senderDevice,
         'identity-signing-key':packet.prekey.senderSigningKey,
         'identity-key':packet.prekey.senderIdentityKey};
-      if (!(await verified(sender, pseudoBundle))) throw new Error(`${sender} の端末鍵が未確認です。`);
+      if (!(await verified(sender, pseudoBundle))) throw new Error(fmt('{sender} の端末鍵が未確認です。', {sender}));
       const secret = await x3dhReceiver(device, packet.prekey);
       state = {RK:secret, CKs:null, CKr:null,
         DHsPrivate:device.signedPrekey.keyPair.privateKey,
@@ -313,7 +317,7 @@
   const bundlesFor = async (principal) => {
     const directory = await api.postJSON(`${api.prefix}/device-directory`, {principal}, true);
     for (const item of directory.devices || []) {
-      if (!(await verified(principal, item))) throw new Error(`${principal} / ${item.id} の端末鍵が未確認です。`);
+      if (!(await verified(principal, item))) throw new Error(fmt('{principal} / {id} の端末鍵が未確認です。', {principal, id: item.id}));
     }
     const missing = [];
     for (const item of directory.devices || []) {
@@ -346,7 +350,7 @@
     const packets = [];
     for (const recipient of recipients) {
       const bundles = await bundlesFor(recipient);
-      if (!bundles.length) throw new Error(`${recipient} にSignal端末がありません。`);
+      if (!bundles.length) throw new Error(fmt('{recipient} にSignal端末がありません。', {recipient}));
       for (const bundle of bundles) {
         packets.push(await encryptPacket(recipient, bundle, distribution, conversation.id));
       }
@@ -382,7 +386,7 @@
     else {
       for (const recipient of recipients) {
         const bundles = await bundlesFor(recipient);
-        if (!bundles.length) throw new Error(`${recipient} にSignal端末がありません。`);
+        if (!bundles.length) throw new Error(fmt('{recipient} にSignal端末がありません。', {recipient}));
         for (const bundle of bundles) packets.push(await encryptPacket(recipient, bundle, plaintext, conversation.id));
       }
     }
