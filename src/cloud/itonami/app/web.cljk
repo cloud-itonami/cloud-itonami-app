@@ -2234,7 +2234,7 @@
          (if (= :cloud residency) "cloud-agent · murakumo.cloud" "local-agent · この端末")]
         [:span {:id "workspace-status"} "既存サービスを確認中…"]]])
 
-(defn- settings-view [mode]
+(defn- settings-view [mode locale]
   [:section {:class "view" :data-view-panel "settings" :hidden true}
          (view-header "アカウント" "プロフィール、接続、Bot の設定を管理します。")
          [:section {:class "settings-assistant local-card"}
@@ -2250,7 +2250,12 @@
           [:div {:class "button-row"} (comment-mode-toggle)
            ;; light / dark / system — the shinkansen contract, answered by
            ;; its runtime; the 8-bit appearance is reached by ?appearance=8bit
-           (switch/theme-switch {:id "theme-switch" :current :system})]
+           (switch/theme-switch {:id "theme-switch" :current :system})
+           ;; the language switch (shinkansen.locale): the runtime writes the
+           ;; negotiation cookie and reloads; the resident serves the variant
+           (switch/locale-switch {:id "locale-switch" :current locale
+                                  :locales [{:locale "ja" :label "日本語" :href "#"}
+                                            {:locale "en" :label "English" :href "#"}]})]
         [:a {:class "workspace-wallet authenticated-only" :id "workspace-wallet"
              :href "#/wallet" :hidden true :aria-label "ウォレットを開く"}
          [:span {:id "workspace-wallet-label"} "ウォレットを確認"]]
@@ -2532,11 +2537,16 @@
         model (get-in configuration [:routing :default-model])
         brand (get-in configuration [:brand :name] "Cloud Itonami")
         mode (appearance/resolve-mode configuration)
+        ;; the document's language. Variants are rendered per locale
+        ;; (scripts/render-ui-preview.cljk) and the resident serves the one
+        ;; the shinkansen_locale cookie / Accept-Language negotiates.
+        locale (or (some-> (get-in configuration [:ui :locale]) str not-empty) "ja")
         residency (appearance/residency-plane configuration)
         css (two-size-css (fs-read-text "resources/jp_go_dds/dds.css"))]
     (page-with-two-size-styles
      {:title (str "Bots | " brand)
       :description "安全第一（緑十字）のAIワークスペース"
+      :lang locale
       :theme-default mode
       ;; `:dark? true`: jp-go-dds emits its dark layer (snapshot, the inverted
       ;; ramps under `:root:root[data-theme="dark"]` and under the OS media
@@ -4258,4 +4268,4 @@
                "Passkey を登録して参加"]]]])]]
         (app-marketplace-views)
         (plugins-view)
-        (settings-view mode)]]])))
+        (settings-view mode locale)]]])))
