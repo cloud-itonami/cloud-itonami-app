@@ -19,9 +19,22 @@
   `out` defaults to target/ui-preview.html. The configuration rendered is the
   resident's: murakumo default provider, `light` appearance (the browser flips
   it to the device's remembered choice), brand Cloud Itonami. Prints the byte
-  count; a render that throws is an error, not an empty file."
+  count; a render that throws is an error, not an empty file.
+
+  Locale variants (2026-09-16, owner: 「翻訳対応して」): beside the Japanese
+  document this writes `ui-preview.en.html` — the same render with
+  `[:ui :locale] en` (lang, the language switch's current mark) passed
+  through `shinkansen.locale/substitute :exact?` with the table under
+  resources/cloud/itonami/app/i18n/en/*.edn (every part must read as a map
+  of string → string). The resident serves the variant the
+  shinkansen_locale cookie negotiates. Coverage is MEASURED and printed:
+  the Japanese text nodes, attribute values and script literals left in the
+  English variant (template literals are expected to remain)."
   (:require ["node:fs" :as fs]
             ["node:path" :as path]
+            [clojure.edn :as edn]
+            [kotoba.lang.text :as str]
+            [shinkansen.locale :as locale]
             [cloud.itonami.app.kotoba-oracle :as oracle]))
 
 (def app-root (js/process.cwd))
@@ -38,6 +51,48 @@
    :brand {:name "Cloud Itonami"}
    :ui {:appearance "light"}})
 
+(def i18n-dir (path/join app-root "resources" "cloud" "itonami" "app" "i18n"))
+
+(defn- strings-for
+  "The substitution table for `locale`: every *.edn under i18n/<locale>/
+  merged. A part that is not a map of strings is an error, not a skipped
+  file — a silently skipped part is a page that is half translated."
+  [locale]
+  (let [dir (path/join i18n-dir locale)]
+    (when (fs/existsSync dir)
+      (reduce (fn [acc f]
+                (let [m (edn/read-string (fs/readFileSync (path/join dir f) "utf8"))]
+                  (when-not (and (map? m) (every? (fn [[k v]] (and (string? k) (string? v))) m))
+                    (throw (ex-info (str "i18n part is not a string→string map: " f)
+                                    {:type :i18n/bad-part :file f})))
+                  (merge acc m)))
+              {}
+              (sort (filter #(.endsWith % ".edn") (js->clj (fs/readdirSync dir))))))))
+
+(def jp-re #"[\u3040-\u30ff\u4e00-\u9fff]")
+
+(defn- japanese-left
+  "Counts of Japanese still in a rendered document: text nodes, attribute
+  values, script literals ('…' / \"…\"), and template literals (`…`, which
+  substitution does not touch)."
+  [html]
+  (let [body (subs html (max 0 (or (str/index-of html "<body") 0)))
+        no-script (-> body (str/replace #"(?s)<script.*?</script>" "") (str/replace #"(?s)<style.*?</style>" ""))
+        jp? #(re-find jp-re %)
+        texts (->> (re-seq #">([^<>]+)<" no-script) (map second) (filter jp?) count)
+        attrs (->> (re-seq #"(?:placeholder|aria-label|title|alt|value|aria-description|data-ask-settings)=\"([^\"]+)\"" no-script)
+                   (map second) (filter jp?) count)
+        scripts (str/join "\n" (map second (re-seq #"(?s)<script[^>]*>(.*?)</script>" html)))
+        literals (->> (re-seq #"'((?:[^'\\\n]|\\.)*)'|\"((?:[^\"\\\n]|\\.)*)\"" scripts)
+                      (map #(or (nth % 1) (nth % 2))) (filter jp?) count)
+        templates (->> (re-seq #"(?s)`((?:[^`\\]|\\.)*)`" scripts) (map second) (filter jp?) count)]
+    {:text-nodes texts :attributes attrs :script-literals literals :template-literals templates}))
+
+(defn- write! [out html]
+  (fs/mkdirSync (path/dirname out) #js {:recursive true})
+  (fs/writeFileSync (str out ".tmp") html)
+  (fs/renameSync (str out ".tmp") out))
+
 (let [out (or (some-> (last js/process.argv)
                       (#(when (.endsWith % ".html") %)))
               (path/join app-root "target" "ui-preview.html"))
@@ -45,7 +100,16 @@
   (when-not (and (string? html) (> (count html) 100000))
     (throw (ex-info "page-html returned something too small to be the workspace"
                     {:type :render/too-small :bytes (count (str html))})))
-  (fs/mkdirSync (path/dirname out) #js {:recursive true})
-  (fs/writeFileSync (str out ".tmp") html)
-  (fs/renameSync (str out ".tmp") out)
-  (println (str "RENDERED\t" (count html) "\tbytes -> " out)))
+  (write! out html)
+  (println (str "RENDERED\t" (count html) "\tbytes -> " out " (ja) " (pr-str (japanese-left html))))
+  ;; the English variant: rendered as en (lang, switch), then substituted
+  (when-let [strings (strings-for "en")]
+    (let [en-out (str/replace out #"\.html$" ".en.html")
+          en (locale/substitute (web/page-html (assoc-in configuration [:ui :locale] "en"))
+                                {:locale "en" :strings strings :exact? true})
+          left (japanese-left en)]
+      (write! en-out en)
+      (println (str "RENDERED\t" (count en) "\tbytes -> " en-out " (en, " (count strings) " strings) left " (pr-str left)))
+      (println (str "SCANNED\t" (count strings) "\tstrings substituted; japanese left in en: "
+                    (:text-nodes left) " text nodes, " (:attributes left) " attributes, "
+                    (:script-literals left) " script literals, " (:template-literals left) " template literals (not substituted by design)")))))

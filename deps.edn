@@ -9,7 +9,7 @@
   ;; shinkansen.on) and the runtime web.cljk inlines
   io.github.kotoba-lang/shinkansen
   {:git/url "https://github.com/kotoba-lang/shinkansen.git"
-   :git/sha "a79c874f0b0c2ed3d26a2e19b9d7cc89ddaa1fa6"}
+   :git/sha "339226743fa95cfa3c93da1dc396479f443b9dae"}
 
         ;; kotoba.lang.text, not clojure.string. Pinned as an explicit floor:
         ;; tools.deps takes the NEWEST sha it is shown, so without a floor here

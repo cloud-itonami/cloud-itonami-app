@@ -45,6 +45,7 @@
             [webauthn.adapters.edge :as edge]
             [cloud.itonami.app.passkey-options :as options]
             [cloud.itonami.app.hermes-gateway :as hg]
+            [shinkansen.locale :as locale]
             [cloud.itonami.app.kotoba-oracle :as oracle]))
             ;; NOTE: [cloud.itonami.app.web :as web] was required here but
             ;; never used — and web.cljk has top-level (slurp (io/resource …))
@@ -71,6 +72,12 @@
 (def session-seconds (* 30 24 60 60))
 
 (def state-file (.join path app-dir "data/state.edn"))
+
+(def supported-locales
+  "The locales the resident can serve. ja is the source document; every
+   other one exists only as target/ui-preview.<locale>.html rendered from
+   its i18n table."
+  [:ja :en])
 
 ;; ---------- oracle resource loader (page render needs it) ----------
 (oracle/set-resource-loader!
@@ -1251,9 +1258,26 @@
     (route-hermes req res method p session url)
 
     (and (= method "GET") (or (= p "/") (str/starts-with? p "/#")))
-    (let [html (try (.readFileSync fs (.join path app-dir "target/ui-preview.html") "utf8")
-                    (catch :default _ nil))]
-      (.writeHead res 200 #js {"content-type" "text/html; charset=utf-8"})
+    ;; The document has locale variants (scripts/render-ui-preview.cljk):
+    ;; target/ui-preview.html is Japanese, target/ui-preview.<locale>.html
+    ;; the others. shinkansen.locale/negotiate picks one from the
+    ;; shinkansen_locale cookie (written by the language switch through the
+    ;; runtime), then Accept-Language, then ja — a cookie naming a locale
+    ;; that has no variant is ignored, never trusted. `Vary` says so.
+    (let [{:keys [locale]} (locale/negotiate
+                            {:supported supported-locales :default :ja
+                             :cookie-value (get (cookies req) (:cookie-name locale/defaults))
+                             :accept-language (aget (.-headers req) "accept-language")})
+          file (if (= locale :ja) "target/ui-preview.html"
+                   (str "target/ui-preview." (name locale) ".html"))
+          html (or (try (.readFileSync fs (.join path app-dir file) "utf8") (catch :default _ nil))
+                   ;; a variant that was never rendered falls back to the
+                   ;; document that exists, never to an empty page
+                   (try (.readFileSync fs (.join path app-dir "target/ui-preview.html") "utf8")
+                        (catch :default _ nil)))]
+      (.writeHead res 200 #js {"content-type" "text/html; charset=utf-8"
+                               "content-language" (name locale)
+                               "vary" "Cookie, Accept-Language"})
       (.end res html))
 
     (= p "/health")
