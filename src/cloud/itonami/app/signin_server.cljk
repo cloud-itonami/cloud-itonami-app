@@ -16,6 +16,12 @@
     GET  /api/auth/itonami/qr               — hosted entrance as SVG QR
     GET  /api/auth/itonami/qr-url           — hosted entrance as JSON {url}
 
+  and, since 2026-09-16, the Hermes Agent Bot Mode gateway of
+  docs/hermes-bot-mode-compatibility.md (`/api/profiles`, `/api/sessions*`,
+  `/v1/runs*`, optional `/p/<profile>/` prefix), JVM-free — see the
+  `;; ---------- hermes gateway ----------` section below for what a turn is
+  here and what it is not.
+
   Cryptographic verification is webauthn.adapters.edge (WebCrypto) — the same
   verifier the Worker uses, on Node's globalThis.crypto (node 19+).
 
@@ -38,6 +44,7 @@
             [nbb.core :refer [*file*]]
             [webauthn.adapters.edge :as edge]
             [cloud.itonami.app.passkey-options :as options]
+            [cloud.itonami.app.hermes-gateway :as hg]
             [cloud.itonami.app.kotoba-oracle :as oracle]))
             ;; NOTE: [cloud.itonami.app.web :as web] was required here but
             ;; never used — and web.cljk has top-level (slurp (io/resource …))
@@ -701,9 +708,548 @@
                        {:ok true :session session})))))
         (.catch (fn [e] {:ok false :error (str e) :status 500})))))
 
+;; ---------- hermes gateway ----------
+;;
+;; The Hermes Agent Bot Mode gateway (docs/hermes-bot-mode-compatibility.md)
+;; on this JVM-free resident. The data half is `cloud.itonami.app.hermes-gateway`;
+;; this section is the host: HTTP, the run table, the clock, the provider
+;; call, and the writes into the same `data/state.edn` the JVM server owns
+;; (`:bots :conversations` / `:bots :turn-history`, same message and turn keys,
+;; so the JVM server and the UI read these turns as their own).
+;;
+;; What a turn IS here: one durable Bot turn = the Bot's conversation (bounded
+;; history) + the input, sent to the Bot's provider as a streamed
+;; chat completion, the assistant text appended to the conversation, a
+;; `:turn-history` row written running → completed/failed/cancelled. Steer
+;; queues a follow-up that becomes the next provider call when the current
+;; one returns (that is the only model boundary a tool-less turn has; at most
+;; `hg/max-followups-per-run` per run). Stop aborts the fetch.
+;;
+;; What it is NOT: the JVM `bots.cljk` loop. No tools, no held writes, no
+;; approval cards, no workspace, no peers. `POST /v1/runs/{id}/approval`
+;; therefore answers 409 `approval_not_pending` for every run — the same
+;; literal the JVM adapter uses when nothing is held — rather than pretending
+;; a tool loop exists. A Hermes client that needs tools needs the JVM
+;; resident; this one gives it chat over the durable Bot conversation.
+;;
+;; Provider policy is the app's: fail closed. The only admitted provider is
+;; murakumo, resolved per ADR-2607173100 (env override → `murakumo-main`
+;; alias → the public boundary with the alias name); a missing
+;; MURAKUMO_API_KEY denies the turn with `provider_unauthenticated` before
+;; any request leaves — it does not fall back to another key.
+;;
+;; Auth: the same application session as every `/api/*` route here, from the
+;; cookie or `Authorization: Bearer <token>` (the CLI form). Mutating routes
+;; with a cookie session must carry no Origin or this server's Origin —
+;; a cross-origin page cannot start a turn with the user's cookie.
+
+(defonce ^:private hermes-runs (atom {}))
+
+(def ^:private murakumo-alias-url "https://api.murakumo.cloud/infer/models/murakumo-main")
+(def ^:private murakumo-default-endpoint "https://api.murakumo.cloud/v1/chat/completions")
+(def ^:private murakumo-default-model "murakumo-main")
+(def ^:private provider-timeout-ms 300000)
+
+(defn- bearer-token [req]
+  (let [h (str (or (aget (.-headers req) "authorization") ""))]
+    (when (str/starts-with? (str/lower h) "bearer ")
+      (not-empty (str/trim (subs h 7))))))
+
+(defn- now-seconds [] (/ (.valueOf (js/Date.)) 1000.0))
+
+(defn- hermes-visible-bots
+  "Keyword-keyed Bot rows (the JVM `bots/overview` shape) for this session."
+  [session]
+  (let [state @state-ref
+        sec (:bots state)]
+    (->> (vals (:bots sec))
+         (filter (fn [b] (and (= (:user-id session) (:bot/owner b))
+                              (= (:organization-id session) (:bot/organization b)))))
+         (sort-by :bot/updated-at)
+         (mapv (fn [b]
+                 (let [row (into {} (map (fn [[k v]] [(keyword k) v]))
+                                 (public-bot state session b))
+                       binding (get-in sec [:hermes-import-bindings (:bot/id b)])]
+                   (cond-> row
+                     binding (assoc :hermes-import
+                                    {:profile-id (:profile-id binding)
+                                     :session-ids (get-in binding [:session-export :session-ids])}))))))))
+
+(defn- hermes-messages
+  "`{:id :role :text :at :cards}` rows of the Bot's durable conversation."
+  [bot-id]
+  (mapv (fn [m] {:id (str (:message/id m))
+                 :role (some-> (:message/role m) name)
+                 :text (str (:message/text m))
+                 :at (:message/at m)
+                 :cards (vec (:message/cards m))})
+        (get-in @state-ref [:bots :conversations bot-id])))
+
+(defn- hermes-default-bot-id []
+  (some-> (get-in @state-ref [:bots :hermes :default-bot-id]) str str/trim not-empty))
+
+(defn- hermes-query [url]
+  (let [params (aget url "searchParams")
+        out (atom {})]
+    (.forEach params (fn [v k] (swap! out assoc (keyword k) v)))
+    @out))
+
+(defn- bounded-int [value default maximum]
+  (let [n (js/parseInt (str value) 10)]
+    (if (js/isNaN n) default (-> n (max 0) (min maximum)))))
+
+(defn- hermes-refuse! [res refusal]
+  (let [[status body] (hg/refusal->response refusal)]
+    (json res status body)))
+
+;; --- state writes (same keys as the JVM Bot loop) ---
+
+(defn- append-message! [bot-id role text]
+  (let [m {:message/id (str "msg-" (new-uuid))
+           :message/role role
+           :message/text text
+           :message/at (iso-now)
+           :message/source :hermes-gateway}]
+    (transact! (fn [s] (update-in s [:bots :conversations bot-id] (fnil conj []) m)))
+    m))
+
+(defn- write-turn! [bot-id run-id f]
+  (transact! (fn [s]
+               (update-in s [:bots :turn-history bot-id]
+                          (fn [history]
+                            (let [history (vec history)
+                                  idx (some (fn [[i t]] (when (= run-id (:turn/id t)) i))
+                                            (map-indexed vector history))]
+                              (if idx
+                                (update history idx f)
+                                (conj history (f {:turn/id run-id}))))))))
+  nil)
+
+;; --- provider ---
+
+(defn- provider-target
+  "→ {:endpoint :model :via} or a refusal. Resolution per ADR-2607173100."
+  []
+  (let [key (some-> js/process.env.MURAKUMO_API_KEY not-empty)
+        env-ep (some-> js/process.env.MURAKUMO_ENDPOINT not-empty)
+        env-model (some-> js/process.env.MURAKUMO_MODEL not-empty)]
+    (cond
+      (nil? key)
+      (js/Promise.resolve
+       {:refuse :provider/unauthenticated
+        :message "murakumo は認証情報が無いので denied（MURAKUMO_API_KEY が resident に無い）。fallback はしない。"})
+
+      (and env-ep env-model)
+      (js/Promise.resolve {:endpoint env-ep :model env-model :via :env :key key})
+
+      :else
+      (-> (js/fetch murakumo-alias-url #js {:signal (js/AbortSignal.timeout 15000)})
+          (.then (fn [r] (if (.-ok r) :alias :fallback)))
+          (.catch (fn [_] :fallback))
+          (.then (fn [via]
+                   {:endpoint (or env-ep murakumo-default-endpoint)
+                    :model (or env-model murakumo-default-model)
+                    :via via :key key}))))))
+
+(defn- read-sse!
+  "Drain an OpenAI-shaped SSE body, calling `on-chunk` with each parsed
+  `data:` object. Resolves when the stream ends."
+  [response on-chunk]
+  (let [reader (.getReader (.-body response))
+        decoder (js/TextDecoder.)
+        buf (atom "")
+        drain! (fn [final?]
+                 ;; limit -1: keep trailing empties, else a buffer ending in
+                 ;; "\n" would hold its last complete line back as partial
+                 (let [lines (str/split @buf #"\n" -1)
+                       [complete tail] (if final? [lines []] [(butlast lines) [(last lines)]])]
+                   (reset! buf (or (first tail) ""))
+                   (doseq [line complete]
+                     (let [line (str/trim line)]
+                       (when (and (str/starts-with? line "data:")
+                                  (not= "[DONE]" (str/trim (subs line 5))))
+                         (let [chunk (try (js->clj (js/JSON.parse (str/trim (subs line 5)))
+                                                   :keywordize-keys true)
+                                          (catch :default _ nil))]
+                           (when chunk (on-chunk chunk))))))))]
+    (js/Promise.
+     (fn [resolve reject]
+       (letfn [(step []
+                 (-> (.read reader)
+                     (.then (fn [result]
+                              (if (.-done result)
+                                (do (drain! true) (resolve :done))
+                                (do (swap! buf str (.decode decoder (.-value result) #js {:stream true}))
+                                    (drain! false)
+                                    (step)))))
+                     (.catch reject)))]
+         (step))))))
+
+(defn- run-event! [run-id event]
+  (swap! hermes-runs update run-id
+         (fn [run] (when run (hg/apply-event run event (now-seconds))))))
+
+(defn- provider-call!
+  "One chat completion for `input` after `prior` (the conversation before
+  `input` was appended). Emits
+  `:delta` events into the run; resolves to `{:usage m}` or rejects."
+  [run-id bot target prior input]
+  (let [controller (js/AbortController.)
+        _ (swap! hermes-runs assoc-in [run-id :abort] controller)
+        timer (js/setTimeout #(.abort controller "timeout") provider-timeout-ms)
+        body (hg/chat-completion-request bot prior input {:model (:model target)})
+        usage (atom nil)]
+    (-> (js/fetch (:endpoint target)
+                  #js {:method "POST"
+                       :headers #js {"content-type" "application/json"
+                                     "accept" "text/event-stream, application/json"
+                                     "authorization" (str "Bearer " (:key target))}
+                       :body (js/JSON.stringify (clj->js body))
+                       :signal (.-signal controller)})
+        (.then (fn [r]
+                 (if-not (.-ok r)
+                   (-> (.text r)
+                       (.then (fn [t]
+                                (throw (ex-info (str "provider " (.-status r) ": "
+                                                     (subs (str t) 0 (min 400 (count (str t)))))
+                                                {:type :provider/error :status (.-status r)})))))
+                   (let [ct (str (.get (.-headers r) "content-type"))]
+                     (if (str/includes? ct "text/event-stream")
+                       (read-sse! r (fn [chunk]
+                                      (when-let [u (hg/sse-usage chunk)] (reset! usage u))
+                                      (when-let [d (hg/sse-delta chunk)]
+                                        (run-event! run-id [:delta d]))))
+                       (-> (.json r)
+                           (.then (fn [j]
+                                    (let [c (js->clj j :keywordize-keys true)]
+                                      (reset! usage (:usage c))
+                                      (run-event! run-id [:delta (hg/completion-text c)]))))))))))
+        (.then (fn [_] (js/clearTimeout timer) {:usage @usage}))
+        (.catch (fn [e] (js/clearTimeout timer) (throw e))))))
+
+(defn- hermes-turn!
+  "Run the whole turn for `run-id`: person message → provider call(s) →
+  bot message + turn row. Returns a promise that settles when the run is
+  closed. Never rejects: every outcome is folded into the run."
+  [run-id bot input]
+  (let [bot-id (:id bot)
+        started (iso-now)
+        prior (hermes-messages bot-id)
+        finish! (fn [state phase extra]
+                  (write-turn! bot-id run-id
+                               #(merge % {:turn/state state :turn/phase phase
+                                          :turn/updated-at (iso-now)
+                                          :turn/finished-at (iso-now)} extra)))]
+    (append-message! bot-id :person input)
+    (write-turn! bot-id run-id
+                 #(merge % {:turn/state :running :turn/phase :accepted
+                            :turn/objective input :turn/goal input
+                            :turn/started-at started :turn/updated-at started
+                            :turn/provider "murakumo" :turn/source :hermes-gateway}))
+    (run-event! run-id [:running])
+    (-> (provider-target)
+        (.then (fn [target]
+                 (when (hg/refusal? target)
+                   (throw (ex-info (:message target) {:type (:refuse target)})))
+                 (write-turn! bot-id run-id #(assoc % :turn/model (:model target)
+                                                    :turn/route (name (:via target))))
+                 (swap! hermes-runs update run-id
+                        #(some-> % (assoc-in [:status :model] (:model target))))
+                 (letfn [(call [prior text]
+                           (-> (provider-call! run-id bot target prior text)
+                               (.then (fn [{:keys [usage]}]
+                                        (let [run (get @hermes-runs run-id)]
+                                          (if-let [followup (first (:followups run))]
+                                            ;; the queued steer becomes the next
+                                            ;; model call — the only boundary a
+                                            ;; tool-less turn has.
+                                            (let [prior (hermes-messages bot-id)]
+                                              (run-event! run-id [:followup-applied])
+                                              (append-message! bot-id :person followup)
+                                              (call prior followup))
+                                            usage))))))]
+                   (call prior input))))
+        (.then (fn [usage]
+                 (let [run (get @hermes-runs run-id)
+                       output (str (:output run))]
+                   (append-message! bot-id :bot output)
+                   (finish! :completed :completed
+                            {:turn/result output :turn/usage (or usage {})})
+                   (run-event! run-id [:completed {:usage (or usage {})}]))))
+        (.catch (fn [e]
+                  ;; `controller.abort(reason)` rejects with the REASON, not an
+                  ;; AbortError, so the signal is the witness: "stop" is the
+                  ;; person's cancel, "timeout" is a failure with a name.
+                  (let [signal (some-> (get-in @hermes-runs [run-id :abort]) .-signal)
+                        reason (when (some-> signal .-aborted) (str (.-reason signal)))
+                        message (cond
+                                  (= "timeout" reason) (str "provider timeout after " provider-timeout-ms "ms")
+                                  :else (or (some-> e .-message) (str e)))]
+                    (if (= "stop" reason)
+                      (do (finish! :cancelled :cancelled {})
+                          (run-event! run-id [:cancelled]))
+                      (do (finish! :failed :failed
+                                   ;; sci rewraps a throw inside a promise
+                                   ;; callback as :sci/error — that is the
+                                   ;; engine's type, not the turn's
+                                   {:turn/error-type (let [t (some-> (ex-data e) :type)]
+                                                       (if (or (nil? t) (= "sci" (namespace t)))
+                                                         :provider/error t))
+                                    :turn/error-message message})
+                          (run-event! run-id [:failed message])))))))))
+
+(defn- start-run!
+  "→ `{:run_id :status}` or a refusal. The turn runs detached."
+  [session profile body]
+  (swap! hermes-runs hg/purge-runs (now-seconds))
+  (let [bot (hg/resolve-bot (hermes-visible-bots session) (hermes-default-bot-id)
+                            (or profile (:profile body) (:session_id body)))
+        input (hg/chat-text body)]
+    (cond
+      (hg/refusal? bot) bot
+      (hg/refusal? input) input
+      (not (:enabled? bot)) {:refuse :bot/disabled
+                             :message "この Bot は停止しています。"}
+      ;; fail closed before a run exists: no key, no run, no fallback
+      (nil? (some-> js/process.env.MURAKUMO_API_KEY not-empty))
+      {:refuse :provider/unauthenticated
+       :message "murakumo は認証情報が無いので denied（MURAKUMO_API_KEY が resident に無い）。fallback はしない。"}
+      :else
+      (let [run-id (str "run_" (str/replace (str (.randomUUID crypto)) "-" ""))]
+        (swap! hermes-runs assoc run-id
+               (assoc (hg/new-run run-id bot (now-seconds))
+                      :owner (select-keys session [:user-id :organization-id])))
+        (hermes-turn! run-id bot input)
+        {:run_id run-id :status "started"}))))
+
+(defn- owned-run
+  "The run, or a refusal — a run id is not an authority token."
+  [session run-id]
+  (let [run (get @hermes-runs (str run-id))]
+    (if (and run (= (:owner run) (select-keys session [:user-id :organization-id])))
+      run
+      {:refuse :hermes/run-not-found :message (str "Run not found: " run-id)})))
+
+(defn- send-events!
+  "Hermes `data: <json>` SSE frames for a run, from its first frame to close.
+  Frames already emitted are replayed; new ones follow as the run folds them."
+  [res session run-id]
+  (let [run (owned-run session run-id)]
+    (if (hg/refusal? run)
+      (hermes-refuse! res run)
+      (let [cursor (atom 0)
+            watch-key (keyword (str "sse-" run-id "-" (random-token 6)))
+            write-frame! (fn [frame]
+                           (.write res (str "data: " (js/JSON.stringify (clj->js frame)) "\n\n")))
+            flush! (fn [run]
+                     (let [events (:events run)]
+                       (doseq [frame (subvec events (min @cursor (count events)))]
+                         (write-frame! frame))
+                       (reset! cursor (count events))
+                       (when (:closed? run)
+                         (remove-watch hermes-runs watch-key)
+                         (.write res ": stream closed\n\n")
+                         (.end res))))
+            keepalive (js/setInterval (fn [] (when-not (.-writableEnded res)
+                                               (.write res ": keepalive\n\n")))
+                                      30000)]
+        (.writeHead res 200 #js {"content-type" "text/event-stream"
+                                 "cache-control" "no-cache"
+                                 "x-accel-buffering" "no"})
+        (.on res "close" (fn [] (js/clearInterval keepalive)
+                           (remove-watch hermes-runs watch-key)))
+        (add-watch hermes-runs watch-key
+                   (fn [_ _ _ new] (when-let [r (get new run-id)] (flush! r))))
+        (flush! run)))))
+
+(defn- mutation-allowed?
+  "A cookie session may mutate only from this origin (or no Origin — the
+  CLI); a Bearer session is its own proof."
+  [req]
+  (or (bearer-token req)
+      (let [o (some-> (aget (.-headers req) "origin") str)]
+        (or (nil? o) (= o origin)))))
+
+(defn- route-hermes
+  "The gateway routes; `route` sends every `hg/gateway-path?` here."
+  [req res method raw-path session url]
+  (let [[path-profile p] (hg/split-profile-path raw-path)
+        path-profile (some-> path-profile js/decodeURIComponent)
+        header-profile (some-> (aget (.-headers req) "x-hermes-profile") str str/trim not-empty)
+        profile (or path-profile header-profile)
+        seg (fn [pattern] (some-> (re-matches pattern p) second js/decodeURIComponent))
+        query (hermes-query url)
+        bots (delay (hermes-visible-bots session))
+        resolve (fn [id] (hg/resolve-bot @bots (hermes-default-bot-id) id))
+        with-bot (fn [id f] (let [b (resolve id)]
+                              (if (hg/refusal? b) (hermes-refuse! res b) (f b))))
+        mutate (fn [f] (if-not (mutation-allowed? req)
+                         (json res 403 (hg/openai-error "cross-origin cookie mutation refused" "origin"))
+                         (.then (read-body! req) f)))]
+    (cond
+      (not session)
+      (json res 401 (hg/openai-error "サインインが必要です。" "no_session"))
+
+      (and (= method "GET") (= p "/api/profiles"))
+      (json res 200 (hg/profile-list @bots))
+
+      (and (= method "GET") (= p "/api/sessions"))
+      (let [all (if profile
+                  (let [b (resolve profile)] (if (hg/refusal? b) b [b]))
+                  @bots)]
+        (if (hg/refusal? all)
+          (hermes-refuse! res all)
+          (json res 200 (hg/session-list all #(hermes-messages (:id %))
+                                          {:limit (bounded-int (:limit query) 50 200)
+                                           :offset (bounded-int (:offset query) 0 1000000)
+                                           :title (:title query)
+                                           :include-hidden (contains? #{"true" "1" "yes"}
+                                                                      (str/lower (str (:include_hidden query))))}))))
+
+      (and (= method "POST") (= p "/api/sessions"))
+      (mutate (fn [body]
+                (with-bot (or (:id body) (:session_id body) profile)
+                  (fn [b] (json res 201 (hg/session b (hermes-messages (:id b))))))))
+
+      (and (= method "GET") (seg #"/api/sessions/([^/]+)"))
+      (with-bot (or profile (seg #"/api/sessions/([^/]+)"))
+        (fn [b] (json res 200 (hg/session b (hermes-messages (:id b))))))
+
+      (and (= method "PATCH") (seg #"/api/sessions/([^/]+)"))
+      (mutate (fn [body]
+                (if (or (empty? body)
+                        (and (= #{:title} (set (keys body))) (= hg/bot-chat-title (:title body))))
+                  (with-bot (or profile (seg #"/api/sessions/([^/]+)"))
+                    (fn [b] (json res 200 (hg/session b (hermes-messages (:id b))))))
+                  (json res 400 (hg/openai-error
+                                 "Cloud Itonami canonical Bot sessions do not expose mutable session metadata."
+                                 "unsupported_session_field")))))
+
+      (and (= method "DELETE") (seg #"/api/sessions/([^/]+)"))
+      (json res 409 (hg/openai-error
+                     "A canonical Bot Chat cannot delete or disable its Cloud Itonami Bot."
+                     "canonical_session"))
+
+      (and (= method "GET") (seg #"/api/sessions/([^/]+)/messages"))
+      (let [order (:order query)]
+        (if-not (contains? #{nil "oldest" "latest"} order)
+          (hermes-refuse! res {:refuse :hermes/invalid-pagination
+                               :message "order must be oldest or latest"})
+          (with-bot (or profile (seg #"/api/sessions/([^/]+)/messages"))
+            (fn [b] (json res 200 (hg/session-messages
+                                   b (hermes-messages (:id b))
+                                   {:limit (when (contains? query :limit)
+                                             (bounded-int (:limit query) 0 500))
+                                    :offset (bounded-int (:offset query) 0 1000000)
+                                    :order order}))))))
+
+      (and (= method "POST") (seg #"/api/sessions/([^/]+)/chat"))
+      (mutate (fn [body]
+                (let [session-id (or profile (seg #"/api/sessions/([^/]+)/chat"))
+                      started (start-run! session session-id (assoc body :session_id session-id))]
+                  (if (hg/refusal? started)
+                    (hermes-refuse! res started)
+                    ;; synchronous: answer when the run closes
+                    (let [run-id (:run_id started)
+                          watch-key (keyword (str "chat-" run-id))
+                          answer! (fn [run]
+                                    (remove-watch hermes-runs watch-key)
+                                    (let [st (:status run)]
+                                      (if (= "completed" (:status st))
+                                        (json res 200 {:object "hermes.session.chat.completion"
+                                                       :session_id session-id
+                                                       :message {:role "assistant" :content (:output run)}
+                                                       :usage (or (:usage st) {})
+                                                       :runtime {:provider "murakumo"
+                                                                 :model (:model st)
+                                                                 :requested_model (:model st)
+                                                                 :route_source "cloud_itonami"}})
+                                        (json res 502 (hg/openai-error
+                                                       (str "run " (:status st) ": " (or (:error st) ""))
+                                                       (str "run_" (:status st)))))))]
+                      (add-watch hermes-runs watch-key
+                                 (fn [_ _ _ new]
+                                   (when-let [r (get new run-id)]
+                                     (when (:closed? r) (answer! r)))))
+                      (let [r (get @hermes-runs run-id)]
+                        (when (:closed? r) (answer! r))))))))
+
+      (and (= method "POST") (seg #"/api/sessions/([^/]+)/chat/stream"))
+      (mutate (fn [body]
+                (let [session-id (or profile (seg #"/api/sessions/([^/]+)/chat/stream"))
+                      started (start-run! session session-id (assoc body :session_id session-id))]
+                  (if (hg/refusal? started)
+                    (hermes-refuse! res started)
+                    (send-events! res session (:run_id started))))))
+
+      (and (= method "POST") (= p "/v1/runs"))
+      (mutate (fn [body]
+                (let [started (start-run! session profile body)]
+                  (if (hg/refusal? started)
+                    (hermes-refuse! res started)
+                    (json res 202 started)))))
+
+      (and (= method "GET") (seg #"/v1/runs/([^/]+)"))
+      (let [run (owned-run session (seg #"/v1/runs/([^/]+)"))]
+        (if (hg/refusal? run) (hermes-refuse! res run) (json res 200 (:status run))))
+
+      (and (= method "GET") (seg #"/v1/runs/([^/]+)/events"))
+      (send-events! res session (seg #"/v1/runs/([^/]+)/events"))
+
+      (and (= method "POST") (seg #"/v1/runs/([^/]+)/approval"))
+      (mutate (fn [body]
+                (let [run-id (seg #"/v1/runs/([^/]+)/approval")
+                      run (owned-run session run-id)
+                      raw (some-> (:choice body) str str/lower str/trim)
+                      choice (get {"approve" "once" "approved" "once" "allow" "once"} raw raw)]
+                  (cond
+                    (hg/refusal? run) (hermes-refuse! res run)
+                    (not (contains? #{"once" "session" "always" "deny"} choice))
+                    (hermes-refuse! res {:refuse :hermes/invalid-approval-choice
+                                         :message "Invalid approval choice; expected once, session, always, or deny."})
+                    ;; a tool-less turn never holds a write, so nothing is
+                    ;; ever pending — the JVM adapter's literal, not an
+                    ;; emulated approval
+                    :else (hermes-refuse! res {:refuse :hermes/approval-not-pending
+                                               :message (str "Run has no pending approval: " run-id)})))))
+
+      (and (= method "POST") (seg #"/v1/runs/([^/]+)/steer"))
+      (mutate (fn [body]
+                (let [run-id (seg #"/v1/runs/([^/]+)/steer")
+                      run (owned-run session run-id)
+                      text (hg/chat-text body)]
+                  (cond
+                    (hg/refusal? run) (hermes-refuse! res run)
+                    (hg/refusal? text) (hermes-refuse! res text)
+                    (:closed? run) (hermes-refuse! res {:refuse :hermes/run-finished
+                                                        :message (str "Run already " (get-in run [:status :status]) ": " run-id)})
+                    (not (hg/steer-accepted? run))
+                    (hermes-refuse! res {:refuse :hermes/steer-budget-spent
+                                         :message (str "Run accepts at most " hg/max-followups-per-run " follow-ups: " run-id)})
+                    :else
+                    (do (run-event! run-id [:steer text])
+                        (json res 200 {:object "hermes.run.steer" :run_id run-id
+                                       :accepted true
+                                       :followup_id (str run-id "-f" (count (:followups (get @hermes-runs run-id))))}))))))
+
+      (and (= method "POST") (seg #"/v1/runs/([^/]+)/stop"))
+      (mutate (fn [_]
+                (let [run-id (seg #"/v1/runs/([^/]+)/stop")
+                      run (owned-run session run-id)]
+                  (if (hg/refusal? run)
+                    (hermes-refuse! res run)
+                    (do (some-> (:abort run) (.abort "stop"))
+                        (json res 200 {:run_id run-id :status "stopping"}))))))
+
+      :else
+      (json res 404 (hg/openai-error (str "Hermes endpoint not found: " p) "not_found")))))
+
 ;; ---------- router ----------
 (defn- route [req res method p session url]
   (cond
+    (hg/gateway-path? (second (hg/split-profile-path p)))
+    (route-hermes req res method p session url)
+
     (and (= method "GET") (or (= p "/") (str/starts-with? p "/#")))
     (let [html (try (.readFileSync fs (.join path app-dir "target/ui-preview.html") "utf8")
                     (catch :default _ nil))]
@@ -1003,7 +1549,8 @@
                                method (.-method req)
                                p (aget url "pathname")
                                cookies (cookies req)
-                               session (live-session-for-token (get cookies cookie-name))]
+                               session (live-session-for-token
+                                        (or (bearer-token req) (get cookies cookie-name)))]
                            (route req res method p session url))
                          (catch :default e
                            (println :route-error (str e))

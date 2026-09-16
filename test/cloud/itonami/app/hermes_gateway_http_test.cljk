@@ -1,0 +1,418 @@
+(ns cloud.itonami.app.hermes-gateway-http-test
+  "The Hermes Bot Mode gateway over HTTP on the JVM-free resident.
+
+  Spawns `signin_server.cljk` on the kbb engine against a scratch app dir
+  (seeded store, one session token, two Bots) and a stub provider hosted by
+  this process, then drives the routes the way `itonami hermes …` would.
+  Nothing here touches data/state.edn of the checkout, api.murakumo.cloud, or
+  port 1338.
+
+  Run (from the app root):
+    kbb --backend sci --classpath src:test:<siblings…> test/cloud/itonami/app/hermes_gateway_http_test.cljk
+  The sibling classpath and NBB_CLJK_ROOTS are the ones the resident uses
+  (scripts/itonami-app-resident.cljk in the superproject); this test forwards
+  its own to the child, so run it the same way you would run the server.
+
+  Evidence floor: the test prints `SCANNED<TAB>n` with the number of HTTP
+  exchanges it made; n=0 is not clean."
+  (:require [cljs.test :refer [deftest is testing async run-tests]]
+            ["node:http" :as http]
+            ["node:child_process" :as cp]
+            ["node:fs" :as fs]
+            ["node:os" :as os]
+            ["node:path" :as path]
+            ["node:crypto" :as crypto]
+            [clojure.edn :as edn]
+            [kotoba.lang.text :as str]))
+
+(def token "hermes-gateway-http-test-token")
+(def user "user-test")
+(def org "org-test")
+(def bot-live "bot-live")
+(def bot-off "bot-off")
+
+(defn- sha256-hex [s]
+  (.digest (doto (.createHash crypto "sha256") (.update s "utf8")) "hex"))
+
+(defn- seed-state []
+  {:identity {:users {user {:id user :default-membership-id "m-test"}}
+              :memberships {"m-test" {:id "m-test" :user-id user :organization-id org}}
+              :sessions {"session-test" {:id "session-test" :user-id user
+                                         :organization-id org :membership-id "m-test"
+                                         :token-digest (sha256-hex token)
+                                         :csrf "csrf" :created-at "2026-09-16T00:00:00Z"
+                                         :expires-at "2099-01-01T00:00:00Z"
+                                         :revoked? false :kind :passkey}}
+              :passkeys {}}
+   :bots {:bots {bot-live {:bot/id bot-live :bot/owner user :bot/organization org
+                           :bot/name "Live" :bot/brief "You are Live." :bot/enabled? true
+                           :bot/model "murakumo-main" :bot/provider-id "murakumo"
+                           :bot/tools #{} :bot/updated-at "2026-09-16T00:00:00Z"}
+                 bot-off {:bot/id bot-off :bot/owner user :bot/organization org
+                          :bot/name "Off" :bot/enabled? false
+                          :bot/model "murakumo-main" :bot/provider-id "murakumo"
+                          :bot/tools #{} :bot/updated-at "2026-09-15T00:00:00Z"}}
+          :conversations {bot-live [{:message/id "m-0" :message/role :person
+                                     :message/text "earlier" :message/at "2026-09-15T00:00:00Z"}]}
+          :turn-history {}}})
+
+;; ---------- stub provider ----------
+
+(def provider-calls (atom []))
+(def provider-mode (atom :stream))   ; :stream | :slow | :fail | :json
+
+(defn- sse [res chunks]
+  (.writeHead res 200 #js {"content-type" "text/event-stream"})
+  (doseq [c chunks]
+    (.write res (str "data: " (js/JSON.stringify (clj->js c)) "\n\n")))
+  (.write res "data: [DONE]\n\n")
+  (.end res))
+
+(defn- start-provider! []
+  (js/Promise.
+   (fn [resolve]
+     (let [server (.createServer
+                   http
+                   (fn [req res]
+                     (let [acc (atom "")]
+                       (.on req "data" #(swap! acc str %))
+                       (.on req "end"
+                            (fn []
+                              (let [body (js->clj (js/JSON.parse @acc) :keywordize-keys true)]
+                                (swap! provider-calls conj
+                                       {:path (.-url req)
+                                        :authorization (aget (.-headers req) "authorization")
+                                        :body body})
+                                (case @provider-mode
+                                  :fail (do (.writeHead res 503 #js {"content-type" "application/json"})
+                                            (.end res "{\"error\":\"upstream down\"}"))
+                                  :json (do (.writeHead res 200 #js {"content-type" "application/json"})
+                                            (.end res (js/JSON.stringify
+                                                       #js {:choices #js [#js {:message #js {:content "plain json answer"}}]
+                                                            :usage #js {:total_tokens 4}})))
+                                  :slow (do (.writeHead res 200 #js {"content-type" "text/event-stream"})
+                                            (.write res (str "data: " (js/JSON.stringify
+                                                                       #js {:choices #js [#js {:delta #js {:content "slow-"}}]}) "\n\n"))
+                                            (js/setTimeout
+                                             (fn []
+                                               (.write res (str "data: " (js/JSON.stringify
+                                                                          #js {:choices #js [#js {:delta #js {:content (str "done:" (-> body :messages last :content))}}]}) "\n\n"))
+                                               (.write res "data: [DONE]\n\n")
+                                               (.end res))
+                                             1200))
+                                  (sse res [{:choices [{:delta {:role "assistant"}}]}
+                                            {:choices [{:delta {:content "hello "}}]}
+                                            {:choices [{:delta {:content "world"}}]}
+                                            {:choices [] :usage {:total_tokens 9}}]))))))))]
+       (.listen server 0 "127.0.0.1"
+                (fn [] (resolve {:server server :port (.-port (.address server))})))))))
+
+;; ---------- child resident ----------
+
+(defn- free-port []
+  (js/Promise. (fn [resolve]
+                 (let [s (.createServer http (fn [_ _]))]
+                   (.listen s 0 "127.0.0.1"
+                            (fn [] (let [p (.-port (.address s))]
+                                     (.close s (fn [] (resolve p))))))))))
+
+(defn- scratch-app-dir []
+  (let [dir (.mkdtempSync fs (path/join (.tmpdir os) "hermes-gateway-http-"))]
+    (.mkdirSync fs (path/join dir "data"))
+    (.mkdirSync fs (path/join dir "resources"))
+    (.mkdirSync fs (path/join dir "target"))
+    (.writeFileSync fs (path/join dir "data" "state.edn") (pr-str (seed-state)))
+    dir))
+
+(defn- read-store [dir]
+  (edn/read-string (.readFileSync fs (path/join dir "data" "state.edn") "utf8")))
+
+(defn- spawn-resident!
+  "Start signin_server.cljk on `port`, resolving once it answers /health.
+  `env-extra` sets the provider variables; the three are cleared otherwise."
+  [app-dir port env-extra]
+  (let [server-file (path/resolve "src/cloud/itonami/app/signin_server.cljk")
+        env (js/Object.assign #js {} js/process.env
+                              (clj->js (merge {"CLOUD_ITONAMI_APP_DIR" app-dir
+                                               "CLOUD_ITONAMI_PORT" (str port)}
+                                              env-extra)))
+        _ (doseq [k ["MURAKUMO_API_KEY" "MURAKUMO_ENDPOINT" "MURAKUMO_MODEL"]]
+            (when-not (contains? env-extra k) (js-delete env k)))
+        cpi (.indexOf js/process.argv "--classpath")
+        argv (into ["--backend" "sci"]
+                   (concat (when (pos? cpi) ["--classpath" (aget js/process.argv (inc cpi))])
+                           [server-file]))
+        child (cp/spawn "kbb" (clj->js argv) #js {:env env :stdio #js ["ignore" "pipe" "pipe"]})
+        out (atom "")]
+    (.on (.-stdout child) "data" #(swap! out str %))
+    (.on (.-stderr child) "data" #(swap! out str %))
+    (js/Promise.
+     (fn [resolve reject]
+       (let [deadline (+ (js/Date.now) 90000)
+             poll (fn poll []
+                    (-> (js/fetch (str "http://127.0.0.1:" port "/health"))
+                        (.then (fn [r] (if (= 200 (.-status r))
+                                         (resolve {:child child :out out})
+                                         (throw (js/Error. "not yet")))))
+                        (.catch (fn [_]
+                                  (if (> (js/Date.now) deadline)
+                                    (reject (js/Error. (str "resident did not start:\n" @out)))
+                                    (js/setTimeout poll 500))))))]
+         (poll))))))
+
+;; ---------- HTTP ----------
+
+(def exchanges (atom 0))
+
+(defn- call
+  "→ promise of {:status :body(parsed json or text)}"
+  [base method p & [{:keys [body headers auth?] :or {auth? true}}]]
+  (swap! exchanges inc)
+  (-> (js/fetch (str base p)
+                (clj->js (cond-> {:method method
+                                  :headers (cond-> (or headers {})
+                                             auth? (assoc "authorization" (str "Bearer " token))
+                                             body (assoc "content-type" "application/json"))}
+                           body (assoc :body (js/JSON.stringify (clj->js body))))))
+      (.then (fn [r]
+               (-> (.text r)
+                   (.then (fn [t]
+                            {:status (.-status r)
+                             :body (try (js->clj (js/JSON.parse t) :keywordize-keys true)
+                                        (catch :default _ t))})))))))
+
+(defn- sse-frames
+  "Collect every `data:` frame of an SSE response until it closes."
+  [base method p & [{:keys [body]}]]
+  (swap! exchanges inc)
+  (-> (js/fetch (str base p)
+                (clj->js (cond-> {:method method
+                                  :headers (cond-> {"authorization" (str "Bearer " token)}
+                                             body (assoc "content-type" "application/json"))}
+                           body (assoc :body (js/JSON.stringify (clj->js body))))))
+      (.then (fn [r]
+               (-> (.text r)
+                   (.then (fn [t]
+                            {:status (.-status r)
+                             :frames (->> (str/split t #"\n")
+                                          (filter #(str/starts-with? % "data: "))
+                                          (mapv #(js->clj (js/JSON.parse (subs % 6)) :keywordize-keys true)))})))))))
+
+(defn- sleep [ms] (js/Promise. (fn [resolve] (js/setTimeout resolve ms))))
+
+(defn- turn-row [dir bot-id run-id]
+  (some #(when (= run-id (:turn/id %)) %) (get-in (read-store dir) [:bots :turn-history bot-id])))
+
+;; ---------- the test ----------
+
+(deftest gateway-over-http
+  (async done
+    (let [app-dir (scratch-app-dir)
+          ctx (atom {})]
+      (-> (start-provider!)
+          (.then (fn [{:keys [server port]}]
+                   (swap! ctx assoc :provider server :provider-port port)
+                   (free-port)))
+          (.then (fn [port]
+                   (swap! ctx assoc :port port :base (str "http://127.0.0.1:" port))
+                   (spawn-resident! app-dir port
+                                    {"MURAKUMO_API_KEY" "test-key"
+                                     "MURAKUMO_ENDPOINT" (str "http://127.0.0.1:" (:provider-port @ctx) "/chat/completions")
+                                     "MURAKUMO_MODEL" "stub-model"})))
+          (.then (fn [{:keys [child out]}]
+                   (swap! ctx assoc :child child :out out)
+                   (let [base (:base @ctx)]
+                     (-> (call base "GET" "/api/profiles" {:auth? false})
+                         (.then (fn [r]
+                                  (testing "no session → 401 with the gateway's own code"
+                                    (is (= 401 (:status r)))
+                                    (is (= "no_session" (get-in r [:body :error :code]))))
+                                  (call base "GET" "/api/profiles")))
+                         (.then (fn [r]
+                                  (testing "profiles = the session's Bots, Bearer auth"
+                                    (is (= 200 (:status r)))
+                                    (is (= #{bot-live bot-off} (set (map :id (get-in r [:body :data])))))
+                                    (is (= [true false] (mapv :enabled (sort-by :id (get-in r [:body :data])))) "sorted: bot-live, bot-off"))
+                                  (call base "GET" (str "/p/" bot-live "/api/sessions"))))
+                         (.then (fn [r]
+                                  (testing "/p/<profile>/ prefix narrows the session list"
+                                    (is (= 200 (:status r)))
+                                    (is (= [bot-live] (mapv :id (get-in r [:body :data]))))
+                                    (is (= 1 (:message_count (first (get-in r [:body :data]))))))
+                                  (call base "GET" (str "/api/sessions/" bot-live "/messages?order=oldest"))))
+                         (.then (fn [r]
+                                  (testing "message projection"
+                                    (is (= [["user" "earlier"]] (mapv (juxt :role :content) (get-in r [:body :data])))))
+                                  (call base "GET" (str "/api/sessions/" bot-live "/messages?order=sideways"))))
+                         (.then (fn [r]
+                                  (testing "bad pagination is refused by name"
+                                    (is (= 400 (:status r)))
+                                    (is (= "invalid-pagination" (get-in r [:body :error :code]))))
+                                  (call base "POST" (str "/api/sessions/" bot-live "/chat") {:body {:input "ping"}})))
+                         (.then (fn [r]
+                                  (testing "synchronous chat: a real turn through the provider"
+                                    (is (= 200 (:status r)))
+                                    (is (= "hello world" (get-in r [:body :message :content])))
+                                    (is (= {:total_tokens 9} (get-in r [:body :usage])))
+                                    (is (= "stub-model" (get-in r [:body :runtime :model])))
+                                    (let [c (last @provider-calls)]
+                                      (is (= "Bearer test-key" (:authorization c)) "the resident's key, not the client's")
+                                      (is (= "stub-model" (get-in c [:body :model])))
+                                      (is (= [["system" "You are Live."] ["user" "earlier"] ["user" "ping"]]
+                                             (mapv (juxt :role :content) (get-in c [:body :messages]))))))
+                                  (testing "the turn is durable in the shared store, JVM-shaped"
+                                    (let [store (read-store app-dir)
+                                          conv (get-in store [:bots :conversations bot-live])
+                                          turn (last (get-in store [:bots :turn-history bot-live]))]
+                                      (is (= [[:person "earlier"] [:person "ping"] [:bot "hello world"]]
+                                             (mapv (juxt :message/role :message/text) conv)))
+                                      (is (= :completed (:turn/state turn)))
+                                      (is (= "hello world" (:turn/result turn)))
+                                      (is (= :hermes-gateway (:turn/source turn)))))
+                                  (call base "POST" "/v1/runs" {:body {:profile bot-live :input "stream me"}})))
+                         (.then (fn [r]
+                                  (testing "async run starts with 202"
+                                    (is (= 202 (:status r)))
+                                    (is (= "started" (get-in r [:body :status]))))
+                                  (swap! ctx assoc :run (get-in r [:body :run_id]))
+                                  (sse-frames base "GET" (str "/v1/runs/" (:run @ctx) "/events"))))
+                         (.then (fn [{:keys [status frames]}]
+                                  (testing "events stream replays from run.started to run.completed"
+                                    (is (= 200 status))
+                                    (is (= ["run.started" "assistant.delta" "assistant.delta" "run.completed"]
+                                           (mapv :event frames)))
+                                    (is (= "hello world" (:output (last frames))))
+                                    (is (every? #(= (:run @ctx) (:run_id %)) frames)))
+                                  (call base "GET" (str "/v1/runs/" (:run @ctx)))))
+                         (.then (fn [r]
+                                  (testing "run status after completion"
+                                    (is (= "completed" (get-in r [:body :status])))
+                                    (is (= "hello world" (get-in r [:body :output]))))
+                                  (call base "POST" (str "/v1/runs/" (:run @ctx) "/approval") {:body {:choice "approve"}})))
+                         (.then (fn [r]
+                                  (testing "approval: a tool-less turn never holds → the JVM literal"
+                                    (is (= 409 (:status r)))
+                                    (is (= "approval-not-pending" (get-in r [:body :error :code]))))
+                                  (call base "POST" (str "/v1/runs/" (:run @ctx) "/steer") {:body {:input "late"}})))
+                         (.then (fn [r]
+                                  (testing "steer on a finished run is refused by name"
+                                    (is (= 409 (:status r)))
+                                    (is (= "run-finished" (get-in r [:body :error :code]))))
+                                  (call base "GET" "/v1/runs/run_does_not_exist")))
+                         (.then (fn [r]
+                                  (testing "unknown run"
+                                    (is (= 404 (:status r)))
+                                    (is (= "run-not-found" (get-in r [:body :error :code]))))
+                                  (call base "POST" (str "/api/sessions/" bot-off "/chat") {:body {:input "x"}})))
+                         (.then (fn [r]
+                                  (testing "a disabled Bot refuses the turn before any provider call"
+                                    (is (= 409 (:status r)))
+                                    (is (= "disabled" (get-in r [:body :error :code]))))
+                                  (call base "POST" (str "/api/sessions/" bot-live "/chat") {:body {:input "  "}})))
+                         (.then (fn [r]
+                                  (testing "empty input"
+                                    (is (= 400 (:status r)))
+                                    (is (= "invalid-input" (get-in r [:body :error :code]))))
+                                  (call base "POST" (str "/api/sessions/" bot-live "/chat")
+                                        {:body {:input "x"} :headers {"cookie" (str "cloud_itonami_identity=" token)
+                                                                      "origin" "https://evil.example"} :auth? false})))
+                         (.then (fn [r]
+                                  (testing "cookie session + foreign Origin cannot start a turn"
+                                    (is (= 403 (:status r)))
+                                    (is (= "origin" (get-in r [:body :error :code]))))
+                                  ;; --- steer + stop against a slow provider ---
+                                  (reset! provider-mode :slow)
+                                  (reset! provider-calls [])
+                                  (call base "POST" "/v1/runs" {:body {:profile bot-live :input "first"}})))
+                         (.then (fn [r]
+                                  (swap! ctx assoc :slow-run (get-in r [:body :run_id]))
+                                  (sleep 300)))
+                         (.then (fn [_] (call base "POST" (str "/v1/runs/" (:slow-run @ctx) "/steer") {:body {:input "second"}})))
+                         (.then (fn [r]
+                                  (testing "steer on a live run is accepted"
+                                    (is (= 200 (:status r)))
+                                    (is (true? (get-in r [:body :accepted]))))
+                                  (sse-frames base "GET" (str "/v1/runs/" (:slow-run @ctx) "/events"))))
+                         (.then (fn [{:keys [frames]}]
+                                  (testing "the follow-up became the next provider call at the model boundary"
+                                    (is (= ["run.started" "assistant.delta" "assistant.delta" "run.steered"
+                                            "assistant.delta" "assistant.delta" "run.completed"]
+                                           (mapv :event frames)))
+                                    (is (= 2 (count @provider-calls)))
+                                    (is (= "second" (-> @provider-calls second :body :messages last :content)))
+                                    (is (= "slow-done:firstslow-done:second" (:output (last frames)))))
+                                  (reset! provider-calls [])
+                                  (call base "POST" "/v1/runs" {:body {:profile bot-live :input "to be stopped"}})))
+                         (.then (fn [r]
+                                  (swap! ctx assoc :stop-run (get-in r [:body :run_id]))
+                                  (sleep 300)))
+                         (.then (fn [_] (call base "POST" (str "/v1/runs/" (:stop-run @ctx) "/stop"))))
+                         (.then (fn [r]
+                                  (testing "stop answers stopping"
+                                    (is (= 200 (:status r)))
+                                    (is (= "stopping" (get-in r [:body :status]))))
+                                  (sse-frames base "GET" (str "/v1/runs/" (:stop-run @ctx) "/events"))))
+                         (.then (fn [{:keys [frames]}]
+                                  (testing "stop aborts the provider call and the run is cancelled"
+                                    (is (= "run.cancelled" (:event (last frames))))
+                                    (is (= :cancelled (:turn/state (turn-row app-dir bot-live (:stop-run @ctx))))))
+                                  ;; --- provider failure ---
+                                  (reset! provider-mode :fail)
+                                  (sse-frames base "POST" (str "/api/sessions/" bot-live "/chat/stream") {:body {:input "will fail"}})))
+                         (.then (fn [{:keys [status frames]}]
+                                  (testing "provider 503 → run.failed, error text kept, turn row failed"
+                                    (is (= 200 status) "the stream itself opened")
+                                    (is (= ["run.started" "run.failed"] (mapv :event frames)))
+                                    (is (str/starts-with? (str (:error (last frames))) "provider 503"))
+                                    (is (= :failed (:turn/state (turn-row app-dir bot-live (:run_id (last frames))))))
+                                    (is (= :provider/error (:turn/error-type (turn-row app-dir bot-live (:run_id (last frames)))))))
+                                  ;; --- non-streaming provider ---
+                                  (reset! provider-mode :json)
+                                  (call base "POST" (str "/api/sessions/" bot-live "/chat") {:body {:input "json please"}})))
+                         (.then (fn [r]
+                                  (testing "a provider that answers JSON instead of SSE still completes"
+                                    (is (= 200 (:status r)))
+                                    (is (= "plain json answer" (get-in r [:body :message :content])))
+                                    (is (= {:total_tokens 4} (get-in r [:body :usage]))))
+                                  (call base "GET" "/api/bots")))
+                         (.then (fn [r]
+                                  (testing "the resident's own routes still answer"
+                                    (is (= 200 (:status r)))
+                                    (is (= 2 (count (get-in r [:body :bots])))))
+                                  (call base "GET" "/api/whatever")))
+                         (.then (fn [r]
+                                  (testing "non-gateway unknown paths keep the resident's 404"
+                                    (is (= 404 (:status r)))
+                                    (is (= "not-this-server" (get-in r [:body :error :type]))))))))))
+          ;; --- second resident: no key at all ---
+          (.then (fn [_]
+                   (.kill (:child @ctx) "SIGTERM")
+                   (free-port)))
+          (.then (fn [port]
+                   (swap! ctx assoc :base2 (str "http://127.0.0.1:" port))
+                   (spawn-resident! app-dir port {})))
+          (.then (fn [{:keys [child]}]
+                   (swap! ctx assoc :child2 child)
+                   (call (:base2 @ctx) "POST" (str "/api/sessions/" bot-live "/chat") {:body {:input "x"}})))
+          (.then (fn [r]
+                   (testing "no MURAKUMO_API_KEY → denied before any request, no fallback"
+                     (is (= 503 (:status r)))
+                     (is (= "unauthenticated" (get-in r [:body :error :code])))
+                     (is (str/includes? (get-in r [:body :error :message]) "MURAKUMO_API_KEY")))))
+          (.catch (fn [e]
+                    (is false (str "unexpected: " (or (some-> e .-stack) e)
+                                   "\n--- resident output ---\n" (some-> @ctx :out deref)))))
+          (.finally (fn []
+                      (some-> (:child @ctx) (.kill "SIGTERM"))
+                      (some-> (:child2 @ctx) (.kill "SIGTERM"))
+                      (some-> (:provider @ctx) .close)
+                      (println (str "SCANNED\t" @exchanges "\texchanges"))
+                      (done)))))))
+
+(defmethod cljs.test/report [:cljs.test/default :end-run-tests] [m]
+  (println "hermes-gateway-http-test" (select-keys m [:test :pass :fail :error]))
+  (when-not (cljs.test/successful? m)
+    (set! (.-exitCode js/process) 1))
+  (js/setTimeout #(.exit js/process (or (.-exitCode js/process) 0)) 200))
+
+(run-tests)

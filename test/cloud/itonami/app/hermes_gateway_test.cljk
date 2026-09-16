@@ -1,0 +1,159 @@
+(ns cloud.itonami.app.hermes-gateway-test
+  "The portable half of the JVM-free Hermes gateway, on the kbb engine.
+
+  Run: kbb --backend sci --classpath src:test:<text>/src test/cloud/itonami/app/hermes_gateway_test.cljk
+
+  Refusals pin the `:refuse` literal (CLAUDE.md question 6): a test that only
+  asserts `refusal?` would count a run refused for another reason."
+  (:require [cljs.test :refer [deftest is testing run-tests]]
+            [cloud.itonami.app.hermes-gateway :as hg]))
+
+(def bots
+  [{:id "bot-a" :name "A" :model "murakumo-main" :provider-id "murakumo"
+    :enabled? false :pinned? true :hidden? false :status "idle"
+    :updated-at "2026-09-01T00:00:00Z"}
+   {:id "bot-b" :name "B" :model "murakumo-main" :provider-id "murakumo"
+    :enabled? true :pinned? false :hidden? false :status "idle"
+    :updated-at "2026-09-02T00:00:00Z"
+    :hermes-import {:profile-id "webest" :session-ids ["s-1"]}}
+   {:id "bot-c" :name "C" :model "murakumo-main" :provider-id "murakumo"
+    :enabled? true :pinned? false :hidden? true :status "idle"
+    :updated-at "2026-09-03T00:00:00Z"}])
+
+(def messages
+  [{:id "m1" :role "person" :text "hello" :at "2026-09-10T00:00:00Z" :cards []}
+   {:id "m2" :role "bot" :text "hi there" :at "2026-09-10T00:00:05Z" :cards []}])
+
+(deftest paths
+  (is (= ["webest" "/api/profiles"] (hg/split-profile-path "/p/webest/api/profiles")))
+  (is (= [nil "/api/profiles"] (hg/split-profile-path "/api/profiles")))
+  (is (hg/gateway-path? "/api/sessions/x/chat/stream"))
+  (is (hg/gateway-path? "/v1/runs"))
+  (is (not (hg/gateway-path? "/api/sessionsx")) "prefix without the slash is not ours")
+  (is (not (hg/gateway-path? "/api/bots")) "the resident's own route stays its own"))
+
+(deftest resolution
+  (testing "explicit id, imported profile id, imported session id"
+    (is (= "bot-b" (:id (hg/resolve-bot bots nil "bot-b"))))
+    (is (= "bot-b" (:id (hg/resolve-bot bots nil "webest"))))
+    (is (= "bot-b" (:id (hg/resolve-bot bots nil "s-1")))))
+  (testing "default: a tiered (pinned) Bot wins even when disabled, if no enabled Bot is in a tier"
+    (is (= "bot-a" (:id (hg/resolve-bot bots nil "default")))))
+  (testing "default: an enabled tiered Bot beats a disabled one that sorts earlier"
+    (is (= "bot-c" (:id (hg/resolve-bot (assoc-in bots [2 :pinned?] true) nil "default")))))
+  (testing "configured default id wins when enabled"
+    (is (= "bot-c" (:id (hg/resolve-bot bots "bot-c" "default")))))
+  (testing "a disabled-only fleet still resolves, to refuse by name later"
+    (is (= "bot-a" (:id (hg/resolve-bot [(first bots)] nil "default")))))
+  (testing "unknown → :hermes/not-found as data"
+    (let [r (hg/resolve-bot bots nil "nope")]
+      (is (hg/refusal? r))
+      (is (= :hermes/not-found (:refuse r)))
+      (is (= [404 "not-found"] (let [[s b] (hg/refusal->response r)] [s (get-in b [:error :code])]))))))
+
+(deftest projections
+  (let [profiles (hg/profile-list bots)]
+    (is (= "list" (:object profiles)))
+    (is (= ["bot-a" "webest" "bot-c"] (mapv :id (:data profiles))) "imported profile id is the Hermes id")
+    (is (= ["bot-a" "bot-b" "bot-c"] (mapv :bot_id (:data profiles)))))
+  (let [row (hg/session-row (second bots) messages)]
+    (is (= "Bot Chat" (:title row)))
+    (is (= 2 (:message_count row)))
+    (is (= "hi there" (:preview row)))
+    (is (= (/ (js/Date.parse "2026-09-10T00:00:05Z") 1000.0) (:last_active row)))
+    (is (false? (:archived row))))
+  (is (true? (:archived (hg/session-row (first bots) []))) "disabled Bot = archived session")
+  (let [listed (hg/session-list bots (constantly messages) {})]
+    (is (= ["bot-a" "bot-b"] (mapv :id (:data listed))) "hidden Bot excluded by default")
+    (is (false? (:has_more listed))))
+  (is (= 3 (count (:data (hg/session-list bots (constantly messages) {:include-hidden true})))))
+  (let [page (hg/session-list bots (constantly messages) {:limit 1})]
+    (is (= 1 (count (:data page))))
+    (is (true? (:has_more page)))))
+
+(deftest message-projection
+  (let [latest (hg/session-messages (second bots) messages {})
+        oldest (hg/session-messages (second bots) messages {:order "oldest"})]
+    (is (= ["assistant" "user"] (mapv :role (:data latest))) "default page is latest-first")
+    (is (= ["user" "assistant"] (mapv :role (:data oldest))))
+    (is (= "latest" (get-in latest [:pagination :order])))
+    (is (= 2 (get-in latest [:pagination :returned])))
+    (is (= "hello" (:content (first (:data oldest)))))
+    (is (nil? (:display_kind (first (:data oldest)))) "no cards → no display_kind")))
+
+(deftest input-contract
+  (is (= "hi" (hg/chat-text {:input "  hi "})))
+  (is (= "hi" (hg/chat-text {:message "hi"})))
+  (is (= "hi" (hg/chat-text {:input [{:role "user" :content [{:type "text" :text "hi"}]}]})))
+  (is (= "Instructions for this turn:\nbe brief\n\nhi" (hg/chat-text {:input "hi" :instructions "be brief"})))
+  (let [r (hg/chat-text {:input "   "})]
+    (is (= :hermes/invalid-input (:refuse r)))
+    (is (= "Missing non-empty input/message/text." (:message r))))
+  (is (= :hermes/invalid-input (:refuse (hg/chat-text {})))))
+
+(deftest run-lifecycle
+  (let [bot (second bots)
+        run (hg/new-run "run_1" bot 100.0)]
+    (is (= "started" (get-in run [:status :status])))
+    (is (= 1 (count (:events run))))
+    (let [run (-> run
+                  (hg/apply-event [:running] 101.0)
+                  (hg/apply-event [:delta "hel"] 102.0)
+                  (hg/apply-event [:delta "lo"] 103.0))]
+      (is (= "running" (get-in run [:status :status])))
+      (is (= "hello" (:output run)))
+      (is (= ["run.started" "assistant.delta" "assistant.delta"] (mapv :event (:events run))))
+      (testing "steer queues up to the budget, then is dropped"
+        (let [run (reduce #(hg/apply-event %1 [:steer %2] 104.0) run ["a" "b" "c" "d"])]
+          (is (= ["a" "b" "c"] (:followups run)))
+          (is (false? (hg/steer-accepted? run)))
+          (let [run (hg/apply-event run [:followup-applied] 105.0)]
+            (is (= ["b" "c"] (:followups run)))
+            (is (= 1 (:followups-applied run)))
+            (is (= "run.steered" (:event (last (:events run)))))
+            (is (false? (hg/steer-accepted? run)) "applied ones still count against the budget"))))
+      (testing "completed closes the run with output and usage"
+        (let [run (hg/apply-event run [:completed {:usage {:total_tokens 7}}] 110.0)]
+          (is (true? (:closed? run)))
+          (is (= "completed" (get-in run [:status :status])))
+          (is (= "hello" (get-in run [:status :output])))
+          (is (= {:total_tokens 7} (:usage (last (:events run)))))
+          (is (= run (hg/apply-event run [:delta "late"] 111.0)) "events after close are ignored, not thrown")))
+      (testing "failed and cancelled are terminal with their own frame"
+        (let [failed (hg/apply-event run [:failed "provider 503"] 110.0)
+              cancelled (hg/apply-event run [:cancelled] 110.0)]
+          (is (= "provider 503" (get-in failed [:status :error])))
+          (is (= "run.failed" (:event (last (:events failed)))))
+          (is (= "run.cancelled" (:event (last (:events cancelled)))))
+          (is (every? :closed? [failed cancelled])))))))
+
+(deftest purge
+  (let [bot (second bots)
+        old (hg/apply-event (hg/new-run "old" bot 0.0) [:completed {}] 10.0)
+        live (hg/new-run "live" bot 0.0)
+        fresh (hg/apply-event (hg/new-run "fresh" bot 0.0) [:completed {}] 5000.0)
+        kept (hg/purge-runs {"old" old "live" live "fresh" fresh} 5000.0)]
+    (is (= #{"live" "fresh"} (set (keys kept))) "terminal + older than retention is dropped; a live run never is")))
+
+(deftest provider-shapes
+  (let [req (hg/chat-completion-request (assoc (second bots) :brief "You are B.")
+                                        messages "next" {:model "murakumo-main"})]
+    (is (= "murakumo-main" (:model req)))
+    (is (true? (:stream req)))
+    (is (= [["system" "You are B."] ["user" "hello"] ["assistant" "hi there"] ["user" "next"]]
+           (mapv (juxt :role :content) (:messages req)))))
+  (is (= 2 (count (:messages (hg/chat-completion-request (second bots) messages "x" {:model "m" :history-limit 1}))))
+      "history is bounded")
+  (is (= "abc" (hg/sse-delta {:choices [{:delta {:content "abc"}}]})))
+  (is (nil? (hg/sse-delta {:choices [{:delta {:role "assistant"}}]})))
+  (is (nil? (hg/sse-delta "[DONE]")))
+  (is (= {:total_tokens 3} (hg/sse-usage {:usage {:total_tokens 3}})))
+  (is (= "full" (hg/completion-text {:choices [{:message {:content "full"}}]})))
+  (is (= "" (hg/completion-text {:error "x"}))))
+
+(defmethod cljs.test/report [:cljs.test/default :end-run-tests] [m]
+  (println "hermes-gateway-test" (select-keys m [:test :pass :fail :error]))
+  (when-not (cljs.test/successful? m)
+    (set! (.-exitCode js/process) 1)))
+
+(run-tests)
