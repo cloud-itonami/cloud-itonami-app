@@ -1,0 +1,51 @@
+(ns render-ui-preview
+  "Render the workspace document the JVM-free resident serves.
+
+  `signin_server.cljk` answers `/` with `target/ui-preview.html`, a static
+  snapshot: the page is `web/page-html`, and `web.cljk` could not be required
+  at the resident's load time (its top-level defs read resources before the
+  oracle loader exists). It CAN be rendered on the kbb engine once the loader
+  is set — measured 2026-09-16, 1,111,094 bytes, byte-equivalent to the
+  snapshot a JVM had written two days earlier — so this script is how the
+  snapshot is refreshed after a change to `web.cljk` / `appearance.cljk` /
+  `interaction.js`. Without it, a fix lands in `src` and the resident keeps
+  serving the page from before the fix, with nothing failing anywhere.
+
+  Run from the app root with the resident's classpath and cljk roots
+  (`scripts/itonami-app-resident.cljk` in the superproject lists them):
+
+    kbb --backend sci --classpath <resident classpath> scripts/render-ui-preview.cljk [out]
+
+  `out` defaults to target/ui-preview.html. The configuration rendered is the
+  resident's: murakumo default provider, `light` appearance (the browser flips
+  it to the device's remembered choice), brand Cloud Itonami. Prints the byte
+  count; a render that throws is an error, not an empty file."
+  (:require ["node:fs" :as fs]
+            ["node:path" :as path]
+            [cloud.itonami.app.kotoba-oracle :as oracle]))
+
+(def app-root (js/process.cwd))
+
+(oracle/set-resource-loader!
+ (fn [p] (let [full (path/join app-root "resources" p)]
+           (when (fs/existsSync full) (fs/readFileSync full "utf8")))))
+
+;; `web` requires resources at load, so it is required only after the loader.
+(require '[cloud.itonami.app.web :as web])
+
+(def configuration
+  {:routing {:default-provider "murakumo" :default-model "murakumo-main"}
+   :brand {:name "Cloud Itonami"}
+   :ui {:appearance "light"}})
+
+(let [out (or (some-> (last js/process.argv)
+                      (#(when (.endsWith % ".html") %)))
+              (path/join app-root "target" "ui-preview.html"))
+      html (web/page-html configuration)]
+  (when-not (and (string? html) (> (count html) 100000))
+    (throw (ex-info "page-html returned something too small to be the workspace"
+                    {:type :render/too-small :bytes (count (str html))})))
+  (fs/mkdirSync (path/dirname out) #js {:recursive true})
+  (fs/writeFileSync (str out ".tmp") html)
+  (fs/renameSync (str out ".tmp") out)
+  (println (str "RENDERED\t" (count html) "\tbytes -> " out)))

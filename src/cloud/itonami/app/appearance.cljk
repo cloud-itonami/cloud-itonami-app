@@ -326,7 +326,8 @@
   (str/join "" (for [[k v] decls] (str k ":" v ";"))))
 
 (defn dark-css
-  "The `dark` appearance: DADS with its primitive ramps inverted.
+  "The `dark` appearance: DADS with its primitive ramps inverted — and the
+  floor under `grok`, which draws its own surfaces on top of this inversion.
 
   Takes the vendored `dds.css` rather than reading it, so this stays portable
   — `test/portable_nbb.cljk` executes this namespace and cannot slurp a
@@ -362,7 +363,17 @@
   [dds-css]
   (str
    ":root{" (declarations->css (dark/snapshot-declarations dds-css)) "}\n"
-   ":root:has(.workspace[data-appearance=\"dark\"]){"
+   ;; `grok` inherits the inversion. It is a DRAWN appearance (a palette and
+   ;; per-component rules for the rail, the cards, the composer) and a drawn
+   ;; layer misses surfaces — measured 2026-09-16 on the live #/bots view:
+   ;; 27 light surfaces in grok (the group label band, the launcher, the
+   ;; account and action menus, the workspace switcher) where its rules did
+   ;; not reach. Putting the primitive inversion under it means every surface
+   ;; grok does not name follows dark, and grok's own rules stay what they
+   ;; are: the rounded, raised layer on top. Two selectors rather than one
+   ;; `:has(a, b)` so the plain `dark` selector stays a literal substring for
+   ;; `core_test/dark-css-only-references-design-system-tokens-that-exist`.
+   ":root:has(.workspace[data-appearance=\"dark\"]),:root:has(.workspace[data-appearance=\"grok\"]){"
    (declarations->css (dark/dark-declarations dds-css)) "}\n"
    ".appearance-toggle[data-next=\"dark\"]::before{content:\"◐ \"}\n"))
 

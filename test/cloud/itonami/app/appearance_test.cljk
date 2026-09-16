@@ -100,3 +100,22 @@
     (is (= "true" (:aria-pressed attrs))
         "dark is not the default, so the control reads as pressed")
     (is (= "LIGHT" label))))
+
+(deftest grok-stands-on-the-inversion
+  ;; grok is drawn per component and a drawn layer misses surfaces (measured
+  ;; 2026-09-16: 27 light surfaces in grok on #/bots). The primitive inversion
+  ;; is scoped under grok too, so what grok does not name follows dark. The
+  ;; sample is a ramp small enough to read, not the vendored sheet: the
+  ;; assertion is about the SCOPE, and the JVM core_test already proves the
+  ;; declarations against the real ramps.
+  (let [sample (str ":root {\n  --color-neutral-white: #ffffff;\n  --color-neutral-black: #000000;\n"
+                    "  --color-neutral-solid-gray-50: #f2f2f2;\n  --color-neutral-solid-gray-900: #1a1a1a;\n"
+                    "  --color-primitive-blue-50: #e8f1fe;\n  --color-primitive-blue-1200: #000060;\n}\n")
+        dark (appearance/dark-css sample)]
+    (is (str/includes? dark ":root:has(.workspace[data-appearance=\"dark\"])"))
+    (is (str/includes? dark ":root:has(.workspace[data-appearance=\"grok\"])")
+        "grok inherits the inversion instead of drawing every surface itself")
+    (is (= 1 (count (re-seq #"color-scheme:dark" dark)))
+        "one inverted block serves both selectors — the declarations are not duplicated")
+    (is (not (str/includes? dark "data-appearance=\"8bit\""))
+        "8bit stays fully drawn: cream paper is its ground, not an inverted grey")))
