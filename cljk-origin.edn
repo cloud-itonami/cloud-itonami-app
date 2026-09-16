@@ -144,6 +144,7 @@
   "src/cloud/itonami/app/health.cljk" ".cljc"
   "src/cloud/itonami/app/hermes_compat.cljk" ".clj"
   "src/cloud/itonami/app/hermes_gateway.cljk" ".cljc"
+  "scripts/render-ui-preview.cljk" ".cljs"
   "src/cloud/itonami/app/hermes_import_data.cljk" ".clj"
   "src/cloud/itonami/app/hermes_migration.cljk" ".clj"
   "src/cloud/itonami/app/hokusai.cljk" ".cljc"
