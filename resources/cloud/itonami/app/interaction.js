@@ -10543,36 +10543,28 @@
       const empty = $('#bots-rail-empty');
       empty.hidden = visibleBots.length > 0;
       empty.textContent = query ? '一致する Bot がいません' : 'まだ Bot がいません';
-      botsSidebarGroups(visibleBots).forEach((group) => {
-        const pinnedGroup = group.label === 'ピン留め' || group.label === '優先度';
-        const heading = make('li', 'bots-rail__group', group.label);
-        heading.setAttribute('aria-hidden', 'true');
-        if (!pinnedGroup) list.append(heading);
-        group.bots.forEach((bot) => {
-        if (bot.conversationKind === 'group') {
-          const entry = make('li'); entry.append(roomRailItem(bot)); list.append(entry); return;
-        }
-        const item = make('button', 'bots-rail__item');
-        item.type = 'button';
-        item.setAttribute('aria-current', String(bot.id === botsState.selected && !document.body.classList.contains('group-chat-open')));
+      // The row is cloud-kotoba-dds's (cloudKotobaBots.row): same markup,
+      // hooks and `bots/select` action as the hiccup rail-item; selection
+      // is dispatched by the shinkansen runtime (see shinkansen.on below).
+      // What stays here is the host's: the status-named dot, the accessible
+      // label, and the context menu.
+      const current = document.body.classList.contains('group-chat-open') ? null : botsState.selected;
+      const railRow = (bot) => {
         const statusSummary = botsStatusSummary(bot);
         const preview = botsRailPreview(bot, statusSummary);
-        item.setAttribute('aria-label',
-          `${bot.name}、${statusSummary}、${preview}`);
+        const li = cloudKotobaBots.row({
+          id: bot.id, name: bot.name, meta: preview,
+          time: botsCompactTime(bot['activity-at'] || bot['last-message']?.at),
+          unread: true, status: bot.status,
+          label: `${bot.name}、${statusSummary}、${preview}`
+        }, {current, avatar: () => botAvatar(make('span', 'bot-avatar'), bot.avatar, bot.status, bot.id),
+            unreadLabel: statusSummary});
+        const item = li.querySelector('.ck-bots__item');
         item.setAttribute('aria-haspopup', 'menu');
         if (bot['unread?']) item.dataset.unread = 'true';
-        const avatar = botAvatar(make('span', 'bot-avatar'), bot.avatar, bot.status, bot.id);
-        const copy = make('div', 'bots-rail__copy');
-        const headline = make('span', 'bots-rail__headline');
-        headline.append(make('span', 'bots-rail__name', bot.name));
-        const time = botsCompactTime(bot['activity-at'] || bot['last-message']?.at);
-        if (time) headline.append(make('span', 'bots-rail__time', time));
-        copy.append(headline, make('span', 'bots-rail__last', preview));
-        const dot = make('span', 'bots-dot');
+        const dot = li.querySelector('.ck-bots__dot');
         dot.dataset.status = bot.status;
         dot.title = statusSummary;
-        item.append(avatar, copy, dot);
-        item.addEventListener('click', () => selectBot(bot.id));
         item.addEventListener('contextmenu', (event) => {
           event.preventDefault();
           openBotsRailMenu(event, bot);
@@ -10584,9 +10576,25 @@
             openBotsRailMenu(event, bot);
           }
         });
-        const entry = make('li');
-        entry.append(item);
-        (pinnedGroup ? pinnedList : list).append(entry);
+        return li;
+      };
+      let group = null;
+      botsSidebarGroups(visibleBots).forEach((section) => {
+        const pinnedGroup = section.label === 'ピン留め' || section.label === '優先度';
+        if (!pinnedGroup) {
+          group = make('ul', 'ck-bots__group');
+          group.dataset.ckBots = 'group';
+          const heading = make('li', 'ck-bots__group-label', section.label);
+          heading.dataset.ckBots = 'group-label';
+          heading.setAttribute('aria-hidden', 'true');
+          group.append(heading);
+          list.append(group);
+        }
+        section.bots.forEach((bot) => {
+          if (bot.conversationKind === 'group') {
+            const entry = make('li', 'ck-bots__row'); entry.append(roomRailItem(bot)); (group || list).append(entry); return;
+          }
+          (pinnedGroup ? pinnedList : group).append(railRow(bot));
         });
       });
       pinnedList.hidden = !pinnedList.children.length;
@@ -11913,13 +11921,17 @@
       syncBotsContextButton();
       if (!selected) setBotRoutinesOpen(false);
     };
+    // The rail's rows name `bots/select` (shinkansen.interaction); the
+    // runtime dispatches the click here. Registered once, by id — the row
+    // itself carries no listener for it.
+    shinkansen.on('bots/select', ({id}) => selectBot(id));
     const selectBot = async (botId) => {
       botsState.selected = botId;
       $('#bots-conversations-panel').hidden = true;
       document.body.classList.remove('group-chat-open');
       $('#bots-conversations').setAttribute('aria-expanded', 'false');
       $('#bots-learning-panel').open = false;
-      $('#bots-shell').classList.remove('show-bot-list');
+      $('#bots-shell').classList.remove('show-rail');
       botsState.routines = [];
       // Both of these belong to the Bot you were just looking at. A rename
       // field carrying one Bot's name over another Bot's title would save the
@@ -12278,7 +12290,7 @@
         if (botsState.selected) renderBotsThread();
       } catch (error) { botsSetStatus(error.message); }
     };
-    $('#bots-list-toggle').addEventListener('click', () => { const open = $('#bots-shell').classList.toggle('show-bot-list'); $('#bots-list-toggle').setAttribute('aria-expanded', String(open)); });
+    $('#bots-list-toggle').addEventListener('click', () => { const open = $('#bots-shell').classList.toggle('show-rail'); $('#bots-list-toggle').setAttribute('aria-expanded', String(open)); });
     $('#bots-filter').addEventListener('input', renderBotsRail);
     // The one place the grid is redrawn alone, and it is not an exception to
     // the rule above: a search narrows what the GRID lists and changes nothing
@@ -12691,7 +12703,8 @@
     }));
     const roomStatus = (text) => { $('#room-status').textContent = text || ''; };
     const roomRailItem = (room) => {
-        const open = make('button', 'bots-rail__item');
+        const open = make('button', 'ck-bots__item');
+        open.dataset.ckBots = 'item';
         open.setAttribute('aria-label', `${room.name}、あなたと${room.members.length}体の Bot`);
         open.setAttribute('aria-current', String(roomsState.selected === room.id && !$('#bots-conversations-panel').hidden));
         const faces = make('span', 'group-chat-avatars');
@@ -12699,16 +12712,16 @@
           const b = roomsState.bots.find(x => x.id === member.id) || member;
           faces.append(botAvatar(make('span', 'bot-avatar'), b.avatar, b.status, b.id));
         });
-        const copy = make('div', 'bots-rail__copy');
-        const headline = make('span', 'bots-rail__headline');
-        headline.append(make('span', 'bots-rail__name', room.name));
+        const copy = make('span', 'ck-bots__copy');
+        const headline = make('span', 'ck-bots__headline');
+        headline.append(make('span', 'ck-bots__name', room.name));
         const time = botsCompactTime(room['activity-at']);
-        if (time) headline.append(make('span', 'bots-rail__time', time));
-        copy.append(headline, make('span', 'bots-rail__last', room['last-message']?.text || `あなたと${room.members.length}体の Bot`));
+        if (time) headline.append(make('time', 'ck-bots__time', time));
+        copy.append(headline, make('span', 'ck-bots__meta', room['last-message']?.text || `あなたと${room.members.length}体の Bot`));
         open.append(faces, copy);
         open.type = 'button';
         open.addEventListener('click', () => {
-          $('#bots-shell').classList.remove('show-bot-list');
+          $('#bots-shell').classList.remove('show-rail');
           setBotConversationsOpen(true); selectRoom(room.id);
         });
         return open;

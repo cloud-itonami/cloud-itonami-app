@@ -504,9 +504,16 @@
   ;; computed-value time, so it does not fall back to the cascade — it silently
   ;; resolves to the initial value. That turned state chips transparent and
   ;; every :focus-visible outline into outline-style:none, with nothing failing.
+  ;; The snapshot block (`--dds-light-*`, written by appearance/dark-css and
+  ;; appended to every page after app-css) counts as defined: the Bots
+  ;; workspace pattern's dark surface lifts (cloud-kotoba-dds styles/bots-css,
+  ;; 2026-09-16) read those names inside light-dark(), and they are always on
+  ;; the page — the test below pins that the snapshot really writes them.
   (let [dds (slurp (io/resource "jp_go_dds/dds.css"))
-        defined (into (set (map second (re-seq #"(--[a-z0-9-]+)\s*:" dds)))
-                      (map second (re-seq #"(--[a-z0-9-]+)\s*:" web/app-css)))
+        snapshot (appearance/dark-css dds)
+        defined (-> (set (map second (re-seq #"(--[a-z0-9-]+)\s*:" dds)))
+                    (into (map second (re-seq #"(--[a-z0-9-]+)\s*:" web/app-css)))
+                    (into (map second (re-seq #"(--[a-z0-9-]+)\s*:" snapshot))))
         referenced (set (map second (re-seq #"var\((--[a-z0-9-]+)\)" web/app-css)))
         missing (set/difference referenced defined)]
     (is (seq referenced))
