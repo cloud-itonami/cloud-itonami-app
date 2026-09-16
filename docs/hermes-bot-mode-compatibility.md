@@ -52,6 +52,43 @@ the first pinned visible Bot, then the oldest visible Bot.
 The `itonami hermes ...` CLI covers profile/session discovery and run start,
 status, steer, stop and approval.
 
+## Two residents serve this surface
+
+| Resident | Where | Turn |
+|---|---|---|
+| JVM application server (`server.cljk` + `hermes_compat.cljk`) | `kbb -M:server` | the full `bots.cljk` loop: tools, held writes, approval cards, workspace, peers |
+| JVM-free resident (`signin_server.cljk` + `hermes_gateway.cljk`, kbb engine) | `launchd cloud.itonami.app.local`, port 1338 since 2026-09-15 | one streamed chat completion over the Bot's durable conversation, no tools |
+
+Both answer every route above with the same envelopes and the same
+refusal literals, and both write the same `:bots :conversations` /
+`:bots :turn-history` rows into `data/state.edn`, so a turn taken through
+either is the other's history. Where they differ:
+
+- **approval** — the JVM-free turn runs no tools, so no write is ever held:
+  `POST /v1/runs/{id}/approval` answers `409 approval-not-pending` for every
+  run (the JVM literal for "nothing is held"), never an emulated approval.
+- **steer** — the JVM-free turn's only model boundary is the end of the
+  current provider call; a queued follow-up becomes the next call (at most
+  3 per run; a 4th is `409 steer-budget-spent`, a steer after close is
+  `409 run-finished`).
+- **provider** — murakumo only, resolved per ADR-2607173100; no
+  `MURAKUMO_API_KEY` in the resident means `503 provider-unauthenticated`
+  before any request leaves. No fallback provider.
+- **auth** — the same application session, from the cookie or
+  `Authorization: Bearer`; a cookie session with a foreign `Origin` cannot
+  mutate (`403 origin`).
+
+Tests, on the kbb engine (the classpath and `NBB_CLJK_ROOTS` are the ones
+`scripts/itonami-app-resident.cljk` gives the resident):
+
+```
+kbb --backend sci --classpath src:test:<text>/src test/cloud/itonami/app/hermes_gateway_test.cljk
+kbb --backend sci --classpath <resident classpath>:test test/cloud/itonami/app/hermes_gateway_http_test.cljk
+```
+
+The second spawns the resident against a scratch store and a stub provider
+and prints `SCANNED<TAB>n` exchanges; `n=0` is not clean.
+
 ## Authority and compatibility boundary
 
 Compatibility does not replace Itonami semantics. It does not let a Hermes
