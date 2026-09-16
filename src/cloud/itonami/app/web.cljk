@@ -9,6 +9,9 @@
             [cloud-kotoba-dds.chat :as chat]
             [cloud-kotoba-dds.bots :as bots]
             [cloud-kotoba-dds.switch :as switch]
+            [cloud-kotoba-dds.tokens :as ck]
+            [cloud-kotoba-dds.menu :as menu]
+            [cloud-kotoba-dds.status :as status]
             [cloud-kotoba-dds.styles :as chat-styles]
             [shinkansen.interaction :as interaction]
             [shinkansen.theme :as theme]
@@ -400,24 +403,6 @@
      status colours of the dot. */
   .ck-bots__empty{margin:.5rem .25rem;color:var(--color-neutral-solid-gray-600);
     font-size:.875rem}
-  .bots-rail-menu{position:fixed;z-index:80;min-width:18.5rem;
-    max-width:min(22rem,calc(100vw - 1rem));padding:.375rem 0;margin:0;
-    border:1px solid var(--color-neutral-solid-gray-200);border-radius:.875rem;
-    background:var(--color-neutral-white);box-shadow:0 .5rem 1.5rem rgb(0 0 0 / .16);
-    list-style:none}
-  .bots-rail-menu[hidden]{display:none}
-  .bots-rail-menu__item{display:flex;align-items:center;gap:.75rem;width:100%;
-    min-height:2.75rem;border:0;background:transparent;padding:.375rem 1rem;
-    color:var(--color-neutral-solid-gray-900);font:inherit;font-size:.9375rem;
-    text-align:left;cursor:pointer}
-  .bots-rail-menu__item:hover{background:var(--color-neutral-solid-gray-50)}
-  .bots-rail-menu__item:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
-    outline-offset:-4px}
-  .bots-rail-menu__icon{width:1.25rem;height:1.25rem;flex:0 0 auto}
-  .bots-rail-menu__sep{height:1px;margin:.375rem .75rem;border:0;
-    background:var(--color-neutral-solid-gray-200)}
-  .bots-rail-menu__item--danger{color:var(--color-semantic-error-1)}
-  .bots-rail-menu__item--danger:hover{background:var(--color-primitive-red-50)}
   /* Identity and motion come from cloud-kotoba-dds; the host owns sizes. */
   .bot-avatar{width:2rem;height:2rem}
   .bot-avatar--xl{width:4.5rem;height:4.5rem}
@@ -1818,7 +1803,7 @@
   The 8-bit appearance layer (`cloud.itonami.app.appearance/css`) is
   concatenated LAST so that its overrides win, and so that the same token
   guard covers it: every `--eightbit-*` it references it also declares."
-  (str tokens/bridge-css "\n" bot-component-css "\n" (two-size-css chat-styles/css) "\n" (two-size-css chat-styles/bots-css) "\n" (two-size-css switch/css) "\n" base-css "\n" bot-workspace-css "\n  " hanmen-svg/stylesheet "\n" appearance/css "\n"))
+  (str tokens/bridge-css "\n" ck/css "\n" bot-component-css "\n" (two-size-css chat-styles/css) "\n" (two-size-css chat-styles/bots-css) "\n" (two-size-css switch/css) "\n" menu/css "\n" status/css "\n" base-css "\n" bot-workspace-css "\n  " hanmen-svg/stylesheet "\n" appearance/css "\n"))
 
 (def interaction-js
   "The page's interaction layer, which is JavaScript and now lives in a
@@ -2559,7 +2544,8 @@
              ;; the stored theme lands before paint — a flash on every load otherwise
              [:script theme/head-script]
              [:script signal-js] [:script interaction/runtime] [:script bot-component-js]
-             [:script bots/script] [:script switch/script] [:script interaction-js]]}
+             [:script bots/script] [:script switch/script] [:script menu/script] [:script status/script]
+             [:script interaction-js]]}
      ;; `data-appearance` is the whole of a mode (ADR-0091): the server renders
      ;; the configured default, `interaction.js` flips it to the device's
      ;; remembered choice, and the stylesheet reads it. Nothing else differs.
@@ -2904,8 +2890,9 @@
                        :hidden true} "中止"]
              [:small {:class "bots-composer__help" :id "bots-input-help"}
               "Enter で改行 · ⌘ / Ctrl + Enter で送信"])
-            [:p {:class "drive-create__status" :id "bots-thread-status-line"
-                 :aria-live "polite"}]]))]
+            ;; the status line is cloud-kotoba-dds.status; interaction.js
+            ;; speaks through cloudKotobaStatus.say
+            (status/line {:id "bots-thread-status-line" :label "操作の結果"})]))]
         [:section {:class "legacy-surface" :hidden true}
          (view-header "Capture"
                       "考えを評価・分類せず、そのまま手元に残します。AIには送られません。整理は後から行います。")
