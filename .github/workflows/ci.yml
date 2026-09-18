@@ -20,6 +20,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # bb (babashka) is required by the kbb engine's lib/nbb_deps.js, which
+      # execSync's `bb --config ... uberjar` to build the nbb deps classpath
+      # jar. bb is a GraalVM static binary — it does not put java/clojure on
+      # PATH, so the JVM-free constraint holds; scripts/path-without-jvm only
+      # filters java|javac|clojure|clj. Fixes the 2026-09-15..18 CI red streak
+      # (/bin/sh: 1: bb: not found, exit 127) that silently skipped
+      # windows-launch-smoke via `needs`.
+      - name: Install babashka (bb) for the engine's deps download
+        uses: DeLaGuardo/setup-clojure@13
+        with:
+          babashka: latest
       - name: Install nbb host
         run: npm ci
       - name: JVM-free emit + guest load (no java/clojure)
@@ -69,6 +80,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # The engine's lib/nbb_deps.js also invokes `bb` on Windows; install it
+      # here too so the smoke does not fail on a missing bb.
+      - name: Install babashka (bb) for the engine's deps download
+        uses: DeLaGuardo/setup-clojure@13
+        with:
+          babashka: latest
       - name: Install kbb launcher + engine (pinned)
         shell: bash
         run: |
@@ -109,4 +126,3 @@ jobs:
           curl -fsS http://127.0.0.1:1338/health
           echo ""
           echo "Windows launch smoke test: /health returned 200 (kbb guest-wasm run path)"
-
