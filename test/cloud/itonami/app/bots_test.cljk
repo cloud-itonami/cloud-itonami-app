@@ -3306,6 +3306,56 @@
         (catch clojure.lang.ExceptionInfo e
           (is (= :agent/browser-disabled (:type (ex-data e)))))))))
 
+(deftest call-browser-tool-checks-the-bots-own-host-row-before-navigation
+  ;; `:bot/allowed-hosts` existed, `bounds/admit-host` existed, and nothing
+  ;; called one from the other until now: the machine's `allowed-domains`
+  ;; list was the only gate on egress. The Bot's row must be narrower than the
+  ;; machine's and still hold (ADR-2609062600 stage 1 completion).
+  (with-store
+    (fn []
+      (let [seen (atom [])
+            bot {:bot/allowed-hosts #{"example.com"}}]
+        (with-redefs-fn {(execute-tool-var)
+                         (fn [_ name _] (swap! seen conj name) "ok")}
+          (fn []
+            ;; In the row: navigates.
+            (agent-control/call-browser-tool! browser-on "bot-a" "browser_open"
+                                              {:url "https://example.com/x"} bot)
+            ;; Not in the row: refused BEFORE any navigation, even though the
+            ;; machine settings would allow it.
+            (try
+              (agent-control/call-browser-tool! browser-on "bot-a" "browser_open"
+                                                {:url "https://evil.example/"} bot)
+              (is false "a host outside the Bot's row must be refused")
+              (catch clojure.lang.ExceptionInfo e
+                (is (= :bot/host-denied (:type (ex-data e))))
+                (is (= "evil.example" (:host (ex-data e))))
+                (is (= :bounds/host-not-allowed (:reason (ex-data e))))))
+            ;; An EMPTY SET is a list someone wrote with nothing in it: deny.
+            (try
+              (agent-control/call-browser-tool! browser-on "bot-a" "browser_open"
+                                                {:url "https://example.com/"} {:bot/allowed-hosts #{}})
+              (is false "an empty host list denies every destination")
+              (catch clojure.lang.ExceptionInfo e
+                (is (= :bot/host-denied (:type (ex-data e))))))
+            ;; No list: reported as :bounds/no-host-list and PASSES, so wiring
+            ;; the row in cannot stop a Bot that never declared one.
+            (agent-control/call-browser-tool! browser-on "bot-a" "browser_open"
+                                              {:url "https://example.com/"} {})))
+        (is (= 2 (count @seen))
+            "only the two in-row opens ran; refusals ran nothing")))))
+
+(deftest call-browser-tool-still-runs-with-the-old-arity
+  ;; call sites that do not carry the Bot's row keep today's behaviour.
+  (with-store
+    (fn []
+      (let [seen (atom [])]
+        (with-redefs-fn {(execute-tool-var)
+                         (fn [_ name _] (swap! seen conj name) "ok")}
+          (fn []
+            (agent-control/call-browser-tool! browser-on "bot-a" "browser_snapshot" {})))
+        (is (= ["browser_snapshot"] @seen))))))
+
 (deftest computer-tools-require-both-machine-and-bot-grants
   (with-store
     (fn []

@@ -10,6 +10,7 @@
             [cloud.itonami.app.model-routing :as routing]
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.provider :as provider]
+            [cloud.itonami.app.bot-bounds :as bounds]
             [cloud.itonami.app.store :as store]
             [hil.core :as hil])
   (:import [java.net URI]
@@ -596,17 +597,33 @@
 
   The profile is `session-for`, so two Bots do not share cookies. This is the
   seam ADR-0034 left unwired: the field existed, the profile name existed, and
-  nothing in a Bot turn called through."
-  [configuration principal-id tool-name input]
-  (let [name (str tool-name)]
+  nothing in a Bot turn called through.
+
+  When the caller passes the Bot's row, `:bot/allowed-hosts` is checked here
+  BEFORE any navigation: a machine-level `allowed-domains` list is what the
+  Settings screen owns, and the Bot's row is what the Bot itself carries —
+  a narrower list on the Bot must hold even when the machine allows the host
+  (ADR-2609062600 stage 1 completion, 2026-09-18). A Bot with no host list is
+  reported by `bounds/admit-host` as `:bounds/no-host-list` and passes, so
+  wiring the row in cannot stop a Bot that never declared one."
+  [configuration principal-id tool-name input & [bot]]
+  (let [name (str tool-name)
+        input (or input {})]
     (when-not (browser-tool? name)
       (throw (ex-info "browser tool ではありません。"
                       {:type :agent/unknown-tool :tool name})))
     (when-not (browser-enabled? configuration)
       (throw (ex-info "分離ブラウザーは有効ではありません。"
                       {:type :agent/browser-disabled :tool name})))
+    (when (and bot (:url input))
+      (let [d (bounds/admit-host bot (:url input))]
+        (when-not (:allowed? d)
+          (throw (ex-info (str "URL はこの Bot の allowed-hosts 外です: "
+                               (or (:message d) (:host d)))
+                          {:type :bot/host-denied :host (:host d)
+                           :reason (:reason d)})))))
     (binding [*browser-session* (session-for principal-id)]
-      (execute-tool! (or configuration {}) name (or input {})))))
+      (execute-tool! (or configuration {}) name input))))
 
 (defn call-computer-tool!
   "Run one focus-free computer tool after both machine and Bot admission.
