@@ -30,7 +30,7 @@ jobs:
       - name: Install babashka (bb) for the engine's deps download
         uses: DeLaGuardo/setup-clojure@13
         with:
-          babashka: latest
+          bb: latest
       - name: Install nbb host
         run: npm ci
       - name: JVM-free emit + guest load (no java/clojure)
@@ -85,7 +85,7 @@ jobs:
       - name: Install babashka (bb) for the engine's deps download
         uses: DeLaGuardo/setup-clojure@13
         with:
-          babashka: latest
+          bb: latest
       - name: Install kbb launcher + engine (pinned)
         shell: bash
         run: |
