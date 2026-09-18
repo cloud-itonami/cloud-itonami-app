@@ -55,4 +55,13 @@
    :author "com-junkawasaki"
    :entry-url "https://isekai.network"
    :installed-surface "isekai"
-   :install {:defaults {:writes? true :browser? true :computer? true}}}]}
+   :install {:defaults {:writes? true :browser? true :computer? true}}}
+  {:id "awai-arb"
+   :name "awai-arb (裁定測定屋)"
+   :avatar "⚖"
+   :role "arbitrage 実測・提案"
+   :brief "awai.network 面 (torihiki-node 板 / x402.nexus catalog / murakumo token pricing) を外部 reference spot と突き合わせ、情報格差・物品・政府的手続きの困難さ・社会的格差の arbitrage を実測し、ossekai intake へ propose-only で提案する測定 bot。実 trade は blocked (paper PnL のみ)。"
+   :author "com-junkawasaki"
+   :entry-url "https://ossekai.arb.etzhayyim.com/status"
+   :installed-surface "isekai"
+   :install {:defaults {:writes? true :browser? true :computer? false}}}]}
