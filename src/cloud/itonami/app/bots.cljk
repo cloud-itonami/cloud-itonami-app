@@ -2634,7 +2634,12 @@
                :glyphs (mapv name bot/avatar-glyphs)}
      :default-workspace (default-local-workspace configuration)
      :browser-available? (agent-control/browser-enabled? configuration)
-     :computer-available? (agent-control/computer-ready? configuration)}))
+     :computer-available? (agent-control/computer-ready? configuration)
+     ;; ADR-2609062600: `unbounded?` exists so a surface can count the Bots
+     ;; that carry no ceiling — an absence nobody can see is the failure the
+     ;; rows are against. This is the count, not a decision about it.
+     :bounds {:unbounded (count (filter bounds/unbounded? mine))
+              :total (count mine)}}))
 
 (defn sync-workspace!
   "Run one finite two-way reconciliation for an owned managed Bot workspace."
@@ -3426,8 +3431,11 @@
                         configuration tool-name args)
 
                        :else
+                       ;; The Bot's own row rides along so `:bot/allowed-hosts`
+                       ;; is checked before navigation, not just the machine's
+                       ;; settings list (ADR-2609062600 stage 1 completion).
                        (agent-control/call-browser-tool!
-                        configuration (:bot/id b) tool-name args))
+                        configuration (:bot/id b) tool-name args b))
                      (let [registry (connectors/enabled configuration)]
                        (invoke/call registry tool-name args
                                     {:http (http-port)
@@ -6921,8 +6929,12 @@
         ;; p50 43,299 tokens, p90 250,926, and one turn of 29,231,364 with
         ;; nothing in the system that could have stopped it. Re-derive with
         ;; `kbb --backend sci scripts/measure-bot-usage.cljk` rather than quoting these.
+        ;; The deployment default (`:bots :goal :default-budget-tokens`) only
+        ;; ever applies where the Bot carries no `:bot/budget-tokens` of its
+        ;; own, and narrows only (ADR-2609062600 stage 1 completion).
         spend (bounds/admit-spend (bot-by-id bot)
-                                  (get-in (snapshot) [:turn-history bot]))]
+                                  (get-in (snapshot) [:turn-history bot])
+                                  (get-in configuration [:bots :goal :default-budget-tokens]))]
     (if-not (:allowed? spend)
       ;; `:failed`, and the state machine is why.
       ;;

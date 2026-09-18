@@ -79,26 +79,39 @@
 
   `{:allowed? true}` or a refusal naming its reason. Three outcomes and not
   two: `:bounds/unbounded` says there is no ceiling to check, which is NOT the
-  same fact as a ceiling that was checked and had room."
-  [b history]
-  (let [budget (:bot/budget-tokens b)]
-    (if (nil? budget)
-      {:allowed? true :reason :bounds/unbounded
-       :message "この Bot に budget がありません。上限は検査していません。"}
-      (let [w (window-turns b)
-            {:keys [tokens turns unreported]} (spent history w)]
-        (if (< tokens (long budget))
-          {:allowed? true :reason :bounds/within
-           :spent tokens :budget (long budget) :window w :turns turns
-           :unreported unreported}
-          {:allowed? false :reason :bounds/budget-exhausted
-           :spent tokens :budget (long budget) :window w :turns turns
-           :unreported unreported
-           :message (str "直近 " turns " turn で " tokens " tokens を使い、"
-                         "budget " budget " を超えています。"
-                         (when (pos? unreported)
-                           (str "（うち " unreported
-                                " turn は usage を報告しておらず 0 として数えています）")))})))))
+  same fact as a ceiling that was checked and had room.
+
+  `default-budget` (arity 3) is the DEPLOYMENT's ceiling for a Bot that
+  carries none of its own — read from configuration, never from the Bot, and
+  still narrowing-only: it cannot raise a ceiling the Bot set. A deployment
+  that passes nothing keeps today's behaviour, so the default is an owner
+  decision applied by configuration, not a number this row picks
+  (ADR-2609062600: 'budget の既定値は owner の決定')."
+  ([b history]
+   (admit-spend b history nil))
+  ([b history default-budget]
+   (let [own-budget (:bot/budget-tokens b)
+         budget (or own-budget
+                    (when (some? default-budget) (long default-budget)))]
+     (if (nil? budget)
+       {:allowed? true :reason :bounds/unbounded
+        :message "この Bot に budget がありません。上限は検査していません。"}
+       (let [w (window-turns b)
+             {:keys [tokens turns unreported]} (spent history w)]
+         (if (< tokens budget)
+           {:allowed? true :reason :bounds/within
+            :spent tokens :budget budget :window w :turns turns
+            :unreported unreported
+            :source (if own-budget :bot :deployment-default)}
+           {:allowed? false :reason :bounds/budget-exhausted
+            :spent tokens :budget budget :window w :turns turns
+            :unreported unreported
+            :source (if own-budget :bot :deployment-default)
+            :message (str "直近 " turns " turn で " tokens " tokens を使い、"
+                          "budget " budget " を超えています。"
+                          (when (pos? unreported)
+                            (str "（うち " unreported
+                                 " turn は usage を報告しておらず 0 として数えています）")))}))))))
 
 (defn cap
   "The Bot's own ceiling for `k`, narrowing `deployment-cap` and never raising it.

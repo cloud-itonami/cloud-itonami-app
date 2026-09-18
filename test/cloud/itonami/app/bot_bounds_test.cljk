@@ -123,3 +123,35 @@
            :bot/allowed-hosts}
          bounds/keys*))
   (is (not (contains? bounds/keys* :bot/tools))))
+
+(deftest the-deployment-default-applies-where-the-bot-carries-none
+  ;; A deployment default is a ceiling for the Bot with no row of its own. It
+  ;; must not make an unbounded Bot read as a bounded one: the reason stays
+  ;; `:bounds/within`, and `:source` says where the number came from.
+  (let [r (bounds/admit-spend {} [(turn 500000)] 1000000)]
+    (is (:allowed? r))
+    (is (= :bounds/within (:reason r)))
+    (is (= 1000000 (:budget r)))
+    (is (= :deployment-default (:source r)))))
+
+(deftest the-deployment-default-refuses-when-exhausted-too
+  (let [r (bounds/admit-spend {} [(turn 600000) (turn 600000)] 1000000)]
+    (is (false? (:allowed? r)))
+    (is (= :bounds/budget-exhausted (:reason r)))
+    (is (= :deployment-default (:source r)))))
+
+(deftest the-bot-row-wins-and-the-default-cannot-raise-it
+  ;; The default is narrowing-only in both directions: a Bot that set its own
+  ;; ceiling keeps it, and a deployment default above that ceiling is not a
+  ;; way for the deployment to spend more.
+  (let [tight (bounds/admit-spend {:bot/budget-tokens 100} [(turn 60)] 1000000)]
+    (is (= 100 (:budget tight)) "the Bot's own budget must win")
+    (is (= :bot (:source tight))))
+  (let [loose (bounds/admit-spend {:bot/budget-tokens 1000000} [(turn 10)] 100)]
+    (is (= 1000000 (:budget loose)) "the default must not lower the Bot's ceiling either")
+    (is (= :bot (:source loose)))))
+
+(deftest no-default-and-no-row-is-still-unbounded-not-zero
+  (let [r (bounds/admit-spend {} [(turn 999999999)] nil)]
+    (is (:allowed? r))
+    (is (= :bounds/unbounded (:reason r)))))
