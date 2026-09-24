@@ -11,7 +11,7 @@
 
   So these tests exist to say what survived the rescue actually works, rather
   than that it compiles."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.config :as config]
@@ -101,12 +101,12 @@
               the root would be wrong for a different reason — the store is reset
               between tests but the directory is not, so repositories from
               earlier tests and earlier runs are still there."
-      (let [directories (->> (file-seq (io/file (config/data-dir) "projects"))
-                             (filter #(and (.isDirectory %)
-                                           (= (:project-slug item) (.getName %)))))]
+      (let [directories (->> (io/file-seq (io/file (config/data-dir) "projects"))
+                             (filter #(and (io/directory? %)
+                                           (= (:project-slug item) (io/file-name %)))))]
         (is (= 1 (count directories)))
-        (is (.isDirectory (io/file (first directories) ".git")))
-        (is (.isFile (io/file (first directories) ".itonami" "project.edn")))))
+        (is (io/directory? (io/file (first directories) ".git")))
+        (is (io/file? (io/file (first directories) ".itonami" "project.edn")))))
 
     (testing "the catalogue now lists it, with its counts"
       (let [items (:items (projects/local-projects-snapshot (scope)))]

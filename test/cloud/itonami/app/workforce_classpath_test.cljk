@@ -13,17 +13,17 @@
   So both halves are asserted: the classpath follows what the registry
   declares, and an absent checkout is refused BY NAME rather than by
   subprocess dump."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.workforce :as subject]))
 
 (defn- temp-dir []
-  (.toFile (java.nio.file.Files/createTempDirectory
-            "itonami-workforce-cp-" (make-array java.nio.file.attribute.FileAttribute 0))))
+  (io/temp-dir
+            "itonami-workforce-cp-"))
 
 (defn- write! [root path text]
   (let [file (io/file root path)]
-    (.mkdirs (.getParentFile file))
+    (io/mkdirs (io/parent-file file))
     (spit file text)
     file))
 
@@ -80,11 +80,11 @@
   (let [workspace (temp-dir)
         dependencies ["orgs/kotoba-lang/yakuwari/src" "orgs/kotoba-lang/text/src"]]
     (testing "the one that is not on disk is the one reported"
-      (.mkdirs (io/file workspace "orgs/kotoba-lang/yakuwari/src"))
+      (io/mkdirs (io/file workspace "orgs/kotoba-lang/yakuwari/src"))
       (is (= ["orgs/kotoba-lang/text/src"]
              (subject/missing-dependencies workspace dependencies))))
     (testing "and nothing is reported once it is"
-      (.mkdirs (io/file workspace "orgs/kotoba-lang/text/src"))
+      (io/mkdirs (io/file workspace "orgs/kotoba-lang/text/src"))
       (is (= [] (subject/missing-dependencies workspace dependencies))))
     (testing "a file where a source root belongs is missing, not present"
       (write! workspace "orgs/kotoba-lang/decoy/src" "not a directory")

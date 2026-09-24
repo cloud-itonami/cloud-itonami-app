@@ -4,16 +4,15 @@
   Local opaque app sessions remain valid. Hosted access tokens are resolved by
   RFC 7662 introspection, must be active, unexpired, audience-bound to the exact
   resource URL and carry the route's scope. No bearer token is persisted."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.http.form-urlencoded :as form-urlencoded] [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.app.store :as store])
-  (:import [java.net URI URLEncoder]
+  (:import [java.net URI]
            [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
-           [java.time Instant]
-           [java.util Base64]))
+           [java.time Instant]))
 
 (def scopes
   ["mcp:tools" "tenant:connect" "repository:read" "repository:write"
@@ -44,14 +43,12 @@
         (throw (ex-info "OAuth introspection client credentials are missing"
                         {:type :oauth-resource/introspection-credentials-missing})))
       (let [form (str "token="
-                      (URLEncoder/encode token StandardCharsets/UTF_8)
+                      (form-urlencoded/form-encode token)
                       "&token_type_hint=access_token")
             basic-auth (when (and client-id client-secret)
                          (str "Basic "
-                              (.encodeToString
-                               (Base64/getEncoder)
-                               (.getBytes (str client-id ":" client-secret)
-                                          StandardCharsets/UTF_8))))
+                              (kbytes/base64-encode
+                               (kbytes/utf8-bytes (str client-id ":" client-secret)))))
             response (http/request
                       {:url endpoint
                        :method :post
@@ -140,13 +137,12 @@
 
 (defn- stable-session-id [configuration claims]
   (let [digest (.digest (MessageDigest/getInstance "SHA-256")
-                        (.getBytes
+                        (kbytes/utf8-bytes
                          (str (or (:iss claims)
                                   (get-in configuration
                                           [:mcp :oauth :introspection-endpoint]))
                               "\u0000" (:sub claims)
-                              "\u0000" (:client_id claims))
-                         StandardCharsets/UTF_8))]
+                              "\u0000" (:client_id claims))))]
     (str "oauth-"
          (apply str (map #(format "%02x" (bit-and (int %) 0xff))
                          (take 16 digest))))))

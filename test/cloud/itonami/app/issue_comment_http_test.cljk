@@ -6,7 +6,7 @@
   it is reached at all. A handler that quietly dispatched would still return
   200 with the same body, and every other assertion in this file would still
   pass while an HTTP request sat open for the length of a Goal."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.bots :as bots]
@@ -77,16 +77,15 @@
                      (catch Exception _ (.body response)))})))))
 
 (defn- with-server [f]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-issue-comment"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-issue-comment")
         previous @store/state
         session {:csrf csrf :user-id "alice" :organization-id "org-1"
                  :kind :passkey :authn-level :phishing-resistant}]
     (reset! posted nil)
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     identity/session (fn [_] session)
                     identity/require-passkey! identity
                     identity/configure! (fn [_] nil)
@@ -154,7 +153,7 @@
             fetched (call :get url nil false :bytes)]
         (is (= 200 (:status fetched)))
         (is (str/starts-with? (:content-type fetched) "image/svg+xml"))
-        (is (= (seq (.getBytes crop-svg "UTF-8")) (seq (:bytes fetched))))
+        (is (= (seq (kbytes/utf8-bytes crop-svg)) (seq (:bytes fetched))))
         (testing "and it is served with no authority of its own"
           ;; The crop is a clone of the live DOM, which shows content this
           ;; application did not write. Serving it from this origin without

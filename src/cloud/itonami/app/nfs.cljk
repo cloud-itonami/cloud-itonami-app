@@ -83,9 +83,9 @@
             [kekkai.acl :as acl]
             [kekkai.envelope :as envelope]
             [kekkai.node.netmap :as wire]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.lang.edn :as edn]
-            [clojure.data.json :as json]
+            [kotoba.json :as json]
             [nfs.tcp :as tcp]))
 
 (defonce ^:private server (atom nil))
@@ -113,7 +113,7 @@
   (let [env (or envelope
                 (when envelope-file
                   (let [f (io/file envelope-file)]
-                    (when-not (.exists f)
+                    (when-not (io/exists? f)
                       (throw (ex-info "nfs: :netmap :envelope-file does not exist"
                                       {:type :nfs/netmap-envelope-missing
                                        :file (str envelope-file)})))

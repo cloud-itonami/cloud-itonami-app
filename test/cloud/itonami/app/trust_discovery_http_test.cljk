@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.trust-discovery-http-test
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as identity]
@@ -36,13 +36,12 @@
      :body (json/read-str (.body response) :key-fn keyword)}))
 
 (defn- with-server [body]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-trust-discovery"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-trust-discovery")
         previous-state @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     identity/configure! (fn [_] nil)]
         (server/stop!)
         (server/start! configuration)

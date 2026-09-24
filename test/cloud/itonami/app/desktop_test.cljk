@@ -12,7 +12,7 @@
   The live half runs only where the helper is built and Accessibility is
   granted, and it reports which of those it skipped for. A skip that looks like
   a pass is the failure this repository has spent a lot of ADRs on."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-control :as agent-control]
@@ -36,7 +36,7 @@
 ;; ── 1. the three absences that are the contract ─────────────────────────
 
 (deftest the-helper-cannot-take-the-cursor-focus-or-the-front-window
-  (is (.isFile helper-source)
+  (is (io/file? helper-source)
       "the helper source is missing, so nothing below checked anything")
   (let [code (code-lines)]
     (doseq [[call why]
@@ -303,7 +303,7 @@
           (is (contains? #{"window-id" "region" "cua-driver-window"} (:capture shot))
               (str "capture mode was " (pr-str (:capture shot))))
           (is (= 4 (count (:frame shot))))
-          (is (pos? (.length (io/file (:image-path shot)))))
+          (is (pos? (io/length (io/file (:image-path shot)))))
           (io/delete-file (io/file (:image-path shot)) true))))))
 
 (deftest window-enumeration-does-not-hide-a-window-that-is-not-composited

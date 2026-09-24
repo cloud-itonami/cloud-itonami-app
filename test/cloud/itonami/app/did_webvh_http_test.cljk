@@ -11,7 +11,7 @@
   It also inverts the shipped decision core, the same way `did-web-http-test`
   does: a handler that kept its own two string equals and dropped the oracle
   call would stay green everywhere else."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
@@ -85,15 +85,14 @@
   redefined, because Host->tenant resolution has its own tests (ADR-0025) and
   is not what this file is about."
   [tenant body]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-app-did-webvh-http"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-app-did-webvh-http")
         previous-state @store/state]
     (try
       (reset! store/state (store/initial-state))
       (when tenant
         (store/transact! (fn [c] (assoc-in c [:identity :organizations "org-1"] tenant))))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/configure! (fn [_] nil)
                     local-identity/did-web-domain-for-host (fn [_] (when tenant domain))]
         (server/stop!)

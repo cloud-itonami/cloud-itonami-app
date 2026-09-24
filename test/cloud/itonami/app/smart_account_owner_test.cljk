@@ -1,20 +1,18 @@
 (ns cloud.itonami.app.smart-account-owner-test
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.smart-account :as smart-account]
             [cloud.itonami.app.smart-account-userop :as userop]
             [eth-crypto.core :as eth]
             [ethereum.abi :as abi])
   (:import [java.math BigInteger]
-           [java.nio.charset StandardCharsets]
            [java.security KeyPairGenerator MessageDigest Signature]
            [java.security.interfaces ECPublicKey]
-           [java.security.spec ECGenParameterSpec]
-           [java.util Base64]))
+           [java.security.spec ECGenParameterSpec]))
 
 (defn- b64-point [hex]
-  (.encodeToString (.withoutPadding (Base64/getUrlEncoder))
-                   (eth/hex->bytes (str "04" hex))))
+  (kbytes/base64url-encode
+                   (eth/hex->bytes (str "04" hex)) {:pad? false}))
 
 (def initial-key
   (str "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296"
@@ -181,18 +179,18 @@
     (System/arraycopy y 0 point 33 32)
     {:credential {:credential-id credential-id
                   :public-key-b64
-                  (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) point)
+                  (kbytes/base64url-encode point {:pad? false})
                   :rp-id rp-id :registration-origin origin
                   :user-verified? true}
      :private-key (.getPrivate pair)}))
 
 (defn- b64u [^bytes bytes]
-  (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) bytes))
+  (kbytes/base64url-encode bytes {:pad? false}))
 
 (defn- authenticator-data [rp-id sign-count]
   (let [out (byte-array 37)
         rp-hash (.digest (MessageDigest/getInstance "SHA-256")
-                         (.getBytes rp-id StandardCharsets/UTF_8))]
+                         (kbytes/utf8-bytes rp-id))]
     (System/arraycopy rp-hash 0 out 0 32)
     (aset-byte out 32 (byte 5))
     (doseq [offset (range 4)]
@@ -207,7 +205,7 @@
                      {:type "webauthn.get"
                       :challenge (b64u (userop/signing-challenge operation))
                       :origin origin :crossOrigin false})
-        client-bytes (.getBytes client-json StandardCharsets/UTF_8)
+        client-bytes (kbytes/utf8-bytes client-json)
         auth-data (authenticator-data rp-id 1)
         client-hash (.digest (MessageDigest/getInstance "SHA-256") client-bytes)
         signed (byte-array (+ (alength auth-data) 32))

@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.tenant-connection-http-test
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as identity]
@@ -48,12 +48,11 @@
 
 (deftest versioned-api-creates-a-pending-tenant-bound-connection
   (let [previous @store/state
-        temporary (java.nio.file.Files/createTempDirectory
-                   "tenant-connection-http-"
-                   (make-array java.nio.file.attribute.FileAttribute 0))]
+        temporary (kio/temp-dir
+                   "tenant-connection-http-")]
     (try
       (reset! store/state (fixture-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     identity/session (fn [token] (when (= token "test-token") session))
                     identity/configure! (fn [_] nil)]
         (server/stop!)

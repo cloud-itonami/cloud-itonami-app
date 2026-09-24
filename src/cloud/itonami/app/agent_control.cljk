@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.agent-control
   "Bounded local agent execution with explicit device capabilities and HIL."
   (:require [agent.run :as agent-run]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.cli-runner :as cli-runner]
             [cloud.itonami.app.chronicle :as chronicle]
@@ -204,11 +204,11 @@
         workspace (some-> (get-in request [:cli :workspace])
                           str str/trim not-empty)
         workspace (when workspace
-                    (let [directory (.getCanonicalFile (io/file workspace))]
-                      (when-not (.isDirectory directory)
+                    (let [directory (io/canonical-file (io/file workspace))]
+                      (when-not (io/directory? directory)
                         (throw (ex-info "Coding Agent workspace が存在しません。"
                                         {:type :cli-agent/invalid-workspace})))
-                      (.getPath directory)))
+                      (io/path directory)))
         access (keyword (or (get-in request [:cli :access]) "read-only"))
         _ (when-not (contains? #{:read-only :workspace-write} access)
             (throw (ex-info "Coding Agent access が不正です。"
@@ -246,8 +246,8 @@
 
 (defn- executable-path [name]
   (some #(let [candidate (io/file % name)]
-           (when (and (.isFile candidate) (.canExecute candidate))
-             (.getCanonicalPath candidate)))
+           (when (and (io/file? candidate) (io/can-execute? candidate))
+             (io/canonical-path candidate)))
         (distinct
          (concat (str/split (or (System/getenv "PATH") "") #":")
                  ;; A Finder/LaunchAgent process often has a deliberately
@@ -260,8 +260,8 @@
                          str str/trim not-empty)]
     (if override
       (let [candidate (io/file override)]
-        (when (and (.isFile candidate) (.canExecute candidate))
-          (.getCanonicalPath candidate)))
+        (when (and (io/file? candidate) (io/can-execute? candidate))
+          (io/canonical-path candidate)))
       (executable-path "agent-browser"))))
 
 (defn diagnostics [configuration]
@@ -451,7 +451,7 @@
       "cli_agent"
       (let [selected (policy/select-provider configuration (:provider input))
             expected (get-in s [:cli :workspace])
-            requested (.getCanonicalPath (io/file (:workspace input)))]
+            requested (io/canonical-path (io/file (:workspace input)))]
         (when-not (and selected (= :cli (:kind selected)))
           (throw (ex-info "CLI provider は許可されていません。"
                           {:type :provider/denied})))
@@ -880,7 +880,7 @@
     (when-not (and selected (= :cli (:kind selected)))
       (throw (ex-info "CLI provider は許可されていません。"
                       {:type :provider/denied})))
-    (when-not (and workspace (.isDirectory (io/file workspace)))
+    (when-not (and workspace (io/directory? (io/file workspace)))
       (throw (ex-info "Coding Agent workspace をSettingsで設定してください。"
                       {:type :cli-agent/workspace-required})))
     (let [call {:id (str "cli-" (UUID/randomUUID))

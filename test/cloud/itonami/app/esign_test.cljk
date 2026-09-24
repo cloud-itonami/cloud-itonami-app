@@ -8,7 +8,7 @@
   exactly the code path a third party would run years later. A test that needed
   a real Touch ID prompt would verify the ceremony and leave the archival path
   untested, which is the one that has to keep working."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.credential :as credential]
@@ -22,7 +22,6 @@
             [drive.store.memory :as memory])
   (:import [com.fasterxml.jackson.databind ObjectMapper]
            [com.fasterxml.jackson.dataformat.cbor CBORFactory]
-           [java.nio.charset StandardCharsets]
            [java.security KeyPairGenerator Signature]
            [java.security.spec ECGenParameterSpec]
            [java.util HashMap]))
@@ -83,7 +82,7 @@
   `assertion/parse-authenticator-data` reads."
   [rp-id {:keys [user-present? user-verified? sign-count]
           :or {user-present? true user-verified? true sign-count 7}}]
-  (let [hash (commitment/sha256 (.getBytes ^String rp-id StandardCharsets/UTF_8))
+  (let [hash (commitment/sha256 (kbytes/utf8-bytes ^String rp-id))
         out (byte-array 37)
         flags (cond-> 0
                 user-present? (bit-or 0x01)
@@ -105,7 +104,7 @@
                       "challenge" (assertion/encode challenge)
                       "origin" (or origin-override origin)
                       "crossOrigin" false})
-        client-bytes (.getBytes ^String client-data StandardCharsets/UTF_8)
+        client-bytes (kbytes/utf8-bytes ^String client-data)
         auth-data (authenticator-data-bytes rp-id (or flags {}))
         signed (byte-array (+ (alength auth-data) 32))
         _ (System/arraycopy auth-data 0 signed 0 (alength auth-data))
@@ -369,7 +368,7 @@
                      "adce0002-35bc-c60a-648b-0b25f1f05503")
         file (:item (documents/upload!
                      "見積.pdf" "application/pdf"
-                     (.getBytes "%PDF-1.4\nquote\n%%EOF" StandardCharsets/UTF_8)
+                     (kbytes/utf8-bytes "%PDF-1.4\nquote\n%%EOF")
                      alice object-store))]
     (is (= :drive/not-a-document
            (:type (try (esign/create! {:document-id (:id file)

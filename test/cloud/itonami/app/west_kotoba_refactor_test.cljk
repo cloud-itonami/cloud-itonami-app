@@ -1,11 +1,11 @@
 (ns cloud.itonami.app.west-kotoba-refactor-test
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as kio] [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.west-kotoba-refactor :as subject]))
 
 (defn- temp-dir []
-  (.toFile (java.nio.file.Files/createTempDirectory
-            "itonami-west-refactor-" (make-array java.nio.file.attribute.FileAttribute 0))))
+  (kio/temp-dir
+            "itonami-west-refactor-"))
 
 (defn- write! [root path text]
   (let [file (io/file root path)]

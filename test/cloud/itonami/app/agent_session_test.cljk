@@ -7,7 +7,7 @@
   It must not become a way for ANY CALLER to mint a session — enrollment is
   refused without the data directory's 0600 key, which is the boundary that
   actually holds: something able to read that file can rewrite state.edn."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.json :as json]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.config :as config-loader]

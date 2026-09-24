@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.server
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.http.form-urlencoded :as form-urlencoded] [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
@@ -101,7 +101,7 @@
             [identity.trust-profile :as external-trust])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.io ByteArrayOutputStream OutputStreamWriter]
-           [java.net InetSocketAddress URI URLDecoder]
+           [java.net InetSocketAddress URI]
            [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
            [javax.crypto Mac]
@@ -183,7 +183,7 @@
 
 (defn- webhook-signature [secret ^bytes body]
   (let [mac (Mac/getInstance "HmacSHA256")]
-    (.init mac (SecretKeySpec. (.getBytes secret StandardCharsets/UTF_8)
+    (.init mac (SecretKeySpec. (kbytes/utf8-bytes secret)
                                "HmacSHA256"))
     (str "sha256="
          (apply str (map #(format "%02x" (bit-and 0xff %))
@@ -199,9 +199,8 @@
                       {:type :github-projects/webhook-disabled})))
     (when-not (and supplied
                    (MessageDigest/isEqual
-                    (.getBytes supplied StandardCharsets/UTF_8)
-                    (.getBytes (webhook-signature secret body)
-                               StandardCharsets/UTF_8)))
+                    (kbytes/utf8-bytes supplied)
+                    (kbytes/utf8-bytes (webhook-signature secret body))))
       (throw (ex-info "GitHub webhook signature is invalid"
                       {:type :github-projects/webhook-signature-invalid})))
     true))
@@ -244,7 +243,7 @@
 (defn- send!
   ([exchange status body] (send! exchange status body {}))
   ([^HttpExchange exchange status body headers]
-  (let [bytes (.getBytes (json/write-str body) StandardCharsets/UTF_8)]
+  (let [bytes (kbytes/utf8-bytes (json/write-str body))]
     (doto (.getResponseHeaders exchange)
       (.set "Content-Type" "application/json; charset=utf-8")
       (.set "Cache-Control" "no-store"))
@@ -274,7 +273,7 @@
     (.set "Cache-Control" "no-store")
     (.set "Content-Disposition"
           (str "attachment; filename*=UTF-8''"
-               (-> (java.net.URLEncoder/encode ^String filename StandardCharsets/UTF_8)
+               (-> (form-urlencoded/form-encode ^String filename)
                    (str/replace "+" "%20")))))
   (.sendResponseHeaders exchange 200 (alength body))
   (with-open [out (.getResponseBody exchange)]
@@ -326,7 +325,7 @@
   ([^HttpExchange exchange status ^String body]
    (send-text! exchange status body "text/plain"))
   ([^HttpExchange exchange status ^String body ^String content-type]
-  (let [bytes (.getBytes body StandardCharsets/UTF_8)]
+  (let [bytes (kbytes/utf8-bytes body)]
     (doto (.getResponseHeaders exchange)
       (.set "Content-Type" content-type)
       (.set "Cache-Control" "no-store"))
@@ -344,7 +343,7 @@
   ;; Nothing in cloud.itonami.app.kaiyu-local has a network writer; its own
   ;; test asserts the absence rather than trusting the docstring.
   (kaiyu-local/record-view! (.getPath (.getRequestURI exchange)))
-  (let [bytes (.getBytes html StandardCharsets/UTF_8)]
+  (let [bytes (kbytes/utf8-bytes html)]
     (doto (.getResponseHeaders exchange)
       (.set "Content-Type" "text/html; charset=utf-8")
       (.set "Cache-Control" "no-store")
@@ -382,7 +381,7 @@
   HTTPS images and links are enough for a static project site without exposing
   the Passkey session to authored code."
   [^HttpExchange exchange status html]
-  (let [bytes (.getBytes (str html) StandardCharsets/UTF_8)]
+  (let [bytes (kbytes/utf8-bytes (str html))]
     (doto (.getResponseHeaders exchange)
       (.set "Content-Type" "text/html; charset=utf-8")
       (.set "Cache-Control" "no-store")
@@ -403,8 +402,8 @@
       (into {}
             (map (fn [entry]
                    (let [[key value] (str/split entry #"=" 2)]
-                     [(keyword (URLDecoder/decode key StandardCharsets/UTF_8))
-                      (URLDecoder/decode (or value "") StandardCharsets/UTF_8)])))
+                     [(keyword (form-urlencoded/form-decode key))
+                      (form-urlencoded/form-decode (or value ""))])))
             (str/split query #"&")))))
 
 (defn- cookie-value [^HttpExchange exchange cookie-name]
@@ -1305,13 +1304,13 @@
       :else (send! exchange 404 {:error {:type "not_found" :path path}}))))
 
 (defn- decoded-path-id [value]
-  (URLDecoder/decode (str value) StandardCharsets/UTF_8))
+  (form-urlencoded/form-decode (str value)))
 
 (defn- send-file-provider-content!
   [^HttpExchange exchange {:keys [item bytes]}]
   (let [body (byte-array (map unchecked-byte bytes))
-        metadata (.getBytes (json/write-str item) StandardCharsets/UTF_8)
-        encoded (.encodeToString (java.util.Base64/getEncoder) metadata)]
+        metadata (kbytes/utf8-bytes (json/write-str item))
+        encoded (kbytes/base64-encode metadata)]
     (doto (.getResponseHeaders exchange)
       (.set "Content-Type" "application/octet-stream")
       (.set "Cache-Control" "no-store")
@@ -4874,7 +4873,7 @@
                 (.set "Content-Type" "text/html; charset=utf-8")
                 (.set "Cache-Control" "no-store")
                 (.set "X-Content-Type-Options" "nosniff"))
-              (let [bytes (.getBytes ^String page StandardCharsets/UTF_8)]
+              (let [bytes (kbytes/utf8-bytes ^String page)]
                 (.sendResponseHeaders exchange 200 (alength bytes))
                 (with-open [o (.getResponseBody exchange)] (.write o bytes))))
 
@@ -5208,7 +5207,7 @@
               (send! exchange 200
                      (fax/dispatch!
                       {:transmission-id (get request "transmission-id")
-                       :bytes (.decode (java.util.Base64/getDecoder)
+                       :bytes (kbytes/base64-decode-bytes
                                        ^String (str (get request "document-base64")))
                        :filename (get request "filename")
                        :today (subs (store/now) 0 10)})))
@@ -6036,7 +6035,7 @@
   [^HttpExchange exchange id]
   (let [file (issue-comment-image-file id)]
     (if (and file (.isFile file))
-      (let [bytes (.getBytes (slurp file :encoding "UTF-8") StandardCharsets/UTF_8)]
+      (let [bytes (kbytes/utf8-bytes (slurp file :encoding "UTF-8"))]
         (doto (.getResponseHeaders exchange)
           (.set "Content-Type" "image/svg+xml; charset=utf-8")
           (.set "Cache-Control" "no-store")
@@ -7062,8 +7061,8 @@
       (into {}
             (map (fn [part]
                    (let [[key value] (str/split part #"=" 2)]
-                     [(keyword (URLDecoder/decode key "UTF-8"))
-                      (URLDecoder/decode (or value "") "UTF-8")]))
+                     [(keyword (form-urlencoded/form-decode key))
+                      (form-urlencoded/form-decode (or value ""))]))
                  (str/split raw #"&"))))))
 
 (defn- parse-bounded-int [value default maximum]
@@ -7112,7 +7111,7 @@
         query (hermes-query exchange)
         segment (fn [pattern]
                   (some-> (re-matches pattern path) second
-                          (URLDecoder/decode "UTF-8")))]
+                          (form-urlencoded/form-decode)))]
     (cond
       (and (= method "GET") (= path "/api/profiles"))
       (send! exchange 200 (hermes-compat/profile-list config session))

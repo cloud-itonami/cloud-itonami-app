@@ -59,7 +59,7 @@
             [didwebvh.signer :as webvh-signer]
             [didwebvh.time :as webvh-time]
             [didwebvh.witness :as webvh-witness]
-            #?@(:clj [[clojure.data.json :as json]
+            #?@(:clj [[kotoba.json :as json]
                       [clojure.java.io :as io]
                       [cloud.itonami.app.config :as config]]))
   #?(:clj (:import [java.security SecureRandom]

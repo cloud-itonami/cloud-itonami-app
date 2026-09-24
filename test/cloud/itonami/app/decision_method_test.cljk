@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.decision-method-test
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as kio] [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.decision-method :as method]))
 
@@ -68,9 +68,8 @@
            (get-in prepared [:decision.method/dynamics :dynamics/mode])))))
 
 (deftest xmile-bound-means-the-canonical-engine-actually-ran
-  (let [root (.toFile (java.nio.file.Files/createTempDirectory
-                       "decision-xmile-test"
-                       (make-array java.nio.file.attribute.FileAttribute 0)))
+  (let [root (kio/temp-dir
+                       "decision-xmile-test")
         model (io/file root "decision.xmile")]
     (spit model
           (str "<?xml version=\"1.0\"?><xmile version=\"1.0\">"

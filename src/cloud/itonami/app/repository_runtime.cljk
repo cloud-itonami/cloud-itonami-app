@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.repository-runtime
   "Operator wiring for ADR-0013. Secrets come from Kagi/Keychain and the
   Kotobase token environment; they are never accepted as command arguments."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [clojure.java.io :as io]
             [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
@@ -10,7 +10,7 @@
             [cloud.itonami.app.repository-invariants :as invariants]
             [cloud.itonami.app.repository-qualification :as qualification]
             [cloud.itonami.app.repository-storage :as repository])
-  (:import [java.nio.charset StandardCharsets]
+  (:import
            [java.nio.file Files StandardCopyOption]
            [java.time Instant]
            [java.util UUID]))
@@ -225,8 +225,7 @@
                             (.redirectErrorStream true)
                             .start)
                 output (with-open [input (.getInputStream process)]
-                         (String. (.readAllBytes input)
-                                  StandardCharsets/UTF_8))]
+                         (kbytes/utf8-string (.readAllBytes input)))]
             (when-not (zero? (.waitFor process))
               (throw (ex-info "cannot resolve checked-out source commit"
                               {:type :repository-storage/source-commit-unavailable})))
@@ -372,8 +371,7 @@
         parent (.getParentFile file)
         temporary (io/file parent (str ".repository-evidence-"
                                         (UUID/randomUUID) ".tmp"))
-        bytes (.getBytes (str (pr-str (into (sorted-map) evidence)) "\n")
-                         StandardCharsets/UTF_8)]
+        bytes (kbytes/utf8-bytes (str (pr-str (into (sorted-map) evidence)) "\n"))]
     (.mkdirs parent)
     (require-ignored-evidence-output! file)
     (Files/write (.toPath temporary) bytes

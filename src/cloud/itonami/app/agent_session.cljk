@@ -39,7 +39,7 @@
   silently reverted by the server's next `transact!`. So enrollment is a route on
   the running server, and the CLI is a client of it. Measured rather than
   assumed: this is why there is an HTTP route here at all."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.secure-file :as secure-file]
@@ -47,8 +47,7 @@
   (:import [java.nio.file Files LinkOption Path]
            [java.util.concurrent TimeUnit]
            [java.security MessageDigest SecureRandom]
-           [java.time Instant]
-           [java.util Base64]))
+           [java.time Instant]))
 
 (def schema "cloud.itonami.app.agent-session.v1")
 
@@ -77,7 +76,7 @@
 (defn- random-key []
   (let [bytes (byte-array 32)]
     (.nextBytes (SecureRandom.) bytes)
-    (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) bytes)))
+    (kbytes/base64url-encode bytes {:pad? false})))
 
 (defn ensure-key!
   "The enrollment key, creating it if absent. Returns the key.
@@ -92,10 +91,10 @@
     (when-not (Files/isDirectory dir (into-array LinkOption []))
       (Files/createDirectories dir (into-array java.nio.file.attribute.FileAttribute [])))
     (if (Files/isRegularFile path (into-array LinkOption []))
-      (str/trim (String. (Files/readAllBytes path) "UTF-8"))
+      (str/trim (kbytes/utf8-string (Files/readAllBytes path)))
       (let [key (random-key)]
         (create-owner-only path)
-        (Files/write path (.getBytes key "UTF-8")
+        (Files/write path (kbytes/utf8-bytes key)
                      (into-array java.nio.file.OpenOption []))
         key))))
 
@@ -106,8 +105,8 @@
   [presented]
   (let [expected (ensure-key!)]
     (and (not (str/blank? presented))
-         (MessageDigest/isEqual (.getBytes (str/trim presented) "UTF-8")
-                                (.getBytes expected "UTF-8")))))
+         (MessageDigest/isEqual (kbytes/utf8-bytes (str/trim presented))
+                                (kbytes/utf8-bytes expected)))))
 
 (defn- owner-user-id
   "The user an agent session acts as.

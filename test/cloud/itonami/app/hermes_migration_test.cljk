@@ -10,11 +10,9 @@
 
   These tests pin the distinction the fix rests on: an mtime that moved with no
   edit must NOT move the revision, and an edit must."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as kio] [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]])
-  (:import [java.io File]
-           [java.nio.file Files]
-           [java.nio.file.attribute FileAttribute]))
+  (:import [java.io File]))
 
 (def ^:private inventory
   "The private inventory under test, reached by var so the namespace keeps its
@@ -23,8 +21,7 @@
       (resolve 'cloud.itonami.app.hermes-migration/profile-inventory)))
 
 (defn- temp-dir ^File []
-  (.toFile (Files/createTempDirectory "hermes-migration-test"
-                                      (into-array FileAttribute []))))
+  (kio/temp-dir "hermes-migration-test"))
 
 (defn- write! [^File root relative content]
   (let [f (io/file root relative)]

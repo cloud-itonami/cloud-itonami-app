@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.file-provider-http-test
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [kotoba.json :as json]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.documents :as documents]
@@ -10,9 +10,7 @@
             [drive.store.memory :as memory])
   (:import (java.net URI)
            (java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-                          HttpResponse$BodyHandlers)
-           (java.nio.charset StandardCharsets)
-           (java.nio.file Files)))
+                          HttpResponse$BodyHandlers)))
 
 (def configuration
   {:brand {:name "Test"}
@@ -42,17 +40,16 @@
     (.send client (.build built) (HttpResponse$BodyHandlers/ofByteArray))))
 
 (defn- json-bytes [value]
-  (.getBytes (json/write-str value) StandardCharsets/UTF_8))
+  (kbytes/utf8-bytes (json/write-str value)))
 
 (defn- response-json [response]
-  (json/read-str (String. ^bytes (.body response) StandardCharsets/UTF_8)
+  (json/read-str (kbytes/utf8-string ^bytes (.body response))
                  :key-fn keyword))
 
 (deftest swift-wire-reaches-encrypted-drive-over-loopback
   (let [previous @store/state
-        data-dir (.toFile (Files/createTempDirectory
-                           "file-provider-http"
-                           (make-array java.nio.file.attribute.FileAttribute 0)))
+        data-dir (kio/temp-dir
+                           "file-provider-http")
         object-store (memory/store)]
     (try
       (reset! store/state (store/initial-state))
@@ -75,7 +72,7 @@
               file (response-json file-response)
               uploaded (request :put (str "/v1/file-provider/items/" (:id file)
                                           "/content")
-                                (.getBytes "Finder round trip" StandardCharsets/UTF_8))
+                                (kbytes/utf8-bytes "Finder round trip"))
               downloaded (request :get (str "/v1/file-provider/items/" (:id file)
                                             "/content") nil)
               mode (request :patch (str "/v1/file-provider/items/" (:id file) "/mode")
@@ -85,7 +82,7 @@
           (is (= 200 (.statusCode file-response)))
           (is (= "proof.txt" (:name (response-json uploaded))))
           (is (= "Finder round trip"
-                 (String. ^bytes (.body downloaded) StandardCharsets/UTF_8)))
+                 (kbytes/utf8-string ^bytes (.body downloaded))))
           (is (.isPresent (.firstValue (.headers downloaded) "X-Kotoba-Item")))
           (is (= "pinned" (:residency (response-json mode))))))
       (finally

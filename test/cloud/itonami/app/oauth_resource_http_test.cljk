@@ -5,7 +5,7 @@
   dropped the oracle call would still 200, and `mcp-http-test` would stay
   green. Invert the artifact; this path must stop answering, and `/health`
   must keep answering (different oracle id)."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.health :as health]
@@ -54,13 +54,12 @@
                 (catch Exception _ {:raw (.body response)}))}))
 
 (defn- with-server [body]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-app-oauth-http"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-app-oauth-http")
         previous-state @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/configure! (fn [_] nil)]
         (server/stop!)
         (server/start! config)

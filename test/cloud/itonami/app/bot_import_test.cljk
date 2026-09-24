@@ -5,7 +5,7 @@
   runtime reports one held bot with `budget-exhausted`. A converter tested
   only against a healthy bot would look correct and would still enable both
   of those on a fifteen-minute cadence."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]

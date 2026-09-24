@@ -7,7 +7,8 @@
   (:import [com.fasterxml.jackson.databind ObjectMapper]
            [com.fasterxml.jackson.dataformat.cbor CBORFactory]
            [java.math BigInteger]
-           [java.util Base64 Map]))
+           [java.util Map])
+  (:require [kotoba.bytes :as kbytes]))
 
 (def ^:private base58-alphabet
   "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
@@ -81,7 +82,7 @@
   come back."
   [public-key-cose]
   (try
-    (let [encoded (.decode (Base64/getUrlDecoder) ^String public-key-cose)
+    (let [encoded (kbytes/base64url-decode-bytes ^String public-key-cose)
           cose (.readValue cbor-mapper encoded Map)
           kty (cose-value cose 1)
           crv (cose-value cose -1)

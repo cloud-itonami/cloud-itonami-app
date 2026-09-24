@@ -30,7 +30,7 @@
   stage marker are not the same kind of claim, and a column of five identical-
   looking decimals hides which is which."
   (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.fleet :as fleet]
@@ -58,7 +58,7 @@
 (defn- read-plane [ws path]
   (when-let [root (:file ws)]
     (let [f (io/file root path)]
-      (when (.isFile f)
+      (when (io/file? f)
         (try (filterv map? (edn/read-string (slurp f)))
              (catch Exception _ unreadable))))))
 

@@ -1,5 +1,5 @@
 ;; Run only after fencing the source process and restart manager. Never loads app code.
-(require '[kotoba.lang.edn :as edn] '[clojure.java.io :as io] '[clojure.walk :as walk])
+(require '[kotoba.lang.edn :as edn] '[clojure.java.io :as io] '[kotoba.lang.coll :as walk])
 (import '[java.security MessageDigest] '[java.nio.file Files StandardCopyOption])
 (defn sha [bytes] (.formatHex (java.util.HexFormat/of) (.digest (MessageDigest/getInstance "SHA-256") bytes)))
 (defn apply-op [s {:keys [op path value from]}]

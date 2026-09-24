@@ -1,15 +1,13 @@
 (ns cloud.itonami.app.file-provider-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is]]
             [cloud.itonami.app.file-provider :as provider]
             [cloud.itonami.app.store :as store]
-            [drive.store.memory :as memory])
-  (:import (java.nio.charset StandardCharsets)))
+            [drive.store.memory :as memory]))
 
 (def actor "user-file-provider")
 
-(defn- utf8 [text] (.getBytes ^String text StandardCharsets/UTF_8))
-(defn- text [value] (String. (byte-array (map unchecked-byte value))
-                            StandardCharsets/UTF_8))
+(defn- utf8 [text] (kbytes/utf8-bytes ^String text))
+(defn- text [value] (kbytes/utf8-string (byte-array (map unchecked-byte value))))
 
 (defn- with-state [f]
   (let [state (atom (store/initial-state))]

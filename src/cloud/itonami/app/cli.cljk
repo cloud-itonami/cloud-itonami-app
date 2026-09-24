@@ -77,10 +77,10 @@
   and no mention of either directory involved.
   `CLOUD_ITONAMI_API_URL=https://itonami.cloud` switches CLI and MCP adapters
   to the hosted control plane; non-loopback plain HTTP is refused."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.walk :as walk]
+            [kotoba.lang.coll :as walk]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.app-client :as client]
             [cloud.itonami.app.bot-import :as bot-import]
@@ -160,7 +160,7 @@
                            "\nサーバーを一度起動すると作成されます"
                            "（CLOUD_ITONAMI_DATA_DIR が同じか確認してください）")
                       {:type :cli/no-enrollment-key})))
-    (str/trim (String. (Files/readAllBytes path) "UTF-8"))))
+    (str/trim (kbytes/utf8-string (Files/readAllBytes path)))))
 
 ;; ---------------------------------------------------------------------------
 ;; server lifecycle

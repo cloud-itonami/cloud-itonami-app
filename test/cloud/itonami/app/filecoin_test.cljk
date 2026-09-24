@@ -9,7 +9,7 @@
             [drive.object :as object]
             [kotoba.bytes :as b]))
 
-(def payload (.getBytes "cloud-itonami-app · filecoin piece addressing" "UTF-8"))
+(def payload (b/utf8-bytes "cloud-itonami-app · filecoin piece addressing"))
 
 (deftest a-piece-cid-is-computed-not-guessed
   ;; Pinned against @filoz/synapse-core, via cloud-filecoin's own vectors.
@@ -27,7 +27,7 @@
   (is (= (:cid (filecoin/piece-of payload)) (filecoin/piece-ref payload)))
   (testing "and different bytes get a different reference"
     (is (not= (filecoin/piece-ref payload)
-              (filecoin/piece-ref (.getBytes "something else" "UTF-8"))))))
+              (filecoin/piece-ref (b/utf8-bytes "something else"))))))
 
 (deftest the-store-refuses-a-reference-that-is-not-the-content
   ;; A store that let a caller file bytes under someone else's PieceCID would
@@ -121,7 +121,7 @@
   ;; PieceCID they do not hash to is the one failure a content-addressed store
   ;; must not have.
   (doseq [[label wrong]
-          [["nginx placeholder" (.getBytes "Server is ready for certbot" "UTF-8")]
+          [["nginx placeholder" (b/utf8-bytes "Server is ready for certbot")]
            ["truncation" (byte-array (map #(unchecked-byte (mod % 251)) (range 200)))]]]
     (testing label
       (let [payload (byte-array (map #(unchecked-byte (mod % 251)) (range 300)))

@@ -2,7 +2,7 @@
   "Bot-owned persona, memory and skill documents. The durable revision is
   authoritative; Markdown files are a recoverable local projection. Neither
   documents nor review results grant execution authority."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.store :as store])
@@ -15,7 +15,7 @@
 (def max-document-chars 12000)
 (defn- sha [x]
   (apply str (map #(format "%02x" (bit-and (int %) 255))
-                 (.digest (MessageDigest/getInstance "SHA-256") (.getBytes (str x) "UTF-8")))))
+                 (.digest (MessageDigest/getInstance "SHA-256") (kbytes/utf8-bytes (str x))))))
 (defn- key-for [b] (sha (pr-str [(:bot/organization b) (:bot/owner b) (:bot/id b)])))
 (defn- path-for [b] [:bots :profiles (key-for b)])
 (defn- valid-file? [file]

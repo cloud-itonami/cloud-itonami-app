@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.repository-actor-test
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as kio] [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.repository-actor :as actor]
             [cloud.itonami.app.repository-storage :as repository]
@@ -8,9 +8,8 @@
 (def owner "owner-actor-test")
 
 (defn- fixture []
-  (let [root (.toFile (java.nio.file.Files/createTempDirectory
-                       "repository-actor-"
-                       (make-array java.nio.file.attribute.FileAttribute 0)))
+  (let [root (kio/temp-dir
+                       "repository-actor-")
         owner-dir (io/file root owner)
         state-file (io/file owner-dir "state.edn")]
     (.mkdirs owner-dir)

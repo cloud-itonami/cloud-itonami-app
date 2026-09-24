@@ -43,10 +43,10 @@
   section), so a committed proposal here means a governed proposal was recorded --
   NOT that a card was issued, a profile downloaded, or a call answered. Callers
   and UI must not present it as more than that."
-  (:require [webauthn.assurance :as assurance]
+  (:require [kotoba.bytes :as kbytes] [webauthn.assurance :as assurance]
             [cloud.itonami.app.passkey :as passkey]
             [cloud.itonami.app.store :as store])
-  (:import [java.nio.charset StandardCharsets]
+  (:import
            [java.security MessageDigest]
            [java.util Base64 UUID]))
 
@@ -118,7 +118,7 @@
                     {:type :authority/material-invalid})))
   (let [^String s material]
     (-> (MessageDigest/getInstance "SHA-256")
-        (.digest (.getBytes s StandardCharsets/UTF_8))
+        (.digest (kbytes/utf8-bytes s))
         (->> (.encodeToString (.withoutPadding (Base64/getUrlEncoder)))))))
 
 ;; ---------------------------------------------------------------------------

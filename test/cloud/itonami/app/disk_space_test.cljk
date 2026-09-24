@@ -1,13 +1,12 @@
 (ns cloud.itonami.app.disk-space-test
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as kio] [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.disk-space :as disk-space]))
 
 (defn- temp-root []
-  (.toFile (java.nio.file.Files/createTempDirectory
-            "cloud-itonami-disk-candidates"
-            (make-array java.nio.file.attribute.FileAttribute 0))))
+  (kio/temp-dir
+            "cloud-itonami-disk-candidates"))
 
 (defn- error-type [f]
   (:type (ex-data (try (f) (catch Exception error error)))))

@@ -1,9 +1,9 @@
 (ns cloud.itonami.app.relay
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.http.form-urlencoded :as form-urlencoded] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.identity :as identity])
-  (:import [java.net URLEncoder]
+  (:import
            [java.nio.charset StandardCharsets]))
 
 (defn- setting [config key default]
@@ -59,7 +59,7 @@
     (assoc
      (request! config "GET"
                (str "/v1/aliases/me?accountId="
-                    (URLEncoder/encode account-id StandardCharsets/UTF_8))
+                    (form-urlencoded/form-encode account-id))
                nil)
      :configured? true)))
 

@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.drive-store-migration-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [clojure.test :refer [deftest is]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.drive-crypto :as crypto]
             [cloud.itonami.app.drive-store-migration :as migration]
@@ -22,11 +22,10 @@
        (-object-exists? [_ ref] (contains? @held ref)))}))
 
 (deftest migration-seals-legacy-and-commits-only-verified-cids
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "drive-store-migration"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "drive-store-migration")
         source (memory/store)
-        body (mapv int (.getBytes "legacy plaintext" java.nio.charset.StandardCharsets/UTF_8))
+        body (mapv int (kbytes/utf8-bytes "legacy plaintext"))
         workspace (-> (ws/workspace "drive-alice" "alice" 100000)
                       (ws/create-file "f1" "root"
                                       {:drive/title "legacy.txt"
@@ -36,7 +35,7 @@
                                    {:object-ref "obj-legacy"})
         state {:drive {:workspaces {"alice" (:workspace written)}}}
         {:keys [held store]} (target-store)]
-    (with-redefs [config/data-dir (fn [] (.toFile temporary))]
+    (with-redefs [config/data-dir (fn [] temporary)]
       (let [{next-state :state report :report}
             (migration/migrate-state state source store)
             item (get-in next-state [:drive :workspaces "alice"

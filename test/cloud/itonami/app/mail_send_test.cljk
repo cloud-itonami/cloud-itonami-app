@@ -12,15 +12,13 @@
   one — some pass it, some mangle it, some refuse the message — so a subject
   that reads 見積もりの件 locally and arrives as mojibake is the ordinary
   failure here, not an exotic one."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.mail-account :as account]
             [cloud.itonami.app.mail-send :as mail-send]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.mail-imap :as mail-imap]
-            [smtp.client])
-  (:import [java.nio.charset StandardCharsets]
-           [java.util Base64]))
+            [smtp.client]))
 
 (use-fixtures
   :each
@@ -139,8 +137,7 @@
     (testing "and it decodes back to what was typed"
       (let [encoded (second (re-find #"=\?UTF-8\?B\?([^?]+)\?=" subject))]
         (is (= "見積もりの件"
-               (String. (.decode (Base64/getDecoder) ^String encoded)
-                        StandardCharsets/UTF_8)))))))
+               (kbytes/utf8-string (kbytes/base64-decode-bytes ^String encoded))))))))
 
 (deftest an-ascii-subject-is-left-alone
   (testing "encoding one that does not need it makes every message unreadable

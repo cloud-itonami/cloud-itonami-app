@@ -1,13 +1,12 @@
 (ns cloud.itonami.app.drive-delivery-test
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.drive-delivery :as delivery]
             [cloud.itonami.app.store :as store]
             [drive.store.memory :as memory])
-  (:import (java.nio.charset StandardCharsets)
-           (java.nio.file Files)
+  (:import
            (java.security MessageDigest)))
 
 (def ^:private alice "user-alice")
@@ -31,10 +30,8 @@
 
 (defn- with-delivery-state [f]
   (let [state (atom (store/initial-state))
-        dir (.toFile
-             (Files/createTempDirectory
-              "drive-delivery-test"
-              (make-array java.nio.file.attribute.FileAttribute 0)))
+        dir (kio/temp-dir
+              "drive-delivery-test")
         root (byte-array (map byte (range 32)))]
     (with-redefs [store/snapshot (fn [] @state)
                   store/transact! (fn [g & args] (apply swap! state g args))
@@ -48,7 +45,7 @@
     :owner alice :audience audience :action action
     :expires-at expires-at :max-uses max-uses
     :filename "plan.txt" :media-type "text/plain"
-    :bytes (.getBytes "confidential plan" StandardCharsets/UTF_8)
+    :bytes (kbytes/utf8-bytes "confidential plan")
     :object-store object-store :content-ref cid-for}))
 
 (deftest each-recipient-gets-a-distinct-content-addressed-delivery
@@ -63,7 +60,7 @@
                                    (:delivery-id bob-delivery) :audience])))
         (let [opened (delivery/redeem! (:delivery-id bob-delivery) bob :download
                                        now-ms object-store)
-              text (String. ^bytes (:bytes opened) StandardCharsets/UTF_8)]
+              text (kbytes/utf8-string ^bytes (:bytes opened))]
           (is (str/includes? text "confidential plan"))
           (is (str/includes? text (:watermark bob-delivery)))
           (is (= :visible-text (:watermark-mode opened))))))))
@@ -119,7 +116,7 @@
         (is (nil? (:source-ref issued)))
         (is (nil? (:object-ref issued)))
         (is (= id (:source-id opened)))
-        (is (str/includes? (String. ^bytes (:bytes opened) StandardCharsets/UTF_8)
+        (is (str/includes? (kbytes/utf8-string ^bytes (:bytes opened))
                            (:watermark issued)))
         (is (= (:delivery-id copy-delivery) (:delivery/id provenance)))
         (is (= id (:delivery/source-id provenance)))

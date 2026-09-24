@@ -1,13 +1,11 @@
 (ns cloud.itonami.app.bot-authority-test
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.bot-authority :as bot-authority]
-            [cloud.itonami.app.bot-identity :as bot-identity])
-  (:import [java.nio.file Files]
-           [java.nio.file.attribute FileAttribute]))
+            [cloud.itonami.app.bot-identity :as bot-identity]))
 
 (defn- temp-dir []
-  (.toFile (Files/createTempDirectory "bot-authority-" (make-array FileAttribute 0))))
+  (io/temp-dir "bot-authority-"))
 
 (def ^:private now "2026-08-20T00:00:00Z")
 (def ^:private policy

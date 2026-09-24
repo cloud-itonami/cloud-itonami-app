@@ -36,8 +36,8 @@
   revenue, no customers, no cash. ADR-2607309600 requires that limit to be
   visible in the UI rather than left for a reader to infer from intervention
   names, so `:models-what` says it on every response."
-  (:require [kotoba.lang.edn :as edn]
-            [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.edn :as edn]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.business :as business]
             [dynamics.core :as dynamics]
@@ -68,7 +68,7 @@
   [^String text]
   (let [factory (doto (SAXParserFactory/newInstance)
                   (.setFeature "http://apache.org/xml/features/disallow-doctype-decl" true))]
-    (cxml/parse (ByteArrayInputStream. (.getBytes text "UTF-8"))
+    (cxml/parse (ByteArrayInputStream. (kbytes/utf8-bytes text))
                 (fn [source handler]
                   (.parse (.newSAXParser factory) source handler)))))
 
@@ -86,7 +86,7 @@
 (defn- read-model [ws path]
   (when-let [root (:file ws)]
     (let [f (io/file root path)]
-      (when (.isFile f)
+      (when (io/file? f)
         (try (xxml/parse-doc (parse-xml (slurp f)))
              (catch Exception e {::error (.getMessage e)}))))))
 
@@ -367,7 +367,7 @@
 
       :else
       (let [f (io/file (:file ws) path)]
-        (if-not (.isFile f)
+        (if-not (io/file? f)
           {:schema schema :state :missing :source path
            :detail (str path " が workspace にありません")}
           (let [{:keys [events skipped]}

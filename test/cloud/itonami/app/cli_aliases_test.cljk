@@ -6,7 +6,7 @@
   function cannot: a `{param}` with nothing to fill it, a body spec naming a
   parse that does not exist, a name that collides with a generated command and
   quietly shadows it. These are those failures."
-  (:require [clojure.set :as set]
+  (:require [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.commands :as commands]))

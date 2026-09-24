@@ -35,7 +35,7 @@
   The rule that adds the facts up is `domain_binding_core.kotoba`. DNS, the
   outbound probe, the store writes and every `throw` are here — an exception is
   an effect and the core has none."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [cloud.itonami.app.credential-trust :as credential-trust]
             [cloud.itonami.app.domain-binding :as binding]
             [cloud.itonami.app.domain-name :as domain-name]
@@ -44,7 +44,7 @@
   (:import [java.net IDN URI]
            [java.security SecureRandom]
            [java.time Duration Instant]
-           [java.util Base64 UUID]
+           [java.util UUID]
            [javax.naming.directory InitialDirContext]))
 
 (def schema "cloud.itonami.app.domain-verifications.v2")
@@ -129,7 +129,7 @@
 (defn- random-token []
   (let [bytes (byte-array 32)]
     (.nextBytes (SecureRandom.) bytes)
-    (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) bytes)))
+    (kbytes/base64url-encode bytes {:pad? false})))
 
 (defn- verification-name [domain]
   (str "_itonami-verification." domain))

@@ -45,12 +45,11 @@
 
   The envelope id is the AAD, so a ciphertext moved to another envelope's record
   fails to authenticate rather than decrypting into it."
-  (:require [kotoba.lang.edn :as edn]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [cloud.itonami.app.config :as config])
-  (:import [java.nio.charset StandardCharsets]
+  (:import
            [java.security SecureRandom]
-           [java.util Base64]
            [javax.crypto Cipher]
            [javax.crypto.spec GCMParameterSpec SecretKeySpec]))
 
@@ -81,8 +80,8 @@
 
 (defonce ^:private lock (Object.))
 
-(defn- ->b64 [^bytes b] (.encodeToString (Base64/getEncoder) b))
-(defn- <-b64 [^String s] (.decode (Base64/getDecoder) s))
+(defn- ->b64 [^bytes b] (kbytes/base64-encode b))
+(defn- <-b64 [^String s] (kbytes/base64-decode-bytes s))
 
 (defn- random-bytes [n]
   (let [b (byte-array n)]
@@ -94,7 +93,7 @@
     (.init (int mode)
            (SecretKeySpec. key "AES")
            (GCMParameterSpec. tag-bits nonce))
-    (.updateAAD (.getBytes aad StandardCharsets/UTF_8))))
+    (.updateAAD (kbytes/utf8-bytes aad))))
 
 (defn seal!
   "Encrypt `plaintext` under a fresh key recorded against `envelope-id`.
@@ -107,7 +106,7 @@
     (let [key (random-bytes key-bytes)
           nonce (random-bytes nonce-bytes)
           ciphertext (.doFinal (cipher Cipher/ENCRYPT_MODE key nonce envelope-id)
-                               (.getBytes plaintext StandardCharsets/UTF_8))]
+                               (kbytes/utf8-bytes plaintext))]
       (write-keys! (assoc (read-keys) envelope-id (->b64 key)))
       {:vault/schema schema
        :vault/algorithm "AES-256-GCM"
@@ -123,9 +122,8 @@
   [envelope-id {:vault/keys [nonce ciphertext]}]
   (when-let [key (get (read-keys) envelope-id)]
     (try
-      (String. (.doFinal (cipher Cipher/DECRYPT_MODE (<-b64 key) (<-b64 nonce) envelope-id)
-                         (<-b64 ciphertext))
-               StandardCharsets/UTF_8)
+      (kbytes/utf8-string (.doFinal (cipher Cipher/DECRYPT_MODE (<-b64 key) (<-b64 nonce) envelope-id)
+                         (<-b64 ciphertext)))
       (catch Exception _
         ;; Authentication failure. The AAD is the envelope id, so this is what a
         ;; ciphertext moved from another envelope looks like — and it must read

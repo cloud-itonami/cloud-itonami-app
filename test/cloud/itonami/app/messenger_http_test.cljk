@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.messenger-http-test
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.config :as config-loader]
@@ -68,9 +68,8 @@
             {:id "human:bob" :display-name "Bob"}]}})
 
 (defn- with-server [actor body]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-app-messenger-http"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-app-messenger-http")
         previous @store/state]
     (try
       (reset! store/state
@@ -87,7 +86,7 @@
                        "membership-bob" {:id "membership-bob"
                                          :organization-id "organization-record-acme"
                                          :user-id "human:bob"}}}))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/session
                     (fn [_] {:id (str @actor "-session")
                              :csrf csrf :user-id @actor :kind :passkey})

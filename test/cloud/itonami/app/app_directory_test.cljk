@@ -6,7 +6,7 @@
   fallback is `other-row`, which keeps that same connector reachable for a
   person in the meantime. Both are asserted, because a fallback nothing
   exercises and a gate nothing can fail are the same kind of nothing."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as kio] [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.app-directory :as directory]
@@ -134,13 +134,12 @@
       (is (= "" (directory/summary [(row "a")]))))))
 
 (defn- with-store [f]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-app-directory"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-app-directory")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config/data-dir (fn [] temporary)
                     store/transact! (fn [f & args] (apply swap! store/state f args))]
         (f))
       (finally (reset! store/state previous)))))

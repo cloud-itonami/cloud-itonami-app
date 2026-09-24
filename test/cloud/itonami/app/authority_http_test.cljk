@@ -16,7 +16,7 @@
   Same shape as business_http_test: the passkey gate is stubbed rather than satisfied,
   because a real ceremony needs an authenticator and what is under test is the route
   layer behind that gate."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as local-identity]
@@ -68,13 +68,12 @@
                         :headers {"Origin" origin "X-CLOUD-ITONAMI-CSRF" csrf}}))
 
 (defn- with-server [body]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-app-authority-http"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-app-authority-http")
         previous-state @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/session (fn [_] {:csrf csrf :user-id "test-user"})
                     local-identity/require-passkey! identity
                     local-identity/configure! (fn [_] nil)]

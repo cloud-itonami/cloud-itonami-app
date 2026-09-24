@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.tenant-repository-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.io :as kio] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.repository-storage :as repository]
             [cloud.itonami.app.store :as store]
@@ -35,12 +35,11 @@
 
 (deftest direct-edn-write-is-cid-safe-and-budgeted
   (let [previous @store/state
-        temporary (java.nio.file.Files/createTempDirectory
-                   "tenant-repository-"
-                   (make-array java.nio.file.attribute.FileAttribute 0))]
+        temporary (kio/temp-dir
+                   "tenant-repository-")]
     (try
       (reset! store/state (fixture))
-      (with-redefs [config/data-dir (fn [] (.toFile temporary))]
+      (with-redefs [config/data-dir (fn [] temporary)]
         (binding [tenant-repository/*environment* (constantly nil)]
           (let [id (:id (active-connection 10000))
                 initial "{:datoms [[\"e-1\" :note/title \"first\"]]}"
@@ -71,12 +70,11 @@
 
 (deftest storage-budget-refuses-before-initialization
   (let [previous @store/state
-        temporary (java.nio.file.Files/createTempDirectory
-                   "tenant-repository-budget-"
-                   (make-array java.nio.file.attribute.FileAttribute 0))]
+        temporary (kio/temp-dir
+                   "tenant-repository-budget-")]
     (try
       (reset! store/state (fixture))
-      (with-redefs [config/data-dir (fn [] (.toFile temporary))]
+      (with-redefs [config/data-dir (fn [] temporary)]
         (binding [tenant-repository/*environment* (constantly nil)]
           (let [id (:id (active-connection 8))
                 owner (tenant-repository/owner-id agent-session tenant-id)]
@@ -87,6 +85,6 @@
                            agent-session id {:state_edn "{:datoms []}"})
                           (catch clojure.lang.ExceptionInfo e e))))))
             (is (nil? (repository/workspace-snapshot
-                       (.getPath (java.io.File. (.toFile temporary) "workspace"))
+                       (kio/path (kio/file temporary "workspace"))
                        owner))))))
       (finally (reset! store/state previous)))))

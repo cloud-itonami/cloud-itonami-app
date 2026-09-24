@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.provider-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is testing]]
             [kotoba.lang.text :as str]
-            [clojure.data.json :as json]
+            [kotoba.json :as json]
             [cloud.itonami.app.provider :as provider])
   (:import [com.sun.net.httpserver HttpServer HttpHandler]
            [java.net InetSocketAddress]))
@@ -47,10 +47,9 @@
      server "/api/show"
      (reify HttpHandler
        (handle [_ exchange]
-         (let [bytes (.getBytes
+         (let [bytes (kbytes/utf8-bytes
                       (json/write-str
-                       {:model_info {:custom-family.context_length 65536}})
-                      "UTF-8")]
+                       {:model_info {:custom-family.context_length 65536}}))]
            (.sendResponseHeaders exchange 200 (alength bytes))
            (with-open [out (.getResponseBody exchange)]
              (.write out bytes))))))
@@ -176,7 +175,7 @@
                  [200 {:model "murakumo-main"
                        :choices [{:finish_reason "stop"
                                   :message {:content "fallback-ok"}}]}])
-               bytes (.getBytes (json/write-str payload) "UTF-8")]
+               bytes (kbytes/utf8-bytes (json/write-str payload))]
            (.sendResponseHeaders exchange status (alength bytes))
            (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
     (.start server)
@@ -217,7 +216,7 @@
                  [200 {:model "z-ai/glm-5.3-flash"
                        :choices [{:finish_reason "stop"
                                   :message {:content "glm-fallback-ok"}}]}])
-               bytes (.getBytes (json/write-str payload) "UTF-8")]
+               bytes (kbytes/utf8-bytes (json/write-str payload))]
            (.sendResponseHeaders exchange status (alength bytes))
            (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
     (.start server)
@@ -258,7 +257,7 @@
                  [200 {:model "murakumo-main"
                        :choices [{:finish_reason "stop"
                                   :message {:content "must-not-run"}}]}])
-               bytes (.getBytes (json/write-str payload) "UTF-8")]
+               bytes (kbytes/utf8-bytes (json/write-str payload))]
            (.sendResponseHeaders exchange status (alength bytes))
            (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
     (.start server)
@@ -293,12 +292,11 @@
        (handle [_ exchange]
          (reset! readiness-auth
                  (.getFirst (.getRequestHeaders exchange) "Authorization"))
-         (let [bytes (.getBytes
+         (let [bytes (kbytes/utf8-bytes
                       (json/write-str {:ok false
                                        :hosted-models
                                        {"qwen3.8-27b-throughput-5090"
-                                        {:idle 0 :running 1 :queued 2}}})
-                      "UTF-8")]
+                                        {:idle 0 :running 1 :queued 2}}}))]
            (.sendResponseHeaders exchange 503 (alength bytes))
            (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
     (.createContext
@@ -309,12 +307,11 @@
                                       :key-fn keyword)
                model (:model request)
                _ (swap! requested conj model)
-               bytes (.getBytes
+               bytes (kbytes/utf8-bytes
                       (json/write-str
                        {:model model
                         :choices [{:finish_reason "stop"
-                                   :message {:content "ready-fallback-ok"}}]})
-                      "UTF-8")]
+                                   :message {:content "ready-fallback-ok"}}]}))]
            (.sendResponseHeaders exchange 200 (alength bytes))
            (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
     (.start server)
@@ -350,15 +347,14 @@
      server "/ready"
      (reify HttpHandler
        (handle [_ exchange]
-         (let [bytes (.getBytes
+         (let [bytes (kbytes/utf8-bytes
                       (json/write-str
                        {:ok false
                         :inference {:ok false}
                         :hosted-models
                         {"qwen3.8-27b-throughput-5090"
                          {:ok true :idle 1 :running 1
-                          :generation-ok true}}})
-                      "UTF-8")]
+                          :generation-ok true}}}))]
            (.sendResponseHeaders exchange 503 (alength bytes))
            (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
     (.createContext
@@ -369,12 +365,11 @@
                                       :key-fn keyword)
                model (:model request)
                _ (swap! requested conj model)
-               bytes (.getBytes
+               bytes (kbytes/utf8-bytes
                       (json/write-str
                        {:model model
                         :choices [{:finish_reason "stop"
-                                   :message {:content "5090-primary-ok"}}]})
-                      "UTF-8")]
+                                   :message {:content "5090-primary-ok"}}]}))]
            (.sendResponseHeaders exchange 200 (alength bytes))
            (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
     (.start server)
@@ -410,7 +405,7 @@
                model (:model request)
                _ (swap! requested conj model)]
            (if (= "qwen3.8-27b-throughput-5090" model)
-             (let [bytes (.getBytes "{\"error\":\"cold origin unavailable\"}" "UTF-8")]
+             (let [bytes (kbytes/utf8-bytes "{\"error\":\"cold origin unavailable\"}")]
                (.sendResponseHeaders exchange 502 (alength bytes))
                (with-open [out (.getResponseBody exchange)] (.write out bytes)))
              (let [payload (str "data: "
@@ -419,7 +414,7 @@
                                   :choices [{:finish_reason "stop"
                                              :delta {:content "stream-ok"}}]})
                                 "\n\ndata: [DONE]\n\n")
-                   bytes (.getBytes payload "UTF-8")]
+                   bytes (kbytes/utf8-bytes payload)]
                (.getResponseHeaders exchange)
                (.add (.getResponseHeaders exchange) "Content-Type"
                      "text/event-stream")
@@ -456,7 +451,7 @@
                [status payload] (if (= 1 attempt)
                                   [502 {:error "temporary"}]
                                   [200 {:ok true}])
-               bytes (.getBytes (json/write-str payload) "UTF-8")]
+               bytes (kbytes/utf8-bytes (json/write-str payload))]
            (.sendResponseHeaders exchange status (alength bytes))
            (with-open [out (.getResponseBody exchange)]
              (.write out bytes))))))
@@ -476,7 +471,7 @@
      (reify HttpHandler
        (handle [_ exchange]
          (swap! attempts inc)
-         (let [bytes (.getBytes "{\"error\":\"bad request\"}" "UTF-8")]
+         (let [bytes (kbytes/utf8-bytes "{\"error\":\"bad request\"}")]
            (.sendResponseHeaders exchange 400 (alength bytes))
            (with-open [out (.getResponseBody exchange)]
              (.write out bytes))))))
@@ -774,7 +769,7 @@
          ;; Answer far too late. The point is the class of the failure, not
          ;; the duration, so the limit is moved rather than the wait.
          (Thread/sleep 4000)
-         (let [bytes (.getBytes "{\"ok\":true}" "UTF-8")]
+         (let [bytes (kbytes/utf8-bytes "{\"ok\":true}")]
            (.sendResponseHeaders exchange 200 (alength bytes))
            (with-open [out (.getResponseBody exchange)]
              (.write out bytes))))))
@@ -884,7 +879,7 @@
      server "/v1/chat/completions"
      (reify HttpHandler
        (handle [_ exchange]
-         (let [bytes (.getBytes body "UTF-8")]
+         (let [bytes (kbytes/utf8-bytes body)]
            (.sendResponseHeaders exchange status (alength bytes))
            (with-open [out (.getResponseBody exchange)]
              (.write out bytes))))))

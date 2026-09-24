@@ -1,15 +1,15 @@
 (ns cloud.itonami.app.folder-sync-test
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.folder-sync :as sync])
-  (:import [java.nio.charset StandardCharsets]
+  (:import
            [java.nio.file Files]))
 
 (defn- utf8-bytes [value]
-  (.getBytes ^String value StandardCharsets/UTF_8))
+  (kbytes/utf8-bytes ^String value))
 
 (defn- text [^bytes value]
-  (String. value StandardCharsets/UTF_8))
+  (kbytes/utf8-string value))
 
 (defrecord MemoryRemote [files sequence]
   sync/RemoteDrive

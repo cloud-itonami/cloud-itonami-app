@@ -5,7 +5,7 @@
   Kotobase. This module signs a short assertion only after a local human
   passkey session and names the stable Principal separately from the active
   controller DID."
-  (:require [cacao.core :as cacao]
+  (:require [kotoba.bytes :as kbytes] [cacao.core :as cacao]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.store :as store]
             [clojure.java.io :as io]
@@ -13,7 +13,7 @@
             [ed25519.core :as ed])
   (:import [java.security SecureRandom]
            [java.time Instant]
-           [java.util Base64 UUID]))
+           [java.util UUID]))
 
 (def schema "cloud.itonami.app.kotobase-federation.v1")
 (def targets
@@ -65,12 +65,12 @@
 (defn- read-seed []
   (let [f (key-file)]
     (when (.isFile f)
-      (.decode (Base64/getDecoder) ^String (str/trim (slurp f))))))
+      (kbytes/base64-decode-bytes ^String (str/trim (slurp f))))))
 
 (defn- write-seed! [^bytes seed]
   (let [f (key-file)]
     (.mkdirs (.getParentFile f))
-    (spit f (.encodeToString (Base64/getEncoder) seed))
+    (spit f (kbytes/base64-encode seed))
     (doto f (.setReadable false false) (.setReadable true true)
             (.setWritable false false) (.setWritable true true))
     seed))

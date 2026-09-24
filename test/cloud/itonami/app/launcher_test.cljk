@@ -1,13 +1,11 @@
 (ns cloud.itonami.app.launcher-test
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as kio] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]))
 
 (defn- temporary-directory []
-  (.toFile
-    (java.nio.file.Files/createTempDirectory
-    "cloud-itonami-launcher-test"
-    (make-array java.nio.file.attribute.FileAttribute 0))))
+  (kio/temp-dir
+    "cloud-itonami-launcher-test"))
 
 ;; `resident-cli-launcher-answers-from-its-own-file` and
 ;; `an-explicit-data-directory-wins-in-the-resident-launcher` left with

@@ -43,7 +43,7 @@
   the quality figures in the same map, so a renderer cannot show one without
   having been handed the other."
   (:require [kotoba.lang.edn :as edn]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.business :as business])
   (:import [java.time Duration Instant LocalDate ZoneOffset]))
@@ -72,7 +72,7 @@
 (defn- read-metrics [ws product]
   (when-let [root (:file ws)]
     (let [f (io/file root (metrics-path product))]
-      (when (.isFile f)
+      (when (io/file? f)
         (try (edn/read-string (slurp f))
              (catch Exception _ unreadable))))))
 

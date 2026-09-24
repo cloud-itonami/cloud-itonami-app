@@ -1,9 +1,9 @@
 (ns cloud.itonami.app.drive-crypto-test
-  (:require [kotoba.lang.edn :as edn]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.edn :as edn]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.drive-crypto :as crypto])
-  (:import (java.nio.charset StandardCharsets)
+  (:import
            (java.nio.file Files)))
 
 (defn- with-temp-keys [f]
@@ -15,18 +15,15 @@
 (deftest encrypted-package-round-trips-and-tampering-fails
   (with-temp-keys
     (fn []
-      (let [plaintext (mapv int (.getBytes "Kotobase cannot read this"
-                                       StandardCharsets/UTF_8))
+      (let [plaintext (mapv int (kbytes/utf8-bytes "Kotobase cannot read this"))
             sealed (crypto/seal "alice" "drive:test:v1" plaintext)
             package (edn/read-string
-                     (String. (byte-array (map unchecked-byte sealed))
-                              StandardCharsets/UTF_8))
+                     (kbytes/utf8-string (byte-array (map unchecked-byte sealed))))
             chunk (first (:kotoba.drive.encrypted/chunks package))
             changed-package (assoc package :kotoba.drive.encrypted/chunks
                                    [(str (if (= \A (first chunk)) \B \A)
                                          (subs chunk 1))])
-            changed (mapv int (.getBytes (pr-str changed-package)
-                                         StandardCharsets/UTF_8))]
+            changed (mapv int (kbytes/utf8-bytes (pr-str changed-package)))]
         (is (crypto/encrypted? sealed))
         (is (not= plaintext sealed))
         (is (= plaintext (crypto/open "alice" sealed)))
@@ -41,11 +38,9 @@
     (fn []
       (crypto/ensure-keypair! "bob")
       (let [sealed (crypto/seal "alice" "drive:share:v1" [1 2 3 4])
-            before (edn/read-string (String. (byte-array (map unchecked-byte sealed))
-                                             StandardCharsets/UTF_8))
+            before (edn/read-string (kbytes/utf8-string (byte-array (map unchecked-byte sealed))))
             shared (crypto/grant sealed "alice" "bob")
-            after (edn/read-string (String. (byte-array (map unchecked-byte shared))
-                                            StandardCharsets/UTF_8))]
+            after (edn/read-string (kbytes/utf8-string (byte-array (map unchecked-byte shared))))]
         (is (= [1 2 3 4] (crypto/open "bob" shared)))
         (testing "ciphertext chunks are byte-identical after sharing"
           (is (= (:kotoba.drive.encrypted/chunks before)
@@ -68,8 +63,7 @@
     (fn []
       (let [sealed (crypto/seal "alice" "drive:link:v1" [7 6 5])
             {:keys [bytes grant]} (crypto/mint-link sealed "alice")
-            package-text (String. (byte-array (map unchecked-byte bytes))
-                                  StandardCharsets/UTF_8)]
+            package-text (kbytes/utf8-string (byte-array (map unchecked-byte bytes)))]
         (is (= [7 6 5] (crypto/open-link bytes grant)))
         (is (= :url-fragment (:grant/placement grant)))
         (is (not (.contains package-text (:grant/secret grant))))

@@ -11,7 +11,7 @@
 
   So the interesting case here is not 'no server'. It is a server that IS
   healthy and IS someone else's, and a server that cannot say which it is."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.server-process :as server-process])
   (:import [com.sun.net.httpserver HttpHandler HttpServer]
@@ -28,7 +28,7 @@
      server "/health"
      (reify HttpHandler
        (handle [_ exchange]
-         (let [bytes (.getBytes ^String body "UTF-8")]
+         (let [bytes (kbytes/utf8-bytes ^String body)]
            (.sendResponseHeaders exchange 200 (alength bytes))
            (with-open [out (.getResponseBody exchange)]
              (.write out bytes))))))

@@ -4,7 +4,7 @@
   No satellite and no network. What is protocol lives in `io-storj-node` and
   is tested there against Go; what is here is the parts this app supplies —
   and the store is the one that could quietly lose a piece."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as kio] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.storj-node :as node]
@@ -64,9 +64,8 @@
 (defn- with-pieces-dir
   "Run `f` against a store rooted in a fresh temporary directory."
   [f]
-  (let [dir (.toFile (java.nio.file.Files/createTempDirectory
-                      "storj-pieces-test"
-                      (into-array java.nio.file.attribute.FileAttribute [])))]
+  (let [dir (kio/temp-dir
+                      "storj-pieces-test")]
     (try
       (with-redefs [node/pieces-dir (constantly dir)]
         (f (node/file-blobs) dir))

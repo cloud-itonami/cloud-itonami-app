@@ -5,7 +5,7 @@
   search that reads a body. The app had been calling two of that library's
   functions and none of these, so what is under test is mostly whether the
   app asks the model the right questions and stores only the difference."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.mailbox :as app-mailbox]
@@ -25,12 +25,11 @@
 (use-fixtures
   :each
   (fn [run]
-    (let [temporary (java.nio.file.Files/createTempDirectory
-                     "cloud-itonami-app-mailbox"
-                     (make-array java.nio.file.attribute.FileAttribute 0))
-          root (.toFile temporary)
+    (let [temporary (io/temp-dir
+                     "cloud-itonami-app-mailbox")
+          root temporary
           inbox (io/file root "m365-archive/mail/受信トレイ")]
-      (.mkdirs inbox)
+      (io/mkdirs inbox)
       ;; Long enough that the last word is past the 220-character snippet:
       ;; the interface filtered that string and the model was handed it as
       ;; the body, so a word out here was findable by nothing.
@@ -68,7 +67,7 @@
   (testing "the next reader's inbox is untouched"
     (is (= 0 (:unread (app-mailbox/view bob)))))
   (testing "and the file is exactly where it was"
-    (is (.isFile (io/file @archive "m365-archive/mail/受信トレイ" a)))
+    (is (io/file? (io/file @archive "m365-archive/mail/受信トレイ" a)))
     (is (= 2 (count (:items (app-mailbox/view bob)))))))
 
 (deftest starring-is-a-toggle-and-shows-up-as-a-place-to-look
@@ -100,7 +99,7 @@
   (app-mailbox/set-trashed! a true alice)
   (is (= [b] (ids (app-mailbox/view alice))) "gone from the inbox")
   (is (= [a] (ids (app-mailbox/view alice {:label "trash"}))) "and findable in the trash")
-  (is (.isFile (io/file @archive "m365-archive/mail/受信トレイ" a))
+  (is (io/file? (io/file @archive "m365-archive/mail/受信トレイ" a))
       "the archive is files this app reads and does not own")
   (testing "and it comes back"
     (app-mailbox/set-trashed! a false alice)
@@ -140,7 +139,7 @@
   ;; conjure an entry with a label and no mail in it, which is what
   ;; `add-label` on an unknown id would produce.
   (app-mailbox/set-label! a "starred" true alice)
-  (.delete (io/file @archive "m365-archive/mail/受信トレイ" a))
+  (io/delete (io/file @archive "m365-archive/mail/受信トレイ" a))
   (workspace/clear-cache!)
   (let [seen (app-mailbox/view alice)]
     (is (= [b] (ids seen)))

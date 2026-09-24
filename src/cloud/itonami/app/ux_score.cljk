@@ -4,7 +4,7 @@
   The score is an engineering signal, not a usability-test substitute. Inputs
   are observable UI counts/ratios, the weighted result is deterministic, and
   the system-dynamics trajectory is delegated to the OASIS XMILE engine."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [clojure.xml :as cxml]
             [xmile.execute :as execute]
@@ -82,7 +82,7 @@
 (defn- parse-xml [text]
   (let [factory (doto (SAXParserFactory/newInstance)
                   (.setFeature "http://apache.org/xml/features/disallow-doctype-decl" true))]
-    (cxml/parse (ByteArrayInputStream. (.getBytes text "UTF-8"))
+    (cxml/parse (ByteArrayInputStream. (kbytes/utf8-bytes text))
                 (fn [source handler]
                   (.parse (.newSAXParser factory) source handler)))))
 

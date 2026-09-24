@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.drive-fs-test
   "The Drive answering the thirteen questions NFS asks, and the two seams
   that decide who may ask them."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.drive-fs :as drive-fs]
             [cloud.itonami.app.nfs :as nfs-service]
@@ -241,10 +241,9 @@
       ;; The digest and the signature both cover the payload bytes, so this
       ;; must fail on the first of them rather than parse and admit.
       (let [tampered (assoc envelope :netmap/payload-b64
-                            (.encodeToString (java.util.Base64/getEncoder)
-                                             (.getBytes (pr-str (assoc drive-netmap
-                                                                       :netmap/version 8))
-                                                        "UTF-8")))]
+                            (kbytes/base64-encode
+                                             (kbytes/utf8-bytes (pr-str (assoc drive-netmap
+                                                                       :netmap/version 8)))))]
         (is (thrown? clojure.lang.ExceptionInfo
                      (nfs-service/verified-netmap {:envelope tampered
                                                    :authority-spki-b64 spki})))))

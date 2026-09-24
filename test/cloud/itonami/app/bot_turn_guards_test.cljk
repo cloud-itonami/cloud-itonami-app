@@ -23,7 +23,7 @@
 
   The model seam is redefined rather than reached, the way `routines-test` does
   it. Nothing here calls a model or reaches the network."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.io :as kio] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.config :as config]
@@ -32,13 +32,12 @@
             [cloud.itonami.app.store :as store]))
 
 (defn- with-store [f]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-turn-guards-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-turn-guards-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config/data-dir (fn [] (.toFile temporary))]
+      (with-redefs [config/data-dir (fn [] temporary)]
         (f))
       (finally (reset! store/state previous)))))
 

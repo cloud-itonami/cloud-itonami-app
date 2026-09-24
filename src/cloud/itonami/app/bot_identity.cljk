@@ -37,14 +37,14 @@
   silently: a missing seed is created, an unreadable one degrades to no
   identity, and neither path quietly mints a different name for a Bot that
   already had one."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [ed25519.core :as ed]
             [identity.model :as identity-model]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.secure-file :as secure-file])
   (:import [java.security MessageDigest SecureRandom]
-           [java.nio.file Files LinkOption]
+           [java.nio.file LinkOption]
 ))
 
 (def seed-bytes 32)
@@ -58,7 +58,7 @@
 (defn- read-seed []
   (let [file (seed-file)]
     (when (.isFile file)
-      (let [bytes (Files/readAllBytes (.toPath file))]
+      (let [bytes (kio/read-all-bytes file)]
         (when (= seed-bytes (alength bytes)) bytes)))))
 
 (defn fleet-seed
@@ -89,7 +89,7 @@
   (let [digest (MessageDigest/getInstance "SHA-256")]
     (.update digest fleet)
     (.update digest (byte-array 1))
-    (.update digest (.getBytes bot-id "UTF-8"))
+    (.update digest (kbytes/utf8-bytes bot-id))
     (.digest digest)))
 
 (defn bot-signing-seed

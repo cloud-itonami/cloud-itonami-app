@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.mcp-http-test
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as identity]
@@ -56,12 +56,11 @@
 
 (deftest streamable-http-mcp-is-authenticated-and-discoverable
   (let [previous @store/state
-        temporary (java.nio.file.Files/createTempDirectory
-                   "mcp-http-"
-                   (make-array java.nio.file.attribute.FileAttribute 0))]
+        temporary (kio/temp-dir
+                   "mcp-http-")]
     (try
       (reset! store/state (fixture))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     identity/configure! (fn [_] nil)]
         (let [{:keys [token]} (identity/issue-session!
                               "user-a" {:kind :agent :label "mcp-http"})]

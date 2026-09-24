@@ -4,6 +4,25 @@
 ;; deps.edn, not chosen here.
 {:paths ["." "src" "resources" "target" "scripts/nbb_compat"]
  :deps {
+        ;; kotoba.http.form-urlencoded replaced java.net.URLEncoder/URLDecoder here
+        ;; (2026-09-24). An explicit floor: tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/http-parse-url {:git/sha "8ad2f9680111e50168b4078a64601dc9296158d7"}
+        ;; kotoba.bytes replaced java.util.Base64 here (2026-09-24). An explicit
+        ;; floor: tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/bytes {:git/sha "d5259f35ab7c4f5a66e63ca29ed4dcf7ba3f1ac5"}
+        ;; kotoba.io replaced clojure.java.io here (2026-09-24). An explicit floor:
+        ;; kotoba.io carries clojure.java.io's file/as-file/as-relative-path/
+        ;; make-parents/delete-file from 98045c7, and tools.deps takes the NEWEST
+        ;; sha it is shown.
+        io.github.kotoba-lang/io {:git/sha "1b60ca825c1e705bd195f857ca4549133653a9f3"}
+        ;; kotoba.json replaced clojure.data.json here (2026-09-24). An explicit
+        ;; floor: kotoba.json/read-str and /write-str first exist at 9c11ad1, and
+        ;; tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/json {:git/sha "9c11ad189e64907700e8b4eb9b26f40336bffa01"}
+        ;; kotoba.pprint replaced clojure.pprint here (2026-09-24): the same
+        ;; bytes (cljs.pprint transcribed). An explicit floor; tools.deps takes the
+        ;; NEWEST sha it is shown.
+        io.github.kotoba-lang/pprint {:git/sha "5c9d4aea71d6caac529fffcf361aba0f87ee485e"}
         ;; kotoba.lang.edn replaced clojure.edn here (2026-09-23). An explicit floor:
         ;; tools.deps takes the NEWEST sha it is shown, and kbb resolves git deps
         ;; only from nbb.edn, so every project file this repo has names it.

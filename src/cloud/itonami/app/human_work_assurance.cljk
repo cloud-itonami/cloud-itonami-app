@@ -5,7 +5,7 @@
   browser. Requests contain the minimum claim coordinates needed to check one
   version. Responses are accepted only when they bind the same worker, claim,
   version, and organization. Raw identity documents are never stored here."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.human-work :as human-work]

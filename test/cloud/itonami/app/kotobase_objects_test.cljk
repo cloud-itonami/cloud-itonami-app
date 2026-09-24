@@ -2,7 +2,7 @@
   "Offline. The transport is a map, so what is under test is the DAG, the
   identity/location split and the refusals — none of which need
   kotobase.net to be reachable to be wrong."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.archive :as archive]
             [cloud.itonami.app.kotobase-objects :as ko]
@@ -18,7 +18,7 @@
                                 (handle [_ exchange]
                                   (let [put? (= "PUT" (.getRequestMethod exchange))
                                         _ (when put? (reset! stored (.readAllBytes (.getRequestBody exchange))))
-                                        body (if put? (.getBytes "{}" "UTF-8") @stored)]
+                                        body (if put? (kbytes/utf8-bytes "{}") @stored)]
                                     (.sendResponseHeaders exchange (if put? 201 200) (alength body))
                                     (with-open [out (.getResponseBody exchange)] (.write out body))))))
     (.start server)

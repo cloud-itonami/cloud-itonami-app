@@ -7,8 +7,8 @@
   distinguish one-sided edits from conflicts. Remote conflicts are preserved
   below `.itonami-conflicts`; remote deletions move local files below
   `.itonami-trash` instead of unlinking them."
-  (:require [kotoba.lang.edn :as edn]
-            [clojure.data.json :as json]
+  (:require [kotoba.http.form-urlencoded :as form-urlencoded] [kotoba.bytes :as kbytes] [kotoba.lang.edn :as edn]
+            [kotoba.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
@@ -17,7 +17,7 @@
             [cloud.itonami.app.http-client :as http]
             [fileprovider.model :as sync-model])
   (:import [java.io File InputStream]
-           [java.net URI URLEncoder]
+           [java.net URI]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files LinkOption Path StandardCopyOption]
            [java.security MessageDigest]
@@ -509,7 +509,7 @@
 ;; Hosted Drive HTTP adapter ------------------------------------------------
 
 (defn- encoded [value]
-  (URLEncoder/encode (str value) StandardCharsets/UTF_8))
+  (form-urlencoded/form-encode (str value)))
 
 (defn- http-base [remote-config]
   (let [value (str/replace (str (:base-url remote-config)) #"/+$" "")
@@ -543,11 +543,11 @@
                                content-type (assoc "Content-Type" content-type))
                     ;; Bodies here are bytes; they cross the shim base64-encoded.
                     :body (when body
-                            (.encodeToString (java.util.Base64/getEncoder)
+                            (kbytes/base64-encode
                                              ^bytes body))})
          status (:status response)
          response-bytes (when (seq (str (:body response)))
-                          (.decode (java.util.Base64/getDecoder)
+                          (kbytes/base64-decode-bytes
                                    ^String (:body response)))]
      (when-not (<= 200 status 299)
        (throw (ex-info "hosted Drive request failed"
@@ -559,10 +559,10 @@
   ([remote-config method path]
    (http-json remote-config method path nil))
   ([remote-config method path value]
-   (let [body (when value (.getBytes (json/write-str value) StandardCharsets/UTF_8))
+   (let [body (when value (kbytes/utf8-bytes (json/write-str value)))
          response (http-request! remote-config method path body
                                  (when body "application/json"))]
-     (json/read-str (String. ^bytes (:bytes response) StandardCharsets/UTF_8)
+     (json/read-str (kbytes/utf8-string ^bytes (:bytes response))
                     :key-fn keyword))))
 
 (defn- folder-query [folder]
@@ -646,9 +646,8 @@
                      "&media-type=" (encoded media-type)
                      "&folder=" (encoded folder))
           item (:item (json/read-str
-                       (String. ^bytes (:bytes (http-request! remote-config "POST"
-                                                             route bytes media-type))
-                                StandardCharsets/UTF_8)
+                       (kbytes/utf8-string ^bytes (:bytes (http-request! remote-config "POST"
+                                                             route bytes media-type)))
                        :key-fn keyword))]
       {:id (:id item) :etag (:etag item) :media-type (:media-type item)
        :size-bytes (:size-bytes item) :updated-at (:updated-at item)}))

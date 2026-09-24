@@ -5,7 +5,7 @@
   migration directory, required to be a regular file, and checked against the
   sha256 recorded when it was staged.  This namespace has no authority to
   create a Bot or grant a tool; it only projects portable source evidence."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str])
   (:import [java.io File]

@@ -4,14 +4,13 @@
   These checks do not claim production throughput or remote availability. They
   prove properties of the exact running implementation, so an operator cannot
   replace them with `true` in an evidence file."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as kio] [clojure.java.io :as io]
             [cloud.itonami.app.local-query :as local-query]
             [cloud.itonami.app.repository-storage :as repository]
             [datascript.core :as datascript]
             [kagi.crypto :as crypto]
             [kotobase.local :as local]
-            [langchain.edn-persist :as edn-persist])
-  (:import [java.nio.file Files]))
+            [langchain.edn-persist :as edn-persist]))
 
 (def ^:private owner "qualification-invariant-owner")
 
@@ -117,9 +116,8 @@
        (set (local-query/query-state base-state (pr-str query))))))
 
 (defn- actor-and-agent-edits-converge? []
-  (let [root (.toFile (Files/createTempDirectory
-                       "repository-lock-invariant-"
-                       (make-array java.nio.file.attribute.FileAttribute 0)))
+  (let [root (kio/temp-dir
+                       "repository-lock-invariant-")
         owner-dir (io/file root owner)
         state-file (io/file owner-dir "state.edn")
         lock-file (io/file owner-dir ".state.edn.lock")]
@@ -142,10 +140,10 @@
                                    [:kotoba.agent/streams
                                     "actor/qualification"]))))))
       (finally
-        (Files/deleteIfExists (.toPath state-file))
-        (Files/deleteIfExists (.toPath lock-file))
-        (Files/deleteIfExists (.toPath owner-dir))
-        (Files/deleteIfExists (.toPath root))))))
+        (kio/delete-if-exists state-file)
+        (kio/delete-if-exists lock-file)
+        (kio/delete-if-exists owner-dir)
+        (kio/delete-if-exists root)))))
 
 (defn verify
   "Run all code invariants and return only boolean qualification facts. Any

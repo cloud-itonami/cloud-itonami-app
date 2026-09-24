@@ -7,14 +7,14 @@
   window. OCR text is untrusted context: callers must not treat it as an
   instruction channel. Chat history and derived memory are separate stores so
   deleting memory does not silently delete a user's conversations."
-  (:require [clojure.java.io :as io]
-            [clojure.set :as set]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [clojure.java.io :as io]
+            [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.screen-guest :as screen-guest]
             [cloud.itonami.app.secure-file :as secure-file]
             [cloud.itonami.app.store :as store])
-  (:import [java.nio.file Files]
+  (:import
 
            [java.security MessageDigest]
            [java.util UUID]
@@ -39,7 +39,7 @@
 
 (defn- digest [value]
   (hex (.digest (MessageDigest/getInstance "SHA-256")
-                (.getBytes (str value) java.nio.charset.StandardCharsets/UTF_8))))
+                (kbytes/utf8-bytes (str value)))))
 
 (defn- user-key [user-id]
   (when-not (and (string? user-id) (not (str/blank? user-id)))
@@ -149,7 +149,7 @@
 
 (defn- remove-file! [path]
   (when path
-    (try (Files/deleteIfExists (.toPath (io/file path)))
+    (try (kio/delete-if-exists (io/file path))
          (catch Exception _ false))))
 
 (defn- prune! [user-id]

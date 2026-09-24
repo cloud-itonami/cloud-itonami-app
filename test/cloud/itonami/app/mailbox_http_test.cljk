@@ -11,7 +11,7 @@
   Same shape as `business_http_test`: the passkey gate is stubbed rather
   than satisfied, because a real ceremony needs an authenticator and what is
   under test is the route layer behind that gate."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.http.form-urlencoded :as form-urlencoded] [kotoba.io :as kio] [kotoba.json :as json]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as local-identity]
@@ -60,10 +60,9 @@
 (def ^:private message-id "20260728T010203Z_a.eml")
 
 (defn- with-server [who body]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-app-mailbox-http"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
-        root (.toFile temporary)
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-app-mailbox-http")
+        root temporary
         inbox (clojure.java.io/file root "m365-archive/mail/受信トレイ")
         previous @store/state]
     (.mkdirs inbox)
@@ -74,7 +73,7 @@
     (try
       (reset! store/state (store/initial-state))
       (workspace/clear-cache!)
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     workspace/workspace-root (constantly root)
                     local-identity/session (fn [_] {:csrf csrf :user-id who})
                     local-identity/require-passkey! identity
@@ -155,7 +154,7 @@
       (let [thread (:thread (first (get-in (authed :get "/api/workspace/inbox")
                                            [:body :items])))
             r (authed :get (str "/api/workspace/inbox/threads/"
-                                (java.net.URLEncoder/encode thread "UTF-8")))]
+                                (form-urlencoded/form-encode thread)))]
         (is (= 200 (:status r)))
         (is (= [message-id] (mapv :id (get-in r [:body :items]))))))))
 

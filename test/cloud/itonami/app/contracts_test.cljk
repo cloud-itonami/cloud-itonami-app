@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.contracts-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.contracts :as contracts]
             [kagitaba.contract :as contract]
             [kagitaba.item :as item]
@@ -23,7 +23,7 @@
   (g/run* (op/build store {:crypto provider})
           {:request {:op :item/create :item-id item-id :compartment "personal"
                      :category :membership
-                     :plaintext (.getBytes ^String (pr-str kagitaba-item) "UTF-8")}
+                     :plaintext (kbytes/utf8-bytes ^String (pr-str kagitaba-item))}
            :context {:did (:did identity) :role :owner :phase 1 :vmk vmk
                      :purpose :daily-use}}
           {:thread-id (str "seed-" item-id)}))

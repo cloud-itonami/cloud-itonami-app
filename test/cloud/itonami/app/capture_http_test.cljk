@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.capture-http-test
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.chronicle :as chronicle]
@@ -39,15 +39,14 @@
      :body (json/read-str (.body response) :key-fn keyword)}))
 
 (defn- with-server [f]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-capture-http"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-capture-http")
         previous @store/state
         session {:csrf csrf :user-id "alice" :organization-id "org-1"
                  :kind :passkey :authn-level :phishing-resistant}]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     identity/session (fn [_] session)
                     identity/require-passkey! identity
                     identity/configure! (fn [_] nil)]

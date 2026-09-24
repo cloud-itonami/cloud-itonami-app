@@ -3,7 +3,7 @@
 
   The profile/argv/result boundary is intentionally compatible with Tamaki's
   runner profiles and is the extraction point for kotoba-lang/provider."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config])

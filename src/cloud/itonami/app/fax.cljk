@@ -42,18 +42,18 @@
   deployment step, not something a test here has proved.
 
   API reference: <https://help.dropbox.com/integrations/send-fax-using-dropbox-fax-api>"
-  (:require [cloud.itonami.app.config :as config]
+  (:require [kotoba.http.form-urlencoded :as form-urlencoded] [kotoba.bytes :as kbytes] [cloud.itonami.app.config :as config]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.lawfirm :as app-lawfirm]
-            [clojure.data.json :as json]
+            [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [lawfirm.actor :as lf-actor]
             [lawfirm.store :as lf-store]
             [lawfirm.workspace :as lf-workspace])
-  (:import [java.net URLEncoder]
+  (:import
            [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
-           [java.util Base64 UUID]
+           [java.util UUID]
            [java.util.concurrent TimeUnit]))
 
 (def schema "cloud.itonami.app.fax.v1")
@@ -149,7 +149,7 @@
   request in the app and `java.net.http` has no builder for one."
   [boundary fields ^bytes file-bytes filename]
   (let [out (java.io.ByteArrayOutputStream.)
-        write (fn [^String s] (.write out (.getBytes s StandardCharsets/UTF_8)))]
+        write (fn [^String s] (.write out (kbytes/utf8-bytes s)))]
     (doseq [[k v] fields :when (some? v)]
       (write (str "--" boundary "\r\n"
                   "Content-Disposition: form-data; name=\"" k "\"\r\n\r\n"
@@ -162,9 +162,8 @@
     (.toByteArray out)))
 
 (defn- basic-auth [{:keys [username password]}]
-  (str "Basic " (.encodeToString (Base64/getEncoder)
-                                 (.getBytes (str username ":" password)
-                                            StandardCharsets/UTF_8))))
+  (str "Basic " (kbytes/base64-encode
+                                 (kbytes/utf8-bytes (str username ":" password)))))
 
 (defn http-send-fn
   "The real transport. Separated so every test drives an injected one and no
@@ -172,7 +171,7 @@
   [{:keys [credentials to file-bytes filename cover]}]
   (let [boundary (str "----kotoba" (UUID/randomUUID))
         url (str api-base "/Accounts/" (:account-guid credentials) "/Transmissions"
-                 "?To=" (URLEncoder/encode (str to) StandardCharsets/UTF_8))
+                 "?To=" (form-urlencoded/form-encode (str to)))
         body (multipart boundary
                         {"CoverPageTo" (:to cover)
                          "CoverPageFrom" (:from cover)
@@ -186,7 +185,7 @@
                    :headers {"Authorization" (basic-auth credentials)
                              "Content-Type"
                              (str "multipart/form-data; boundary=" boundary)}
-                   :body (.encodeToString (java.util.Base64/getEncoder)
+                   :body (kbytes/base64-encode
                                           ^bytes body)})]
     {:status (:status response) :body (:body response)}))
 

@@ -6,7 +6,7 @@
   namespaced EDN values, executes the returned plan, and records receipts. That
   separation keeps a board item from becoming execution authority merely by
   moving columns."
-  (:require [clojure.set :as set]
+  (:require [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
             [yakuwari.reconcile :as reconcile]
             [yakuwari.spec :as yakuwari]))

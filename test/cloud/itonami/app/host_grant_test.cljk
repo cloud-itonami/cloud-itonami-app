@@ -3,15 +3,15 @@
 
   Both directions: denied when the set is bound without the cap, and allowed
   when the cap is present. Unbound nil remains the legacy desktop host."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.host :as host]))
 
 (deftest untendered-host-still-spawns
   (let [tmp (doto (io/file (System/getProperty "java.io.tmpdir")
                            (str "itonami-host-grant-" (System/nanoTime)))
-              (.mkdirs))
-        echo (or (some #(when (.canExecute (io/file %)) %)
+              (io/mkdirs))
+        echo (or (some #(when (io/can-execute? (io/file %)) %)
                        ["/bin/echo" "/usr/bin/echo"])
                  (throw (ex-info "no echo binary" {})))
         proc (host/process {"echo" echo})]
@@ -21,11 +21,11 @@
                                        :timeout-ms 5000
                                        :max-stdout-bytes 256)))))
       (finally
-        (doseq [f (reverse (file-seq tmp))]
-          (.delete ^java.io.File f))))))
+        (doseq [f (reverse (io/file-seq tmp))]
+          (io/delete f))))))
 
 (deftest grant-set-denies-missing-spawn
-  (let [echo (or (some #(when (.canExecute (io/file %)) %)
+  (let [echo (or (some #(when (io/can-execute? (io/file %)) %)
                        ["/bin/echo" "/usr/bin/echo"])
                  (throw (ex-info "no echo binary" {})))
         proc (host/process {"echo" echo})]
@@ -36,7 +36,7 @@
                          :max-stdout-bytes 256))))))
 
 (deftest grant-set-allows-spawn-with-process-spawn
-  (let [echo (or (some #(when (.canExecute (io/file %)) %)
+  (let [echo (or (some #(when (io/can-execute? (io/file %)) %)
                        ["/bin/echo" "/usr/bin/echo"])
                  (throw (ex-info "no echo binary" {})))
         proc (host/process {"echo" echo})]

@@ -28,7 +28,7 @@
   A lock older than the startup budget is a crash, not a competitor, and is
   cleared. A pid file is written only after the server answers `/health`, so its
   presence means 'this was serving', never 'this was attempted'."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.app-client :as client]

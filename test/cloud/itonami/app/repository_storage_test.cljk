@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.repository-storage-test
-  (:require [clojure.java.io :as io]
-            [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [clojure.java.io :as io]
+            [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.repository-measurement :as measurement]
@@ -13,9 +13,7 @@
             [kotobase.local :as local]
             [langchain.edn-persist :as edn-persist])
   (:import [com.sun.net.httpserver HttpHandler HttpServer]
-           [java.net InetSocketAddress]
-           [java.nio.charset StandardCharsets]
-           [java.nio.file Files]))
+           [java.net InetSocketAddress]))
 
 (def owner "user-storage-opaque-001")
 
@@ -37,9 +35,8 @@
      :head-store (local/local-store)}))
 
 (deftest actor-appends-and-direct-edn-edits-share-one-lock
-  (let [root (.toFile (Files/createTempDirectory
-                       "repository-edit-lock-"
-                       (make-array java.nio.file.attribute.FileAttribute 0)))
+  (let [root (kio/temp-dir
+                       "repository-edit-lock-")
         owner-dir (io/file root owner)
         state-file (io/file owner-dir "state.edn")
         _ (.mkdirs owner-dir)
@@ -64,9 +61,8 @@
       (is (= (vec (range 1 31)) (mapv :seq events))))))
 
 (deftest stale-direct-edit-fails-without-overwriting-actor-transaction
-  (let [root (.toFile (Files/createTempDirectory
-                       "repository-stale-edit-"
-                       (make-array java.nio.file.attribute.FileAttribute 0)))
+  (let [root (kio/temp-dir
+                       "repository-stale-edit-")
         owner-dir (io/file root owner)
         state-file (io/file owner-dir "state.edn")
         _ (.mkdirs owner-dir)
@@ -153,10 +149,8 @@
     (is (pos? (:encrypted-output-ratio result)))))
 
 (deftest cold-hydrate-requires-an-empty-isolated-block-cache
-  (let [empty-root (.toFile (Files/createTempDirectory
-                             "cloud-itonami-cold-cache-"
-                             (make-array java.nio.file.attribute.FileAttribute
-                                         0)))
+  (let [empty-root (kio/temp-dir
+                             "cloud-itonami-cold-cache-")
         {:keys [provider vmk signing-public transport head-store] :as context}
         (fixture)
         prepared (preparation context base-state base-state base-state nil)
@@ -178,8 +172,7 @@
           materialized (io/file blocks
                                 (str (apply str (repeat 64 "a")) ".block"))]
       (.mkdirs blocks)
-      (Files/write (.toPath materialized) (byte-array [1 2 3])
-                   (make-array java.nio.file.OpenOption 0))
+      (kio/write-bytes materialized (byte-array [1 2 3]))
       (is (thrown-with-msg?
            clojure.lang.ExceptionInfo #"already contains local block"
            (repository/assert-empty-datalad-block-cache! empty-root))))))
@@ -235,7 +228,7 @@
     (is (= (repository/validate-state! base-state) (:state hydrated)))
     (is (= (:head/cid (:head result)) (:head/cid (:head retried))))
     (is (:idempotent? (:receipt retried)))
-    (is (not (str/includes? (String. journal "UTF-8") "secret-marker"))
+    (is (not (str/includes? (kbytes/utf8-string journal) "secret-marker"))
         "retry journal contains ciphertext only")))
 
 (deftest transport-failure-cannot-advance-head
@@ -328,9 +321,8 @@
 (deftest published-head-cas-admits-staged-kagi-rotation
   (let [{:keys [provider vmk signing-public signing-secret transport head-store]
          :as context} (fixture)
-        home (.toFile (Files/createTempDirectory
-                       "itonami-kagi-rotation"
-                       (make-array java.nio.file.attribute.FileAttribute 0)))
+        home (kio/temp-dir
+                       "itonami-kagi-rotation")
         unlock-fn (fn [_ _] vmk)
         secrets (secret-store/mem-secret-store)
         _ (kagi-persist/save! (.getPath (io/file home "vault.edn"))
@@ -382,8 +374,7 @@
                             "secret-marker")))))
 
 (deftest workspace-refuses-a-path-inside-datalad
-  (let [root (.toFile (Files/createTempDirectory "itonami-workspace-test"
-                                                  (make-array java.nio.file.attribute.FileAttribute 0)))
+  (let [root (kio/temp-dir "itonami-workspace-test")
         dataset (io/file root "dataset")]
     (.mkdirs dataset)
     (is (thrown-with-msg?
@@ -392,9 +383,8 @@
                                       {:head/cid "head"} 1)))))
 
 (deftest workspace-refuses-a-trackable-git-path
-  (let [root (.toFile (Files/createTempDirectory
-                       "itonami-trackable-workspace"
-                       (make-array java.nio.file.attribute.FileAttribute 0)))
+  (let [root (kio/temp-dir
+                       "itonami-trackable-workspace")
         workspace (io/file root "workspace")
         datalad (io/file root "separate-datalad")]
     (.mkdirs (io/file root ".git"))
@@ -407,9 +397,8 @@
 (deftest workspace-commit-reuses-journal-and-three-way-merges-remote
   (let [{:keys [provider vmk signing-public transport head-store] :as context}
         (fixture)
-        root (.toFile (Files/createTempDirectory
-                       "itonami-workspace-commit"
-                       (make-array java.nio.file.attribute.FileAttribute 0)))
+        root (kio/temp-dir
+                       "itonami-workspace-commit")
         workspace (io/file root "workspace")
         datalad (io/file root "datalad")
         _ (.mkdirs datalad)
@@ -446,12 +435,11 @@
         (is (= true (get-in hydrated [:state :settings :remote])))))))
 
 (deftest datalad-payload-audit-detects-plaintext-and-cid-mismatch
-  (let [root (.toFile (Files/createTempDirectory
-                       "itonami-datalad-audit"
-                       (make-array java.nio.file.attribute.FileAttribute 0)))
+  (let [root (kio/temp-dir
+                       "itonami-datalad-audit")
         _ (.mkdirs (io/file root ".git"))
         transport (repository/datalad-block-transport root nil)
-        ciphertext (.getBytes "opaque-ciphertext" "UTF-8")
+        ciphertext (kbytes/utf8-bytes "opaque-ciphertext")
         cid (repository/bytes-cid ciphertext)]
     (repository/stage-block! transport cid ciphertext)
     (is (:qualified? (repository/audit-datalad-blocks root ["secret-marker"])))
@@ -463,9 +451,8 @@
              (set (mapcat :problems (:violations audit))))))))
 
 (deftest empty-datalad-payload-cannot-pass-audit
-  (let [root (.toFile (Files/createTempDirectory
-                       "itonami-empty-datalad-audit"
-                       (make-array java.nio.file.attribute.FileAttribute 0)))]
+  (let [root (kio/temp-dir
+                       "itonami-empty-datalad-audit")]
     (.mkdirs (io/file root ".itonami" "blocks"))
     (is (false? (:qualified?
                  (repository/audit-datalad-blocks root ["private"]))))))
@@ -501,7 +488,7 @@
                     (do (reset! remote-state request)
                         [200 {:ok true :epoch (:epoch request)
                               :manifest_cid "bafy-manifest"}]))
-                  bytes (.getBytes (json/write-str body) StandardCharsets/UTF_8)]
+                  bytes (kbytes/utf8-bytes (json/write-str body))]
               (.sendResponseHeaders exchange status (alength bytes))
               (with-open [output (.getResponseBody exchange)]
                 (.write output bytes)))))]

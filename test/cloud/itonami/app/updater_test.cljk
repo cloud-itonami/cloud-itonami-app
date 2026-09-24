@@ -1,15 +1,13 @@
 (ns cloud.itonami.app.updater-test
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.updater :as updater])
   (:import [java.math BigInteger]
-           [java.nio.charset StandardCharsets]
            [java.nio.file Files]
-           [java.security KeyPairGenerator MessageDigest Signature]
-           [java.util Base64]))
+           [java.security KeyPairGenerator MessageDigest Signature]))
 
 (defn- key-pair []
   (.generateKeyPair (KeyPairGenerator/getInstance "Ed25519")))
@@ -18,7 +16,7 @@
   (let [signature (Signature/getInstance "Ed25519")]
     (.initSign signature private-key)
     (.update signature (updater/signable-bytes manifest))
-    (.encodeToString (Base64/getEncoder) (.sign signature))))
+    (kbytes/base64-encode (.sign signature))))
 
 (defn- sha256 [^bytes content]
   (format "%064x"
@@ -46,7 +44,7 @@
 
 (deftest signed-manifests-fail-closed
   (let [pair (key-pair)
-        manifest (signed-manifest pair (.getBytes "package" StandardCharsets/UTF_8))]
+        manifest (signed-manifest pair (kbytes/utf8-bytes "package"))]
     (is (= manifest (updater/verify-manifest manifest (.getPublic pair))))
     (testing "a transport cannot change even one signed field"
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"signature is invalid"
@@ -64,7 +62,7 @@
 
 (deftest discovery-and-download-stage-only-verified-bytes
   (let [pair (key-pair)
-        package (.getBytes "verified package bytes" StandardCharsets/UTF_8)
+        package (kbytes/utf8-bytes "verified package bytes")
         manifest (signed-manifest pair package)
         manifest-url "https://github.com/cloud-itonami/cloud-itonami-app/releases/download/v9.0.0/update-manifest.edn"
         releases-url "https://api.github.test/releases"
@@ -80,8 +78,8 @@
       (binding [updater/*http-get-bytes*
                 (fn [url]
                   (cond
-                    (= url releases-url) (.getBytes releases StandardCharsets/UTF_8)
-                    (= url manifest-url) (.getBytes (pr-str manifest) StandardCharsets/UTF_8)
+                    (= url releases-url) (kbytes/utf8-bytes releases)
+                    (= url manifest-url) (kbytes/utf8-bytes (pr-str manifest))
                     :else (throw (ex-info "unexpected URL" {:url url}))))
                 updater/*download-to!*
                 (fn [_ destination]
@@ -103,8 +101,8 @@
 
 (deftest automatic-staging-fails-closed-on-changed-package
   (let [pair (key-pair)
-        signed-package (.getBytes "signed package" StandardCharsets/UTF_8)
-        changed-package (.getBytes "changed package" StandardCharsets/UTF_8)
+        signed-package (kbytes/utf8-bytes "signed package")
+        changed-package (kbytes/utf8-bytes "changed package")
         manifest (signed-manifest pair signed-package)
         manifest-url "https://github.com/cloud-itonami/cloud-itonami-app/releases/download/v9.0.0/update-manifest.edn"
         releases-url "https://api.github.test/releases"
@@ -122,8 +120,8 @@
       (binding [updater/*http-get-bytes*
                 (fn [url]
                   (if (= url releases-url)
-                    (.getBytes releases StandardCharsets/UTF_8)
-                    (.getBytes (pr-str manifest) StandardCharsets/UTF_8)))
+                    (kbytes/utf8-bytes releases)
+                    (kbytes/utf8-bytes (pr-str manifest))))
                 updater/*download-to!*
                 (fn [_ destination]
                   (Files/write destination changed-package

@@ -1,20 +1,18 @@
 (ns cloud.itonami.app.repos-test
   "The repos plane, tested on the one thing it exists to get right: an axis
   nobody scored is not a zero, and no average pretends otherwise."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as kio] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.repos :as repos]
-            [cloud.itonami.app.store :as store])
-  (:import [java.nio.file Files]
-           [java.nio.file.attribute FileAttribute]))
+            [cloud.itonami.app.store :as store]))
 
 (def session {:user-id "user-1" :organization-id "org-1"})
 (def no-workspace {})
 
 (defn- temp-dir []
-  (.toFile (Files/createTempDirectory "repos-test" (into-array FileAttribute []))))
+  (kio/temp-dir "repos-test"))
 
 (defn- reset-all! []
   (store/transact! #(assoc % :businesses {} :operator-adoptions {})))

@@ -5,7 +5,7 @@
   still sees mail sealed to the vault's key has a bug they cannot see, and one
   whose vault is unreachable needs the Keychain to answer rather than the
   resolution to stop."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.mail-age-key :as age-key]))
@@ -49,12 +49,12 @@
                       recipient-a "\n"
                       "\n"
                       recipient-b "\n"))
-      (with-environment {"CLOUD_ITONAMI_MAIL_AGE_RECIPIENTS_FILE" (.getPath file)}
+      (with-environment {"CLOUD_ITONAMI_MAIL_AGE_RECIPIENTS_FILE" (io/path file)}
         (fn []
           (let [{:keys [recipients source]} (age-key/resolve-recipients)]
             (is (= [recipient-a recipient-b] recipients))
             (is (= :file source)))))
-      (finally (.delete file)))))
+      (finally (io/delete file)))))
 
 (deftest the-environment-beats-the-file
   (let [file (io/file (System/getProperty "java.io.tmpdir")
@@ -62,10 +62,10 @@
     (try
       (spit file recipient-b)
       (with-environment {"CLOUD_ITONAMI_MAIL_AGE_RECIPIENTS" recipient-a
-                         "CLOUD_ITONAMI_MAIL_AGE_RECIPIENTS_FILE" (.getPath file)}
+                         "CLOUD_ITONAMI_MAIL_AGE_RECIPIENTS_FILE" (io/path file)}
         (fn []
           (is (= [recipient-a] (age-key/recipients)))))
-      (finally (.delete file)))))
+      (finally (io/delete file)))))
 
 (deftest with-nothing-configured-it-says-so-and-names-the-places
   (with-environment {}

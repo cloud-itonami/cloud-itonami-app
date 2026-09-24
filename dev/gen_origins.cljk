@@ -10,8 +10,8 @@
   Writes `resources/cloud-itonami-app.origins.edn`, which is also the file
   published to yabai. Nothing here reads a message body."
   (:require [kotoba.lang.edn :as edn]
-            [clojure.java.io :as io]
-            [clojure.pprint :as pprint]
+            [kotoba.io :as io]
+            [kotoba.pprint :as pprint]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.mail-origins :as origins]
             [cloud.itonami.app.mail-projects :as mail-projects]))
@@ -28,7 +28,7 @@
                           (str (System/getProperty "user.home")
                                "/.cloud-itonami/data/state.edn"))))
         messages (vals (get-in state [:mail :messages]))
-        curated (:origins (when (.isFile (io/file output))
+        curated (:origins (when (io/file? (io/file output))
                             (edn/read-string (slurp output))))
         entries (origins/merge-known (origins/observe messages domain-of)
                                      (or curated []))

@@ -29,7 +29,7 @@
   application never reached at all — is present in the registry and off until
   an operator turns it on. That is the point: the narrowing is now expressible,
   and so is the widening, and both are visible."
-  (:require [clojure.set :as set]
+  (:require [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.kotoba-oracle :as oracle]
             [connector.consent :as consent]

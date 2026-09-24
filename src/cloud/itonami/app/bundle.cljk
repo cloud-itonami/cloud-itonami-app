@@ -15,14 +15,14 @@
   Put is `PUT https://kotobase.net/ipfs/{cid}` (Bearer
   `KOTOBASE_ARCHIVE_TOKEN`). The server recomputes sha256; mismatch is 422.
   Cap is 4 MiB (`kotobase.archive-put/max-object-bytes`)."
-  (:require [cloud.itonami.app.archive :as archive]
+  (:require [kotoba.bytes :as kbytes] [cloud.itonami.app.archive :as archive]
             [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.web :as web]
             [kotoba.protocol.app :as app]
             [kotoba.protocol.cid :as cid])
-  (:import [java.nio.charset StandardCharsets]
+  (:import
            [java.security MessageDigest]
            [java.time Instant]
            [java.util Arrays]))
@@ -53,7 +53,7 @@
 
 (defn document-bytes
   []
-  (.getBytes ^String (document-html) StandardCharsets/UTF_8))
+  (kbytes/utf8-bytes ^String (document-html)))
 
 (defn- sha256
   [^bytes body]
