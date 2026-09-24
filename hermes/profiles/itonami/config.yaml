@@ -1,0 +1,166 @@
+# Host-local blocks (command_allowlist, onboarding, secrets, skills, terminal) are kept on the host and omitted here.
+model:
+  provider: murakumo
+  default: mishima
+  max_tokens: 1024
+  context_length: 131072
+  base_url: https://api.murakumo.cloud/v1
+providers:
+  murakumo:
+    base_url: https://api.murakumo.cloud/v1
+    api_mode: chat_completions
+    models:
+      mishima:
+        context_length: 131072
+        max_tokens: 1024
+    stale_timeout_seconds: 600
+    request_timeout_seconds: 2000
+    extra_headers:
+      HTTP-Referer: https://itonami.cloud
+      X-OpenRouter-Title: Itonami By KotobaLabs
+      X-Title: Itonami By KotobaLabs
+  openrouter-free:
+    base_url: https://openrouter.ai/api/v1
+    api_mode: chat_completions
+    key_env: OPENROUTER_API_KEY
+    stale_timeout_seconds: 600
+    extra_headers:
+      HTTP-Referer: https://itonami.cloud
+      X-OpenRouter-Title: Itonami By KotobaLabs
+      X-Title: Itonami By KotobaLabs
+  custom:
+    models:
+      glm-5.3-flash-cybersecurity-w4a16:
+        stale_timeout_seconds: 2400
+        timeout_seconds: 2400
+      qwen3.8-flash-next-cybersecurity-nvfp4:
+        stale_timeout_seconds: 2000
+        timeout_seconds: 2000
+      mishima:
+        stale_timeout_seconds: 600
+        timeout_seconds: 900
+  kotoba:
+    base_url: https://api.kotoba.cloud/v1
+    api_mode: chat_completions
+    key_env: KOTOBA_API_TOKEN
+    stale_timeout_seconds: 600
+    request_timeout_seconds: 900
+    models:
+      qwen3.8-27b-whitehacker:
+        context_length: 262144
+      qwen3.8-flash-next-whitehacker:
+        context_length: 131072
+fallback_providers:
+  - provider: kotoba
+    model: qwen3.8-27b-whitehacker
+    base_url: https://api.kotoba.cloud/v1
+agent:
+  max_turns: 500
+compression:
+  threshold_tokens: 60000
+  proactive_prune_tokens: 40000
+  protect_last_n: 8
+  tail_mode: lean
+auxiliary:
+  free_only: true
+  vision:
+    provider: kotoba
+    model: qwen3.8-flash-next-whitehacker
+    base_url: https://api.kotoba.cloud/v1
+    reasoning_effort: none
+    key_env: KOTOBA_API_TOKEN
+  compression:
+    provider: kotoba
+    model: qwen3.8-flash-next-whitehacker
+    base_url: https://api.kotoba.cloud/v1
+    reasoning_effort: none
+  skills_hub:
+    provider: kotoba
+    model: qwen3.8-flash-next-whitehacker
+    base_url: https://api.kotoba.cloud/v1
+  approval:
+    provider: kotoba
+    model: qwen3.8-flash-next-whitehacker
+    base_url: https://api.kotoba.cloud/v1
+  mcp:
+    provider: kotoba
+    model: qwen3.8-flash-next-whitehacker
+    base_url: https://api.kotoba.cloud/v1
+  title_generation:
+    provider: kotoba
+    model: qwen3.8-flash-next-whitehacker
+    base_url: https://api.kotoba.cloud/v1
+    reasoning_effort: none
+  triage_specifier:
+    provider: kotoba
+    model: qwen3.8-flash-next-whitehacker
+    base_url: https://api.kotoba.cloud/v1
+  web_extract:
+    base_url: https://api.kotoba.cloud/v1
+    model: qwen3.8-flash-next-whitehacker
+    provider: kotoba
+approvals:
+  destructive_slash_confirm: false
+  mode: "off"
+plugins:
+  disabled: []
+  enabled:
+    - hermes-zap-proxy
+  entries:
+    hermes-zap-proxy:
+      allow_tool_override: false
+      settings:
+        zap_proxy_targets:
+          - allow_active: false
+            url: http://127.0.0.1:8765
+cron:
+  max_parallel_jobs: 12
+  bot_chat_delivery_timeout_seconds: 900
+_config_version: 45
+mcp_servers:
+  cloudflare:
+    url: https://mcp.cloudflare.com/mcp?codemode=false
+    auth: oauth
+    enabled: true
+    tools:
+      exclude:
+        - docs
+        - '*_radar_*'
+        - '*_accounts_magic_*'
+        - '*_accounts_mnm_*'
+        - '*_accounts_cni_*'
+        - '*_accounts_teamnet_*'
+        - '*_accounts_cloudforceone_*'
+        - '*_accounts_dlp_*'
+        - '*_accounts_devices*'
+        - '*_accounts_dex_*'
+        - '*_accounts_datasecurity_*'
+        - '*_accounts_emailsecurity_*'
+        - '*_accounts_scim_*'
+        - '*_accounts_gateway*'
+        - '*_accounts_zerotrust_*'
+        - '*_accounts_one_*'
+        - '*_accounts_brandprotection_*'
+        - '*_accounts_intel_*'
+        - '*_accounts_urlscanner_*'
+        - '*_accounts_vuln_scanner_*'
+        - '*_zones_securitycenter_*'
+        - '*_accounts_securitycenter_*'
+        - '*_zones_api_gateway_*'
+        - '*_zones_schema_validation*'
+        - '*_zones_token_validation*'
+        - '*_zones_waiting_rooms*'
+        - '*_accounts_addressing_*'
+        - '*_accounts_shares*'
+        - '*_accounts_slurper_*'
+        - '*_zones_web3_*'
+        - '*_accounts_flagship_*'
+        - '*_zones_secondary_dns_*'
+        - '*_accounts_secondary_dns_*'
+        - '*_user_load_balancers*'
+provider_routing:
+  order:
+    - Relace
+    - StreamLake
+  ignore:
+    - Wafer

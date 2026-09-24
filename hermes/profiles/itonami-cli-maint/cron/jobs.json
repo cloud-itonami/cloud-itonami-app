@@ -1,0 +1,26 @@
+{
+  "jobs": [
+    {
+      "base_url": null,
+      "context_from": null,
+      "deliver": "local",
+      "enabled": true,
+      "enabled_toolsets": null,
+      "id": "ce07e94250fc",
+      "model": "qwen3.8-27b-whitehacker",
+      "name": "itonami-cli-maint-tick",
+      "no_agent": false,
+      "prompt": "itonami-cli-maint: SOUL.md の 1 反復型を実行。注入された state script 実測を読み maturity/maturity.md の OPEN 赤 1 件を反証。refuted なら修理案を ledger に Tier 2 記録 (着地可なら branch→PR)。survived なら範囲修正して追記。bin/itonami と bots 面限定。current/data を壊さない。変更前後でテスト緑確認。報告: 軸名/測定値/refuted|survived/次の 1 アクション。",
+      "provider": "kotoba",
+      "schedule": {
+        "kind": "cron",
+        "expr": "50 3-23/8 * * *",
+        "display": "50 3-23/8 * * *"
+      },
+      "script": "itonami_cli_state.sh",
+      "skill": null,
+      "skills": [],
+      "workdir": null
+    }
+  ]
+}
