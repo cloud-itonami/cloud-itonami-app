@@ -5,8 +5,8 @@
   Nothing here calls a model or reaches the network. The two places that would
   — `advance!` and `run-tool!` — are behind the connection gate, and every test
   that would cross it redefines the seam instead."
-  (:require [agent.run :as agent-run]
-            [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [agent.run :as agent-run]
+            [kotoba.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
@@ -35,13 +35,12 @@
             [connector.ports :as cports]))
 
 (defn- with-store [f]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-bots-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-bots-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config/data-dir (fn [] temporary)
                     store/transact! (fn [f & args]
                                       (apply swap! store/state f args))]
         (f))
@@ -1329,9 +1328,8 @@
                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
 
 (defn- git-workspace []
-  (let [root (.toFile (java.nio.file.Files/createTempDirectory
-                       "cloud-itonami-bot-workspace-"
-                       (make-array java.nio.file.attribute.FileAttribute 0)))
+  (let [root (kio/temp-dir
+                       "cloud-itonami-bot-workspace-")
         process (.start (doto (ProcessBuilder.
                                ^java.util.List
                                ["/usr/bin/git" "-C" (.getPath root) "init" "-q"

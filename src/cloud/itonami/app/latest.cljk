@@ -17,7 +17,7 @@
   The seed is never committed. Read it from `CLOUD_ITONAMI_APP_IPNS_SEED`
   (64 hex chars). Live custody is kagi item `cloud-itonami-app-latest`
   (compartment `personal`)."
-  (:require [kotoba.lang.edn :as edn]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.bundle :as bundle]
@@ -139,10 +139,10 @@
                :timeout-seconds 45
                :headers (into {} (map (fn [[k v]] [(name k) (str v)])) (or headers {}))
                :body (when (= method :put)
-                       (.encodeToString (java.util.Base64/getEncoder)
+                       (kbytes/base64-encode
                                         ^bytes (if (bytes? body) body (->bytes body))))})
         resp-bytes (when (seq (str (:body resp)))
-                     (.decode (java.util.Base64/getDecoder)
+                     (kbytes/base64-decode-bytes
                               ^String (:body resp)))]
     {:status (:status resp)
      :body (when (and resp-bytes (pos? (alength ^bytes resp-bytes)))

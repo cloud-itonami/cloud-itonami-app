@@ -10,17 +10,17 @@
   Both of those are places where a wrong answer is silent. An ECDSA signature
   reassembled at the wrong offsets is not malformed, it is merely invalid, and
   the CA's error names none of it."
-  (:require [asn1.core :as asn1]
-            [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [asn1.core :as asn1]
+            [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.acme :as acme])
   (:import [java.math BigInteger]
            [java.security KeyFactory Signature]
            [java.security.spec X509EncodedKeySpec]
-           [java.util Arrays Base64]))
+           [java.util Arrays]))
 
-(defn- decode64 ^bytes [s] (.decode (Base64/getUrlDecoder) ^String s))
+(defn- decode64 ^bytes [s] (kbytes/base64url-decode-bytes ^String s))
 
 (defn- public-key [key]
   (.generatePublic (KeyFactory/getInstance "EC")
@@ -53,7 +53,7 @@
                            (asn1/unsigned-integer-from-hex (even-hex s))]))]
     (.verify (doto (Signature/getInstance "SHA256withECDSA")
                (.initVerify (public-key key))
-               (.update (.getBytes input "UTF-8")))
+               (.update (kbytes/utf8-bytes input)))
              der)))
 
 (deftest the-verifier-in-this-file-handles-a-coordinate-with-a-leading-zero
@@ -71,7 +71,7 @@
   (let [key (acme/generate-key)
         signed (acme/jws key {:nonce "abc" :url "https://ca.test/x"
                               :payload {"a" 1}})
-        header (json/read-str (String. (decode64 (get signed "protected")) "UTF-8"))]
+        header (json/read-str (kbytes/utf8-string (decode64 (get signed "protected"))))]
     (is (= #{"protected" "payload" "signature"} (set (keys signed)))
         "flattened JSON, not compact — RFC 8555 posts an object")
     (is (= "ES256" (get header "alg")))
@@ -97,8 +97,7 @@
 
 (deftest an-account-key-announces-itself-until-it-has-a-kid
   (let [key (acme/generate-key)
-        header #(json/read-str (String. (decode64 (get (acme/jws key %) "protected"))
-                                        "UTF-8"))]
+        header #(json/read-str (kbytes/utf8-string (decode64 (get (acme/jws key %) "protected"))))]
     (testing "newAccount carries the jwk, because the CA has nothing to look up"
       (is (contains? (header {:nonce "n" :url "u"}) "jwk"))
       (is (not (contains? (header {:nonce "n" :url "u"}) "kid"))))
@@ -257,9 +256,8 @@
       (let [finalize (some #(when (= "https://ca.test/finalize/1" (:url %)) %) @calls)
             ;; The recorded body is the JWS envelope; the CSR is inside the
             ;; signed payload, which is the only place a CA looks either.
-            payload (json/read-str (String. (decode64 (get (:body finalize) "payload"))
-                                            "UTF-8"))
-            der (.decode (Base64/getUrlDecoder) ^String (get payload "csr"))
+            payload (json/read-str (kbytes/utf8-string (decode64 (get (:body finalize) "payload"))))
+            der (kbytes/base64url-decode-bytes ^String (get payload "csr"))
             info (asn1/nth-element (asn1/decode der) 0)
             extension (-> (asn1/nth-element info 3) (asn1/nth-element 0)
                           (asn1/nth-element 1) (asn1/nth-element 0)

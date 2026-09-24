@@ -5,19 +5,17 @@
   verifies under the public Ed25519 key embedded in this application and the
   selected package matches the signed size and SHA-256. Applying the staged
   package happens before the next server start, in the platform launcher."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.http-client :as http])
   (:import [java.math BigInteger]
-           [java.nio.charset StandardCharsets]
            [java.nio.file Files Path StandardCopyOption]
            [java.security KeyFactory MessageDigest Signature]
            [java.security.spec X509EncodedKeySpec]
            [java.time Instant]
-           [java.util Base64]
            [java.util.concurrent Executors ScheduledExecutorService TimeUnit]))
 
 (def manifest-schema "cloud.itonami.desktop-update.v1")
@@ -47,13 +45,12 @@
   signer and focused parity tests; callers never choose which fields are
   omitted."
   [manifest]
-  (.getBytes (pr-str (canonical-value (dissoc manifest :signature)))
-             StandardCharsets/UTF_8))
+  (kbytes/utf8-bytes (pr-str (canonical-value (dissoc manifest :signature)))))
 
 (defn- decode-public-key [encoded]
   (.generatePublic (KeyFactory/getInstance "Ed25519")
                    (X509EncodedKeySpec.
-                    (.decode (Base64/getDecoder) (str/trim encoded)))))
+                    (kbytes/base64-decode-bytes (str/trim encoded)))))
 
 (defn embedded-public-key []
   (-> "cloud-itonami-update-public-key.b64" io/resource slurp decode-public-key))
@@ -81,7 +78,7 @@
        (throw (ex-info "update manifest is unsigned" {:type :update/signature})))
      (.initVerify verifier public-key)
      (.update verifier (signable-bytes manifest))
-     (when-not (.verify verifier (.decode (Base64/getDecoder) signature-text))
+     (when-not (.verify verifier (kbytes/base64-decode-bytes signature-text))
        (throw (ex-info "update manifest signature is invalid"
                        {:type :update/signature}))))
    manifest))
@@ -113,12 +110,12 @@
     (when-not (= 200 (:status response))
       (throw (ex-info "update transport returned an error"
                       {:type :update/http :status (:status response)})))
-    (.getBytes ^String (:body response) StandardCharsets/UTF_8)))
+    (kbytes/utf8-bytes ^String (:body response))))
 
 (def ^:dynamic *http-get-bytes* http-get-bytes)
 
 (defn- parse-releases [bytes]
-  (json/read-str (String. ^bytes bytes StandardCharsets/UTF_8) :key-fn keyword))
+  (json/read-str (kbytes/utf8-string ^bytes bytes) :key-fn keyword))
 
 (defn- release-manifest-url [releases channel]
   (some (fn [release]
@@ -149,7 +146,7 @@
          (let [manifest-bytes (*http-get-bytes* manifest-url)]
            (when (> (alength ^bytes manifest-bytes) max-manifest-bytes)
              (throw (ex-info "update manifest is too large" {:type :update/size})))
-           (let [manifest (-> (String. ^bytes manifest-bytes StandardCharsets/UTF_8)
+           (let [manifest (-> (kbytes/utf8-string ^bytes manifest-bytes)
                               edn/read-string
                               verify-manifest)
                  installed (current-version)
@@ -201,7 +198,7 @@
       (throw (ex-info "update download returned an error"
                       {:type :update/http :status (:status response)})))
     (Files/write destination
-                 (.getBytes ^String (:body response) StandardCharsets/UTF_8)
+                 (kbytes/utf8-bytes ^String (:body response))
                  (make-array java.nio.file.CopyOption 0))
     destination))
 

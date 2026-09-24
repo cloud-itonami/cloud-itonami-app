@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.fleet-test
   (:require [clojure.test :refer [deftest is testing]]
-            [clojure.set]
+            [kotoba.lang.coll]
             [kotoba.lang.text]
             [cloud.itonami.app.fleet :as fleet]))
 
@@ -183,7 +183,7 @@
     (let [od-roles (set (map :role (fleet/by-execution :on-demand)))]
       (is (< 5 (count od-roles)))
       (is (contains? od-roles :sector-agent))
-      (is (empty? (clojure.set/intersection
+      (is (empty? (kotoba.lang.coll/intersection
                    od-roles
                    #{:continuous-orchestrator :artificial-organism-actor})))))
 

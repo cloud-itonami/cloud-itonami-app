@@ -11,7 +11,7 @@
   (plain text, Markdown, HTML, PNG and JPEG).  Other formats retain a signed
   forensic watermark in the encrypted delivery package and response headers
   rather than corrupting the file by appending arbitrary bytes."
-  (:require [biscuit.authorizer :as authorizer]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [biscuit.authorizer :as authorizer]
             [biscuit.token :as biscuit]
             [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
@@ -25,11 +25,9 @@
   (:import (java.awt AlphaComposite Color Font RenderingHints)
            (java.awt.image BufferedImage)
            (java.io ByteArrayInputStream ByteArrayOutputStream)
-           (java.nio.charset StandardCharsets)
-           (java.nio.file Files)
 
            (java.security SecureRandom)
-           (java.util Base64 UUID)
+           (java.util UUID)
            (javax.imageio ImageIO)))
 
 (def schema "cloud.itonami.app.drive-delivery.v1")
@@ -41,7 +39,7 @@
 
 (defn- read-seed [file]
   (when (.isFile file)
-    (let [value (Files/readAllBytes (.toPath file))]
+    (let [value (kio/read-all-bytes file)]
       (when (= seed-bytes (alength value)) value))))
 
 (defn root-seed []
@@ -65,26 +63,26 @@
   (if (bytes? value) value (byte-array (map unchecked-byte value))))
 
 (defn- sign [seed payload]
-  (ed/sign seed (.getBytes ^String payload StandardCharsets/UTF_8)))
+  (ed/sign seed (kbytes/utf8-bytes ^String payload)))
 
 (defn- verify [did payload signature]
   (try
-    (ed/verify-did did (.getBytes ^String payload StandardCharsets/UTF_8)
+    (ed/verify-did did (kbytes/utf8-bytes ^String payload)
                    (as-bytes signature))
     (catch Exception _ false)))
 
 (defn- b64 [^bytes value]
-  (.encodeToString (Base64/getEncoder) value))
+  (kbytes/base64-encode value))
 
 (defn- unb64 [value]
-  (.decode (Base64/getDecoder) ^String value))
+  (kbytes/base64-decode-bytes ^String value))
 
 (defn- watermark-label [{:keys [watermark audience action issued-at]}]
   (str "Cloud Itonami " watermark " · " audience " · "
        (name action) " · " issued-at))
 
 (defn- watermark-html [^bytes bytes label]
-  (let [text (String. bytes StandardCharsets/UTF_8)
+  (let [text (kbytes/utf8-string bytes)
         mark (str "<div data-cloud-itonami-watermark=\"true\" style=\""
                   "position:fixed;right:12px;bottom:10px;z-index:2147483647;"
                   "font:12px system-ui;color:#555;background:#fff;padding:4px 7px;"
@@ -97,7 +95,7 @@
         out (if (str/includes? (str/lower text) "</body>")
               (str/replace-first text #"(?i)</body>" (str mark "</body>"))
               (str text mark))]
-    (.getBytes out StandardCharsets/UTF_8)))
+    (kbytes/utf8-bytes out)))
 
 (defn- watermark-image [^bytes bytes media-type label]
   (try
@@ -140,9 +138,8 @@
         label (watermark-label delivery)]
     (cond
       (#{"text/plain" "text/markdown"} media-type)
-      {:bytes (.getBytes (str (String. bytes StandardCharsets/UTF_8)
-                              "\n\n[" label "]\n")
-                         StandardCharsets/UTF_8)
+      {:bytes (kbytes/utf8-bytes (str (kbytes/utf8-string bytes)
+                              "\n\n[" label "]\n"))
        :mode :visible-text}
 
       (= "text/html" media-type)
@@ -228,7 +225,7 @@
                          :payload-b64 (b64 ^bytes (:bytes marked))
                          :biscuit token)
           sealed (crypto/seal-for (distinct [owner audience]) nonce
-                                  (.getBytes (pr-str package) StandardCharsets/UTF_8))
+                                  (kbytes/utf8-bytes (pr-str package)))
           delivery-id (content-ref sealed)
           record (assoc (dissoc package :payload-b64 :biscuit)
                         :id delivery-id :uses 0 :revoked? false)]
@@ -308,7 +305,7 @@
                                    {:type :drive/delivery-object-missing})))
         package (-> (crypto/open actor sealed)
                     as-bytes
-                    (String. StandardCharsets/UTF_8)
+                    (kbytes/utf8-string)
                     edn/read-string)
         decision (authorize-token (:biscuit package) delivery actor
                                   requested-action now-ms)]

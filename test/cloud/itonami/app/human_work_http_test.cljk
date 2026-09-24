@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.human-work-http-test
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as local-identity]
@@ -97,16 +97,15 @@
    :evidence-ref "evidence:organization-check"})
 
 (defn- with-server [body]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-app-human-work-http"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-app-human-work-http")
         previous @store/state]
     (try
       (reset! actor "person-requester")
       (reset! role :member)
       (reset! active-organization organization)
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/session
                     (fn [_] {:csrf csrf :user-id @actor
                              :organization-id @active-organization})

@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.repository-profile-ci-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is]]
             [cloud.itonami.app.repository-profile-ci :as profile-ci])
-  (:import [java.nio.charset StandardCharsets]
+  (:import
            [java.nio.file Files]))
 
 (def valid-profile
@@ -20,7 +20,7 @@
 
 (defn- write! [file text]
   (.mkdirs (.getParentFile file))
-  (Files/write (.toPath file) (.getBytes text StandardCharsets/UTF_8)
+  (Files/write (.toPath file) (kbytes/utf8-bytes text)
                (make-array java.nio.file.OpenOption 0)))
 
 (deftest inventory-drives-local-and-remote-profile-audit

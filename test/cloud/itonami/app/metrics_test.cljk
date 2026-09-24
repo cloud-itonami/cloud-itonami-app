@@ -5,14 +5,13 @@
   2. requests never travel without the quality figures that qualify them;
   3. product-specific shapes are passed through, never unified into a funnel this
      app has no basis to define."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as kio] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.metrics :as metrics]
             [cloud.itonami.app.store :as store])
-  (:import [java.nio.file Files]
-           [java.nio.file.attribute FileAttribute]
+  (:import
            [java.time Instant]))
 
 (def session {:user-id "user-1" :organization-id "org-1"})
@@ -20,7 +19,7 @@
 (def ^:private now (Instant/parse "2026-07-30T12:00:00Z"))
 
 (defn- temp-dir []
-  (.toFile (Files/createTempDirectory "metrics-test" (into-array FileAttribute []))))
+  (kio/temp-dir "metrics-test"))
 
 (defn- reset-all! [] (store/transact! assoc :businesses {}))
 

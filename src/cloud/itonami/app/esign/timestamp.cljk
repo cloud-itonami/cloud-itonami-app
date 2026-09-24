@@ -37,7 +37,7 @@
   cannot learn what. That property is worth stating because it is the reason
   timestamping does not undo the erasure design in
   `cloud.itonami.app.esign`: there is nothing at the TSA to erase."
-  (:require [cloud.itonami.app.config :as config]
+  (:require [kotoba.bytes :as kbytes] [cloud.itonami.app.config :as config]
             [cloud.itonami.app.http-client :as http]
             [kotoba.lang.text :as str]
             [asn1.core :as asn1]
@@ -121,14 +121,14 @@
                    :method :post
                    :timeout-seconds 20
                    :headers {"Content-Type" "application/timestamp-query"}
-                   :body (.encodeToString (java.util.Base64/getEncoder)
+                   :body (kbytes/base64-encode
                                           ^bytes body)})]
     (when-not (= 200 (:status response))
       (throw (ex-info (str "TSA が " (:status response) " を返しました。")
                       {:type :esign/tsa-http-error
                        :status (:status response)
                        :url url})))
-    (.decode (java.util.Base64/getDecoder) ^String (:body response))))
+    (kbytes/base64-decode-bytes ^String (:body response))))
 
 (defn attestation-of
   "What a verified token earns: `:accredited` or `:tsa-attested`.

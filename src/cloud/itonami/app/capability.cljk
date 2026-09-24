@@ -43,15 +43,14 @@
   and no more: whoever can read `data/` can mint capabilities (and, since the
   per-document block keys are derived from it, append any block). Named here
   rather than left for somebody to work out."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.share-grant :as share-grant]
             [ed25519.core :as ed])
   (:import [java.security SecureRandom]
            [java.time Instant]
-           [java.time.temporal ChronoUnit]
-           [java.util Base64]))
+           [java.time.temporal ChronoUnit]))
 
 (def schema "cloud.itonami.app.capability.v1")
 
@@ -60,12 +59,12 @@
 (defn- read-seed []
   (let [f (key-file)]
     (when (.isFile f)
-      (.decode (Base64/getDecoder) ^String (str/trim (slurp f))))))
+      (kbytes/base64-decode-bytes ^String (str/trim (slurp f))))))
 
 (defn- write-seed! [^bytes seed]
   (let [f (key-file)]
     (.mkdirs (.getParentFile f))
-    (spit f (.encodeToString (Base64/getEncoder) seed))
+    (spit f (kbytes/base64-encode seed))
     ;; Best effort: the JVM cannot set POSIX permissions portably through
     ;; `spit`, and a file nobody else can read is the point of saying so.
     (doto f (.setReadable false false) (.setReadable true true)

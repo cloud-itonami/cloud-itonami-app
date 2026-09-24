@@ -5,7 +5,7 @@
   handler is behind `require-human-session!`); installing is a Bot creation in
   the caller's organization, so it needs origin + CSRF, refuses agent
   sessions, is scoped per organization, and persists."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as identity]
@@ -51,15 +51,14 @@
      :body (json/read-str (.body response) :key-fn keyword)}))
 
 (defn- with-server [f]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-public-bots-http"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-public-bots-http")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
       (reset! current-session {:csrf csrf :user-id "alice" :organization-id "org-1"
                                :kind :passkey :authn-level :phishing-resistant})
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     identity/session (fn [_] @current-session)
                     identity/require-passkey! identity
                     identity/configure! (fn [_] nil)]

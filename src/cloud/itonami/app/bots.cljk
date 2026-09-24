@@ -51,8 +51,8 @@
   The honest cost: a Bot does not run while this machine is asleep. That is a
   real difference from the product this is modelled on, and it is a
   consequence of the thesis rather than an oversight."
-  (:require [agent.run :as agent-run]
-            [clojure.data.json :as json]
+  (:require [kotoba.http.form-urlencoded :as form-urlencoded] [kotoba.bytes :as kbytes] [kotoba.io :as kio] [agent.run :as agent-run]
+            [kotoba.json :as json]
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [kotoba.lang.text :as str]
@@ -396,9 +396,9 @@
 (defn- ->query [url query]
   (if (seq query)
     (str url "?" (str/join "&" (for [[k v] query]
-                                 (str (java.net.URLEncoder/encode (str k) "UTF-8")
+                                 (str (form-urlencoded/form-encode (str k))
                                       "="
-                                      (java.net.URLEncoder/encode (str v) "UTF-8")))))
+                                      (form-urlencoded/form-encode (str v))))))
     url))
 
 (defn- parse-body
@@ -515,7 +515,7 @@
 
 (defn- receipt-sha256 [value]
   (let [digest (.digest (MessageDigest/getInstance "SHA-256")
-                        (.getBytes (str value) java.nio.charset.StandardCharsets/UTF_8))]
+                        (kbytes/utf8-bytes (str value)))]
     (apply str (map #(format "%02x" (bit-and (int %) 0xff)) digest))))
 
 (defn- goal-job [run-id]
@@ -1075,10 +1075,9 @@
 (defn- stable-hermes-bot-id [session migration-id profile-id]
   (str "bot-"
        (UUID/nameUUIDFromBytes
-        (.getBytes
+        (kbytes/utf8-bytes
          (str (:organization-id session) ":" (:user-id session) ":"
-              migration-id ":" profile-id)
-         java.nio.charset.StandardCharsets/UTF_8))))
+              migration-id ":" profile-id)))))
 
 (defn hermes-import-binding
   "Return the credential-free migration binding after the normal ownership gate."
@@ -1361,8 +1360,7 @@
 (defn- stable-workforce-id [session key]
   (str "bot-workforce-"
        (UUID/nameUUIDFromBytes
-        (.getBytes (str (:organization-id session) ":" (:user-id session) ":" key)
-                   java.nio.charset.StandardCharsets/UTF_8))))
+        (kbytes/utf8-bytes (str (:organization-id session) ":" (:user-id session) ":" key)))))
 
 (def workforce-avatar
   {:business-owner {:avatar/color :clay :avatar/glyph :wedge}
@@ -1383,7 +1381,7 @@
      (.getCanonicalPath (io/file root (:workspace entry))))))
 
 (defn- next-workforce-run [now key cadence]
-  (let [uuid (UUID/nameUUIDFromBytes (.getBytes key "UTF-8"))
+  (let [uuid (UUID/nameUUIDFromBytes (kbytes/utf8-bytes key))
         spread (mod (bit-and Long/MAX_VALUE (.getLeastSignificantBits uuid)) cadence)]
     (str (.plusSeconds (java.time.Instant/parse now) (* 60 spread)))))
 
@@ -3346,8 +3344,8 @@
         (if-not (.isFile source)
           {:error (str "画像ファイルが見つかりませんでした: " path)}
           (let [scaled (downscaled-png (.getCanonicalPath source))
-                bytes (java.nio.file.Files/readAllBytes (.toPath (io/file scaled)))
-                encoded (.encodeToString (java.util.Base64/getEncoder) bytes)
+                bytes (kio/read-all-bytes (io/file scaled))
+                encoded (kbytes/base64-encode bytes)
                 media (or (some-> (:media-type result) str not-empty) "image/png")]
             (if (> (count encoded) max-image-encoded-bytes)
               {:error (str "画像が大きすぎて添付できませんでした（"
@@ -4810,7 +4808,7 @@
   token per character and leaves more room than the usual English bytes / 4.
   The fixed context safety reserve covers chat-template framing."
   [value]
-  (max 1 (long (Math/ceil (/ (alength (.getBytes (json/write-str value) "UTF-8"))
+  (max 1 (long (Math/ceil (/ (alength (kbytes/utf8-bytes (json/write-str value)))
                              3.0)))))
 
 (defn- next-context-start
@@ -8302,7 +8300,7 @@
 
 (defn- sha256-hex [^String s]
   (let [digest (.digest (MessageDigest/getInstance "SHA-256")
-                        (.getBytes s "UTF-8"))]
+                        (kbytes/utf8-bytes s))]
     (apply str (map #(format "%02x" %) digest))))
 
 (defn- address

@@ -4,20 +4,20 @@
   Plaintext is accepted and returned only at this local boundary. Block
   transports receive ciphertext byte arrays. A signed Kotobase head is
   advanced only after the transport confirms every referenced block."
-  (:require [kotoba.lang.edn :as edn]
-            [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.edn :as edn]
+            [kotoba.json :as json]
             [clojure.java.io :as io]
-            [clojure.set :as set]
+            [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
-            [clojure.walk :as walk]
+            [kotoba.lang.coll :as walk]
             [kagi.crypto :as crypto]
             [langchain.edn-persist :as edn-persist]
             [kotobase.store :as kstore]
             [cloud.itonami.app.http-client :as http])
-  (:import [java.nio.charset StandardCharsets]
+  (:import
            [java.nio.file Files StandardCopyOption]
            [java.security MessageDigest]
-           [java.util Base64 UUID]))
+           [java.util UUID]))
 
 (def format-version 1)
 (def default-max-chunk-bytes (* 256 1024))
@@ -64,7 +64,7 @@
 
 (defn- wire-value [value]
   (cond
-    (bytes?* value) {:kagi/b64 (.encodeToString (Base64/getEncoder) value)}
+    (bytes?* value) {:kagi/b64 (kbytes/base64-encode value)}
     (map? value) (into (sorted-map-by compare-edn)
                        (map (fn [[k v]] [(wire-value k) (wire-value v)])) value)
     (vector? value) (mapv wire-value value)
@@ -73,11 +73,10 @@
     :else value))
 
 (defn canonical-bytes ^bytes [value]
-  (.getBytes ^String (pr-str (wire-value (canonical-value value)))
-             StandardCharsets/UTF_8))
+  (kbytes/utf8-bytes ^String (pr-str (wire-value (canonical-value value)))))
 
 (defn wire-string [value]
-  (String. (canonical-bytes value) StandardCharsets/UTF_8))
+  (kbytes/utf8-string (canonical-bytes value)))
 
 (defn- decode-wire [^bytes bytes]
   (let [decoded (edn/read-string
@@ -86,16 +85,16 @@
                              (throw (ex-info "tagged repository value denied"
                                              {:type :repository-storage/tagged-edn
                                               :tag tag})))}
-                 (String. bytes StandardCharsets/UTF_8))]
+                 (kbytes/utf8-string bytes))]
     (walk/postwalk
      (fn [value]
        (if (and (map? value) (= #{:kagi/b64} (set (keys value))))
-         (.decode (Base64/getDecoder) ^String (:kagi/b64 value))
+         (kbytes/base64-decode-bytes ^String (:kagi/b64 value))
          value))
      decoded)))
 
 (defn decode-wire-string [value]
-  (decode-wire (.getBytes ^String value StandardCharsets/UTF_8)))
+  (decode-wire (kbytes/utf8-bytes ^String value)))
 
 (defn sha256 ^bytes [^bytes bytes]
   (.digest (MessageDigest/getInstance "SHA-256") bytes))
@@ -336,9 +335,8 @@
 ;; Kagi envelopes -----------------------------------------------------------
 
 (defn- aad-bytes ^bytes [owner purpose]
-  (.getBytes ^String (str "cloud-itonami/repository/v1\u0000" owner
-                          "\u0000" (name purpose))
-             StandardCharsets/UTF_8))
+  (kbytes/utf8-bytes ^String (str "cloud-itonami/repository/v1\u0000" owner
+                          "\u0000" (name purpose))))
 
 (defn- seal-bytes
   [provider vmk owner purpose plaintext]
@@ -953,7 +951,7 @@
         files (if (.isDirectory root)
                 (filter #(.isFile ^java.io.File %) (file-seq root))
                 [])
-        marker-bytes (mapv #(.getBytes ^String (str %) StandardCharsets/UTF_8)
+        marker-bytes (mapv #(kbytes/utf8-bytes ^String (str %))
                            plaintext-markers)
         contains-bytes?
         (fn [^bytes haystack ^bytes needle]

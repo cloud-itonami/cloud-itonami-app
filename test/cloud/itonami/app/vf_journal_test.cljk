@@ -14,9 +14,8 @@
 
   The vocabulary is consumed, never reimplemented: every OK/reject verdict
   here comes from `valueflows.conform` and `valueflows.event` at the west pin."
-  (:require [kotoba.lang.text] [clojure.test :refer [deftest is testing]]
-            [cloud.itonami.app.vf-journal :as vf-journal])
-  (:import [java.nio.file Files]))
+  (:require [kotoba.io :as kio] [kotoba.lang.text] [clojure.test :refer [deftest is testing]]
+            [cloud.itonami.app.vf-journal :as vf-journal]))
 
 ;; ONE FRESH TEMP DIR PER TEST, not one per namespace: these tests assert
 ;; exact counts ("two events recorded", "the journal reads as empty"), and
@@ -25,8 +24,7 @@
 ;; journal into conform-reject's "empty" assertion and 6 assertions failed
 ;; on ordering alone. fresh-dir! makes every deftest self-contained.
 (defn- fresh-dir! []
-  (str (Files/createTempDirectory "vf-journal-test"
-                                 (make-array java.nio.file.attribute.FileAttribute 0))))
+  (str (kio/temp-dir "vf-journal-test")))
 
 (def ^:dynamic *tmp-dir* nil)
 (def ^:private org :org-test)

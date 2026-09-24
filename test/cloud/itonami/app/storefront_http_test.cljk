@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.storefront-http-test
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.commerce :as commerce]
             [cloud.itonami.app.config :as config-loader]
@@ -74,12 +74,11 @@
    {:user-id "alice" :organization-id "org-1"} {:slug "alice-store"}))
 
 (defn- with-server [f]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-storefront-http"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-storefront-http")
         previous @store/state]
     (try
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     identity/session (fn [_] @current-session)
                     identity/require-passkey! identity
                     identity/configure! (fn [_] nil)]

@@ -33,7 +33,7 @@
   (:require [cloud.itonami.app.store :as store]
             [cloud.itonami.app.wallet :as wallet]
             [kotoba.lang.text :as str]
-            #?(:clj [clojure.data.json :as json])
+            #?(:clj [kotoba.json :as json])
             #?(:clj [cloud.itonami.app.http-client :as http])
             [eth-crypto.core :as eth]
             [wallet.chain :as wchain]

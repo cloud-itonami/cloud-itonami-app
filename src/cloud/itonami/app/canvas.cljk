@@ -42,7 +42,7 @@
   endpoint instead of trusting a claim, and `funding` applies by refusing an
   unknown balance instead of reading it as zero."
   (:require [kotoba.lang.edn :as edn]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.store :as store])
@@ -75,7 +75,7 @@
 (defn- read-projection [ws product]
   (when-let [root (:file ws)]
     (let [f (io/file root (projection-path product))]
-      (when (.isFile f)
+      (when (io/file? f)
         (try (edn/read-string (slurp f))
              (catch Exception _ unreadable))))))
 
@@ -295,7 +295,7 @@
 
       :else
       (let [f (io/file (:file ws) maturity-path)]
-        (if-not (.isFile f)
+        (if-not (io/file? f)
           {:state :missing :source maturity-path
            :detail (str maturity-path " が workspace にありません。superproject で "
                         "`kbb --backend sci 70-tools/bmc/bin/gftd.cljk score datoms` を実行すると生成されます")}

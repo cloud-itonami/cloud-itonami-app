@@ -7,7 +7,7 @@
   then every person who reconnects would be shown an approval screen for
   access nobody decided to want — and they would approve it, because it
   arrives looking like the normal reconnect."
-  (:require [clojure.set :as set]
+  (:require [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.connectors :as connectors]

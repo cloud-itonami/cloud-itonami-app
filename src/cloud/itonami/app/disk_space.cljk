@@ -7,7 +7,7 @@
   then reclaim re-discovers and revalidates those ids immediately before a
   mutation. Unknown, stale, open, symlinked, Git-owned and unclassified paths
   fail closed."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [clojure.java.io :as io]
             [kotoba.lang.text :as str])
   (:import [java.nio.file FileVisitResult Files LinkOption Path SimpleFileVisitor]
            [java.nio.file.attribute BasicFileAttributes]
@@ -244,7 +244,7 @@
 
 (defn- sha256 [s]
   (let [digest (.digest (MessageDigest/getInstance "SHA-256")
-                        (.getBytes (str s) "UTF-8"))]
+                        (kbytes/utf8-bytes (str s)))]
     (apply str (map #(format "%02x" (bit-and 0xff %)) digest))))
 
 (defn- candidate-id [^Path path kind bytes]

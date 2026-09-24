@@ -4,7 +4,7 @@
   A handler that kept `(= method \"GET\") (= path \"/health\")` and dropped the
   oracle call would still 200, and every other test in this repository would
   stay green. Invert the artifact; the process must stop answering."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.config :as config-loader]
@@ -51,13 +51,12 @@
                 (catch Exception _ {:raw (.body response)}))}))
 
 (defn- with-server [body]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-app-health-http"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-app-health-http")
         previous-state @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/configure! (fn [_] nil)]
         (server/stop!)
         (server/start! config)

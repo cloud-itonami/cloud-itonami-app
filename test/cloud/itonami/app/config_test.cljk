@@ -19,7 +19,7 @@
   data-dir. A JVM cannot portably set its own environment, so the half of the precedence
   rule that reads CLOUD_ITONAMI_DATA_DIR is exercised only by the property winning when
   both could apply. Pretending otherwise would be worse than saying so."
-  (:require [kotoba.lang.edn :as edn]
+  (:require [kotoba.io :as kio] [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
@@ -102,9 +102,8 @@
         (System/setProperty "user.dir" previous-dir)))))
 
 (defn- scratch-home []
-  (let [home (.toFile (java.nio.file.Files/createTempDirectory
-                       "cloud-itonami-app-resident"
-                       (make-array java.nio.file.attribute.FileAttribute 0)))]
+  (let [home (kio/temp-dir
+                       "cloud-itonami-app-resident")]
     (.mkdirs (io/file home ".cloud-itonami" "app"))
     (.getCanonicalPath home)))
 

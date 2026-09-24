@@ -1,8 +1,8 @@
 (ns cloud.itonami.app.core-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.io :as kio] [clojure.test :refer [deftest is testing]]
             [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.set :as set]
+            [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.appearance :as appearance]
@@ -118,14 +118,13 @@
              tamaki-worker-assignment intent 2000))))))
 
 (deftest chat-persists-kgraph-backed-memory
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-app-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-app-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
       (with-redefs [config-loader/data-dir
-                    (fn [] (.toFile temporary))
+                    (fn [] temporary)
                     provider/chat
                     (fn [_ request]
                       (is (= "hello" (get-in request [:messages 1 :content])))
@@ -140,14 +139,13 @@
         (reset! store/state previous)))))
 
 (deftest opted-in-chronicle-context-is-bounded-and-remembered
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-memory-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-memory-test")
         previous @store/state
         remembered (atom nil)]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     chronicle/context (fn [user-id query]
                                         (is (= "alice" user-id))
                                         (is (= "hello" query))
@@ -229,14 +227,13 @@
       (finally (reset! store/state previous)))))
 
 (deftest streaming-chat-emits-deltas-and-persists-complete-message
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-app-stream-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-app-stream-test")
         previous @store/state
         deltas (atom [])]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     provider/chat-stream!
                     (fn [_ _ on-delta]
                       (on-delta "こん")
@@ -656,10 +653,9 @@
       (is (= "event" (get-in snapshot [:scheduler :items 0 :id]))))))
 
 (deftest workspace-adapters-return-safe-domain-backed-view-models
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "Cloud Itonami-workspace-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
-        root (.toFile temporary)
+  (let [temporary (kio/temp-dir
+                   "Cloud Itonami-workspace-test")
+        root temporary
         inbox (io/file root "m365-archive/mail/受信トレイ")
         drive (io/file root "m365-archive/onedrive/資料")]
     (.mkdirs inbox)
@@ -698,15 +694,14 @@
 (defn- with-worker-sandbox
   "Run `body` against isolated persisted state and an empty worker queue."
   [body]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-app-worker-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-app-worker-test")
         previous-state @store/state
         previous-runs @worker/runs]
     (try
       (reset! store/state (store/initial-state))
       (reset! worker/runs [])
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
+      (with-redefs [config-loader/data-dir (fn [] temporary)]
         (body))
       (finally
         (reset! store/state previous-state)
@@ -814,9 +809,8 @@
                  (mapv :title (:items (worker/snapshot bounded))))))))))
 
 (deftest one-user-can-belong-to-and-switch-between-organizations
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-multi-org-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-multi-org-test")
         previous @store/state
         now (store/now)]
     (try
@@ -835,7 +829,7 @@
                        {:id "membership-personal"
                         :organization-id "org-personal"
                         :user-id "user-1" :role :owner :created-at now}}}))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
+      (with-redefs [config-loader/data-dir (fn [] temporary)]
         (let [{:keys [token]} (local-identity/issue-session!
                                "user-1" passkey-session-options)
               session (local-identity/session token)]
@@ -869,13 +863,12 @@
         (reset! store/state previous)))))
 
 (deftest a-personal-tenant-is-the-users-own-namespace-and-landing-is-deliberate
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-personal-tenant-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-personal-tenant-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/provider-config
                     (fn [provider]
                       {:provider provider :name (name provider)
@@ -939,13 +932,12 @@
         (reset! store/state previous)))))
 
 (deftest an-added-user-gets-their-own-tenant-and-lands-in-the-organization
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-added-user-tenant"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-added-user-tenant")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/provider-config
                     (fn [provider]
                       {:provider provider :name (name provider)
@@ -993,9 +985,8 @@
         (reset! store/state previous)))))
 
 (deftest did-web-answers-for-the-tenant-that-was-asked-about
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-did-web-per-tenant"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-did-web-per-tenant")
         previous @store/state
         previous-profile (local-identity/identity-profile)
         now (store/now)]
@@ -1028,7 +1019,7 @@
                        {:id "membership-etzhayyim"
                         :organization-id "org-etzhayyim"
                         :user-id "user-1" :role :owner :created-at now}}}))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
+      (with-redefs [config-loader/data-dir (fn [] temporary)]
         (testing "the document served depends on the name that was asked for"
           (is (= "etzhayyim.example.test"
                  (local-identity/did-web-domain-for-host
@@ -1055,9 +1046,8 @@
         (reset! store/state previous)))))
 
 (deftest existing-user-accepts-an-organization-bound-invitation
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-org-invitation-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-org-invitation-test")
         previous @store/state
         now (store/now)]
     (try
@@ -1087,7 +1077,7 @@
           "membership-personal"
           {:id "membership-personal" :organization-id "org-personal"
            :user-id "user-member" :role :owner :created-at now}}}))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
+      (with-redefs [config-loader/data-dir (fn [] temporary)]
         (let [owner-token (:token
                            (local-identity/issue-session!
                             "user-owner" passkey-session-options))
@@ -1134,10 +1124,9 @@
         (reset! store/state previous)))))
 
 (deftest tamaki-activity-is-cursor-based-and-redacted
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-organism-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
-        root (.toFile temporary)
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-organism-test")
+        root temporary
         organisms (io/file root "organisms")
         state-dir (io/file root ".tamaki")
         events (io/file state-dir "events.edn")
@@ -1235,13 +1224,12 @@
                                   "must remain private"))))))))
 
 (deftest local-identity-registers-organization-owner-and-members-safely
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "Cloud Itonami-identity-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "Cloud Itonami-identity-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/provider-config
                     (fn [provider]
                       {:provider provider :name (name provider)
@@ -1271,13 +1259,12 @@
         (reset! store/state previous)))))
 
 (deftest passkey-first-registration-needs-no-profile-and-roots-a-user-did
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "Cloud Itonami-passkey-first-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "Cloud Itonami-passkey-first-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/provider-config
                     (fn [provider]
                       {:provider provider :name (name provider)
@@ -1364,13 +1351,12 @@
         (reset! store/state previous)))))
 
 (deftest oauth-start-is-session-bound-pkce-and-secret-free-in-public-state
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "Cloud Itonami-oauth-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "Cloud Itonami-oauth-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/provider-config
                     (fn [provider]
                       {:provider provider :name "GitHub" :configured? true
@@ -1411,13 +1397,12 @@
         (reset! store/state previous)))))
 
 (deftest managed-account-ids-are-canonical-and-enrollment-codes-are-secret
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "Cloud Itonami-account-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "Cloud Itonami-account-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/provider-config
                     (fn [provider]
                       {:provider provider :name (name provider)
@@ -1466,13 +1451,12 @@
         (reset! store/state previous)))))
 
 (deftest passkey-ceremonies-require-discoverable-user-verification-and-are-single-use
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "Cloud Itonami-passkey-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "Cloud Itonami-passkey-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
+      (with-redefs [config-loader/data-dir (fn [] temporary)]
         (let [{:keys [token]} (local-identity/register!
                                {:organization-name "Example Org"
                                 :organization-id "example"

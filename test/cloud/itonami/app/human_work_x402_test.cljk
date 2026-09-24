@@ -1,12 +1,10 @@
 (ns cloud.itonami.app.human-work-x402-test
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is use-fixtures]]
             [cloud.itonami.app.human-work :as human-work]
             [cloud.itonami.app.human-work-x402 :as x402]
-            [cloud.itonami.app.store :as store])
-  (:import [java.nio.charset StandardCharsets]
-           [java.util Base64]))
+            [cloud.itonami.app.store :as store]))
 
 (def configuration
   {:server {:public-origin "https://itonami.example"}
@@ -75,8 +73,8 @@
     (human-work/accept! (:id request) "worker")))
 
 (defn- encode [value]
-  (.encodeToString (Base64/getEncoder)
-                   (.getBytes (json/write-str value) StandardCharsets/UTF_8)))
+  (kbytes/base64-encode
+                   (kbytes/utf8-bytes (json/write-str value))))
 
 (defn- provider [calls]
   (fn [_ call]

@@ -17,7 +17,7 @@
   Preview and stage use the same v2 manifest.  Stage rebuilds the source
   inventory before and after export and refuses if it changed, which keeps the
   reviewed preview tied to the bytes that were actually staged."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.bots :as bots]

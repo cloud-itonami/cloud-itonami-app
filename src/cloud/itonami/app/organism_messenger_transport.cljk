@@ -4,16 +4,16 @@
   The clear token exists only in a 0600 file under Tamaki's private workplace.
   Cloud Itonami persists its SHA-256 digest and resolves the bearer to exactly
   one active assignment; a request never supplies the mailbox principal."
-  (:require [kotoba.lang.edn :as edn]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.organism-gateway :as gateway]
             [cloud.itonami.app.secure-file :as secure-file]
             [cloud.itonami.app.store :as store])
-  (:import [java.nio.charset StandardCharsets]
+  (:import
            [java.nio.file Files StandardCopyOption]
            [java.security MessageDigest SecureRandom]
-           [java.util Base64 UUID]))
+           [java.util UUID]))
 
 (def schema "cloud.itonami.app.organism-messenger-transport.v1")
 
@@ -28,7 +28,7 @@
 
 (defn- digest-bytes [value]
   (.digest (MessageDigest/getInstance "SHA-256")
-           (.getBytes (str value) StandardCharsets/UTF_8)))
+           (kbytes/utf8-bytes (str value))))
 
 (defn- hex [bytes]
   (apply str (map #(format "%02x" (bit-and (int %) 0xff)) bytes)))
@@ -36,7 +36,7 @@
 (defn- random-token []
   (let [bytes (byte-array 32)]
     (.nextBytes (SecureRandom.) bytes)
-    (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) bytes)))
+    (kbytes/base64url-encode bytes {:pad? false})))
 
 (defn- credential-directory []
   (io/file (or (System/getenv "CLOUD_ITONAMI_TAMAKI_STATE_DIR")
@@ -58,7 +58,7 @@
     (.mkdirs parent)
     (secure-file/create-file! temporary)
     (Files/write (.toPath temporary)
-                 (.getBytes (str (pr-str value) "\n") StandardCharsets/UTF_8)
+                 (kbytes/utf8-bytes (str (pr-str value) "\n"))
                  (make-array java.nio.file.OpenOption 0))
     (Files/move (.toPath temporary) (.toPath file)
                 (into-array StandardCopyOption

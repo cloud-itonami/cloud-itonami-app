@@ -147,7 +147,7 @@
         b64 (:body resp)]
     {:status (:status resp)
      :bytes (when (seq (str b64))
-              (.decode (java.util.Base64/getDecoder) ^String b64))}))
+              (b/base64-decode-bytes ^String b64))}))
 
 (defn- fetch-piece
   "Read-through retrieval for a piece that is not staged. Returns bytes or
@@ -299,5 +299,5 @@
   asserted. Offline — no network, no funds, no provider."
   ([] (sample "cloud-itonami-app · filecoin piece addressing"))
   ([text]
-   (let [bytes (.getBytes ^String text "UTF-8")]
+   (let [bytes (b/utf8-bytes ^String text)]
      (assoc (piece-of bytes) :text text :bytes (alength bytes)))))

@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.bulky-waste-http-test
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as local-identity]
@@ -74,14 +74,13 @@
    :facility-permit-evidence-ref "permit:1"})
 
 (defn- with-server [body]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-app-bulky-waste-http"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-app-bulky-waste-http")
         previous @store/state]
     (try
       (reset! actor "person-owner")
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/session
                     (fn [_] {:csrf csrf :user-id @actor
                              :organization-id organization})

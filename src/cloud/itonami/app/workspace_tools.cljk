@@ -4,7 +4,7 @@
   There is deliberately no shell tool. Reads stay inside the exact Git root;
   writes and commits are separate tool names so the Bot host can hold them for
   human approval before this namespace is called."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [clojure.java.io :as io]
             [kotoba.lang.text :as str])
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files LinkOption Path StandardCopyOption]
@@ -268,7 +268,7 @@
 (defn- write-file! [root {:keys [path content]}]
   (let [^Path target (safe-path root path)
         ^Path parent (.getParent target)
-        bytes (.getBytes (str content) StandardCharsets/UTF_8)]
+        bytes (kbytes/utf8-bytes (str content))]
     (when (> (alength bytes) max-file-bytes)
       (throw (ex-info "Workspace file exceeds the write limit."
                       {:type :workspace/file-too-large})))

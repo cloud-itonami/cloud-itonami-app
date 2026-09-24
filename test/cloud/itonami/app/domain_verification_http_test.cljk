@@ -11,7 +11,7 @@
   These tests therefore send requests shaped like the browser's: no `Origin` on
   the GET, `Origin` on the writes. The point is the asymmetry, so both halves
   are asserted — dropping the check from the read must not weaken the writes."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as identity]
@@ -58,9 +58,8 @@
                 (catch Exception _ (.body response)))}))
 
 (defn- with-server [f]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-domain-http"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-domain-http")
         previous @store/state
         session {:csrf csrf :user-id "user-a" :organization-id "org-a"
                  :membership-id "membership-a"
@@ -76,7 +75,7 @@
                                                     :organization-id "org-a"
                                                     :user-id "user-a" :role :owner}}
                       :domain-verifications {}}))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     identity/session (fn [_] session)
                     identity/require-passkey! identity
                     identity/configure! (fn [_] nil)]

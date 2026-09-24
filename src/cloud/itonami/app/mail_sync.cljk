@@ -28,8 +28,8 @@
   mean `sync-all!` recorded an error against a *provider* and moved on, and
   with two Gmail accounts connected that reads as 'Gmail is broken' when one
   of the two mailboxes is perfectly fine."
-  (:require [clojure.data.json :as json]
-            [clojure.java.io :as io]
+  (:require [kotoba.http.form-urlencoded :as form-urlencoded] [kotoba.bytes :as kbytes] [kotoba.json :as json]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.identity :as identity]
@@ -39,7 +39,7 @@
             [cloud.itonami.app.mail-pop3 :as pop3]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.store :as store])
-  (:import [java.net URLEncoder]
+  (:import
            [java.nio.charset StandardCharsets]
            [java.util.concurrent Executors ScheduledExecutorService
             ThreadFactory TimeUnit]))
@@ -53,7 +53,7 @@
   (identity/keychain-find service account))
 
 (defn- url-encode [value]
-  (URLEncoder/encode (str value) StandardCharsets/UTF_8))
+  (form-urlencoded/form-encode (str value)))
 
 (defn- query-string [values]
   (str/join "&"
@@ -121,9 +121,9 @@
         safe-id (str/replace (str (:provider-message-id message))
                              #"[^A-Za-z0-9._-]" "_")
         file (io/file (archive-root) safe-account (str safe-id ".json"))]
-    (.mkdirs (.getParentFile file))
+    (io/mkdirs (io/parent-file file))
     (spit file (json/write-str message))
-    (.getPath file)))
+    (io/path file)))
 
 (defn message-id
   "The local id for one synced message.
@@ -231,7 +231,7 @@
      :body body
      :labels [(:displayName folder)]
      :read? (boolean (:isRead data))
-     :size-bytes (count (.getBytes ^String body StandardCharsets/UTF_8))}))
+     :size-bytes (count (kbytes/utf8-bytes ^String body))}))
 
 (defn- graph-folder-sync! [token folder delta-link]
   (loop [url (or delta-link

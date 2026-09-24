@@ -6,7 +6,7 @@
   no knowledge of how they were made, and resolves. Verifying the in-memory
   value proves the library works; verifying the BYTES proves this app
   publishes something a resolver can read."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
@@ -154,11 +154,10 @@
 ;; ── rotation, portability and the pre-rotation commitment ────────────────────
 
 (defn- with-temp-data-dir [body]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-org-root-did"
-                   (make-array java.nio.file.attribute.FileAttribute 0))]
-    (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
-      (body (.toFile temporary)))))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-org-root-did")]
+    (with-redefs [config-loader/data-dir (fn [] temporary)]
+      (body temporary))))
 
 (deftest a-proved-domain-appends-a-version-that-resolves
   (testing "the demonstration the pre-rotation commitment was written for"

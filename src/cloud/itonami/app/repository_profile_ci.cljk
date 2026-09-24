@@ -2,14 +2,12 @@
   "Cross-repository ADR-0013 profile gate for GitHub Actions. The checked-out
   app profile is read locally; every other inventory entry is read from that
   repository's `main` through GitHub's contents API."
-  (:require [clojure.data.json :as json]
-            [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [promesa.core :as p]
             [cloud.itonami.app.http-client-async :as http]
-            [cloud.itonami.app.repository-qualification :as qualification])
-  (:import [java.nio.charset StandardCharsets]
-           [java.util Base64]))
+            [cloud.itonami.app.repository-qualification :as qualification]))
 
 (def ^:private current-repository "cloud-itonami/cloud-itonami-app")
 (def ^:private max-profile-bytes (* 64 1024))
@@ -35,11 +33,11 @@
               _ (when-not (= "base64" encoding)
                   (throw (ex-info "GitHub repository profile encoding denied"
                                   {:type :repository-storage/profile-encoding})))
-              bytes (.decode (Base64/getMimeDecoder) ^String content)]
+              bytes (kbytes/base64mime-decode-bytes ^String content)]
           (when (> (alength bytes) max-profile-bytes)
             (throw (ex-info "GitHub repository profile exceeds size limit"
                             {:type :repository-storage/profile-too-large})))
-          (String. bytes StandardCharsets/UTF_8))))))
+          (kbytes/utf8-string bytes))))))
 
 (def ^:dynamic *fetch-profile* github-profile)
 
@@ -53,8 +51,8 @@
   one."
   ([inventory-path] (audit! inventory-path (System/getenv "GITHUB_TOKEN")))
   ([inventory-path token]
-   (let [inventory-file (.getCanonicalFile (io/file inventory-path))
-         parent (.getParentFile inventory-file)
+   (let [inventory-file (io/canonical-file (io/file inventory-path))
+         parent (io/parent-file inventory-file)
          entries (qualification/read-profile-inventory! inventory-file)
          client nil
          ;; `try/catch` could not stay: a rejected promise arrives after the

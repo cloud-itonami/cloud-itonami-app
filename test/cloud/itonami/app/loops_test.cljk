@@ -7,21 +7,19 @@
   3. a strength score that `dynamics.core` returns nil for stays absent — it is
      never 0 and never a plausible-looking number;
   4. a ledger of a different shape is named as such, not rendered as empty."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as kio] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.loops :as loops]
             [cloud.itonami.app.store :as store]
-            [dynamics.core :as dynamics])
-  (:import [java.nio.file Files]
-           [java.nio.file.attribute FileAttribute]))
+            [dynamics.core :as dynamics]))
 
 (def session {:user-id "user-1" :organization-id "org-1"})
 (def no-workspace {})
 
 (defn- temp-dir []
-  (.toFile (Files/createTempDirectory "loops-test" (into-array FileAttribute []))))
+  (kio/temp-dir "loops-test"))
 
 (defn- reset-all! [] (store/transact! assoc :businesses {}))
 

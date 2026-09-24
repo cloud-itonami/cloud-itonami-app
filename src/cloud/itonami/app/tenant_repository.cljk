@@ -4,12 +4,12 @@
   Plaintext exists only in the local editable workspace. `publish!` uses the
   existing Kagi/DataLad/Kotobase pipeline; this namespace never accepts keys or
   remote credentials from an agent request."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as io]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.repository-runtime :as runtime]
             [cloud.itonami.app.repository-storage :as repository]
             [cloud.itonami.app.tenant-connection :as connection])
-  (:import [java.nio.charset StandardCharsets]
+  (:import
            [java.security MessageDigest]))
 
 (def ^:dynamic *environment* #(System/getenv %))
@@ -21,17 +21,16 @@
   "Opaque stable coordinate. User and tenant IDs never become filesystem names
   or Kotobase CIDs themselves."
   [session tenant-id]
-  (let [source (.getBytes (str (:user-id session) "\u0000" tenant-id)
-                          StandardCharsets/UTF_8)]
+  (let [source (kbytes/utf8-bytes (str (:user-id session) "\u0000" tenant-id))]
     (str "usr-" (hex (.digest (MessageDigest/getInstance "SHA-256") source)))))
 
 (defn- roots []
   {:workspace-root
    (or (not-empty (*environment* "CLOUD_ITONAMI_WORKSPACE_ROOT"))
-       (.getPath (io/file (config/data-dir) "workspace")))
+       (io/path (io/file (config/data-dir) "workspace")))
    :datalad-root
    (or (not-empty (*environment* "CLOUD_ITONAMI_DATALAD_DATASET"))
-       (.getPath (io/file (config/data-dir) "datalad")))})
+       (io/path (io/file (config/data-dir) "datalad")))})
 
 (defn- parse-state [state-edn]
   (when-not (string? state-edn)

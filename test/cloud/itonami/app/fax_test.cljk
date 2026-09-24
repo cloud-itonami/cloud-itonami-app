@@ -2,7 +2,7 @@
   "Every test here drives an injected `send-fn`. Nothing in this file reaches
   `api.hellofax.com`, and nothing in this repository ever has: no account is
   provisioned and a live call costs money and rings a real phone line."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.fax :as fax]
@@ -11,10 +11,9 @@
             [lawfirm.demo :as demo]
             [lawfirm.store :as lf-store]
             [lawfirm.transmission :as lf-transmission]
-            [lawfirm.workspace :as lf-workspace])
-  (:import [java.nio.charset StandardCharsets]))
+            [lawfirm.workspace :as lf-workspace]))
 
-(defn- bytes-of [^String s] (.getBytes s StandardCharsets/UTF_8))
+(defn- bytes-of [^String s] (kbytes/utf8-bytes s))
 
 (def ^:private pdf (bytes-of "%PDF-1.4 準備書面"))
 (def ^:private pdf-digest (fax/sha256-hex pdf))

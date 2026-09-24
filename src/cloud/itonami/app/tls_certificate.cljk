@@ -28,7 +28,7 @@
   behind a CDN or a reverse proxy already has certificates and should not be
   asking a CA for more; a rate limit spent on a name somebody else terminates is
   spent for nothing."
-  (:require [clojure.java.shell :as shell]
+  (:require [kotoba.bytes :as kbytes] [clojure.java.shell :as shell]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.acme :as acme]
             [cloud.itonami.app.store :as store]
@@ -39,7 +39,6 @@
            [java.security.cert CertificateFactory X509Certificate]
            [java.security.spec PKCS8EncodedKeySpec]
            [java.time Duration Instant]
-           [java.util Base64]
            [javax.net.ssl ExtendedSSLSession KeyManagerFactory SNIHostName
             SSLContext TrustManagerFactory X509ExtendedKeyManager]))
 
@@ -136,7 +135,7 @@
   [pem]
   (let [factory (CertificateFactory/getInstance "X.509")]
     (vec (.generateCertificates factory
-                                (ByteArrayInputStream. (.getBytes (str pem) "UTF-8"))))))
+                                (ByteArrayInputStream. (kbytes/utf8-bytes (str pem)))))))
 
 (defn public-record [record]
   (select-keys record [:domain :status :issued-at :not-after :serial :error
@@ -280,7 +279,7 @@
                     (.generatePrivate
                      factory
                      (PKCS8EncodedKeySpec.
-                      (.decode (Base64/getUrlDecoder) ^String secret)))
+                      (kbytes/base64url-decode-bytes ^String secret)))
                     (char-array 0)
                     (into-array X509Certificate (parse-chain (:pem record)))))
     ks))

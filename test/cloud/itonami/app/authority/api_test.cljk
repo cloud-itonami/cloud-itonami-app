@@ -3,7 +3,7 @@
   authority cannot be reached by a typo, that the transport records why a hand-off
   could not happen, and -- the one that matters most -- that a CLIENT CANNOT
   SUPPLY ITS OWN POSTURE."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.authority :as authority]
             [cloud.itonami.app.authority.api :as api]
@@ -12,8 +12,7 @@
             [cloud.itonami.app.authority.transport :as transport]
             [cloud.itonami.app.store :as store])
   (:import [com.sun.net.httpserver HttpHandler HttpServer]
-           [java.net InetSocketAddress]
-           [java.nio.charset StandardCharsets]))
+           [java.net InetSocketAddress]))
 
 (def session {:user-id "user-1" :organization-id "org-1"})
 
@@ -295,7 +294,7 @@
      server "/"
      (reify HttpHandler
        (handle [_ ex]
-         (let [bytes (.getBytes (json/write-str payload) StandardCharsets/UTF_8)]
+         (let [bytes (kbytes/utf8-bytes (json/write-str payload))]
            (.set (.getResponseHeaders ex) "Content-Type" "application/json")
            (.sendResponseHeaders ex 200 (alength bytes))
            (with-open [out (.getResponseBody ex)] (.write out bytes))
@@ -448,8 +447,7 @@
          (handle [_ ex]
            (reset! answered {:method (.getRequestMethod ex)
                              :path (.getPath (.getRequestURI ex))})
-           (let [b (.getBytes (json/write-str {:status "pending" :reference "r1"})
-                              StandardCharsets/UTF_8)]
+           (let [b (kbytes/utf8-bytes (json/write-str {:status "pending" :reference "r1"}))]
              (.set (.getResponseHeaders ex) "Content-Type" "application/json")
              (.sendResponseHeaders ex 200 (alength b))
              (with-open [o (.getResponseBody ex)] (.write o b))

@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.provider
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.http-client :as http]

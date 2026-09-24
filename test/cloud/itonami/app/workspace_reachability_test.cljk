@@ -28,7 +28,7 @@
   variable — `act('reject')` builds `/suggestions/{id}/reject` — counts,
   because the string is there; a segment built by joining fragments would
   not."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]))
 

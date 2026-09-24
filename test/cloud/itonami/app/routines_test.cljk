@@ -12,7 +12,7 @@
   is stopped one level down at `provider/agent-turn` — a turn with no tool calls
   ends the loop, which is enough for every assertion here and reaches no
   network."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.io :as kio] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bots :as bots]
@@ -23,13 +23,12 @@
             [cloud.itonami.app.store :as store]))
 
 (defn- with-store [f]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-routines-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-routines-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config/data-dir (fn [] (.toFile temporary))]
+      (with-redefs [config/data-dir (fn [] temporary)]
         (f))
       (finally (reset! store/state previous)))))
 

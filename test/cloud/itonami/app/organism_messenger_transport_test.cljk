@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.organism-messenger-transport-test
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as io]
             [clojure.test :refer [deftest is use-fixtures]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.organism-gateway :as gateway]
@@ -13,12 +13,10 @@
   :each
   (fn [test-fn]
     (let [before @store/state
-          directory (.toFile
-                     (java.nio.file.Files/createTempDirectory
-                      "cloud-itonami-ao-messenger"
-                      (make-array java.nio.file.attribute.FileAttribute 0)))
+          directory (io/temp-dir
+                      "cloud-itonami-ao-messenger")
           organisms (io/file directory "organisms")]
-      (.mkdirs organisms)
+      (io/mkdirs organisms)
       (spit (io/file organisms "reviewer.edn")
             (pr-str {:ao.worker/schema organism-worker/schema
                      :ao.worker/id "ao:acme:reviewer"
@@ -47,7 +45,7 @@
         token (:token credential)
         record (get-in (store/snapshot)
                        [:organism-messenger-transports "ao:acme:reviewer"])]
-    (is (.isFile (io/file (:credential-file issued))))
+    (is (io/file? (io/file (:credential-file issued))))
     (is (string? token))
     (is (nil? (:token record)) "clear token is not in app state")
     (is (= "organism:ao:acme:reviewer"

@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.virtual-shell-test
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as kio] [clojure.java.io :as io]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.virtual-shell :as shell]
             [cloud.itonami.app.workspace-tools :as workspace-tools]))
@@ -39,9 +39,8 @@
   (is (.endsWith (shell/bounded-output (apply str (repeat 40000 "x"))) "…")))
 
 (deftest linked-worktrees-are-refused-instead-of-mounting-shared-git-metadata
-  (let [root (.toFile (java.nio.file.Files/createTempDirectory
-                       "cloud-itonami-vshell-worktree-"
-                       (make-array java.nio.file.attribute.FileAttribute 0)))]
+  (let [root (kio/temp-dir
+                       "cloud-itonami-vshell-worktree-")]
     (spit (io/file root ".git") "gitdir: /outside/grant\n")
     (with-redefs [workspace-tools/admit-root (constantly (.getPath root))]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"standalone Git clone"

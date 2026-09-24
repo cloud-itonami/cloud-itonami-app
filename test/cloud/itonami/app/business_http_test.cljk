@@ -7,7 +7,7 @@
   the CSRF token. The passkey gate is stubbed rather than satisfied, like the
   worker HTTP tests: a real ceremony needs an authenticator, and what is under
   test is the route layer behind that gate."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as local-identity]
@@ -67,13 +67,12 @@
   500 for any install that had actually set one."
   ([organization body] (with-server organization {} body))
   ([organization overrides body]
-   (let [temporary (java.nio.file.Files/createTempDirectory
-                    "cloud-itonami-app-business-http"
-                    (make-array java.nio.file.attribute.FileAttribute 0))
+   (let [temporary (kio/temp-dir
+                    "cloud-itonami-app-business-http")
          previous-state @store/state]
      (try
        (reset! store/state (store/initial-state))
-       (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+       (with-redefs [config-loader/data-dir (fn [] temporary)
                      local-identity/session
                      (fn [_] (cond-> {:csrf csrf :user-id "test-user"}
                                organization (assoc :organization-id organization)))
@@ -168,9 +167,8 @@
 ;; caught it because the default config sets no workspace root, and the
 ;; `:unset` branch carries no `:file`.
 (deftest a-configured-workspace-still-serializes
-  (let [root (.toFile (java.nio.file.Files/createTempDirectory
-                       "cloud-itonami-app-business-ws"
-                       (make-array java.nio.file.attribute.FileAttribute 0)))]
+  (let [root (kio/temp-dir
+                       "cloud-itonami-app-business-ws")]
     (with-server "org-ws" {:business {:workspace-root (.getPath root)}}
       (fn []
         (testing "a present workspace is 200, not 500 on a File it cannot write"

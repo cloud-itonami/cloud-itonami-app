@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.humanity-trust-http-test
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.humanity-trust :as humanity]
@@ -45,16 +45,15 @@
      :body (json/read-str (.body response) :key-fn keyword)}))
 
 (defn- with-server [f]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-humanity-http"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-humanity-http")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
       (reset! current-session {:csrf csrf :user-id "alice"
                                :organization-id "org-1" :kind :passkey
                                :authn-level :phishing-resistant})
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     identity/session (fn [_] @current-session)
                     identity/require-passkey! identity
                     identity/configure! (fn [_] nil)

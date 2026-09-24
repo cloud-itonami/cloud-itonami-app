@@ -12,27 +12,26 @@
   GET-verified at `https://kotobase.net/ipfs/{raw-cid}`.
 
   Does not republish IPNS. Does not move the auth host."
-  (:require [kotoba.lang.edn :as edn]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [chain.core :as chain]
             [cloud.itonami.app.bundle :as bundle]
             [kotoba.protocol.app :as app]
             [kotoba.protocol.graph :as g])
-  (:import [java.nio.charset StandardCharsets]
+  (:import
            [java.time Instant]
            [java.util Arrays]))
 
 (def workspace-name "mobile")
 (def workspace-body
-  (.getBytes (str "{:kotoba.graph/name \"" workspace-name "\"}\n")
-             StandardCharsets/UTF_8))
+  (kbytes/utf8-bytes (str "{:kotoba.graph/name \"" workspace-name "\"}\n")))
 
 (defn- ->bytes [x]
   (cond
     (nil? x) (byte-array 0)
     (bytes? x) x
-    (string? x) (.getBytes ^String x StandardCharsets/UTF_8)
+    (string? x) (kbytes/utf8-bytes ^String x)
     (sequential? x) (byte-array (map unchecked-byte x))
     :else (throw (ex-info "not bytes" {:class (class x)}))))
 

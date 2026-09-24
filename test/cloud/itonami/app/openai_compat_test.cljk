@@ -9,7 +9,7 @@
   The provider is stubbed. What is under test is this app's wire contract, not
   a local model's output — a real provider would make the assertions about
   chunk order depend on a model's token boundaries."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
@@ -70,13 +70,12 @@
        vec))
 
 (defn- with-server [chat-stream body]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-app-openai-compat"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-app-openai-compat")
         previous-state @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/configure! (fn [_] nil)
                     provider/chat-stream! chat-stream
                     provider/chat (fn [_ _] {:content "整理しました"

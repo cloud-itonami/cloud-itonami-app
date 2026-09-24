@@ -9,8 +9,8 @@
   account's on-chain owner set.
 
   No private key enters this namespace and no signature is persisted by it."
-  (:require [asn1.core :as asn1]
-            [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [asn1.core :as asn1]
+            [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.esign.assertion :as assertion]
             [cloud.itonami.app.http-client :as http]
@@ -19,7 +19,6 @@
             [ethereum.abi :as abi])
   (:import [java.math BigInteger]
            [java.net InetAddress URI]
-           [java.nio.charset StandardCharsets]
            [java.security AlgorithmParameters KeyFactory MessageDigest Signature]
            [java.security.spec ECGenParameterSpec ECParameterSpec ECPoint
             ECPublicKeySpec]))
@@ -417,7 +416,7 @@
         client-bytes (assertion/decode (:clientDataJSON response))
         auth-bytes (assertion/decode (:authenticatorData response))
         der (assertion/decode (:signature response))
-        client-json (String. client-bytes StandardCharsets/UTF_8)
+        client-json (kbytes/utf8-string client-bytes)
         client-data (try (json/read-str client-json :key-fn keyword)
                          (catch Exception _
                            (refuse :wallet/user-operation-invalid-assertion

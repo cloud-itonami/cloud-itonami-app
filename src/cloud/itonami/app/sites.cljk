@@ -4,7 +4,7 @@
   Editing and publishing are separate state transitions. Published HTML is
   served with a CSP sandbox by the HTTP adapter, so authored markup cannot
   inherit the authenticated application's authority."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [cloud.itonami.app.store :as store])
   (:import [java.util UUID]))
 
@@ -97,7 +97,7 @@
         current (site! organization-id project-id site-id)
         title (if (some? title) (clean-title title) (:title current))
         html (if (some? html) (str html) (:html current))]
-    (when (> (alength (.getBytes html java.nio.charset.StandardCharsets/UTF_8))
+    (when (> (alength (kbytes/utf8-bytes html))
              maximum-html-bytes)
       (fail! :site/html-too-large "HTMLは256KB以内にしてください。"))
     (let [updated (assoc current :title title :html html :status "draft"

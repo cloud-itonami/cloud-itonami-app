@@ -9,8 +9,8 @@
   So the routes are re-scanned here, from the same `.cljc` the generator uses, and
   compared against the checked-in resource. Adding a route without running
   `kbb --backend sci --classpath src dev/gen_commands.cljk` fails the suite."
-  (:require [clojure.java.io :as io]
-            [clojure.set :as set]
+  (:require [kotoba.io :as io]
+            [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-session :as agent-session]

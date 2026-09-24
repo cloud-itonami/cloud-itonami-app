@@ -7,16 +7,13 @@
   `config.yaml` (`command_allowlist`). These tests pin what that evidence
   becomes in the destination, what it never becomes, and that the inert
   default survives untouched."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as kio] [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.hermes-migration :as migration])
-  (:import [java.io File]
-           [java.nio.file Files]
-           [java.nio.file.attribute FileAttribute]))
+  (:import [java.io File]))
 
 (defn- temp-dir ^File []
-  (.toFile (Files/createTempDirectory "hermes-carry-over"
-                                      (into-array FileAttribute []))))
+  (kio/temp-dir "hermes-carry-over"))
 
 (defn- write-config! [^File root content]
   (spit (io/file root "config.yaml") content)

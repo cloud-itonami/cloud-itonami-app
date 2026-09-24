@@ -4,7 +4,7 @@
   Packages contain public envelope metadata and ciphertext chunks. Private
   recipient keys live in one exact local file per principal; this namespace
   never enumerates the key directory."
-  (:require [kotoba.lang.edn :as edn]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.secure-file :as secure-file]
@@ -27,7 +27,7 @@
 
 (defn- sha256-hex [value]
   (let [digest (.digest (MessageDigest/getInstance "SHA-256")
-                        (.getBytes (str value) StandardCharsets/UTF_8))]
+                        (kbytes/utf8-bytes (str value)))]
     (apply str (map #(format "%02x" (bit-and (int %) 0xff)) digest))))
 
 (defn- key-dir [] (io/file (config/data-dir) "drive-keys"))
@@ -78,7 +78,7 @@
   (some-> (keypair principal) :pub envelope/b64url))
 
 (defn- parse [bytes]
-  (edn/read-string (String. (as-bytes bytes) StandardCharsets/UTF_8)))
+  (edn/read-string (kbytes/utf8-string (as-bytes bytes))))
 
 (defn encrypted?
   "True only for a recognized package. Arbitrary EDN remains plaintext."
@@ -96,7 +96,7 @@
     package))
 
 (defn- write-package [package]
-  (bytes-vector (.getBytes (pr-str package) StandardCharsets/UTF_8)))
+  (bytes-vector (kbytes/utf8-bytes (pr-str package))))
 
 (defn seal-for
   "Encrypt plaintext to each local principal in `principals`."

@@ -5,11 +5,11 @@
   and one new file per organization, then atomically replaces the manifest.
   Readers therefore see either the complete previous generation or the
   complete next generation, never a mixture of tenant files."
-  (:require [kotoba.lang.edn :as edn]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.secure-file :as secure-file])
-  (:import [java.nio.charset StandardCharsets]
+  (:import
            [java.nio.file Files StandardCopyOption]
            [java.security MessageDigest]
            [java.util UUID]))
@@ -33,7 +33,7 @@
 
 (defn- tenant-token [organization]
   (subs (hex (.digest (MessageDigest/getInstance "SHA-256")
-                      (.getBytes (str organization) StandardCharsets/UTF_8)))
+                      (kbytes/utf8-bytes (str organization))))
         0 24))
 
 (defn- committed-file [name]

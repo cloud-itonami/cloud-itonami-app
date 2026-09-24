@@ -10,9 +10,9 @@
   loopback-only local surface but is not E2EE.  `:signal-v1` stores an opaque
   envelope produced by a client; this namespace never claims to encrypt bytes
   it did not encrypt."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [cloud.itonami.app.store :as store])
-  (:import [java.nio.charset StandardCharsets]
+  (:import
            [java.security KeyFactory MessageDigest Signature]
            [java.security.spec X509EncodedKeySpec]
            [java.util Base64 UUID]))
@@ -58,7 +58,7 @@
 
 (defn- digest [value]
   (let [bytes (.digest (MessageDigest/getInstance "SHA-256")
-                       (.getBytes (str value) StandardCharsets/UTF_8))]
+                       (kbytes/utf8-bytes (str value)))]
     (str "sha256:" (apply str (map #(format "%02x" (bit-and (int %) 0xff)) bytes)))))
 
 (defn- b64url-bytes [value expected field]

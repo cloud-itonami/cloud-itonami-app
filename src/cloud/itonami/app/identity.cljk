@@ -3,7 +3,7 @@
 
   Public state contains metadata and Keychain references only. OAuth access
   and refresh tokens are written to macOS Keychain and never enter state.edn."
-  (:require [cloud.itonami.app.config :as config]
+  (:require [kotoba.http.form-urlencoded :as form-urlencoded] [kotoba.bytes :as kbytes] [cloud.itonami.app.config :as config]
             [cloud.itonami.app.connectors :as connectors]
             [cloud.itonami.app.credential :as credential]
             [cloud.itonami.app.did :as did]
@@ -26,11 +26,11 @@
             [identity.directory :as directory]
             [identity.model :as identity]
             [oauth.model :as oauth])
-  (:import [java.net URLEncoder]
+  (:import
            [java.nio.charset StandardCharsets]
            [java.security MessageDigest SecureRandom]
            [java.time Duration Instant]
-           [java.util Base64 UUID]
+           [java.util UUID]
            [java.util.concurrent TimeUnit]))
 
 (def cookie-name "cloud_itonami_identity")
@@ -244,17 +244,17 @@
   (connectors/provider-catalog))
 
 (defn- url-encode [value]
-  (URLEncoder/encode (str value) StandardCharsets/UTF_8))
+  (form-urlencoded/form-encode (str value)))
 
 (defn- random-token [size]
   (let [bytes (byte-array size)]
     (.nextBytes (SecureRandom.) bytes)
-    (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) bytes)))
+    (kbytes/base64url-encode bytes {:pad? false})))
 
 (defn- digest [value]
   (let [bytes (.digest (MessageDigest/getInstance "SHA-256")
-                       (.getBytes (str value) StandardCharsets/UTF_8))]
-    (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) bytes)))
+                       (kbytes/utf8-bytes (str value)))]
+    (kbytes/base64url-encode bytes {:pad? false})))
 
 (defn keychain-find
   "The password stored under `service` for `account`, or nil.
@@ -728,7 +728,7 @@
 (defn- write-user-seed! [user-id ^bytes seed]
   (let [f (user-seed-file user-id)]
     (.mkdirs (.getParentFile f))
-    (spit f (.encodeToString (Base64/getEncoder) seed))
+    (spit f (kbytes/base64-encode seed))
     (doto f (.setReadable false false) (.setReadable true true)
              (.setWritable false false) (.setWritable true true))
     seed))
@@ -1952,9 +1952,8 @@
                       (= :pending (:status candidate))
                       code-digest
                       (MessageDigest/isEqual
-                       (.getBytes ^String code-digest StandardCharsets/UTF_8)
-                       (.getBytes ^String (:code-digest candidate)
-                                  StandardCharsets/UTF_8))
+                       (kbytes/utf8-bytes ^String code-digest)
+                       (kbytes/utf8-bytes ^String (:code-digest candidate)))
                       (pos? (compare (Instant/parse (:expires-at candidate))
                                      now-instant)))
              candidate))
@@ -2210,8 +2209,8 @@
                 (let [expected (:identity.email-challenge/token-digest candidate)]
                   (when (and expected token-digest
                              (MessageDigest/isEqual
-                              (.getBytes ^String expected StandardCharsets/UTF_8)
-                              (.getBytes ^String token-digest StandardCharsets/UTF_8))
+                              (kbytes/utf8-bytes ^String expected)
+                              (kbytes/utf8-bytes ^String token-digest))
                              (not (:identity.email-challenge/consumed? candidate))
                              (> (:identity.email-challenge/expires-at candidate 0)
                                 now))
@@ -2449,9 +2448,8 @@
                          (vals (:enrollments state)))]
     (when (and user enrollment
                (MessageDigest/isEqual
-                (.getBytes (digest code) StandardCharsets/UTF_8)
-                (.getBytes ^String (:code-digest enrollment)
-                           StandardCharsets/UTF_8))
+                (kbytes/utf8-bytes (digest code))
+                (kbytes/utf8-bytes ^String (:code-digest enrollment)))
                (not (:used? enrollment))
                (pos? (compare (Instant/parse (:expires-at enrollment))
                               (Instant/now))))
@@ -2531,7 +2529,7 @@
           verifier (random-token 48)
           challenge (-> verifier .getBytes
                         (#(.digest (MessageDigest/getInstance "SHA-256") %))
-                        (#(.encodeToString (.withoutPadding (Base64/getUrlEncoder)) %)))
+                        (#(kbytes/base64url-encode % {:pad? false})))
           redirect-uri (callback-uri origin provider)
           request-model (oauth/auth-request
                          (str "oauth-" (UUID/randomUUID))
@@ -2633,7 +2631,7 @@
           verifier (random-token 48)
           challenge (-> verifier .getBytes
                         (#(.digest (MessageDigest/getInstance "SHA-256") %))
-                        (#(.encodeToString (.withoutPadding (Base64/getUrlEncoder)) %)))
+                        (#(kbytes/base64url-encode % {:pad? false})))
           redirect-uri (sso-callback-uri origin provider)
           expires-at (str (.plusSeconds (Instant/now) transaction-seconds))
           parameters (merge

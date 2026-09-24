@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.hermes-compat-http-test
   "Wire-level proof that a Hermes client can use Itonami without a browser."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.bot :as bot]
@@ -72,14 +72,13 @@
              :bot/updated-at "2026-09-01T00:00:00Z"})))
 
 (defn- with-server [f]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-hermes-http"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-hermes-http")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
       (hermes/reset-runs!)
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     identity/configure! (fn [_] nil)
                     identity/session (fn [token]
                                        (when (= "test-token" token) owner))

@@ -44,7 +44,7 @@
   the UI and marks each item with `:origin`, because \"can I edit this\" has
   different answers on either side and a merged list that did not say so
   would be inviting the wrong one."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
@@ -87,7 +87,7 @@
             ;; goes over HTTP is the same plain-JSON shape the editor has
             ;; always been given, so the client contract does not move.
             [transit.core :as transit])
-  (:import [java.nio.charset StandardCharsets]
+  (:import
            [java.security MessageDigest]
            [java.util UUID]))
 
@@ -107,9 +107,8 @@
       (when-let [ref (:drive/object-ref item)]
         (str "content-sha256:"
              (hex (.digest (MessageDigest/getInstance "SHA-256")
-                           (.getBytes (pr-str ["cloud-itonami-drive-etag-v1"
-                                              (:drive/id item) ref])
-                                      StandardCharsets/UTF_8)))))))
+                           (kbytes/utf8-bytes (pr-str ["cloud-itonami-drive-etag-v1"
+                                              (:drive/id item) ref]))))))))
 
 (def quota-bytes
   "Per-user Drive quota.
@@ -511,10 +510,10 @@
   quota and store nine."
   [envelope]
   (mapv #(bit-and (int %) 0xff)
-        (.getBytes ^String (pr-str envelope) StandardCharsets/UTF_8)))
+        (kbytes/utf8-bytes ^String (pr-str envelope))))
 
 (defn- bytes->string [bytes]
-  (String. (byte-array (map unchecked-byte bytes)) StandardCharsets/UTF_8))
+  (kbytes/utf8-string (byte-array (map unchecked-byte bytes))))
 
 (defn- seal-body [principals item-id bytes]
   (drive-crypto/seal-for principals
@@ -2989,7 +2988,7 @@
          (if native?
            (case action
              :view (let [page (printable id issuer object-store)]
-                     {:bytes (.getBytes ^String (:html page) StandardCharsets/UTF_8)
+                     {:bytes (kbytes/utf8-bytes ^String (:html page))
                       :media-type "text/html"
                       :filename (safe-filename (:drive/title item) "html")})
              :copy (export id "edn" issuer object-store {})
@@ -3244,7 +3243,7 @@
                  "pptx" (slides-pptx/pptx-bytes resource)
                  "xlsx" (sheets-xlsx/xlsx-bytes resource)
                  "docx" (docs-docx/docx-bytes resource)
-                 (.getBytes ^String text StandardCharsets/UTF_8))}))))
+                 (kbytes/utf8-bytes ^String text))}))))
 
 (defn responses-sheet!
   "Put this form's answers into a new workbook in the Drive.
@@ -3337,7 +3336,7 @@
                      {:type :drive/unsupported-format
                       :available (vec (sort (keys import-formats)))})))
    (require-office-package! format bytes)
-   (let [text (delay (String. ^bytes bytes StandardCharsets/UTF_8))
+   (let [text (delay (kbytes/utf8-string ^bytes bytes))
          [kind imported]
          (case format
            "csv" [:sheets nil]

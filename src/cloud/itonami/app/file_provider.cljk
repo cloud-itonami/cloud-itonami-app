@@ -4,14 +4,14 @@
   Apple callbacks never decide sync policy or see storage ciphertext. This
   namespace maps Drive items to the localhost wire format and applies the
   same schedule/residency state machine used by the web UI."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.drive-crypto :as crypto]
             [cloud.itonami.app.store :as store]
             [drive.object :as object]
             [drive.workspace :as ws]
             [fileprovider.model :as model])
-  (:import (java.nio.charset StandardCharsets)
+  (:import
            (java.security MessageDigest)
            (java.util UUID)))
 
@@ -24,7 +24,7 @@
 (defn- version-of [value]
   (str "sha256:"
        (hex (.digest (MessageDigest/getInstance "SHA-256")
-                     (.getBytes (pr-str value) StandardCharsets/UTF_8)))))
+                     (kbytes/utf8-bytes (pr-str value))))))
 
 (defn- policy [item]
   (merge model/defaults

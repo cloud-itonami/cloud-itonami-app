@@ -7,7 +7,7 @@
   that comparing them as strings gives the same answer as comparing the
   instants they stand for."
   (:require [kotoba.lang.edn :as edn]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.store :as store]
             [langchain.edn-persist :as edn-persist])
@@ -63,9 +63,8 @@
     (is (every? (fn [[a b]] (.isBefore a b)) (partition 2 1 xs)))))
 
 (deftest repository-transaction-preserves-a-direct-actor-edit
-  (let [root (.toFile (java.nio.file.Files/createTempDirectory
-                       "cloud-store-repository-"
-                       (make-array java.nio.file.attribute.FileAttribute 0)))
+  (let [root (io/temp-dir
+                       "cloud-store-repository-")
         file (io/file root "state.edn")
         original (store/snapshot)]
     (try
@@ -75,7 +74,7 @@
       (binding [store/*environment*
                 (fn [name]
                   (when (= name "KOTOBA_REPOSITORY_STATE_FILE")
-                    (.getPath file)))]
+                    (io/path file)))]
         (store/transact! assoc :app/write :kept))
       (let [saved (edn/read-string (slurp file))]
         (is (= :kept (:app/write saved)))

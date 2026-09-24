@@ -46,7 +46,7 @@
   The root key here signs authority for the whole workforce. It is a separate
   secret from `bot-identity.seed`: one names Bots, this one speaks for the
   fleet, and a compromise of either should not be a compromise of both."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [ed25519.core :as ed]
             [biscuit.token :as token]
@@ -56,7 +56,6 @@
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.secure-file :as secure-file])
   (:import [java.security SecureRandom]
-           [java.nio.file Files]
 ))
 
 (def seed-bytes 32)
@@ -66,7 +65,7 @@
 
 (defn- read-seed [file]
   (when (.isFile file)
-    (let [bytes (Files/readAllBytes (.toPath file))]
+    (let [bytes (kio/read-all-bytes file)]
       (when (= seed-bytes (alength bytes)) bytes))))
 
 (defn root-seed
@@ -127,7 +126,7 @@
         ;; so today this names the only party who could ever attenuate it.
         :next-public-key holder
         :root-private-key seed
-        :sign-fn (fn [s payload] (ed/sign s (.getBytes ^String payload "UTF-8")))}))))
+        :sign-fn (fn [s payload] (ed/sign s (kbytes/utf8-bytes ^String payload)))}))))
 
 (defn attenuate
   "Narrow a Bot's own token and name who may narrow it next.
@@ -153,7 +152,7 @@
         :rules [] :checks []
         :next-public-key recipient-did
         :private-key seed
-        :sign-fn (fn [k payload] (ed/sign k (.getBytes ^String payload "UTF-8")))}))))
+        :sign-fn (fn [k payload] (ed/sign k (kbytes/utf8-bytes ^String payload)))}))))
 
 (defn verify
   "`{:ok? true :blocks n}` or a reason. Needs only the root did:key."
@@ -161,7 +160,7 @@
   (if-let [root (root-did)]
     (token/verify t root
                   (fn [did payload sig]
-                    (try (ed/verify-did did (.getBytes ^String payload "UTF-8") sig)
+                    (try (ed/verify-did did (kbytes/utf8-bytes ^String payload) sig)
                          (catch Exception _ false))))
     {:ok? false :reason :no-root-key}))
 

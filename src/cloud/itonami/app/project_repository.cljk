@@ -5,7 +5,7 @@
   The former is an ordinary Git repository. The latter is plaintext only in
   the local editable workspace and enters DataLad solely through the existing
   Kagi sealed-block pipeline."
-  (:require [kotoba.lang.edn :as edn]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.mail-age-key :as age-key]
@@ -14,10 +14,10 @@
             [cloud.itonami.app.repository-runtime :as runtime]
             [cloud.itonami.app.repository-storage :as repository]
             [cloud.itonami.app.store :as store])
-  (:import [java.nio.charset StandardCharsets]
+  (:import
            [java.nio.file Files StandardCopyOption]
            [java.security MessageDigest]
-           [java.util Base64 UUID]))
+           [java.util UUID]))
 
 (def schema "cloud.itonami.app.project-conversations.v1")
 
@@ -30,7 +30,7 @@
 
 (defn- digest [value]
   (hex (.digest (MessageDigest/getInstance "SHA-256")
-                (.getBytes (str value) StandardCharsets/UTF_8))))
+                (kbytes/utf8-bytes (str value)))))
 
 (defn- digest-bytes [^bytes value]
   (hex (.digest (MessageDigest/getInstance "SHA-256") value)))
@@ -202,7 +202,7 @@
     (loop [remaining attachments total 0 result []]
       (if-let [attachment (first remaining)]
         (let [data (or (:data-base64 attachment) (:data_base64 attachment))
-              bytes (try (.decode (Base64/getDecoder) (str data))
+              bytes (try (kbytes/base64-decode-bytes (str data))
                          (catch Exception _
                            (throw (ex-info "添付ファイルを読み取れません。"
                                            {:type :chat/invalid-attachment}))))
@@ -363,7 +363,7 @@
     (put-drive-artifact!
      scope :project artifact-id ["Projects" (:project-id scope)]
      (str "project-" (subs artifact-id 0 16) ".edn") "application/edn"
-     (.getBytes (pr-str artifact) StandardCharsets/UTF_8))))
+     (kbytes/utf8-bytes (pr-str artifact)))))
 
 (defn create-project!
   "Create a local project and its ordinary Git repository. GitHub can be
@@ -427,7 +427,7 @@
     (put-drive-artifact!
      scope :project-board artifact-id ["Projects" (:project-id scope)]
      (str "board-" (subs artifact-id 0 16) ".edn") "application/edn"
-     (.getBytes (pr-str board) StandardCharsets/UTF_8))))
+     (kbytes/utf8-bytes (pr-str board)))))
 
 (defn project-board
   "A local Kanban board spanning any number of repositories."
@@ -679,13 +679,12 @@
     (put-drive-artifact!
      scope :chat semantic-cid ["Chat" (:project-id scope) conversation-id]
      (str "conversation-" cid-label ".edn") "application/edn"
-     (.getBytes (pr-str {:schema schema
+     (kbytes/utf8-bytes (pr-str {:schema schema
                          :organization-id (:organization-id scope)
                          :project-id (:project-id scope)
                          :conversation-id conversation-id
                          :semantic-cid semantic-cid
-                         :messages projection})
-                StandardCharsets/UTF_8))
+                         :messages projection})))
     (doseq [attachment (mapcat #(or (:attachments %) []) messages)
             :let [content-id (:id attachment)
                   encoded (:data-base64 attachment)]
@@ -693,7 +692,7 @@
       (put-drive-artifact!
        scope :attachment content-id ["Chat" (:project-id scope) conversation-id "Attachments"]
        (:name attachment) (:media-type attachment)
-       (.decode (Base64/getDecoder) (str encoded))))
+       (kbytes/base64-decode-bytes (str encoded))))
     {:state :available
      :folders ["Chat" (:project-id scope) conversation-id]}))
 
@@ -835,8 +834,7 @@
    :mail/received-at (:received-at message)
    :mail/labels (vec (sort (map name (or (:labels message) []))))
    :mail/body-sha256 (digest (str (:body message)))
-   :mail/body-bytes (count (.getBytes (str (:body message))
-                                      StandardCharsets/UTF_8))
+   :mail/body-bytes (count (kbytes/utf8-bytes (str (:body message))))
    :mail/body-encryption "age"
    :mail/body-recipients (vec (age-recipients))
    :filed/project (:project-id assignment)
@@ -964,8 +962,7 @@
                                (atomic-edn! envelope (mail-envelope message assignment))
                                (if (seq recipients)
                                  (do (age-encrypt! body recipients
-                                                   (.getBytes (str (:body message))
-                                                              StandardCharsets/UTF_8))
+                                                   (kbytes/utf8-bytes (str (:body message))))
                                      {:envelope (.getPath envelope)
                                       :body (.getPath body)})
                                  {:envelope (.getPath envelope) :body nil})))))

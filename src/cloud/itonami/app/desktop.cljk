@@ -31,7 +31,7 @@
     - setting `AXValue` writes the widget but does not necessarily mark the
       document edited. `set-value!` returns what it observes afterwards so a
       caller can see the difference rather than assume it."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config])
@@ -228,7 +228,7 @@
 
 (defn- sha256 [value]
   (let [digest (.digest (MessageDigest/getInstance "SHA-256")
-                        (.getBytes (pr-str value) "UTF-8"))]
+                        (kbytes/utf8-bytes (pr-str value)))]
     (str "sha256:" (apply str (map #(format "%02x" (bit-and % 0xff)) digest)))))
 
 (defn- cua-app! [application]

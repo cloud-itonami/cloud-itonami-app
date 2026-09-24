@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.central-auth-http-test
   "Hosted sign-in starts as a GET navigation. Requiring Origin on that start
   is what made 127.0.0.1 unable to reach auth.itonami.cloud at all."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.config :as config-loader]
@@ -34,13 +34,12 @@
   (.getPort (.getAddress @server/server)))
 
 (defn- with-server [body]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-app-central-auth-http"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-app-central-auth-http")
         previous-state @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/configure! (fn [_] nil)]
         (server/stop!)
         (server/start! config)

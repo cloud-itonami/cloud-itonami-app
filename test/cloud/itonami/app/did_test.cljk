@@ -12,11 +12,10 @@
   So these tests are built on a REAL CBOR-encoded COSE_Key, produced by the same
   encoder shape an authenticator uses, rather than on a hand-made map. A fixture
   that skipped the CBOR round-trip would have skipped the bug."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.did :as did])
   (:import [com.fasterxml.jackson.dataformat.cbor CBORFactory]
-           [java.io ByteArrayOutputStream]
-           [java.util Base64]))
+           [java.io ByteArrayOutputStream]))
 
 (defn- cose-p256
   "A CBOR COSE_Key for an EC2/P-256 public key, base64url encoded.
@@ -34,7 +33,7 @@
     (.writeFieldId g -3) (.writeBinary g y)
     (.writeEndObject g)
     (.close g)
-    (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) (.toByteArray out))))
+    (kbytes/base64url-encode (.toByteArray out) {:pad? false})))
 
 (defn- fill [b] (byte-array (repeat 32 (unchecked-byte b))))
 

@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.wallet-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [clojure.test :refer [deftest is]]
             [kotoba.lang.text :as str]
             [btc-crypto.bip32 :as bip32]
             [btc-crypto.bip39 :as bip39]
@@ -10,8 +10,7 @@
             [cloud.itonami.app.wallet :as wallet]
             [eth-crypto.core :as eth]
             [wallet.signer :as wsigner]
-            [wallet.siwe :as siwe])
-  (:import [java.util Base64]))
+            [wallet.siwe :as siwe]))
 
 (def alice {:user-id "alice" :organization-id "org-1" :kind :passkey})
 (def bob {:user-id "bob" :organization-id "org-2" :kind :passkey})
@@ -23,22 +22,21 @@
   (str "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296"
        "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5"))
 (def p256-public-key-b64
-  (.encodeToString (.withoutPadding (Base64/getUrlEncoder))
-                   (eth/hex->bytes (str "04" p256-owner-hex))))
+  (kbytes/base64url-encode
+                   (eth/hex->bytes (str "04" p256-owner-hex)) {:pad? false}))
 (def second-p256-owner-hex
   (str "7cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978"
        "07775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1"))
 (def second-p256-public-key-b64
-  (.encodeToString (.withoutPadding (Base64/getUrlEncoder))
-                   (eth/hex->bytes (str "04" second-p256-owner-hex))))
+  (kbytes/base64url-encode
+                   (eth/hex->bytes (str "04" second-p256-owner-hex)) {:pad? false}))
 
 (defn- refuses [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo error (:type (ex-data error)))))
 
 (defn- with-wallet-store [f]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-wallet-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-wallet-test")
         previous @store/state]
     (try
       (reset! store/state
@@ -51,7 +49,7 @@
                              :user-id "alice" :public-key-b64 p256-public-key-b64
                              :user-verified? true
                              :created-at "2026-08-28T00:00:00Z"})))
-      (with-redefs [config/data-dir (fn [] (.toFile temporary))] (f))
+      (with-redefs [config/data-dir (fn [] temporary)] (f))
       (finally (reset! store/state previous)))))
 
 (defn- connect! []

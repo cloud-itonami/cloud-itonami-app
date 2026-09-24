@@ -4,7 +4,7 @@
   The object store is `drive.store.memory` rather than the filesystem one,
   and the app state is a local atom rather than the process-wide one, so
   nothing here writes to the data dir."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.json :as json]
             [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]

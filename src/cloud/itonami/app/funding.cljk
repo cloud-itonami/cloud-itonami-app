@@ -32,9 +32,9 @@
   rather than assumed. JPY has exponent 0, so ¥38,500 is 38500; USD has exponent
   2, so $38.50 is 3850. An unknown currency refuses instead of defaulting,
   because defaulting an exponent is how a figure becomes wrong by 100x."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [cloud.itonami.app.store :as store])
-  (:import [java.nio.charset StandardCharsets]
+  (:import
            [java.security MessageDigest]
            [java.time Duration Instant]
            [java.time.format DateTimeParseException]
@@ -70,7 +70,7 @@
 
 (defn- digest [value]
   (-> (MessageDigest/getInstance "SHA-256")
-      (.digest (.getBytes (str value) StandardCharsets/UTF_8))
+      (.digest (kbytes/utf8-bytes (str value)))
       (->> (.encodeToString (.withoutPadding (Base64/getUrlEncoder))))))
 
 (defn- digits [value]

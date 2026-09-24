@@ -5,7 +5,7 @@
   recorded :tx-hash must be the locally computed keccak of that raw tx.
   Refusals pin their :type; a refused submission must leave the transfer
   UNTOUCHED (a half-submitted state is worse than either outcome)."
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.io :as kio] [clojure.test :refer [deftest is]]
             [btc-crypto.bip32 :as bip32]
             [btc-crypto.bip39 :as bip39]
             [cloud.itonami.app.config :as config]
@@ -30,15 +30,14 @@
   (try (f) nil (catch clojure.lang.ExceptionInfo error (:type (ex-data error)))))
 
 (defn- with-wallet-store [f]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-wallet-send-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-wallet-send-test")
         previous @store/state]
     (try
       (reset! store/state
               (assoc-in (store/initial-state) [:identity :users "alice" :did]
                         "did:key:alice"))
-      (with-redefs [config/data-dir (fn [] (.toFile temporary))] (f))
+      (with-redefs [config/data-dir (fn [] temporary)] (f))
       (finally (reset! store/state previous)))))
 
 (def bot {:id "bot-k" :did "did:key:bot-k" :name "Treasurer"

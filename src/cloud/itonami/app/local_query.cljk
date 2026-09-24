@@ -8,7 +8,7 @@
   state. A DataScript or
   Datomic adapter can replace `langchain.db/api` at the same query boundary."
   (:require [kotoba.lang.edn :as edn]
-            [clojure.set :as set]
+            [kotoba.lang.coll :as set]
             [langchain.db :as d]))
 
 (def ^:private entity-id :cloud-itonami.entity/id)
