@@ -7,11 +7,11 @@
       "enabled": true,
       "enabled_toolsets": null,
       "id": "69c28b5692f1",
-      "model": "qwen3.8-27b-whitehacker",
+      "model": "murakumo/free",
       "name": "winfix-qa-smoke-watch",
       "no_agent": false,
       "prompt": "Cloud Itonami Windows版の品質検証 tick。次を順に実行し、結果を $HOME/.hermes/profiles/itonami-winfix-qa/home/qa-state.json に記録せよ。1) cd ~/github/com-junkawasaki/orgs/cloud-itonami/cloud-itonami-app && gh run list --branch fix/windows-posix-acl --limit 3 および main の直近 CI 状態を取得 (gh api repos/cloud-itonami/cloud-itonami-app/actions/runs)。2) windows-launch-smoke job の結論を確認。成功していれば qa-state.json に緑を追記して silent-healthy。失敗した場合は gh run view --log-failed でログを取得し、起動障害を分類 (POSIX権限 / Java検出 / ランチャー / 依存clone / その他) して qa-state.json に記録し、.hermes/plans/winfix-qa-<n>.md に修正計画を書く。3) 変化がない場合は何も出力せず終了。",
-      "provider": "kotoba",
+      "provider": "murakumo",
       "schedule": {
         "kind": "cron",
         "expr": "36 */6 * * *",

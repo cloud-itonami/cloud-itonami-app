@@ -7,11 +7,11 @@
       "enabled": true,
       "enabled_toolsets": null,
       "id": "7de2bcc27715",
-      "model": "qwen3.8-27b-whitehacker",
+      "model": "murakumo/free",
       "name": "itonami-maint-tick",
       "no_agent": false,
       "prompt": "itonami-maint: SOUL.md no 1-hanfuku-gata wo jikkou seyo. 7-jiku no uchi 1-jiku no hanshou wo kokoromi, refuted nara saishou repro to shuuri-an wo 90-docs/sim-loop/status/maturity.md no OPEN-aka ni kiroku, survived nara han-i wo seikaku ni shuusei. maturity.md koushin wa bot/maturity-sim-loop ni commit+push. Tanai no WIP e no touch to gate kanwa (Tier 3) wa kinshi.",
-      "provider": "kotoba",
+      "provider": "murakumo",
       "schedule": {
         "kind": "cron",
         "expr": "42 */12 * * *",
