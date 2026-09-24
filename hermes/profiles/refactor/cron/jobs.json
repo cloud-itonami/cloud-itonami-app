@@ -1,0 +1,48 @@
+{
+  "jobs": [
+    {
+      "base_url": "https://api.kotoba.cloud/v1",
+      "context_from": null,
+      "deliver": "local",
+      "enabled": true,
+      "enabled_toolsets": null,
+      "id": "0b09a84623bc",
+      "model": "qwen3.8-flash-next-whitehacker",
+      "name": "refactor-measure",
+      "no_agent": true,
+      "prompt": "",
+      "provider": "kotoba",
+      "schedule": {
+        "kind": "cron",
+        "expr": "12,42 * * * *",
+        "display": "12,42 * * * *"
+      },
+      "script": "kotoba_slice_measure.py",
+      "skill": null,
+      "skills": [],
+      "workdir": null
+    },
+    {
+      "base_url": null,
+      "context_from": null,
+      "deliver": "local",
+      "enabled": true,
+      "enabled_toolsets": null,
+      "id": "2c8ea6484c82",
+      "model": "qwen3.8-27b-whitehacker",
+      "name": "refactor-land",
+      "no_agent": false,
+      "prompt": "refactor: SOUL.md を読んで 1 tick 実行せよ。scripts/kotoba_slice_measure.py を走らせ、候補があれば 1 本だけ .kotoba 化して着地（branch → gh api merges → worktree 削除）。候補 0 なら「0 候補」と正直に報告。SOUL.md の制約（他セッション WIP に触れない、値捏造なし、verify は amu check --jvm-free）を守れ。",
+      "provider": "kotoba",
+      "schedule": {
+        "kind": "cron",
+        "expr": "22 10 * * *",
+        "display": "22 10 * * *"
+      },
+      "script": null,
+      "skill": null,
+      "skills": [],
+      "workdir": null
+    }
+  ]
+}
