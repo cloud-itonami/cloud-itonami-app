@@ -125,7 +125,7 @@
   (let [conform-result (conform/conform-event ev)]
     (if (not (:ok? conform-result))
       {:appended? false :stage :conform :errors (:errors conform-result)}
-      (let [entry-id (str "vfe-" (java.util.UUID/randomUUID))
+      (let [entry-id (str "vfe-" (random-uuid))
             file (org-journal-file org)
             inventory (load-inventory org)
             fold (event/apply-event inventory ev)]
