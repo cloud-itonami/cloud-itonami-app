@@ -250,9 +250,10 @@
   ;; :dev alias overrides this to a :local/root, so this gap only appears in a
   ;; plain `-M:test` run — which is how it appeared: filecoin.clj is already on
   ;; main (landed as untracked WIP) and cannot load there.
-;; A grant is a signed, expiring, offline-verifiable capability rather than
-  ;; a row only this server can interpret. CAIP-74 over Ed25519, with chain
-  ;; verification already in the library for when a grantee may re-grant.
+;; CAIP-74 (CACAO). No longer the Drive share format (superproject
+  ;; adr-2609241800: shares are Biscuits, cloud.itonami.app.share-grant); still
+  ;; required by cloud.itonami.app.kotobase-federation, and it is what brings
+  ;; ed25519.core (org-ietf-ed25519) onto this classpath.
   io.github.kotoba-lang/org-chainagnostic-cacao
   {:git/url "https://github.com/kotoba-lang/org-chainagnostic-cacao.git"
    :git/sha "3aaab02fb993a1d0b716c8fc1aefe37e4e3ab850"}
@@ -497,9 +498,13 @@
   {:git/url "https://github.com/kotoba-lang/authority.git"
    :git/sha "232eef9b7969aa5990f9b5e48b1184f078500781"}
 
+  ;; 12148e0 (2026-09-24) is a floor: it folds `holder` across blocks in
+  ;; biscuit.kotoba/->delegated. Drive shares (cloud.itonami.app.share-grant)
+  ;; address the grantee in the SECOND block, which 039378d did not read --
+  ;; every share answered :holder-absent there (share-grant-test, measured).
   io.github.kotoba-lang/org-biscuitsec
   {:git/url "https://github.com/kotoba-lang/org-biscuitsec.git"
-   :git/sha "039378d4b6fcebacc6fa54a1dfdbc8a12f2b3530"}
+   :git/sha "12148e029497614f916b8745ac1b2871e2668ef1"}
   ;; (`authentication` / `authorization` are declared once at the top of this
   ;; map, as `authentication-email` + `authorization` at these same SHAs. The
   ;; ADR-0014 replay re-added them here under the pre-rename key, which is a

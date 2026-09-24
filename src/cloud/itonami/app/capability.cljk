@@ -3,56 +3,57 @@
 
   ## What this changes, and what it does not
 
-  Before this, a grant was `{principal-id role}` written into
+  Before capabilities, a grant was `{principal-id role}` written into
   `:drive/permissions`. Nothing outside this process could check it, nothing
   expired, and the only evidence that alice had let bob read a document was
   that this server said so.
 
-  A grant is now also a CACAO (CAIP-74): a SIWE statement naming an
-  audience, a resource and a role, signed with Ed25519 and carrying an
-  expiry. Three things follow that did not before — it can be verified
-  without asking this server, it stops being true on its own, and
-  `cacao.core/verify-chain` is already there for the day a grantee may
-  re-grant.
+  A grant is now also a Biscuit (`cloud.itonami.app.share-grant`): the
+  sharer's token over the document, attenuated by one block to a verb and
+  addressed to the grantee, carrying an expiry. It can be verified without
+  asking this server (the issuer's public did is all it takes), it stops being
+  true on its own, and a holder can narrow it further but never hand it to
+  someone else.
+
+  Until 2026-09-24 the same grant was a CACAO (CAIP-74), with
+  `cacao.core/verify-chain` named as the future re-granting path. Superproject
+  adr-2609241800 retires that: CACAO is accepted only at an Authn exchange, and
+  new delegation is never written in it. `verify-grant` now refuses a CACAO
+  record by name (`:cacao-not-accepted`). Shares written before still work --
+  the ACL entry is what `drive` answers from and `expired?` still reads their
+  `:exp` -- they just show as unverified until the owner shares again, which
+  reissues them as Biscuits.
 
   **It does not remove this server from the trust path, and saying otherwise
-  would be the whole lie of this layer.** The issuer is the Drive's own key,
-  not the granting user's, so the Drive can mint any capability it likes. It
-  is the Drive attesting \"I let bob read this, until then\", verifiable by
-  anyone afterwards — not alice proving she chose to.
+  would be the whole lie of this layer.** The root is the Drive's own key, not
+  the granting user's, so the Drive can mint any capability it likes. It is
+  the Drive attesting \"I let bob read this, until then\", verifiable by anyone
+  afterwards -- not alice proving she chose to.
 
   The reason it is not alice's key is concrete rather than an omission. Her
   Passkey is a WebAuthn P-256 credential (`cloud.itonami.app.did`); WebAuthn
-  signs its own `authenticatorData || clientDataHash` with ES256.
-  `cacao.core/mint` signs a SIWE string with EdDSA from a raw seed. There is
-  no way to make the one produce the other. The User DID may itself be
-  Ed25519 (minted at creation, not from the Passkey), but this layer is still
-  the Drive attesting — not alice proving she chose to. Teaching cacao a
-  WebAuthn signature type, or minting user-issued CACAOs from the person's
-  seed, is a change to that library / a later slice, not something to fake
-  here.
+  signs its own `authenticatorData || clientDataHash` with ES256, and a
+  Biscuit block here is signed with Ed25519 from a raw seed. Moving the root
+  to an Authn-minted itonami capability is step 5 of the same ADR.
 
   ## The key
 
   Generated once and kept beside the state file. For a server that binds
   loopback-only that is the same protection the documents themselves have,
-  and no more: whoever can read `data/` can mint capabilities. Named here
+  and no more: whoever can read `data/` can mint capabilities (and, since the
+  per-document block keys are derived from it, append any block). Named here
   rather than left for somebody to work out."
   (:require [clojure.java.io :as io]
             [kotoba.lang.text :as str]
-            [cacao.core :as cacao]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.share-grant :as share-grant]
             [ed25519.core :as ed])
   (:import [java.security SecureRandom]
            [java.time Instant]
-           [java.util Base64 UUID]))
+           [java.time.temporal ChronoUnit]
+           [java.util Base64]))
 
 (def schema "cloud.itonami.app.capability.v1")
-
-(def ^:private roles
-  "The Drive's roles as capability verbs. `:owner` is absent because it is
-  not something one principal hands another — see `documents/grantable-roles`."
-  {:editor "write" :commenter "comment" :viewer "read"})
 
 (defn- key-file [] (io/file (config/data-dir) "drive-issuer.key"))
 
@@ -90,61 +91,79 @@
   (ed/did-key-from-seed (issuer-seed)))
 
 (defn resource
-  "The capability URI a grant is about.
-
-  `drive:<document-id>#<verb>` — the document names itself and the verb says
-  what is permitted, so `cacao.core/covers?` can compare two capabilities
-  without knowing what a Drive is."
+  "The capability scope a grant is about: `kotoba://drive/<document-id>/<verb>`.
+  A scope `authority` parses, so covering is the lattice's answer."
   [document-id role]
-  (str "drive:" document-id "#" (get roles role (name role))))
+  (share-grant/resource document-id role))
+
+(defn- instant-string
+  "ISO-8601 UTC at second precision. `authority` compares instants as
+  strings, so both sides of every comparison are written this one way."
+  [^Instant instant]
+  (str (.truncatedTo instant ChronoUnit/SECONDS)))
 
 (defn mint-grant
-  "A CACAO attesting that `audience` may act on `document-id` as `role`.
+  "A Biscuit attesting that `audience` may act on `document-id` as `role`,
+  attenuated from `sharer`'s token over the document.
 
   `audience` is the grantee's DID when they have one and their principal id
-  when they do not — a legacy User without a DID is still shareable. Refusing
+  when they do not -- a legacy User without a DID is still shareable. Refusing
   to share until a Passkey exists would be this layer deciding a product
   question (and the person DID is no longer derived from that Passkey)."
-  [{:keys [document-id role audience expires-in-days now]
+  [{:keys [document-id role audience sharer expires-in-days now]
     :or {expires-in-days 365}}]
+  (when (str/blank? (str sharer))
+    (throw (ex-info "a share is attenuated from the sharer's token; name the sharer"
+                    {:type :drive/capability-sharer-required})))
   (let [now (or now (Instant/now))
-        iat (str now)
-        exp (str (.plusSeconds now (* 86400 (long expires-in-days))))]
-    (assoc (cacao/mint {:seed (issuer-seed)
-                        :aud audience
-                        :iat iat
-                        :exp exp
-                        ;; Required by `mint`: without one, nothing
-                        ;; downstream can tell a replay from a reissue.
-                        :nonce (str (UUID/randomUUID))
-                        :domain "cloud.itonami"
-                        :statement (str "Cloud Itonami Drive grants " (name role)
-                                        " on " document-id)
-                        :resources [(resource document-id role)]})
-           :aud audience :iat iat :exp exp)))
+        iat (instant-string now)
+        exp (instant-string (.plusSeconds now (* 86400 (long expires-in-days))))]
+    {:format :biscuit
+     :biscuit (share-grant/mint {:issuer-seed (issuer-seed)
+                                 :document-id document-id
+                                 :sharer sharer
+                                 :holder audience
+                                 :role role
+                                 :expires exp})
+     :aud audience :iat iat :exp exp}))
+
+(defn legacy-cacao?
+  "A share written before 2026-09-24, as a CACAO."
+  [capability]
+  (and (map? capability) (contains? capability :cacao-b64)
+       (not (contains? capability :biscuit))))
+
+(defn encoded
+  "The token as one string, for a response body: the EDN of the Biscuit, or
+  the base64 of a legacy CACAO."
+  [capability]
+  (if (legacy-cacao? capability)
+    (:cacao-b64 capability)
+    (some-> (:biscuit capability) pr-str)))
 
 (defn verify-grant
   "Whether `capability` is a capability this Drive issued for this document
-  and role, and is currently in force.
+  and role, addressed to its audience, and is currently in force.
 
   Returns `{:valid? bool :reason kw}` rather than throwing: an expired share
   is an ordinary state of the world, and the caller's job is to stop
-  honouring it, not to fail."
-  [{:keys [cacao-b64 aud] :as capability} document-id role now]
+  honouring it, not to fail. A legacy CACAO share answers
+  `:cacao-not-accepted` -- this is not an Authn exchange."
+  [capability document-id role now]
   (cond
     (nil? capability) {:valid? false :reason :absent}
-    (str/blank? (str cacao-b64)) {:valid? false :reason :absent}
+    (legacy-cacao? capability) {:valid? false :reason :cacao-not-accepted}
     :else
-    (let [result (try (cacao/verify cacao-b64 {:now (str now)})
-                      (catch Exception _ {:valid? false}))
-          payload (:payload result)]
-      (cond
-        (not (:valid? result)) {:valid? false :reason :unverifiable}
-        (not= (issuer-did) (:iss payload)) {:valid? false :reason :other-issuer}
-        (not= aud (:aud payload)) {:valid? false :reason :audience-mismatch}
-        (not (contains? (set (:resources payload)) (resource document-id role)))
-        {:valid? false :reason :resource-mismatch}
-        :else {:valid? true}))))
+    (let [result (try (share-grant/verify {:token (:biscuit capability)
+                                           :issuer-did (issuer-did)
+                                           :document-id document-id
+                                           :role role
+                                           :holder (:aud capability)
+                                           :now (instant-string now)})
+                      (catch Exception _ {:valid? false :reason :unverifiable}))]
+      (if (:valid? result)
+        {:valid? true}
+        (select-keys result [:valid? :reason])))))
 
 (defn expired?
   "Whether `capability` has passed its `exp`, cheaply and without verifying.
@@ -152,6 +171,7 @@
   Separate from `verify-grant` because the ACL consults it on every read and
   a signature check per item per request is a cost with no answer in it: a
   capability whose signature is bad was never honoured, and one whose expiry
-  has passed stops being honoured now."
+  has passed stops being honoured now. Legacy CACAO records carry `:exp` in
+  the same place, so their expiry keeps being applied."
   [{:keys [exp]} now]
   (boolean (and exp (neg? (compare (str exp) (str now))))))

@@ -1130,10 +1130,24 @@ A grant used to be `{principal-id role}` in this server's state: nothing
 outside the process could check it, nothing expired, and the only evidence
 that alice had let bob read a document was that this server said so.
 
-A grant now also mints a CACAO (CAIP-74) — a SIWE statement naming an
-audience, a `drive:<id>#<verb>` resource and an expiry, signed with Ed25519.
-It can be verified without asking this server, it stops being true on its
-own, and `cacao.core/verify-chain` is already there for re-granting.
+A grant now also mints a Biscuit (`cloud.itonami.app.share-grant`): the
+sharer's token over `kotoba://drive/<id>/*`, attenuated by one block to
+`kotoba://drive/<id>/<verb>`, addressed to the grantee (`holder`) and bounded
+by an expiry, every block signed with Ed25519 under the Drive issuer's did.
+It can be verified without asking this server and stops being true on its
+own. Re-granting is further attenuation by the holder: a later block may
+narrow the verb or the expiry, and a block naming another holder makes the
+token confer nothing (`:holder-readdressed`, `biscuit.kotoba/->delegated`).
+The decision is `authority.chain`'s, `:strict?`, so a block that claims more
+than it was given refuses the token (`:escalation-attempted`).
+
+Until 2026-09-24 the grant was a CACAO (CAIP-74) with `cacao.core/verify-chain`
+named for re-granting. Superproject adr-2609241800 ended that: a CACAO is
+accepted only at an Authn exchange, and new delegation is never written in it.
+`capability/verify-grant` refuses a CACAO share by name (`:cacao-not-accepted`).
+A share recorded as CACAO keeps its ACL entry and its expiry, is shown to the
+owner as `format: "cacao"`, unverified, and is reissued as a Biscuit when the
+owner shares it again.
 
 **The expiry is real, not decorative.** `documents/honour-capabilities` drops
 lapsed grants from the workspace before `drive` is asked anything, so
