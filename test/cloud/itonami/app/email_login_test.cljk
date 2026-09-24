@@ -2,7 +2,7 @@
   "Email delivery may remain as migration code, but it is not an application
   sign-in root. HTTP closure is exercised with the other legacy routes in
   central-auth-http-test; these tests keep shipped configuration fail-closed."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.identity :as identity]

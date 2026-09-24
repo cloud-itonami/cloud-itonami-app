@@ -17,7 +17,7 @@
   (:require ["node:fs" :as fs]
             ["node:os" :as os]
             ["node:path" :as path]
-            [clojure.edn :as edn]))
+            [kotoba.lang.edn :as edn]))
 
 (def dir (fs/mkdtempSync (path/join (os/tmpdir) "signin-handoff-")))
 (fs/mkdirSync (path/join dir "data") #js {:recursive true})

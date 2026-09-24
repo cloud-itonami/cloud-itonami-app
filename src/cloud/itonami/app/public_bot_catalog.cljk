@@ -11,7 +11,7 @@
   `resources/itonami-public-bots.edn`), so it can drift. The schema check
   below fails loudly on drift rather than rendering half-cards: an entry
   missing what the installer needs is an exception, not a missing card."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str])
   ;; `bots` is the JVM-side creation path. The portable half (parse, validate,
   ;; `find-bot`) must stay runnable under ClojureScript, where `bots` cannot

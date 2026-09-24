@@ -49,7 +49,7 @@
   the 未割当 bucket is computed across the installation, not the organization,
   and says so in its own payload rather than implying a scoping that is not
   there."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.operator :as operator]

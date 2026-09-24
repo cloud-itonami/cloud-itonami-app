@@ -45,7 +45,7 @@
 
   The envelope id is the AAD, so a ciphertext moved to another envelope's record
   fails to authenticate rather than decrypting into it."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [cloud.itonami.app.config :as config])
   (:import [java.nio.charset StandardCharsets]

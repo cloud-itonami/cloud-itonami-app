@@ -45,7 +45,7 @@
   different answers on either side and a merged list that did not say so
   would be inviting the wrong one."
   (:require [clojure.data.json :as json]
-            [clojure.edn :as edn]
+            [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.capability :as capability]

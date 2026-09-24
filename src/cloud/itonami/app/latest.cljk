@@ -17,7 +17,7 @@
   The seed is never committed. Read it from `CLOUD_ITONAMI_APP_IPNS_SEED`
   (64 hex chars). Live custody is kagi item `cloud-itonami-app-latest`
   (compartment `personal`)."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.bundle :as bundle]

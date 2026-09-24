@@ -5,7 +5,7 @@
   and the app state is a local atom rather than the process-wide one, so
   nothing here writes to the data dir."
   (:require [clojure.data.json :as json]
-            [clojure.edn :as edn]
+            [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.capability :as capability]

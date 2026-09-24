@@ -11,7 +11,7 @@
   Each assertion therefore pins the REASON and not only the shape. ADR-2608136000
   §6: a negative test that asserts only the result counts an execution that
   failed for another cause as a discrimination it did not make."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.commands :as commands]

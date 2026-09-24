@@ -19,7 +19,7 @@
   data-dir. A JVM cannot portably set its own environment, so the half of the precedence
   rule that reads CLOUD_ITONAMI_DATA_DIR is exercised only by the property winning when
   both could apply. Pretending otherwise would be worse than saying so."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]

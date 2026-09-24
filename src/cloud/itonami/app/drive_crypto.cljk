@@ -4,7 +4,7 @@
   Packages contain public envelope metadata and ciphertext chunks. Private
   recipient keys live in one exact local file per principal; this namespace
   never enumerates the key directory."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.secure-file :as secure-file]

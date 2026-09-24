@@ -15,7 +15,7 @@
   delegation that fell back to a host implementation would pass every parity
   test ever written, because a host copy is exactly what those tests compare
   against."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.kotoba-oracle :as oracle]

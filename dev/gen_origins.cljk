@@ -9,7 +9,7 @@
 
   Writes `resources/cloud-itonami-app.origins.edn`, which is also the file
   published to yabai. Nothing here reads a message body."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [clojure.pprint :as pprint]
             [kotoba.lang.text :as str]

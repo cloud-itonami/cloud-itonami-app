@@ -12,7 +12,7 @@
   GET-verified at `https://kotobase.net/ipfs/{raw-cid}`.
 
   Does not republish IPNS. Does not move the auth host."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [chain.core :as chain]

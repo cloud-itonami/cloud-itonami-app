@@ -3,7 +3,7 @@
 
   Tamaki's append-only EDN stream remains authoritative. The gateway uses an
   opaque byte cursor and projects only allow-listed lifecycle metadata."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.organism-worker :as organism-worker])

@@ -6,7 +6,7 @@
   So two properties matter and neither was true: that no two are equal, and
   that comparing them as strings gives the same answer as comparing the
   instants they stand for."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.store :as store]

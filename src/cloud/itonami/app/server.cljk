@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.server
   (:require [clojure.data.json :as json]
-            [clojure.edn :as edn]
+            [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.kaiyu-local :as kaiyu-local]

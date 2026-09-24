@@ -5,7 +5,7 @@
   resident app invokes its deterministic EDN projection at provisioning time;
   it never guesses roles from repo names and never treats a missing checkout
   as an empty workforce."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]))
 
 (def schema "network.awai.workforce-bots.v1")

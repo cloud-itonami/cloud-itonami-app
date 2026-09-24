@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.drive-crypto-test
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.drive-crypto :as crypto])
