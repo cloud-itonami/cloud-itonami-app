@@ -3,4 +3,8 @@
 ;; because the coordinate was declared only there). The sha is COPIED from
 ;; deps.edn, not chosen here.
 {:paths ["." "src" "resources" "target" "scripts/nbb_compat"]
- :deps {io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}}}
+ :deps {
+        ;; kotoba replaced JVM interop here (2026-09-24). An explicit
+        ;; floor: tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/coll {:git/sha "f74e248f0a07e8ae572885f50fab6bdb39dc24be"}
+        io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}}}

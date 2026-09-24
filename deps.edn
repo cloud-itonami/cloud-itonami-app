@@ -1,6 +1,10 @@
 {:paths ["src" "resources"]
  :deps
- {io.github.kotoba-lang/cloud-kotoba-dds
+ {
+        ;; kotoba replaced JVM interop here (2026-09-24). An explicit
+        ;; floor: tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/coll {:git/sha "f74e248f0a07e8ae572885f50fab6bdb39dc24be"}
+        io.github.kotoba-lang/cloud-kotoba-dds
   ;; the Bots workspace pattern (bots.cljk + styles/bots-css + the renderer)
   ;; that #/bots is built on since 2026-09-16
   {:git/url "https://github.com/kotoba-lang/cloud-kotoba-dds.git"

@@ -12,7 +12,7 @@
 (deftest ledger-round-trips-through-physical-tenant-files
   (let [directory (io/file (System/getProperty "java.io.tmpdir")
                            (str "itonami-work-partitions-"
-                                (java.util.UUID/randomUUID)))
+                                (random-uuid)))
         ledger {:schema "work.v2"
                 :organizations {"org-a" {:org/id "org-a"}
                                 "org-b" {:org/id "org-b"}}
@@ -61,7 +61,7 @@
 (deftest legacy-ledger-is-used-before-first-partition-commit
   (let [directory (io/file (System/getProperty "java.io.tmpdir")
                            (str "itonami-work-legacy-"
-                                (java.util.UUID/randomUUID)))
+                                (random-uuid)))
         legacy {:schema "legacy" :work-items {}}]
     (try
       (with-redefs [config/data-dir (constantly directory)]
