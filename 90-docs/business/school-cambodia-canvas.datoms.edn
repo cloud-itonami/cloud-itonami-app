@@ -1,0 +1,15 @@
+{:db/id :itonami.business/school-cambodia
+ :business/type "school"
+ :business/location "cambodia"
+ :isc/isic "4711"
+ :isc/isco "2641"
+ :isc/isic-label "Schools"
+ :isc/isco-label "University and Higher Education Teachers"
+ :business/description "Japanese language school offering classes to locals and expats"
+ :business/key-metrics
+ {:initial-investment-usd 10000
+  :permit-time-days 5
+  :foreign-ownership-allowed true
+  :min-capital-riel 500000
+  :power-dependency-low
+  :competition-level-low}}

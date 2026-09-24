@@ -1,0 +1,15 @@
+{:db/id :itonami.business/fitness-cambodia
+ :business/type "fitness"
+ :business/location "cambodia"
+ :isc/isic "9311"
+ :isc/isco "3422"
+ :isc/isic-label "Fitness facilities"
+ :isc/isco-label "Sports and fitness workers"
+ :business/description "Japanese fitness studio offering group classes and personal training"
+ :business/key-metrics
+ {:initial-investment-usd 30000
+  :permit-time-days 15
+  :foreign-ownership-allowed true
+  :min-capital-riel 2000000
+  :power-dependency-high
+  :competition-level-medium}}
