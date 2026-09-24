@@ -323,6 +323,28 @@
       "skill": null,
       "skills": [],
       "workdir": null
+    },
+    {
+      "base_url": null,
+      "context_from": null,
+      "deliver": "local",
+      "enabled": true,
+      "enabled_toolsets": null,
+      "id": "e63477869293",
+      "model": null,
+      "name": "ISIC/ISCO registration check",
+      "no_agent": false,
+      "prompt": "ISIC/ISCO registration check",
+      "provider": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 4 * * *",
+        "display": "0 4 * * *"
+      },
+      "script": "iscic-register-evidence.py",
+      "skill": null,
+      "skills": [],
+      "workdir": null
     }
   ]
 }
