@@ -1,0 +1,209 @@
+(ns cloud.itonami.app.share-grant
+  "A Drive share, written as Biscuit attenuation and decided by `authority`.
+
+  Superproject adr-2609241800 (step 6): new delegation between principals is
+  never written in CACAO. Until 2026-09-24 a share was a CACAO the Drive minted
+  per grantee, and `cacao.core/verify-chain` was named as the way a grantee
+  would one day re-grant. That is the form the ADR retires. This namespace is
+  its successor and is pure: seeds and clocks come in as arguments, so the
+  same decision runs on the JVM and under `kbb --backend sci`.
+
+  ## The shape of a share
+
+      block 0  signed by the Drive issuer key (the root, `capability/issuer-did`)
+               scope(kotoba://drive/<doc>/*)  sharer(<owner>)
+               next key: the sharer's per-document key
+      block 1  signed by the sharer's per-document key
+               scope(kotoba://drive/<doc>/<verb>)  holder(<grantee>)  before(<exp>)
+               next key: the grantee's per-document key
+      block n  signed by the previous block's key -- further attenuation only
+
+  Block 0 is the sharer's Biscuit over the document; block 1 narrows it to one
+  verb and addresses it to the grantee. Anything after that can only narrow:
+  scopes meet in the `authority` lattice (a block claiming more than it was
+  given confers nothing and, because the decision is `:strict?`, refuses the
+  whole token as `:escalation-attempted`), expiry takes the earliest `before`,
+  and the holder folds by `biscuit.kotoba/->delegated`'s rule -- a later block
+  may repeat the holder but never name another one (`:holder-readdressed`).
+
+  So re-granting is further attenuation by the holder, and it cannot move the
+  token to a third party. A grantee who could re-address their share would be
+  able to widen who holds access, which is exactly what `documents/owned!`
+  already refuses at the ACL. A third party gets their own share from the
+  owner.
+
+  ## Who holds the keys, stated rather than hidden
+
+  The Drive derives each per-document key from its issuer seed
+  (`share-seed`). Whoever reads `data/drive-issuer.key` can therefore append
+  any block, just as they could mint any CACAO before -- this is the Drive
+  attesting \"I let bob read this, until then\", verifiable by anyone with the
+  issuer's public did, not the sharer proving it with a key of their own
+  (their Passkey is P-256 WebAuthn and cannot sign a block). Moving the root
+  to an Authn-minted itonami capability is step 5 of the same ADR, not this.
+
+  ## Why `scope` facts and not `cap` facts
+
+  `biscuit.kotoba/->delegated` maps `[cap <kind> <resource>]` against the
+  closed `:kinds` set of `lang/capability-semantics.edn`, which has no Drive
+  kind. The Drive therefore speaks the kind-free `[scope \"kotoba://...\"]`
+  mapping `biscuit.authority` documents, decided by `authority.chain`. It still
+  reads `->delegated` for the one thing that mapping does not answer -- the
+  holder fold -- so that there is one holder rule in the fleet, not two."
+  (:require [authority.chain :as chain]
+            [authority.grant :as grant]
+            [biscuit.kotoba :as bk]
+            [biscuit.token :as token]
+            [ed25519.core :as ed]
+            #?(:cljs ["node:crypto" :as ncrypto]))
+  #?(:clj (:import [java.nio.charset StandardCharsets]
+                   [java.security MessageDigest])))
+
+(def schema "cloud.itonami.app.share-grant.v1")
+
+(def verbs
+  "The Drive's roles as the last segment of a scope. `:owner` is the sharer's
+  own reach over the document and is never handed to a grantee."
+  {:owner "*" :editor "write" :commenter "comment" :viewer "read"})
+
+(defn resource
+  "`kotoba://drive/<document-id>/<verb>` -- a scope `authority.scope` parses,
+  so covering is the lattice's answer rather than a string comparison."
+  [document-id role]
+  (str "kotoba://drive/" document-id "/" (get verbs role (name role))))
+
+;; ── bytes, portable ─────────────────────────────────────────────────────────
+
+(defn- utf8 [s]
+  #?(:clj (.getBytes ^String s StandardCharsets/UTF_8)
+     :cljs (js/Buffer.from s "utf8")))
+
+(defn- sig->wire
+  "Signatures as unsigned-byte vectors: a JVM byte array prints as `#object`
+  and cannot be read back from the state file (the convention
+  `drive-delivery` already uses)."
+  [sig]
+  #?(:clj (mapv #(bit-and (int %) 0xff) sig)
+     :cljs (vec (js/Array.from sig))))
+
+(defn- wire->sig [v]
+  #?(:clj (byte-array (map unchecked-byte v))
+     :cljs (js/Uint8Array.from (clj->js v))))
+
+(defn- sign-fn [seed payload]
+  (sig->wire (ed/sign seed (utf8 payload))))
+
+(defn- verify-fn [did payload sig]
+  (try (boolean (ed/verify-did did (utf8 payload) (wire->sig sig)))
+       (catch #?(:clj Exception :cljs :default) _ false)))
+
+(defn share-seed
+  "The per-document key the Drive holds for `principal`: SHA-256 over a
+  domain label, the document, the principal and the issuer seed. Derived, not
+  stored, so no new secret lands in `data/`."
+  [issuer-seed document-id principal]
+  (let [label (utf8 (str "cloud.itonami.drive.share-key/v1\u0000" document-id
+                         "\u0000" principal))]
+    #?(:clj (let [md (MessageDigest/getInstance "SHA-256")]
+              (.update md ^bytes label)
+              (.update md ^bytes issuer-seed)
+              (.digest md))
+       :cljs (-> (.createHash ncrypto "sha256")
+                 (.update label)
+                 (.update (js/Buffer.from issuer-seed))
+                 (.digest)))))
+
+;; ── minting and attenuating ─────────────────────────────────────────────────
+
+(defn mint
+  "The sharer's Biscuit over `document-id`, attenuated to `role` and addressed
+  to `holder`. `expires` is an ISO-8601 UTC instant string (or nil)."
+  [{:keys [issuer-seed document-id sharer holder role expires]}]
+  (when-not (contains? (dissoc verbs :owner) role)
+    (throw (ex-info "a share names one of editor / commenter / viewer"
+                    {:type :share-grant/unknown-role :role role})))
+  (let [sharer-seed (share-seed issuer-seed document-id sharer)
+        holder-seed (share-seed issuer-seed document-id holder)
+        root (token/authority
+              {:facts [['scope (resource document-id :owner)] ['sharer sharer]]
+               :rules [] :checks []
+               :next-public-key (ed/did-key-from-seed sharer-seed)
+               :root-private-key issuer-seed
+               :sign-fn sign-fn})]
+    (token/append root
+                  {:facts (cond-> [['scope (resource document-id role)]
+                                   ['holder holder]]
+                            expires (conj ['before expires]))
+                   :rules [] :checks []
+                   :next-public-key (ed/did-key-from-seed holder-seed)
+                   :private-key sharer-seed
+                   :sign-fn sign-fn})))
+
+(defn attenuate
+  "Append a block signed with `signing-seed` (the key the last block named).
+
+  `facts` is what the block asserts -- `[scope …]`, `[before …]`, `[holder …]`.
+  Nothing here stops a block from claiming more or naming another holder:
+  anyone holding the key can append anything, and the point of the format is
+  that `verify` refuses what such a block tries, by name. `next-seed`
+  defaults to `signing-seed`, keeping further narrowing with the same party."
+  [t {:keys [signing-seed facts next-seed]}]
+  (token/append t {:facts (vec facts) :rules [] :checks []
+                   :next-public-key (ed/did-key-from-seed (or next-seed signing-seed))
+                   :private-key signing-seed
+                   :sign-fn sign-fn}))
+
+;; ── the decision ────────────────────────────────────────────────────────────
+
+(defn- chain-of
+  "One `authority.grant` link per block that asserts scopes, every link
+  carrying the token's earliest `before` and the holder `->delegated` folded.
+  The fold and the covering are `authority.chain`'s."
+  [t holder]
+  (let [blocks (:biscuit/blocks t)
+        befores (keep (fn [[p v]] (when (= 'before p) v)) (mapcat :block/facts blocks))
+        expires (when (seq befores)
+                  (reduce (fn [a b] (if (neg? (compare a b)) a b)) befores))]
+    (into []
+          (keep (fn [b]
+                  (let [ss (keep (fn [[p v]] (when (= 'scope p) v)) (:block/facts b))]
+                    (when (seq ss)
+                      (grant/grant {:scopes (vec ss) :holder holder :expires expires})))))
+          blocks)))
+
+(defn biscuit?
+  [t]
+  (and (map? t) (contains? t :biscuit/blocks)))
+
+(defn verify
+  "May `holder` act on `document-id` as `role` at `now`, on this token?
+
+  -> `{:valid? true :holder h :expires e}` or `{:valid? false :reason kw}`.
+
+  Order: format, signature (root = the Drive issuer did), holder fold, then
+  the lattice. A CACAO presented here is refused by name
+  (`:cacao-not-accepted`) rather than read: shares are Biscuits now, and a
+  verifier that still accepted the old format would keep it alive."
+  [{:keys [token issuer-did document-id role holder now]}]
+  (cond
+    (nil? token) {:valid? false :reason :absent}
+    (and (map? token) (contains? token :cacao-b64)) {:valid? false :reason :cacao-not-accepted}
+    (not (biscuit? token)) {:valid? false :reason :not-a-biscuit}
+    :else
+    (let [checked (token/verify token issuer-did verify-fn)]
+      (if-not (:ok? checked)
+        {:valid? false :reason :unverifiable :detail (:reason checked)}
+        (let [{bound :grant/holder refused :grant/refused} (bk/->delegated token #{})]
+          (cond
+            refused {:valid? false :reason refused}
+            (nil? bound) {:valid? false :reason :holder-absent}
+            :else
+            (let [decision (chain/authorize {:chain (chain-of token bound)
+                                             :requested (resource document-id role)
+                                             :now now
+                                             :holder holder
+                                             :strict? true})]
+              (if (:authority/allowed? decision)
+                {:valid? true :holder bound
+                 :expires (:grant/expires (:authority/effective decision))}
+                {:valid? false :reason (:authority/reason decision)}))))))))

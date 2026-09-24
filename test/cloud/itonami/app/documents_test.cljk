@@ -2197,16 +2197,53 @@
         (is (string? (:expires-at grant)))
         ;; Verifiable without this namespace being asked: the token, the
         ;; document and the role are all it takes.
+        (is (= "biscuit" (:format grant)))
         (let [cap (documents/capability-for @state (:id item) bob)]
           (is (:valid? (capability/verify-grant cap (:id item) :editor
                                                 (java.time.Instant/now))))
-          ;; And it is about this document and this role only.
-          (is (= :resource-mismatch
+          ;; And it is about this document and this role only: the sharer's
+          ;; token reaches the whole document, the grantee's block narrows it.
+          (is (= :out-of-scope
                  (:reason (capability/verify-grant cap (:id item) :viewer
                                                    (java.time.Instant/now)))))
-          (is (= :resource-mismatch
+          (is (= :out-of-scope
                  (:reason (capability/verify-grant cap "doc-other" :editor
+                                                   (java.time.Instant/now)))))
+          ;; Addressed to bob: the same token under another audience is not
+          ;; his to use.
+          (is (= :wrong-holder
+                 (:reason (capability/verify-grant (assoc cap :aud "mallory")
+                                                   (:id item) :editor
                                                    (java.time.Instant/now))))))))))
+
+(deftest a-share-written-as-cacao-still-works-but-no-longer-verifies
+  ;; superproject adr-2609241800: a CACAO is accepted only at an Authn
+  ;; exchange. A share recorded before the move keeps its ACL entry and its
+  ;; expiry; it is reported, by name, as a format this edge no longer reads.
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            id (:id item)
+            exp (str (.plusSeconds (java.time.Instant/now) 86400))]
+        (swap! state update-in [:drive :workspaces alice :drive.workspace/items
+                                id :drive/permissions]
+               assoc bob :editor)
+        (swap! state assoc-in [:drive :capabilities id bob]
+               {:cacao-b64 "o2FoomF0Z2VpcDQzNjE" :aud bob
+                :iat (str (java.time.Instant/now)) :exp exp})
+        (is (= 1 (count (documents/documents @state bob))))
+        (is (:ok? (documents/content id bob object-store)))
+        (is (= {:valid? false :reason :cacao-not-accepted}
+               (capability/verify-grant (documents/capability-for @state id bob)
+                                        id :editor (java.time.Instant/now))))
+        (let [grant (first (:grants (documents/sharing id alice)))]
+          (is (= "cacao" (:format grant)))
+          (is (false? (:verified? grant))))
+        (testing "sharing again reissues it as a Biscuit"
+          (documents/grant! id bob "editor" alice)
+          (let [grant (first (:grants (documents/sharing id alice)))]
+            (is (= "biscuit" (:format grant)))
+            (is (true? (:verified? grant)))))))))
 
 (deftest production-sharing-rewraps-without-reencrypting-content
   (with-state
@@ -2250,7 +2287,7 @@
                [:drive :capabilities (:id item) bob]
                (capability/mint-grant
                 {:document-id (:id item) :role :editor :audience bob
-                 :expires-in-days 1
+                 :sharer alice :expires-in-days 1
                  :now (.minusSeconds (java.time.Instant/now) (* 365 86400))}))
         (is (empty? (documents/documents @state bob)))
         (is (= :drive/not-found

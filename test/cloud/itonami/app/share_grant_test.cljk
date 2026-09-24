@@ -1,0 +1,100 @@
+(ns cloud.itonami.app.share-grant-test
+  "A Drive share as Biscuit attenuation (superproject adr-2609241800 step 6),
+  on both runtimes. Every refusal pins its reason literal: a negative test that
+  asserted only `false` would count a token that failed for some other reason."
+  (:require [clojure.test :refer [deftest is testing]]
+            [cloud.itonami.app.share-grant :as sg]
+            [ed25519.core :as ed]))
+
+(def issuer-seed
+  #?(:clj (byte-array (range 32))
+     :cljs (js/Uint8Array.from (clj->js (range 32)))))
+
+(def issuer-did (ed/did-key-from-seed issuer-seed))
+(def other-seed
+  #?(:clj (byte-array (map #(mod (+ % 7) 256) (range 32)))
+     :cljs (js/Uint8Array.from (clj->js (map #(mod (+ % 7) 256) (range 32))))))
+
+(def doc "doc-6f1c0e1e-0000-4000-8000-000000000001")
+(def now "2026-09-24T00:00:00Z")
+(def exp "2027-09-24T00:00:00Z")
+
+(defn- share [role]
+  (sg/mint {:issuer-seed issuer-seed :document-id doc :sharer "alice"
+            :holder "bob" :role role :expires exp}))
+
+(defn- check [t role holder & [at]]
+  (sg/verify {:token t :issuer-did issuer-did :document-id doc :role role
+              :holder holder :now (or at now)}))
+
+(deftest the-grantee-may-do-what-was-shared
+  (is (= {:valid? true :holder "bob" :expires exp} (check (share :editor) :editor "bob"))))
+
+(deftest attenuation-narrows-a-wider-request-is-refused
+  (testing "block 0 reaches the whole document; block 1 narrows it to one verb"
+    (is (= :out-of-scope (:reason (check (share :viewer) :editor "bob"))))
+    (is (= :out-of-scope (:reason (check (share :viewer) :owner "bob")))))
+  (testing "another document is not under the sharer's scope"
+    (is (= :out-of-scope
+           (:reason (sg/verify {:token (share :editor) :issuer-did issuer-did
+                                :document-id "doc-other" :role :editor
+                                :holder "bob" :now now})))))
+  (testing "a later block that claims the wider scope back refuses the token"
+    (let [widened (sg/attenuate (share :viewer)
+                                {:signing-seed (sg/share-seed issuer-seed doc "bob")
+                                 :facts [['scope (sg/resource doc :owner)]]})]
+      (is (= :escalation-attempted (:reason (check widened :editor "bob"))))
+      (is (= :escalation-attempted (:reason (check widened :viewer "bob"))))))
+  (testing "re-granting is further attenuation: a shorter expiry is kept"
+    (let [shorter (sg/attenuate (share :editor)
+                                {:signing-seed (sg/share-seed issuer-seed doc "bob")
+                                 :facts [['scope (sg/resource doc :editor)]
+                                         ['before "2026-10-01T00:00:00Z"]]})]
+      (is (:valid? (check shorter :editor "bob")))
+      (is (= :expired-or-no-trusted-time
+             (:reason (check shorter :editor "bob" "2026-10-02T00:00:00Z")))))))
+
+(deftest re-addressing-is-refused
+  (let [moved (sg/attenuate (share :editor)
+                            {:signing-seed (sg/share-seed issuer-seed doc "bob")
+                             :facts [['scope (sg/resource doc :viewer)]
+                                     ['holder "mallory"]]
+                             :next-seed (sg/share-seed issuer-seed doc "mallory")})]
+    (testing "neither the new holder nor the old one may use it"
+      (is (= {:valid? false :reason :holder-readdressed} (check moved :viewer "mallory")))
+      (is (= {:valid? false :reason :holder-readdressed} (check moved :editor "bob")))))
+  (testing "repeating the holder is not re-addressing"
+    (let [same (sg/attenuate (share :editor)
+                             {:signing-seed (sg/share-seed issuer-seed doc "bob")
+                              :facts [['holder "bob"]]})]
+      (is (:valid? (check same :editor "bob")))))
+  (testing "someone other than the holder presenting it"
+    (is (= :wrong-holder (:reason (check (share :editor) :editor "mallory"))))))
+
+(deftest a-cacao-is-refused-by-name
+  (is (= {:valid? false :reason :cacao-not-accepted}
+         (check {:cacao-b64 "o2FoomF0Z2VpcDQzNjE" :aud "bob"
+                 :exp exp} :editor "bob"))))
+
+(deftest the-root-is-the-issuer
+  (testing "a token under another root does not verify"
+    (let [forged (sg/mint {:issuer-seed other-seed :document-id doc :sharer "alice"
+                           :holder "bob" :role :editor :expires exp})]
+      (is (= :unverifiable (:reason (check forged :editor "bob"))))))
+  (testing "a block signed with a key the previous block did not name"
+    (let [spliced (sg/attenuate (share :editor)
+                                {:signing-seed other-seed
+                                 :facts [['scope (sg/resource doc :editor)]]})]
+      (is (= :unverifiable (:reason (check spliced :editor "bob"))))))
+  (testing "absent and not-a-biscuit are distinct from denied"
+    (is (= :absent (:reason (check nil :editor "bob"))))
+    (is (= :not-a-biscuit (:reason (check "eyJhbGciOi" :editor "bob"))))))
+
+(deftest expiry-is-the-earliest-before
+  (is (= :expired-or-no-trusted-time
+         (:reason (check (share :viewer) :viewer "bob" "2027-09-24T00:00:01Z"))))
+  (is (= :expired-or-no-trusted-time
+         (:reason (sg/verify {:token (share :viewer) :issuer-did issuer-did
+                              :document-id doc :role :viewer :holder "bob"
+                              :now nil})))
+      "no trusted clock is a denial, not a pass"))
