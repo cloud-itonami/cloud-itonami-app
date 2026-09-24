@@ -1,10 +1,10 @@
 # Host-local blocks (command_allowlist, onboarding, secrets, skills, terminal) are kept on the host and omitted here.
 model:
-  provider: murakumo
-  default: mishima
+  provider: openrouter-free
+  default: openrouter/free
   max_tokens: 1024
   context_length: 131072
-  base_url: https://api.murakumo.cloud/v1
+  base_url: https://openrouter.ai/api/v1
 providers:
   murakumo:
     base_url: https://api.murakumo.cloud/v1
@@ -51,9 +51,9 @@ providers:
       qwen3.8-flash-next-whitehacker:
         context_length: 131072
 fallback_providers:
-  - provider: kotoba
-    model: qwen3.8-27b-whitehacker
-    base_url: https://api.kotoba.cloud/v1
+  - provider: murakumo
+    model: mishima
+    base_url: https://api.murakumo.cloud/v1
 agent:
   max_turns: 500
 compression:
