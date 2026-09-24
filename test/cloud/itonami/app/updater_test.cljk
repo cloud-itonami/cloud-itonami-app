@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.updater-test
   (:require [clojure.data.json :as json]
-            [clojure.edn :as edn]
+            [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config]

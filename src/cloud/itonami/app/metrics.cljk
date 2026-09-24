@@ -42,7 +42,7 @@
   `net-kotobase` 57% probe 4xx. Requests are therefore never returned without
   the quality figures in the same map, so a renderer cannot show one without
   having been handed the other."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.business :as business])

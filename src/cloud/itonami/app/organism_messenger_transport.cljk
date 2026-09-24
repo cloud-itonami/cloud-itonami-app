@@ -4,7 +4,7 @@
   The clear token exists only in a 0600 file under Tamaki's private workplace.
   Cloud Itonami persists its SHA-256 digest and resolves the bearer to exactly
   one active assignment; a request never supplies the mailbox principal."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.organism-gateway :as gateway]

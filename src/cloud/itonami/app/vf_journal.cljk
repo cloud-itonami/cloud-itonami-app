@@ -29,7 +29,7 @@
 
   Replay folds every event and CHECKS the recorded root; a journal whose
   replayed root disagrees with a recorded root is corrupt and refuses to load."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]

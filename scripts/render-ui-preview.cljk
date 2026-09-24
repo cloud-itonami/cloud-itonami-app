@@ -33,7 +33,7 @@
   so they are translated too; scripts/verify-runtime-strings.cljk guards it)."
   (:require ["node:fs" :as fs]
             ["node:path" :as path]
-            [clojure.edn :as edn]
+            [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]
             [shinkansen.locale :as locale]
             [cloud.itonami.app.kotoba-oracle :as oracle]))

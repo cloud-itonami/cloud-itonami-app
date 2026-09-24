@@ -5,7 +5,7 @@
   The former is an ordinary Git repository. The latter is plaintext only in
   the local editable workspace and enters DataLad solely through the existing
   Kagi sealed-block pipeline."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.mail-age-key :as age-key]

@@ -5,7 +5,7 @@
   description of observed work, not authority to call a Bot healthy. PASS is
   therefore the conjunction of every ADR-2608212400 gate. Missing telemetry
   remains `:unmeasured` and fails its gate instead of becoming zero or green."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str])
   (:import [java.time Duration Instant]))

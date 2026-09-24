@@ -13,7 +13,7 @@
 
   Nothing in the old code could have noticed. A journal was replayed because it
   was there."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.host :as host]

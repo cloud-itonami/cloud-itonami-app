@@ -22,7 +22,7 @@
             ["node:os" :as os]
             ["node:path" :as path]
             ["node:crypto" :as crypto]
-            [clojure.edn :as edn]
+            [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]))
 
 (def token "hermes-gateway-http-test-token")

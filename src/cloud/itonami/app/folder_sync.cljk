@@ -7,7 +7,7 @@
   distinguish one-sided edits from conflicts. Remote conflicts are preserved
   below `.itonami-conflicts`; remote deletions move local files below
   `.itonami-trash` instead of unlinking them."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.data.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]

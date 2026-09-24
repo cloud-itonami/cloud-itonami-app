@@ -62,7 +62,7 @@
   The value is derived from the workspace authority
   (`manifest/repository-rules.edn`, ADR-2607299000), not restated in the app,
   and it is absent where that vocabulary does not yet reach."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.fleet-core :as core]))

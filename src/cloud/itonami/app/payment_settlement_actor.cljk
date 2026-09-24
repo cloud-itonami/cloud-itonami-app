@@ -6,7 +6,7 @@
   RECORD. It has no bank credential, no transfer endpoint and no ability to
   move money. A committed response means only that the governed record exists."
   (:require [clojure.data.json :as json]
-            [clojure.edn :as edn]
+            [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config])

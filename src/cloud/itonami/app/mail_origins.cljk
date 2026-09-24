@@ -41,7 +41,7 @@
   This mirrors the messenger's rule (ADR-0016) rather than inventing a second
   trust model: unknown senders fail closed, and a quarantined body never becomes
   model context."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.mail-authentication :as authentication]))

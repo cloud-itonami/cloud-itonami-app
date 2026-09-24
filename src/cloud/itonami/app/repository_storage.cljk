@@ -4,7 +4,7 @@
   Plaintext is accepted and returned only at this local boundary. Block
   transports receive ciphertext byte arrays. A signed Kotobase head is
   advanced only after the transport confirms every referenced block."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.set :as set]

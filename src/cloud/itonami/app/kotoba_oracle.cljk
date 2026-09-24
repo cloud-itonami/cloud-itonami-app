@@ -68,7 +68,7 @@
   is a default: the seam does not reach for `node:fs` on its own, because a
   namespace that does cannot be bundled into a Worker running without
   `nodejs_compat` — which this one's is, deliberately."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [kotoba.kir :as ir]
             #?(:clj [clojure.java.io :as io])))
 

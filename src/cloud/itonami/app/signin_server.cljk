@@ -38,7 +38,7 @@
             ["node:fs" :as fs]
             ["node:path" :as path]
             ["node:crypto" :as crypto]
-            [clojure.edn :as edn]
+            [kotoba.lang.edn :as edn]
             [clojure.set :as set]
             [kotoba.lang.text :as str]
             [nbb.core :refer [*file*]]

@@ -36,7 +36,7 @@
   revenue, no customers, no cash. ADR-2607309600 requires that limit to be
   visible in the UI rather than left for a reader to infer from intervention
   names, so `:models-what` says it on every response."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.business :as business]

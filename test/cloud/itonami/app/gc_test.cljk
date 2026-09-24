@@ -7,7 +7,7 @@
   pressure levels pin their literals — `:unknown` is asserted to be distinct
   from `:ok`, because 'could not measure' printing the same thing as
   'measured and fine' is the exact defect the receipt exists to prevent."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.bot-slo :as bot-slo]

@@ -41,7 +41,7 @@
   This is the same rule `operator/register-endpoint!` applies by probing an
   endpoint instead of trusting a claim, and `funding` applies by refusing an
   unknown balance instead of reading it as zero."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.business :as business]

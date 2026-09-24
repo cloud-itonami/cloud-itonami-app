@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.config
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [cloud.itonami.app.config-policy :as policy-layer]
             [kotoba.lang.text :as str]

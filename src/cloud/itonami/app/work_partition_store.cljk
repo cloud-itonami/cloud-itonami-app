@@ -5,7 +5,7 @@
   and one new file per organization, then atomically replaces the manifest.
   Readers therefore see either the complete previous generation or the
   complete next generation, never a mixture of tenant files."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.secure-file :as secure-file])

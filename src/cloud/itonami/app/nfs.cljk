@@ -84,7 +84,7 @@
             [kekkai.envelope :as envelope]
             [kekkai.node.netmap :as wire]
             [clojure.java.io :as io]
-            [clojure.edn :as edn]
+            [kotoba.lang.edn :as edn]
             [clojure.data.json :as json]
             [nfs.tcp :as tcp]))
 

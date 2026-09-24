@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.project-transfer-test
   "Moving a project between two of one person's tenants (ADR-0024)."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
