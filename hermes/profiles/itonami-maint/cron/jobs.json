@@ -20,7 +20,7 @@
       "script": "itonami_maint_state.sh",
       "skill": null,
       "skills": [],
-      "workdir": "~/.hermes/profiles/itonami-maint/worktree"
+      "workdir": null
     }
   ]
 }
