@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.operator-test
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.fleet :as fleet]
             [cloud.itonami.app.operator :as operator]
@@ -142,10 +142,10 @@
 
 (deftest declaration-must-be-signed
   (operator/save-profile! jp-lawyer)
-  (is (thrown? clojure.lang.ExceptionInfo (operator/declare! real-repo {:by nil})))
-  (is (thrown? clojure.lang.ExceptionInfo (operator/declare! real-repo {:by ""})))
+  (is (thrown? kerror/ExceptionInfo (operator/declare! real-repo {:by nil})))
+  (is (thrown? kerror/ExceptionInfo (operator/declare! real-repo {:by ""})))
   (testing "and must name a blueprint the catalog knows"
-    (is (thrown? clojure.lang.ExceptionInfo
+    (is (thrown? kerror/ExceptionInfo
                  (operator/declare! "no-such-blueprint" {:by "山田 太郎"})))))
 
 (deftest declaring-records-the-requirements-as-they-stood

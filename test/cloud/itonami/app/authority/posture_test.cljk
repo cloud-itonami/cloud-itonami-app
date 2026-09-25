@@ -7,7 +7,7 @@
 
   Tested three ways: the pure rule, the card adapter refusing because of it, and
   the whole sequence an attacker would actually run."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.authority :as authority]
             [cloud.itonami.app.authority.card :as card-adapter]
             [cloud.itonami.app.authority.esim :as esim-adapter]
@@ -36,7 +36,7 @@
   (store/transact! assoc :authority {:proposals {}}))
 
 (defn- refuses [f]
-  (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+  (try (f) nil (catch kerror/ExceptionInfo e (:type (ex-data e)))))
 
 (defn- ok-commit [_c _s p] {:authority/ok? true :authority/record {:recorded (:id p)}})
 

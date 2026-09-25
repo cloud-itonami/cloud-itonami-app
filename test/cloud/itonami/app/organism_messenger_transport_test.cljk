@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.organism-messenger-transport-test
-  (:require [kotoba.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as io]
             [clojure.test :refer [deftest is use-fixtures]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.organism-gateway :as gateway]
@@ -59,4 +59,4 @@
          (:type (ex-data
                  (try (transport/issue! "ao:acme:reviewer" "other")
                       nil
-                      (catch clojure.lang.ExceptionInfo error error)))))))
+                      (catch kerror/ExceptionInfo error error)))))))

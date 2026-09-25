@@ -5,7 +5,7 @@
   search that reads a body. The app had been calling two of that library's
   functions and none of these, so what is under test is mostly whether the
   app asks the model the right questions and stores only the difference."
-  (:require [kotoba.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.mailbox :as app-mailbox]
@@ -92,7 +92,7 @@
   (doseq [reserved ["inbox" "trash"]]
     (is (= :mail/reserved-label
            (try (app-mailbox/set-label! a reserved true alice) nil
-                (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+                (catch kerror/ExceptionInfo e (:type (ex-data e)))))
         reserved)))
 
 (deftest trashing-takes-it-out-of-the-inbox-and-deletes-nothing
@@ -130,7 +130,7 @@
   ;; would ever clear it.
   (is (= :mail/not-found
          (try (app-mailbox/set-read! "no-such.eml" false alice) nil
-              (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+              (catch kerror/ExceptionInfo e (:type (ex-data e))))))
   (is (= {} (get-in @store/state [:mail :marks alice] {}))))
 
 (deftest a-mark-outlives-the-message-it-was-on-without-resurrecting-it

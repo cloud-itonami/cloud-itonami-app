@@ -12,7 +12,7 @@
   is stopped one level down at `provider/agent-turn` — a turn with no tool calls
   ends the loop, which is enough for every assertion here and reaches no
   network."
-  (:require [kotoba.io :as kio] [kotoba.lang.text :as str]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bots :as bots]
@@ -64,7 +64,7 @@
     (fn []
       (let [b (make-bot alice {})]
         (is (thrown-with-msg?
-             clojure.lang.ExceptionInfo #"まだ何も実行していない"
+             kerror/ExceptionInfo #"まだ何も実行していない"
              (bots/record-routine! nil alice (:bot/id b) {:name "morning"})))))))
 
 (deftest a-routine-is-built-from-the-calls-that-ran
@@ -111,7 +111,7 @@
         (traced! (:bot/id b) ["a" "b"])
         (bots/record-routine! nil alice (:bot/id b) {:name "first" :intent "i"})
         (is (thrown-with-msg?
-             clojure.lang.ExceptionInfo #"まだ何も実行していない"
+             kerror/ExceptionInfo #"まだ何も実行していない"
              (bots/record-routine! nil alice (:bot/id b) {:name "second"})))))))
 
 (deftest a-routine-belongs-to-its-bots-owner
@@ -120,9 +120,9 @@
       (let [b (make-bot alice {})]
         (traced! (:bot/id b) ["a"])
         (let [r (bots/record-routine! nil alice (:bot/id b) {:name "x" :intent "i"})]
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"このセッションのもの"
+          (is (thrown-with-msg? kerror/ExceptionInfo #"このセッションのもの"
                                 (bots/routines nil bob (:bot/id b))))
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"このセッションのもの"
+          (is (thrown-with-msg? kerror/ExceptionInfo #"このセッションのもの"
                                 (bots/start-routine! nil bob (:bot/id b) (:id r)))))))))
 
 (deftest a-routine-whose-tools-are-gone-refuses-rather-than-running-short
@@ -137,7 +137,7 @@
           (is (= "stale" (:status r)))
           (is (false? (:may-start? r)))
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"いま使えないツール"
+               kerror/ExceptionInfo #"いま使えないツール"
                (bots/start-routine! nil alice (:bot/id b) (:id r)))))))))
 
 (deftest a-schedule-has-a-floor-and-a-shape
@@ -147,12 +147,12 @@
         (traced! (:bot/id b) ["a"])
         (let [r (bots/record-routine! nil alice (:bot/id b) {:name "x" :intent "i"})]
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"分以上"
+               kerror/ExceptionInfo #"分以上"
                (bots/update-routine! nil alice (:bot/id b) (:id r)
                                      {:schedule {:kind :every-minutes
                                                  :every-minutes 1}})))
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"対応していない schedule"
+               kerror/ExceptionInfo #"対応していない schedule"
                (bots/update-routine! nil alice (:bot/id b) (:id r)
                                      {:schedule {:kind :cron :every-minutes 60}})))
           (testing "a valid one is kept"
@@ -211,7 +211,7 @@
       (let [mine (make-bot alice {:name "mine"})
             theirs (make-bot bob {:name "theirs"})]
         (is (thrown-with-msg?
-             clojure.lang.ExceptionInfo #"このセッションのもの"
+             kerror/ExceptionInfo #"このセッションのもの"
              (quiet-model
               #(bots/hand-off! nil alice (:bot/id mine) (:bot/id theirs)
                                {:task "調べて"}))))))))
@@ -221,7 +221,7 @@
     (fn []
       (let [b (make-bot alice {})]
         (is (thrown-with-msg?
-             clojure.lang.ExceptionInfo #"自分自身"
+             kerror/ExceptionInfo #"自分自身"
              (quiet-model
               #(bots/hand-off! nil alice (:bot/id b) (:bot/id b) {:task "調べて"}))))))))
 
@@ -231,7 +231,7 @@
       (let [a (make-bot alice {:name "a"})
             b (make-bot alice {:name "b"})]
         (is (thrown-with-msg?
-             clojure.lang.ExceptionInfo #"上限"
+             kerror/ExceptionInfo #"上限"
              (quiet-model
               #(bots/hand-off! nil alice (:bot/id a) (:bot/id b)
                                {:task "調べて" :depth 4}))))))))
@@ -338,7 +338,7 @@
       (let [a (make-bot alice {:name "a"})
             b (make-bot alice {:name "b"})]
         (is (thrown-with-msg?
-             clojure.lang.ExceptionInfo #"引き継ぐ内容が空"
+             kerror/ExceptionInfo #"引き継ぐ内容が空"
              (quiet-model
               #(bots/hand-off! nil alice (:bot/id a) (:bot/id b) {:task "  "}))))))))
 

@@ -42,7 +42,7 @@
   trust model: unknown senders fail closed, and a quarantined body never becomes
   model context."
   (:require [kotoba.lang.edn :as edn]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.mail-authentication :as authentication]))
 

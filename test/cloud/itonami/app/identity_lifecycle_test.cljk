@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.identity-lifecycle-test
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.store :as store]))
@@ -85,7 +85,7 @@
         (try
           (identity/revoke-session! current (:session-id foreign-issued))
           (is false)
-          (catch clojure.lang.ExceptionInfo error
+          (catch kerror/ExceptionInfo error
             (is (= :identity/session-not-found (:type (ex-data error)))))))
       (identity/revoke-session! current (:session-id second-issued))
       (is (nil? (identity/session (:token second-issued))))
@@ -110,7 +110,7 @@
         (identity/unlink-login-identity!
          current {:provider :google :subject "subject-1"})
         (is false)
-        (catch clojure.lang.ExceptionInfo error
+        (catch kerror/ExceptionInfo error
           (is (= :identity/last-login-method (:type (ex-data error)))))))))
 
 (defn- central-state []
@@ -176,7 +176,7 @@
             (identity/complete-central-authentication!
              {:state state :code "one-time-code"})
             (is false "state replay must fail")
-            (catch clojure.lang.ExceptionInfo error
+            (catch kerror/ExceptionInfo error
               (is (= :central-auth/invalid-state (:type (ex-data error))))))
           (testing "a linked central provider remains single-factor locally"
             (identity/start-central-authentication! session "http://localhost:1338")
@@ -192,7 +192,7 @@
         (try
           (finish-central! "did:web:kotobase.net:person:two")
           (is false "existing installs require an authenticated link")
-          (catch clojure.lang.ExceptionInfo error
+          (catch kerror/ExceptionInfo error
             (is (= :central-auth/link-required (:type (ex-data error)))))))
       (finally
         (reset! store/state previous)))))

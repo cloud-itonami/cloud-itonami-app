@@ -37,7 +37,7 @@
   silently: a missing seed is created, an unreadable one degrades to no
   identity, and neither path quietly mints a different name for a Bot that
   already had one."
-  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [ed25519.core :as ed]
             [identity.model :as identity-model]
@@ -52,12 +52,12 @@
 (defn seed-file []
   (io/file (config/data-dir) "bot-identity.seed"))
 
-(defn- owner-only! [^java.io.File file]
+(defn- owner-only! [file]
   (secure-file/harden! file "rw-------"))
 
 (defn- read-seed []
   (let [file (seed-file)]
-    (when (.isFile file)
+    (when (io/file? file)
       (let [bytes (kio/read-all-bytes file)]
         (when (= seed-bytes (alength bytes)) bytes)))))
 

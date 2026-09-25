@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.human-work-test
-  (:require [clojure.test :refer [deftest is testing use-fixtures]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.human-work :as human-work]
             [cloud.itonami.app.human-work-tools :as human-work-tools]
             [cloud.itonami.app.store :as store]))
@@ -89,7 +89,7 @@
 
 (defn- error-data [f]
   (try (f) nil
-       (catch clojure.lang.ExceptionInfo error (ex-data error))))
+       (catch kerror/ExceptionInfo error (ex-data error))))
 
 (deftest a-qualified-person-completes-one-evidenced-human-work-chain
   (register-and-verify! worker)

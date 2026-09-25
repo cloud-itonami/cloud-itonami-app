@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.tenant-repository-test
-  (:require [kotoba.io :as kio] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.repository-storage :as repository]
             [cloud.itonami.app.store :as store]
@@ -62,7 +62,7 @@
                          (try (tenant-repository/write!
                                agent-session id {:state_edn initial
                                          :expected_cid "sha256:stale"})
-                              (catch clojure.lang.ExceptionInfo e e))))))
+                              (catch kerror/ExceptionInfo e e))))))
                 (is (= before
                        (:operations-used
                         (connection/connection agent-session id)))))))))
@@ -83,7 +83,7 @@
                     (ex-data
                      (try (tenant-repository/write!
                            agent-session id {:state_edn "{:datoms []}"})
-                          (catch clojure.lang.ExceptionInfo e e))))))
+                          (catch kerror/ExceptionInfo e e))))))
             (is (nil? (repository/workspace-snapshot
                        (kio/path (kio/file temporary "workspace"))
                        owner))))))

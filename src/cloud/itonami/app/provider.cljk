@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.provider
-  (:require [kotoba.json :as json]
+  (:require [kotoba.lang.error :as kerror] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.http-client :as http]
@@ -422,7 +422,7 @@
                              :arguments-sample (subs (str value) 0
                                                      (min max-reported-arguments
                                                           (count (str value))))}))))
-        (catch clojure.lang.ExceptionInfo error (throw error))
+        (catch kerror/ExceptionInfo error (throw error))
         (catch Exception error
           (throw (ex-info "model returned invalid tool arguments"
                           {:type :provider/invalid-tool-arguments
@@ -491,7 +491,7 @@
             :input (try
                      (parse-arguments (get-in call [:function :name])
                                       (get-in call [:function :arguments]))
-                     (catch clojure.lang.ExceptionInfo error
+                     (catch kerror/ExceptionInfo error
                        (throw (budget-exhausted-error
                                (ex-info (.getMessage error)
                                         (assoc (ex-data error)

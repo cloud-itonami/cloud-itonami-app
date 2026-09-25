@@ -32,7 +32,7 @@
   Two booleans for the scope, two for the auxiliary route: 4 x 2, checked in
   full. A conjunction is exactly the shape where sampling misses a dropped
   term."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-control]
             [cloud.itonami.app.bots]
@@ -187,7 +187,7 @@
     (let [thrown (try
                    (routing/auxiliary-choice! denied-provider-config idx :room main)
                    nil
-                   (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                   (catch kerror/ExceptionInfo e (ex-data e)))]
       (is (some? thrown) "an unadmitted override must not return a route")
       (is (= :routing/auxiliary-denied (:type thrown))
           "the refusal must name itself, so a rename of the reason fails here")
@@ -211,7 +211,7 @@
                                              :provider-id nil :model "local"}]]]
     (testing label
       (let [thrown (try (routing/assignment submitted) nil
-                        (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                        (catch kerror/ExceptionInfo e (ex-data e)))]
         (is (= :routing/incomplete (:type thrown))
             "and refuses under its own name")))))
 
@@ -223,7 +223,7 @@
     (let [thrown (try (routing/assignment {:task (:task t) :scope "bot-1"
                                            :provider-id "ollama" :model "local"})
                       nil
-                      (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                      (catch kerror/ExceptionInfo e (ex-data e)))]
       (is (= :routing/scope-not-assignable (:type thrown))
           (str (:task t) " must refuse a per-Bot scope by that name"))))
   ;; The main task is the one that can, because it is the only one that has a
@@ -236,7 +236,7 @@
   (let [thrown (try (routing/assignment {:task :vision :scope "default"
                                          :provider-id "ollama" :model "local"})
                     nil
-                    (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                    (catch kerror/ExceptionInfo e (ex-data e)))]
     (is (= :routing/unknown-task (:type thrown))
         "a task name borrowed from another product has no call site here")))
 

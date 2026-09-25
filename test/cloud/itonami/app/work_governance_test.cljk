@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.work-governance-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.work-governance :as governance]))
 
 (def human
@@ -58,7 +58,7 @@
   (is (= #{:dodaf/performer :dodaf/system}
          (:performer/dodaf-types (governance/performer robot))))
   (is (thrown-with-msg?
-       clojure.lang.ExceptionInfo #"cannot acquire person authority"
+       kerror/ExceptionInfo #"cannot acquire person authority"
        (governance/performer
         (assoc robot :performer/dodaf-types #{:dodaf/person})))))
 
@@ -174,9 +174,9 @@
   (is (= :ready (:work.item/status
                  (governance/transition-work
                   (assoc item :work.item/status :backlog) :ready 20 {}))))
-  (is (thrown? clojure.lang.ExceptionInfo
+  (is (thrown? kerror/ExceptionInfo
                (governance/transition-work item :done 20 {})))
-  (is (thrown? clojure.lang.ExceptionInfo
+  (is (thrown? kerror/ExceptionInfo
                (governance/transition-work
                 (assoc item :work.item/status :rejected) :ready 20 {}))))
 

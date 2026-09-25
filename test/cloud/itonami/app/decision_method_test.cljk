@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.decision-method-test
-  (:require [kotoba.io :as kio] [clojure.java.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [kotoba.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.decision-method :as method]))
 
@@ -37,22 +37,22 @@
 
 (deftest refuses-fiction-shaped-frames
   (testing "facts without evidence are not facts"
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"evidence"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"evidence"
                           (method/prepare-frame
                            (assoc-in frame [:facts 0 :evidence] [])))))
   (testing "relations cannot invent undeclared objects"
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"declared entities"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"declared entities"
                           (method/prepare-frame
                            (assoc-in frame [:relations 0 :to] "ghost")))))
   (testing "dynamic work names stocks and flows"
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"stocks and flows"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"stocks and flows"
                           (method/prepare-frame
                            (assoc-in frame [:dynamics :stocks] [])))))
   (testing "the selected scenario must exist"
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"declared selection"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"declared selection"
                           (method/prepare-frame (assoc frame :selected "ghost")))))
   (testing "XMILE cannot escape the configured workspace"
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"workspace-relative"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"workspace-relative"
                           (method/prepare-frame
                            (assoc frame :dynamics
                                   {:mode "xmile-bound" :model "../secret.xmile"
@@ -82,7 +82,7 @@
                         :stocks ["Backlog"] :flows ["Done"]})
           verified (->> bound method/prepare-frame
                         (method/verify-dynamics
-                         {:business {:workspace-root (.getCanonicalPath root)}}))]
+                         {:business {:workspace-root (io/canonical-path root)}}))]
       (is (= {:xmile/source "decision.xmile" :xmile/model "(無名)"
               :xmile/steps 3 :xmile/state :simulated}
              (:decision.method/xmile-execution verified))))))

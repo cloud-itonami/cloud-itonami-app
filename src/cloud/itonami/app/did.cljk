@@ -8,7 +8,7 @@
            [com.fasterxml.jackson.dataformat.cbor CBORFactory]
            [java.math BigInteger]
            [java.util Map])
-  (:require [kotoba.bytes :as kbytes]))
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes]))
 
 (def ^:private base58-alphabet
   "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
@@ -95,7 +95,7 @@
         (throw (ex-info "Passkey は EC2/P-256 公開鍵ではありません。"
                         {:type :did/unsupported-public-key})))
       {:x x :y y})
-    (catch clojure.lang.ExceptionInfo error
+    (catch kerror/ExceptionInfo error
       (throw error))
     (catch Exception error
       (throw (ex-info "Passkey 公開鍵を読み取れません。"

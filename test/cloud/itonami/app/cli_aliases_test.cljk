@@ -6,7 +6,7 @@
   function cannot: a `{param}` with nothing to fill it, a body spec naming a
   parse that does not exist, a name that collides with a generated command and
   quietly shadows it. These are those failures."
-  (:require [kotoba.lang.coll :as set]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.commands :as commands]))
@@ -133,12 +133,12 @@
            (:flag (ex-data (try (commands/alias-request
                                  (commands/resolve-alias ["bots" "task"])
                                  {:id "b-1"} {})
-                                (catch clojure.lang.ExceptionInfo e e))))))))
+                                (catch kerror/ExceptionInfo e e))))))))
 
 (deftest business-bind-refuses-to-clear-everything
   ;; `bind!` reads a present-but-empty key as "clear this face", so a call that
   ;; named no face at all must not reach the server.
-  (is (thrown? clojure.lang.ExceptionInfo
+  (is (thrown? kerror/ExceptionInfo
                (commands/alias-request (commands/resolve-alias ["business" "bind"])
                                        {:id "b-1"} {})))
   (is (= {:method :post :path "/api/business/b-1/bind" :body {:model "m"}}

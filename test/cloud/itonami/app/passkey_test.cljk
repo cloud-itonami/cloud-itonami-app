@@ -23,7 +23,7 @@
                 after the user consented
 
   Every expectation was measured from the namespace first."
-  (:require [clojure.test :refer [deftest is testing use-fixtures]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.passkey :as passkey]
             [cloud.itonami.app.store :as store]))
 
@@ -49,7 +49,7 @@
   "The :type of an ex-info, or nil. Deliberately narrow: an assertion expecting
   :passkey/invalid-transaction should FAIL, not pass, if something else was raised."
   [f]
-  (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+  (try (f) nil (catch kerror/ExceptionInfo e (:type (ex-data e)))))
 
 (defn- threw?
   "Whether f raised anything at all. Needed where finish fails closed on the JVM
@@ -204,7 +204,7 @@
     (doseq [n [0 16 31 33 64]]
       (let [d (try (passkey/start-signing! (:id user) (byte-array n) {} rp-id origin)
                    nil
-                   (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                   (catch kerror/ExceptionInfo e (ex-data e)))]
         (is (= :esign/invalid-challenge (:type d)) (str n " bytes"))
         (is (= n (:byte-count d))
             "and it reports the length it got, so the caller can see what it sent"))))

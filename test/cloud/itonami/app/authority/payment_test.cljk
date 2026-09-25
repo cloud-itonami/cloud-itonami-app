@@ -6,7 +6,7 @@
   `api-test/a-client-cannot-supply-its-own-posture` establishes for the
   cross-domain posture, and for the same reason: a fact the caller controls is
   not a gate, it is a suggestion."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.authority :as authority]
             [cloud.itonami.app.authority.api :as api]
             [cloud.itonami.app.authority.esim :as esim-adapter]
@@ -60,7 +60,7 @@
          overrides))
 
 (defn- refuses [f]
-  (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+  (try (f) nil (catch kerror/ExceptionInfo e (:type (ex-data e)))))
 
 (defn- check [req] (payment/pre-check {} session req))
 

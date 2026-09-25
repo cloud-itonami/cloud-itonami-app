@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.drive-fs-test
   "The Drive answering the thirteen questions NFS asks, and the two seams
   that decide who may ask them."
-  (:require [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.drive-fs :as drive-fs]
             [cloud.itonami.app.nfs :as nfs-service]
@@ -186,7 +186,7 @@
 (deftest a-non-loopback-bind-without-a-policy-is-refused
   (testing "an unauthenticated NFS export on a LAN is an open Drive, and
             falling back to loopback would silently ignore the operator"
-    (is (thrown? clojure.lang.ExceptionInfo
+    (is (thrown? kerror/ExceptionInfo
                  (nfs-service/start! {:nfs {:enabled? true :actor actor
                                             :bind "0.0.0.0" :port 12099}})))))
 
@@ -232,7 +232,7 @@
 
     (testing "a signature from a key this export does not accept is refused"
       (let [other (signing-identity)]
-        (is (thrown? clojure.lang.ExceptionInfo
+        (is (thrown? kerror/ExceptionInfo
                      (nfs-service/verified-netmap
                       {:envelope envelope
                        :authority-spki-b64 (kekkai.envelope/authority-spki-b64 other)})))))
@@ -244,13 +244,13 @@
                             (kbytes/base64-encode
                                              (kbytes/utf8-bytes (pr-str (assoc drive-netmap
                                                                        :netmap/version 8)))))]
-        (is (thrown? clojure.lang.ExceptionInfo
+        (is (thrown? kerror/ExceptionInfo
                      (nfs-service/verified-netmap {:envelope tampered
                                                    :authority-spki-b64 spki})))))
 
     (testing "the authority is required — an envelope that authenticated itself
               would not be authentication"
-      (is (thrown? clojure.lang.ExceptionInfo
+      (is (thrown? kerror/ExceptionInfo
                    (nfs-service/verified-netmap {:envelope envelope}))))
 
     (let [nm (nfs-service/verified-netmap {:envelope envelope :authority-spki-b64 spki})
@@ -282,7 +282,7 @@
                    {:remote-address "100.64.0.9"}))))))
 
   (testing "a hand-written policy is refused unless the operator says so"
-    (is (thrown? clojure.lang.ExceptionInfo
+    (is (thrown? kerror/ExceptionInfo
                  (nfs-service/config {:nfs {:enabled? true :actor actor
                                             :policy {:nodes [] :grants []}}})))
     (is (some? (nfs-service/config {:nfs {:enabled? true :actor actor
@@ -291,7 +291,7 @@
 
   (testing "a netmap without a capability is refused rather than given a default"
     (let [me (signing-identity)]
-      (is (thrown? clojure.lang.ExceptionInfo
+      (is (thrown? kerror/ExceptionInfo
                    (nfs-service/config
                     {:nfs {:enabled? true :actor actor
                            :netmap {:envelope (kekkai.envelope/seal drive-netmap me)
@@ -338,6 +338,6 @@
 (deftest a-lookup-without-a-netmap-is-refused
   (testing "the lookup names a peer; only a netmap says what that peer may
             reach. One without the other admits whoever was named, on any port"
-    (is (thrown? clojure.lang.ExceptionInfo
+    (is (thrown? kerror/ExceptionInfo
                  (nfs-service/config {:nfs {:enabled? true :actor actor
                                             :principal-endpoint "http://127.0.0.1:1"}})))))

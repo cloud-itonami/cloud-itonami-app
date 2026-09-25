@@ -4,7 +4,7 @@
   No satellite and no network. What is protocol lives in `io-storj-node` and
   is tested there against Go; what is here is the parts this app supplies —
   and the store is the one that could quietly lose a piece."
-  (:require [kotoba.io :as kio] [clojure.java.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.storj-node :as node]
@@ -93,7 +93,7 @@
   ;; report a clean sweep over pieces this node never had
   (with-pieces-dir
     (fn [store _]
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"no such piece"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"no such piece"
                             (p/-delete store "aa/bb/never.sj1")))
       (p/-put store "aa/bb/real.sj1" [1])
       (p/-delete store "aa/bb/real.sj1")
@@ -114,7 +114,7 @@
   (with-pieces-dir
     (fn [store dir]
       (doseq [bad ["../escaped" "aa/../../escaped" "aa/bb/../../../escaped"]]
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"escapes the pieces directory"
+        (is (thrown-with-msg? kerror/ExceptionInfo #"escapes the pieces directory"
                               (p/-put store bad [1]))
             bad))
       (testing "and nothing was written outside it"

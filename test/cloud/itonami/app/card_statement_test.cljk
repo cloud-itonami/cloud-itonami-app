@@ -14,7 +14,7 @@
   unverified -- and the test that matters is that an unverified map fails closed
   rather than silently mis-parsing. When a real export exists, its header row
   replaces `header` below and this paragraph goes away."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.authority.api :as api]
             [cloud.itonami.app.authority.payment :as payment]
@@ -26,7 +26,7 @@
 (def outsider {:user-id "user-9" :organization-id "org-2"})
 
 (defn- refuses [f]
-  (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+  (try (f) nil (catch kerror/ExceptionInfo e (:type (ex-data e)))))
 
 (defn- reset-state! []
   (store/transact! #(assoc %
@@ -67,7 +67,7 @@
     (let [e (try (cs/parse-transactions "日付,店,金額\n2026/08/01,X,100"
                                         {:card-digest "d" :currency "JPY"})
                  nil
-                 (catch clojure.lang.ExceptionInfo ex ex))]
+                 (catch kerror/ExceptionInfo ex ex))]
       (is (= :card-statement/columns-missing (:type (ex-data e))))
       (testing "and the message names both sides, so the mapping is fixable in one step"
         (is (str/includes? (ex-message e) "利用日"))

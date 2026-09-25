@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.updater-test
-  (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
@@ -47,12 +47,12 @@
         manifest (signed-manifest pair (kbytes/utf8-bytes "package"))]
     (is (= manifest (updater/verify-manifest manifest (.getPublic pair))))
     (testing "a transport cannot change even one signed field"
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"signature is invalid"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"signature is invalid"
                             (updater/verify-manifest
                              (assoc manifest :version "9.0.1")
                              (.getPublic pair)))))
     (testing "another key cannot bless the same bytes"
-      (is (thrown? clojure.lang.ExceptionInfo
+      (is (thrown? kerror/ExceptionInfo
                    (updater/verify-manifest manifest (.getPublic (key-pair))))))))
 
 (deftest versions-advance-only-forward

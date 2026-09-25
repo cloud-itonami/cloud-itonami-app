@@ -15,7 +15,7 @@
   Same discipline as `policy-kotoba-parity-test`, and the same caveat: the
   native compile rows assert that the core is expressible on native, not that
   anything runs there. No capability kit is qualified for `:native-aot`."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.fleet-core :as fleet-core]
             [kotoba.compiler.core :as compiler]
@@ -100,9 +100,9 @@
   ;; of the `.kotoba` without changing what a caller of `validate-catalog` sees.
   (is (= {:schema fleet-core/schema}
          (fleet-core/validate-catalog {:schema fleet-core/schema})))
-  (is (thrown? clojure.lang.ExceptionInfo
+  (is (thrown? kerror/ExceptionInfo
                (fleet-core/validate-catalog {:schema "cloud.itonami.fleet-catalog.v2"})))
-  (is (thrown? clojure.lang.ExceptionInfo
+  (is (thrown? kerror/ExceptionInfo
                (fleet-core/validate-catalog {}))))
 
 ;; ---------------------------------------------------------------------------

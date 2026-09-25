@@ -55,7 +55,7 @@
   namespace unloadable in a plain `-M:test` run. `fleet/tools` lives in fleet for
   that exact reason (see the comment above it). The gate is re-read here instead,
   which is a duplication worth naming."
-  (:require [kotoba.json :as json]
+  (:require [kotoba.lang.error :as kerror] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.domain-tools :as domain-tools]
@@ -154,7 +154,7 @@
           {:error "fleet capability is disabled" :type "fleet/disabled"})
         :else {:error (str "unknown tool: " tool-name)
                :type "mcp/unknown-tool"})
-      (catch clojure.lang.ExceptionInfo error
+      (catch kerror/ExceptionInfo error
         {:error (.getMessage error)
          :type (some-> (:type (ex-data error)) str (str/replace #"^:" ""))})
       (catch Exception error

@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.repository-actor-test
-  (:require [kotoba.io :as kio] [clojure.java.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.repository-actor :as actor]
             [cloud.itonami.app.repository-storage :as repository]
@@ -51,13 +51,13 @@
 (deftest launcher-fails-closed-on-unknown-owner-actor-and-process-failure
   (let [context (fixture)]
     (testing "path traversal cannot select another user's workspace"
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo
+      (is (thrown-with-msg? kerror/ExceptionInfo
                             #"owner storage id is invalid"
                             (actor/launch-environment
                              (assoc context :owner "../other"
                                     :actor-id :animeka)))))
     (testing "only registered streams can be launched"
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo
+      (is (thrown-with-msg? kerror/ExceptionInfo
                             #"actor is not registered"
                             (actor/launch-environment
                              (assoc context :actor-id :unknown)))))
@@ -70,6 +70,6 @@
                                           {:exit 9
                                            :output "private plaintext"})))
                     nil
-                    (catch clojure.lang.ExceptionInfo value value))]
+                    (catch kerror/ExceptionInfo value value))]
         (is (= :repository-actor/process-failed (:type (ex-data error))))
         (is (not (.contains (pr-str (ex-data error)) "private plaintext")))))))

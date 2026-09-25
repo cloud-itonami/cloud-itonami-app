@@ -7,7 +7,7 @@
   directory per provider meant two mailboxes' messages collided by id, and
   one error per provider meant 'Google is broken' when one of two Google
   mailboxes was fine."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.mail-account :as account]
             [cloud.itonami.app.mail-sync :as mail-sync]
@@ -141,7 +141,7 @@
             connection live and the mailbox merely hidden"
     (put-connection! {:did "did:key:alice" :provider :google
                       :subject "7001" :email "alice@example.com"})
-    (is (thrown? clojure.lang.ExceptionInfo
+    (is (thrown? kerror/ExceptionInfo
                  (account/remove-account! "gmail:7001")))))
 
 ;; ---------------------------------------------------------------------------

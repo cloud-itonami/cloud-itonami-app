@@ -10,9 +10,8 @@
 
   These tests pin the distinction the fix rests on: an mtime that moved with no
   edit must NOT move the revision, and an edit must."
-  (:require [kotoba.io :as kio] [clojure.java.io :as io]
-            [clojure.test :refer [deftest is testing]])
-  (:import [java.io File]))
+  (:require [kotoba.io :as kio] [kotoba.io :as io]
+            [clojure.test :refer [deftest is testing]]))
 
 (def ^:private inventory
   "The private inventory under test, reached by var so the namespace keeps its
@@ -20,25 +19,25 @@
   (do (require 'cloud.itonami.app.hermes-migration)
       (resolve 'cloud.itonami.app.hermes-migration/profile-inventory)))
 
-(defn- temp-dir ^File []
+(defn- temp-dir []
   (kio/temp-dir "hermes-migration-test"))
 
-(defn- write! [^File root relative content]
+(defn- write! [root relative content]
   (let [f (io/file root relative)]
     (io/make-parents f)
     (spit f content)
     f))
 
-(defn- revision [^File root]
+(defn- revision [root]
   (get-in (inventory {:id "default" :root root}) [:source :revision]))
 
 (defn- touch!
   "Move a file's mtime without changing a byte, the way the cron ticker does."
-  [^File f]
-  (let [before (.lastModified f)
+  [f]
+  (let [before (io/last-modified f)
         moved (+ before 240000)]
-    (is (.setLastModified f moved) "the fixture must be able to move an mtime")
-    (is (not= before (.lastModified f)) "the mtime must actually have moved")))
+    (is (io/set-last-modified f moved) "the fixture must be able to move an mtime")
+    (is (not= before (io/last-modified f)) "the mtime must actually have moved")))
 
 ;; The `default` profile exports a whitelist of portable roots rather than the
 ;; whole home, so a fixture has to put its files where that whitelist looks.

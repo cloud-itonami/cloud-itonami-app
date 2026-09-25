@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.workspace-tools-test
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.lang.error :as kerror] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.workspace-tools :as workspace])
@@ -26,7 +26,7 @@
     (.mkdirs child)
     (git! root "init" "-q" "--initial-branch=main")
     (is (= (.getCanonicalPath root) (workspace/admit-root (.getPath root))))
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Git repository root"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"Git repository root"
                           (workspace/admit-root (.getPath child))))))
 
 (deftest filesystem-tools-cannot-escape-or-open-git-internals
@@ -38,12 +38,12 @@
     (is (= "hello\n" (workspace/call! (.getPath root) "workspace_read"
                                         {:path "README.md"})))
     (doseq [path ["../outside.txt" (.getPath outside) ".git/config" ".GIT/config"]]
-      (is (thrown? clojure.lang.ExceptionInfo
+      (is (thrown? kerror/ExceptionInfo
                    (workspace/call! (.getPath root) "workspace_read" {:path path}))))
     (let [link (io/file root "outside-link")]
       (Files/createSymbolicLink (.toPath link) (.toPath outside)
                                 (make-array FileAttribute 0))
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"symbolic link"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"symbolic link"
                             (workspace/call! (.getPath root) "workspace_read"
                                              {:path "outside-link"}))))))
 
@@ -172,7 +172,7 @@
     (.mkdir (io/file root "src"))
     (spit (io/file root "src" "note.txt") "ready")
     (let [error (try (workspace/call! (.getPath root) "workspace_read" {:path "src"})
-                     (catch clojure.lang.ExceptionInfo e e))]
+                     (catch kerror/ExceptionInfo e e))]
       (is (= :workspace/not-a-file (:type (ex-data error))))
       (is (re-find #"directory.*workspace_list.*workspace_read" (.getMessage error))))
     (is (= "ready" (workspace/call! (.getPath root) "workspace_read" {:path "src/note.txt"})))))

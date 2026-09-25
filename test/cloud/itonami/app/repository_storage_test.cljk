@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.repository-storage-test
-  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [clojure.java.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.io :as kio] [clojure.java.io :as io]
             [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is]]
@@ -78,7 +78,7 @@
                     :expected-cid expected
                     :edit-fn #(assoc % :agent/note "must-not-land")})
                   nil
-                  (catch clojure.lang.ExceptionInfo value value))
+                  (catch kerror/ExceptionInfo value value))
           state (:state (repository/workspace-snapshot root owner))]
       (is (= :repository-storage/edit-conflict (:type (ex-data error))))
       (is (nil? (:agent/note state)))
@@ -174,7 +174,7 @@
       (.mkdirs blocks)
       (kio/write-bytes materialized (byte-array [1 2 3]))
       (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo #"already contains local block"
+           kerror/ExceptionInfo #"already contains local block"
            (repository/assert-empty-datalad-block-cache! empty-root))))))
 
 (deftest direct-edn-and-datom-update-converge
@@ -200,7 +200,7 @@
     (is (= true (get-in merged [:state :settings :local])))
     (is (= true (get-in merged [:state :settings :remote]))))
   (is (thrown-with-msg?
-       clojure.lang.ExceptionInfo #"reconciliation conflict"
+       kerror/ExceptionInfo #"reconciliation conflict"
        (repository/reconcile
         {:base base-state
          :candidate (assoc-in base-state [:settings :order] [2])
@@ -236,7 +236,7 @@
         prepared (preparation context base-state base-state base-state nil)]
     (repository/fail-memory-publish! transport true)
     (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo #"transport failure"
+         kerror/ExceptionInfo #"transport failure"
          (repository/publish-prepared!
           {:transport transport :head-store head-store
            :provider (:provider context)
@@ -378,7 +378,7 @@
         dataset (io/file root "dataset")]
     (.mkdirs dataset)
     (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo #"outside DataLad"
+         kerror/ExceptionInfo #"outside DataLad"
          (repository/write-workspace! dataset dataset owner base-state
                                       {:head/cid "head"} 1)))))
 
@@ -390,7 +390,7 @@
     (.mkdirs (io/file root ".git"))
     (.mkdirs datalad)
     (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo #"not ignored"
+         kerror/ExceptionInfo #"not ignored"
          (repository/write-workspace! workspace datalad owner base-state
                                       {:head/cid "head"} 1)))))
 
@@ -408,7 +408,7 @@
     (repository/write-workspace! workspace datalad owner base-state
                                  {:head/cid nil} 0)
     (repository/fail-memory-publish! transport true)
-    (is (thrown? clojure.lang.ExceptionInfo
+    (is (thrown? kerror/ExceptionInfo
                  (repository/commit-workspace! runtime)))
     (let [staged-before (set (keys @(:staged transport)))]
       (repository/fail-memory-publish! transport false)

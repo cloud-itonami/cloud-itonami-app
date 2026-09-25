@@ -5,7 +5,7 @@
   The former is an ordinary Git repository. The latter is plaintext only in
   the local editable workspace and enters DataLad solely through the existing
   Kagi sealed-block pipeline."
-  (:require [kotoba.bytes :as kbytes] [kotoba.lang.edn :as edn]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.mail-age-key :as age-key]
@@ -654,7 +654,7 @@
           :datalad-root (.getCanonicalPath datalad-root)
           :owner owner
           :candidate (edit (initial-projection scope owner))})
-        (catch clojure.lang.ExceptionInfo error
+        (catch kerror/ExceptionInfo error
           (if (= :repository-storage/initialization-conflict (:type (ex-data error)))
             (repository/retry-workspace-edit!
              {:workspace-root workspace-root :owner owner :edit-fn edit})

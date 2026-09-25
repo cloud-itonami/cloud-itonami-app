@@ -35,7 +35,7 @@
   The rule that adds the facts up is `domain_binding_core.kotoba`. DNS, the
   outbound probe, the store writes and every `throw` are here — an exception is
   an effect and the core has none."
-  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
+  (:require [kotoba.netcap.tls-host :as tls-host] [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [cloud.itonami.app.credential-trust :as credential-trust]
             [cloud.itonami.app.domain-binding :as binding]
             [cloud.itonami.app.domain-name :as domain-name]
@@ -173,7 +173,7 @@
   (loop [t e]
     (cond
       (nil? t) false
-      (or (instance? javax.net.ssl.SSLException t)
+      (or (tls-host/tls-exception? t)
           (instance? java.security.cert.CertificateException t)) true
       :else (recur (.getCause t)))))
 

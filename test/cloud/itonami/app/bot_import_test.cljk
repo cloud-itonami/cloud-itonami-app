@@ -5,7 +5,7 @@
   runtime reports one held bot with `budget-exhausted`. A converter tested
   only against a healthy bot would look correct and would still enable both
   of those on a fifteen-minute cadence."
-  (:require [kotoba.json :as json]
+  (:require [kotoba.lang.error :as kerror] [kotoba.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
@@ -171,7 +171,7 @@
                      (migration/stage! {:home home
                                         :data-dir (temp-dir "itonami-stale-")
                                         :manifest preview})
-                     (catch clojure.lang.ExceptionInfo error error))))))))
+                     (catch kerror/ExceptionInfo error error))))))))
 
 (deftest migration-ids-and-profile-links-cannot-escape-the-bundle
   (let [home (full-hermes-home!)]
@@ -181,7 +181,7 @@
                      (try
                        (migration/preview {:home home
                                            :migration-id "hermes-../../outside"})
-                       (catch clojure.lang.ExceptionInfo error error)))))))
+                       (catch kerror/ExceptionInfo error error)))))))
     (testing "inventory does not follow a profile symlink outside Hermes"
       (let [before (migration/preview {:home home :migration-id "hermes-before"})
             external (temp-dir "itonami-external-")
@@ -321,7 +321,7 @@
 
 (deftest a-source-it-cannot-read-refuses-instead-of-reporting-none
   (testing "no hermes home"
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"cron jobs"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"cron jobs"
                           (subject/import-report
                            "hermes" {:home (temp-dir "itonami-bot-import-empty-")}))))
   (testing "a jobs file that is not JSON"
@@ -329,16 +329,16 @@
           file (io/file home "cron" "jobs.json")]
       (.mkdirs (.getParentFile file))
       (spit file "{not json")
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"壊れています"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"壊れています"
                             (subject/import-report "hermes" {:home home})))))
   (testing "grok without the service token"
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"MURAKUMO_SERVICE_TOKEN"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"MURAKUMO_SERVICE_TOKEN"
                           (subject/require-token nil)))
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"MURAKUMO_SERVICE_TOKEN"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"MURAKUMO_SERVICE_TOKEN"
                           (subject/require-token "  ")))))
 
 (deftest an-unknown-source-names-the-ones-that-exist
-  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"grok / hermes"
+  (is (thrown-with-msg? kerror/ExceptionInfo #"grok / hermes"
                         (subject/read-source "chatgpt" {}))))
 
 (deftest an-empty-source-reports-none-only-after-a-successful-read

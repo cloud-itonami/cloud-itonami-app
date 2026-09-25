@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.messenger-test
-  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [clojure.test :refer [deftest is testing use-fixtures]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.io :as kio] [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.messenger :as messenger]
             [cloud.itonami.app.store :as store])
@@ -119,7 +119,7 @@
                       "acme" "human:alice" principals
                       {:kind "direct" :title "bad" :members ["intruder"]})
                      nil
-                     (catch clojure.lang.ExceptionInfo error error)))))))
+                     (catch kerror/ExceptionInfo error error)))))))
   (let [c (conversation ["human:bob"])]
     (is (= :messenger/forbidden
            (:type (ex-data
@@ -127,7 +127,7 @@
                      (messenger/messages "acme" "agent:ops"
                                          (:conversation/id c) principals)
                      nil
-                     (catch clojure.lang.ExceptionInfo error error))))))))
+                     (catch kerror/ExceptionInfo error error))))))))
 
 (deftest device-prekeys-are-signed-consumed-once-and-not-resurrected
   (let [request (device-request)]
@@ -148,7 +148,7 @@
                      (try (messenger/register-device!
                            "acme" "human:alice" principals bad)
                           nil
-                          (catch clojure.lang.ExceptionInfo error error)))))))))
+                          (catch kerror/ExceptionInfo error error)))))))))
 
 (deftest poll-and-ack-remain-bound-to-one-mailbox
   (let [c (conversation ["human:bob"])
@@ -174,5 +174,5 @@
         b (messenger/send-message! "org" "human:alice" cid request)]
     (is (= (:message-id a) (:message-id b)))
     (is (= 1 (count (:items (messenger/messages "org" "human:alice" cid principals)))))
-    (is (thrown? clojure.lang.ExceptionInfo
+    (is (thrown? kerror/ExceptionInfo
                  (messenger/send-message! "org" "human:alice" cid (assoc request :content "changed"))))))

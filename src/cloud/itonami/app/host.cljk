@@ -24,7 +24,7 @@
   its bound, whether the disk is too full to start, whether a journal belongs
   to the snapshot beside it, what the warning says -- is a pure function above
   them, and is tested on both runtimes."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [cloud.itonami.app.host-bounds :as host-bounds]
             [kotoba.lang.fs :as fs]
             [kotoba.lang.fs-host :as fs-host]
@@ -135,7 +135,7 @@
   is one call on each runtime with every decision made above it."
   [path content]
   #?(:clj (with-open [stream (java.io.FileOutputStream. ^String (str path) true)]
-            (.write stream (.getBytes ^String (str content) "UTF-8"))
+            (.write stream (kbytes/utf8-bytes ^String (str content)))
             (.flush stream)
             (.sync (.getFD stream)))
      :cljs (let [fd (node-fs/openSync (str path) "a")]

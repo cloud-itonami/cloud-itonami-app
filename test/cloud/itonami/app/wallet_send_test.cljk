@@ -5,7 +5,7 @@
   recorded :tx-hash must be the locally computed keccak of that raw tx.
   Refusals pin their :type; a refused submission must leave the transfer
   UNTOUCHED (a half-submitted state is worse than either outcome)."
-  (:require [kotoba.io :as kio] [clojure.test :refer [deftest is]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [clojure.test :refer [deftest is]]
             [btc-crypto.bip32 :as bip32]
             [btc-crypto.bip39 :as bip39]
             [cloud.itonami.app.config :as config]
@@ -27,7 +27,7 @@
      "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"))))
 
 (defn- refuses [f]
-  (try (f) nil (catch clojure.lang.ExceptionInfo error (:type (ex-data error)))))
+  (try (f) nil (catch kerror/ExceptionInfo error (:type (ex-data error)))))
 
 (defn- with-wallet-store [f]
   (let [temporary (kio/temp-dir

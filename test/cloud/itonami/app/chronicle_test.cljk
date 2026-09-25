@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.chronicle-test
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is use-fixtures]]
             [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.store :as store]))
@@ -67,7 +67,7 @@
       (is (= "frame-1" (:frame-id source)))
       (is (= :chronicle/frame-not-found
              (:type (ex-data (try (chronicle/capture-source "bob" "frame-1")
-                                  (catch clojure.lang.ExceptionInfo error error)))))))))
+                                  (catch kerror/ExceptionInfo error error)))))))))
 
 (deftest deleting-memory-removes-derived-data-but-not-chat-sessions
   (let [frame (java.io.File/createTempFile "itonami-chronicle-" ".jpg")]
@@ -98,4 +98,4 @@
 (deftest missing-user-is-rejected
   (is (= :chronicle/user-required
          (:type (ex-data (try (chronicle/settings nil)
-                              (catch clojure.lang.ExceptionInfo error error)))))))
+                              (catch kerror/ExceptionInfo error error)))))))

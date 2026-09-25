@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.sites-test
-  (:require [clojure.test :refer [deftest is testing use-fixtures]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.sites :as sites]
             [cloud.itonami.app.store :as store]))
 
@@ -34,16 +34,16 @@
 
 (deftest slug-and-tenant-boundaries-are-enforced
   (sites/create! "org" "user" {:project "alpha" :title "Alpha" :slug "home"})
-  (is (thrown? clojure.lang.ExceptionInfo
+  (is (thrown? kerror/ExceptionInfo
                (sites/create! "org" "user"
                               {:project "missing" :title "Missing" :slug "missing"})))
-  (is (thrown? clojure.lang.ExceptionInfo
+  (is (thrown? kerror/ExceptionInfo
                (sites/create! "org" "user" {:project "alpha" :title "Again" :slug "home"})))
-  (is (thrown? clojure.lang.ExceptionInfo
+  (is (thrown? kerror/ExceptionInfo
                (sites/create! "org" "user" {:project "alpha" :title "Bad" :slug "Bad slug"})))
   (testing "another organization cannot resolve a private site"
     (let [site (sites/create! "org-a" "user" {:project "alpha" :title "A" :slug "a"})]
-      (is (thrown? clojure.lang.ExceptionInfo
+      (is (thrown? kerror/ExceptionInfo
                    (sites/detail "org-b" "alpha" (:id site)))))))
 
 (deftest starter-page-escapes-the-site-title

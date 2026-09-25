@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.repository-qualification-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is]]
             [cloud.itonami.app.repository-qualification :as qualification]))
 
 (def qualified-evidence
@@ -31,7 +31,7 @@
                 (dissoc qualified-evidence :hydrate-ms))]
     (is (false? (:qualified? result)))
     (is (= [4] (:failed result)))
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not qualified"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"not qualified"
                           (qualification/require-qualified!
                            (dissoc qualified-evidence :hydrate-ms))))))
 
@@ -62,12 +62,12 @@
     (is (= valid (qualification/validate-production-attestation!
                   valid (:evidence/source-commit valid))))
     (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo #"production recovery evidence"
+         kerror/ExceptionInfo #"production recovery evidence"
          (qualification/validate-production-attestation!
           valid (apply str (repeat 40 "b")))))
     (doseq [invalid [(assoc valid :evidence/cold-hydrate? false)
                      (assoc valid :evidence/source-commit "main")
                      (assoc valid :evidence/measured-at "2020-01-01T00:00:00Z")]]
       (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo #"production recovery evidence"
+           kerror/ExceptionInfo #"production recovery evidence"
            (qualification/validate-production-attestation! invalid))))))

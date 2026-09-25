@@ -59,7 +59,7 @@
   bytes. Anything that must be *destroyed* rather than unlinked does not
   belong in this store, and this is the sentence that says so before
   someone finds out."
-  (:require [kotoba.bytes :as kbytes] [cloud.itonami.app.archive :as archive]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [cloud.itonami.app.archive :as archive]
             [drive.object :as object]
             [unixfs.file :as unixfs]))
 
@@ -141,7 +141,7 @@
     ;; ordinary absence.
     (try
       (unixfs/read-file #(get-block transport %) ref)
-      (catch clojure.lang.ExceptionInfo e
+      (catch kerror/ExceptionInfo e
         (if (= :unixfs/missing-block (:type (ex-data e)))
           nil
           (throw e)))))

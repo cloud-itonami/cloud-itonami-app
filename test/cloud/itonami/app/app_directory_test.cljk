@@ -6,7 +6,7 @@
   fallback is `other-row`, which keeps that same connector reachable for a
   person in the meantime. Both are asserted, because a fallback nothing
   exercises and a gate nothing can fail are the same kind of nothing."
-  (:require [kotoba.io :as kio] [clojure.java.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [kotoba.io :as io]
             [clojure.test :refer [deftest is testing]]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.app-directory :as directory]
@@ -210,9 +210,9 @@
         (directory/set-app-installed! alice id false))
       (is (= #{} (directory/installed-app-ids @state alice)) "empty installation must not restore defaults")
       (is (= {:sentinel "unchanged"} (:bots @state)))
-      (is (thrown? clojure.lang.ExceptionInfo (directory/set-app-installed! alice "unknown" true)))
-      (is (thrown? clojure.lang.ExceptionInfo (directory/set-app-installed! alice "drive" "true")))
-      (is (thrown? clojure.lang.ExceptionInfo (directory/workspace-catalog {})))
+      (is (thrown? kerror/ExceptionInfo (directory/set-app-installed! alice "unknown" true)))
+      (is (thrown? kerror/ExceptionInfo (directory/set-app-installed! alice "drive" "true")))
+      (is (thrown? kerror/ExceptionInfo (directory/workspace-catalog {})))
       (is (= (count directory/workspace-apps) (count (set (map :id directory/workspace-apps)))))
       (let [html (web/page-html (config/load-config))]
         (doseq [{:keys [id]} directory/workspace-apps]

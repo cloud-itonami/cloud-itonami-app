@@ -19,7 +19,7 @@
   data-dir. A JVM cannot portably set its own environment, so the half of the precedence
   rule that reads CLOUD_ITONAMI_DATA_DIR is exercised only by the property winning when
   both could apply. Pretending otherwise would be worse than saying so."
-  (:require [kotoba.io :as kio] [kotoba.lang.edn :as edn]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
@@ -360,7 +360,7 @@
   (testing "an override naming a provider that is not in the catalog throws rather
             than being dropped — a typo would otherwise leave the operator reading a
             config that says the thing is on"
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+    (is (thrown-with-msg? kerror/ExceptionInfo
                           #"names no configured provider"
                           (config/overlay-providers [{:id "ollama"}]
                                                     [[{:id "olama" :enabled? true}]])))))

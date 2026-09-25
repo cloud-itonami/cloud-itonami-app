@@ -17,7 +17,7 @@
   Cap is 4 MiB (`kotobase.archive-put/max-object-bytes`)."
   (:require [kotoba.bytes :as kbytes] [cloud.itonami.app.archive :as archive]
             [kotoba.lang.edn :as edn]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.web :as web]
             [kotoba.protocol.app :as app]
@@ -103,7 +103,7 @@
   next IPNS publish restart at sequence 1, which an existing DHT record must
   reject as stale."
   [path {:keys [manifest cid size put get]}]
-  (let [previous (when (.isFile (io/file path))
+  (let [previous (when (io/file? (io/file path))
                    (edn/read-string (slurp path)))
         record (merge previous manifest
                       {:published {:archive (str archive-origin "/ipfs/" cid)
@@ -121,7 +121,7 @@
                          (System/getenv "KOTOBASE_ARCHIVE_TOKEN_2"))
               :lock-path (or (some-> (io/resource published-resource)
                                      io/file
-                                     .getPath)
+                                     io/path)
                              "resources/cloud/itonami/app/kotoba.app.edn")}))
   ([{:keys [token lock-path]}]
    (let [{:keys [bytes size cid manifest problems] :as snap} (snapshot)]

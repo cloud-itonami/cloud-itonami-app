@@ -6,7 +6,7 @@
 
   Plus the one thing only this layer can get wrong -- letting a caller supply a
   fact that decides whether they are allowed."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.authority :as authority]
             [cloud.itonami.app.authority.api :as api]
             [cloud.itonami.app.authority.number :as number]
@@ -43,7 +43,7 @@
   {:authority/ok? true :authority/record {:recorded (:id p)}})
 
 (defn- refuses [f]
-  (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+  (try (f) nil (catch kerror/ExceptionInfo e (:type (ex-data e)))))
 
 (defn- held [msisdn state & {:keys [subject]}]
   (assoc (numbering/record msisdn state :subject (or subject "user-1"))

@@ -5,7 +5,7 @@
   the RSVP states, the conflict rule. The app had been calling three of that
   library's functions and none of these, so what is under test here is
   mostly whether the app hands the model the right questions."
-  (:require [clojure.test :refer [deftest is testing use-fixtures]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.scheduler :as scheduler]
             [cloud.itonami.app.store :as store]))
 
@@ -50,7 +50,7 @@
                         ["evt-nothing" "an id that was never minted"]]]
       (is (= :scheduler/not-found
              (try (scheduler/respond! id "accepted" carol) nil
-                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+                  (catch kerror/ExceptionInfo e (:type (ex-data e)))))
           label))))
 
 (deftest answering-is-for-the-invited-and-only-the-three-answers
@@ -65,13 +65,13 @@
       ;; invited, rather than no such event.
       (is (= :scheduler/not-invited
              (try (scheduler/respond! (:id event) "accepted" alice) nil
-                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))
+                  (catch kerror/ExceptionInfo e (:type (ex-data e)))))))
     (testing "and an answer the model does not know is refused by name"
       ;; `calendar/respond` returns the calendar unchanged for an unknown
       ;; status, which as an API would be 200 and no change.
       (is (= :scheduler/unknown-rsvp
              (try (scheduler/respond! (:id event) "maybe-ish" bob) nil
-                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+                  (catch kerror/ExceptionInfo e (:type (ex-data e)))))))))
 
 (deftest inviting-is-the-organizers-and-twice-is-once
   (let [event (make morning alice)]
@@ -84,11 +84,11 @@
     (testing "an attendee cannot invite"
       (is (= :scheduler/not-organizer
              (try (scheduler/invite! (:id event) carol bob) nil
-                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))
+                  (catch kerror/ExceptionInfo e (:type (ex-data e)))))))
     (testing "and the organizer is not invitable"
       (is (= :scheduler/organizer-is-not-an-attendee
              (try (scheduler/invite! (:id event) alice alice) nil
-                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+                  (catch kerror/ExceptionInfo e (:type (ex-data e)))))))))
 
 (deftest an-appointment-with-no-time-is-refused-by-the-model
   ;; `calendar.validate` already knows what a broken event is. This checks
@@ -98,7 +98,7 @@
                            :end "2026-08-03T09:00:00Z"} "ends before it starts"]]]
     (is (= :scheduler/invalid-event
            (try (scheduler/create! attrs alice) nil
-                (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+                (catch kerror/ExceptionInfo e (:type (ex-data e)))))
         label))
   (is (= [] (:items (scheduler/events alice))) "and nothing was stored"))
 
@@ -121,7 +121,7 @@
   (let [event (make (assoc morning :attendees [bob]) alice)]
     (is (= :scheduler/not-organizer
            (try (scheduler/cancel! (:id event) bob) nil
-                (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                (catch kerror/ExceptionInfo e (:type (ex-data e))))))
     (scheduler/cancel! (:id event) alice)
     (is (= [] (:items (scheduler/events alice))))
     (is (= [] (:items (scheduler/events bob)))

@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.host-store-bound-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
             [clojure.java.io :as io]
             [cloud.itonami.app.host :as host]))
 
@@ -40,7 +40,7 @@
             ;; Just over the document bound; far under the store bound.
             content (apply str (repeat (+ (* 16 1024 1024) 1024) "x"))]
         (testing "the document bound refuses it -- that bound is not wrong, it is for something else"
-          (is (thrown? clojure.lang.ExceptionInfo (host/write-atomic! file content))))
+          (is (thrown? kerror/ExceptionInfo (host/write-atomic! file content))))
         (testing "and the store's own bound accepts it"
           (host/write-atomic! file content host/store-max-bytes)
           (is (.exists file))
@@ -54,7 +54,7 @@
       (fn [dir]
         (let [file (io/file dir "state.edn")
               over (apply str (repeat (+ host/store-max-bytes 8) "x"))]
-          (is (thrown? clojure.lang.ExceptionInfo
+          (is (thrown? kerror/ExceptionInfo
                        (host/write-atomic! file over host/store-max-bytes)))))))
   (testing "and it is larger than the document bound, which is the whole point"
     (is (> host/store-max-bytes (* 16 1024 1024)))))
@@ -65,7 +65,7 @@
     (host/append-durable! file "abc" 8)
     (host/append-durable! file "def" 8)
     (is (= "abcdef" (slurp file)))
-    (is (thrown? clojure.lang.ExceptionInfo
+    (is (thrown? kerror/ExceptionInfo
                  (host/append-durable! file "ghi" 8)))
     (is (= "abcdef" (slurp file)) "a refused append leaves durable bytes intact")))
 
@@ -99,13 +99,13 @@
         (testing "but speaks again when it moves closer"
           (is (re-find #"WARNING" (say 3900000)))) ;; 92% -> decile 9
         (testing "the bound itself still refuses -- the warning does not replace it"
-          (is (thrown? clojure.lang.ExceptionInfo
+          (is (thrown? kerror/ExceptionInfo
                        (host/write-atomic! file (apply str (repeat (+ bound 8) "x")) bound))))))))
 
 (deftest the-test-temp-directory-is-reclaimed-on-failure
   (let [created (atom nil)]
     (is (thrown-with-msg?
-          clojure.lang.ExceptionInfo
+          kerror/ExceptionInfo
           #"probe"
           (with-tmp-dir
             (fn [dir]

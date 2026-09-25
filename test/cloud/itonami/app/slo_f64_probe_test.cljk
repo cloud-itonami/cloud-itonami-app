@@ -9,7 +9,7 @@
   one-word string/record/variant/option/result slice\") — f64 is not a native
   one-word type, so a :f64 core is wasm-only, not native-crossable. Both
   directions pinned so the next reader knows not to claim native f64."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
             [kotoba.compiler.core :as compiler]
             [kotoba.kir :as ir]))
 
@@ -41,7 +41,7 @@
                      (compiler/compile-source src target {})
                      nil
                      (catch Exception e e))]
-        (is (instance? clojure.lang.ExceptionInfo thrown)
+        (is (instance? kerror/ExceptionInfo thrown)
             (str "f64 core must be refused for " (name target)
                  " (native typed-value one-word slice)"))
         (is (re-find #"typed values currently require"

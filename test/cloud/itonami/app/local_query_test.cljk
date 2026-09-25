@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.local-query-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.local-query :as local-query]
             [datascript.core :as datascript]))
 
@@ -41,7 +41,7 @@
 (deftest malformed-and-tagged-input-is-refused
   (doseq [query ["{:find [?e]}" "#foo/bar [:find ?e :where [?e :x _]]"]]
     (testing query
-      (is (thrown? clojure.lang.ExceptionInfo
+      (is (thrown? kerror/ExceptionInfo
                    (local-query/query-state state query))))))
 
 (deftest persisted-common-subset-query-has-datascript-parity

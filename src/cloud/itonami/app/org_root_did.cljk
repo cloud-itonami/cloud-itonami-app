@@ -50,7 +50,7 @@
   and `accept-witness-proof` is already the intake for a witness that signs
   somewhere else — it verifies before it stores, so it needs no authentication
   to be safe."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [didwebvh.did :as webvh-did]
             [didwebvh.entry :as webvh-entry]
             [didwebvh.hash :as webvh-hash]
@@ -62,8 +62,7 @@
             #?@(:clj [[kotoba.json :as json]
                       [clojure.java.io :as io]
                       [cloud.itonami.app.config :as config]]))
-  #?(:clj (:import [java.security SecureRandom]
-                   [java.util Base64])))
+  #?(:clj (:import [java.security SecureRandom])))
 
 ;; ── the shape of the control set ─────────────────────────────────────────────
 
@@ -101,13 +100,13 @@
    (defn- read-seed [nam]
      (let [f (key-file nam)]
        (when (.isFile f)
-         (.decode (Base64/getDecoder) ^String (str/trim (slurp f)))))))
+         (kbytes/base64-decode-bytes ^String (str/trim (slurp f)))))))
 
 #?(:clj
    (defn- write-seed! [nam ^bytes seed]
      (let [f (key-file nam)]
        (.mkdirs (.getParentFile f))
-       (spit f (.encodeToString (Base64/getEncoder) seed))
+       (spit f (kbytes/base64-encode seed))
        (doto f (.setReadable false false) (.setReadable true true)
                (.setWritable false false) (.setWritable true true))
        seed)))

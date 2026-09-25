@@ -4,7 +4,7 @@
   The score is an engineering signal, not a usability-test substitute. Inputs
   are observable UI counts/ratios, the weighted result is deterministic, and
   the system-dynamics trajectory is delegated to the OASIS XMILE engine."
-  (:require [kotoba.bytes :as kbytes] [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [clojure.xml :as cxml]
             [xmile.execute :as execute]

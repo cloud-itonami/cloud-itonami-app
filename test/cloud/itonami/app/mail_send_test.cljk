@@ -12,7 +12,7 @@
   one — some pass it, some mangle it, some refuse the message — so a subject
   that reads 見積もりの件 locally and arrives as mojibake is the ordinary
   failure here, not an exotic one."
-  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.mail-account :as account]
             [cloud.itonami.app.mail-send :as mail-send]
@@ -78,12 +78,12 @@
                                          {:to "not-an-address"
                                           :subject "s" :text "t"}
                                          {:user-did "did:key:alice"})
-                        (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                        (catch kerror/ExceptionInfo e (ex-data e)))]
          (is (= :mail/invalid-message (:type error)))
          (is (seq (:errors error))))))
   (testing "and a message with no recipient at all"
     (with-account imap-account
-      #(is (thrown? clojure.lang.ExceptionInfo
+      #(is (thrown? kerror/ExceptionInfo
                     (mail-send/send! (:id imap-account)
                                      {:subject "s" :text "t"}
                                      {:user-did "did:key:alice"}))))))
@@ -112,7 +112,7 @@
                                          {:to "a@elsewhere.example"
                                           :subject "s" :text "t"}
                                          {:user-did "did:key:alice"})
-                        (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                        (catch kerror/ExceptionInfo e (ex-data e)))]
          (is (= :mail-domain-authority/domain-held-by-another-tenant
                 (:type error)))
          (is (= "example.com" (:domain error)))))))
@@ -123,7 +123,7 @@
                                        {:to "a@example.com" :subject "s"
                                         :text "t"}
                                        {:user-did "did:key:alice"})
-                      (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                      (catch kerror/ExceptionInfo e (ex-data e)))]
        (is (= :mail/unknown-account (:type error))))))
 
 (deftest a-japanese-subject-survives-as-an-encoded-word
@@ -193,7 +193,7 @@
                                          {:to "a@example.com" :subject "s"
                                           :text "t"}
                                          {:user-did "did:key:alice"})
-                        (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                        (catch kerror/ExceptionInfo e (ex-data e)))]
          (is (= :mail/missing-credential (:type error)))))))
 
 ;; --- the copy in the sender's own Sent folder --------------------------------

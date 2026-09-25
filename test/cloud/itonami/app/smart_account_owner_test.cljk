@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.smart-account-owner-test
-  (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.smart-account :as smart-account]
             [cloud.itonami.app.smart-account-userop :as userop]
@@ -80,7 +80,7 @@
         (gas-fn {:bundler-endpoint "http://127.0.0.1:4337"
                  :node-endpoint "http://127.0.0.1:8545"})
         (is false "non-method-not-found failures must remain fail-closed")
-        (catch clojure.lang.ExceptionInfo error
+        (catch kerror/ExceptionInfo error
           (is (= :wallet/user-operation-rpc-error
                  (:type (ex-data error)))))))))
 
@@ -132,7 +132,7 @@
                (smart-account/owner-addition-plan
                 configuration descriptor initial-credential)
                nil
-               (catch clojure.lang.ExceptionInfo error
+               (catch kerror/ExceptionInfo error
                  (:type (ex-data error)))))))))
 
 (deftest user-operation-hashes-match-independent-solidity-abi-vectors

@@ -2,7 +2,7 @@
   "The spine's four properties, each tested as a property rather than as a
   happy path: order, content binding, the two gates not substituting, and
   single use."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.authority :as authority]
             [cloud.itonami.app.store :as store]))
 
@@ -46,18 +46,18 @@
         (str "a domain missing " k " must be rejected")))
   (testing "and review! refuses an invalid domain rather than half-running"
     (reset-proposals!)
-    (is (thrown? clojure.lang.ExceptionInfo
+    (is (thrown? kerror/ExceptionInfo
                  (authority/review! (dissoc (fixture-domain) :authority/material)
                                     {} session {:op :transfer :amount 1})))))
 
 (deftest review-requires-an-authenticated-user
   (reset-proposals!)
-  (is (thrown? clojure.lang.ExceptionInfo
+  (is (thrown? kerror/ExceptionInfo
                (authority/review! (fixture-domain) {} {} {:op :transfer :amount 1}))))
 
 (deftest a-refused-pre-check-stores-nothing-and-requests-no-consent
   (reset-proposals!)
-  (is (thrown? clojure.lang.ExceptionInfo (review! :amount 1000)))
+  (is (thrown? kerror/ExceptionInfo (review! :amount 1000)))
   (is (empty? (authority/proposals session))
       "a proposal that cannot proceed must never reach the store, because a
        stored proposal is exactly what start-approval! will accept"))
@@ -78,8 +78,8 @@
 (deftest digest-requires-a-string
   (testing "hashing a map would make the digest depend on map iteration order,
             which this workspace has already been bitten by"
-    (is (thrown? clojure.lang.ExceptionInfo (authority/digest {:a 1})))
-    (is (thrown? clojure.lang.ExceptionInfo (authority/digest nil))))
+    (is (thrown? kerror/ExceptionInfo (authority/digest {:a 1})))
+    (is (thrown? kerror/ExceptionInfo (authority/digest nil))))
   (is (string? (authority/digest "x")))
   (is (= (authority/digest "x") (authority/digest "x")))
   (is (not= (authority/digest "x") (authority/digest "y"))))
@@ -91,20 +91,20 @@
   (testing "an unknown proposal id is refused before passkey is reached"
     (let [e (try (authority/start-approval! (fixture-domain) session
                                             "no-such-id" "localhost" "http://localhost:1338")
-                 (catch clojure.lang.ExceptionInfo ex ex))]
+                 (catch kerror/ExceptionInfo ex ex))]
       (is (= :authority/proposal-not-found (:type (ex-data e))))))
   (testing "and so is another session's proposal"
     (let [p (review! :sess other-session)
           e (try (authority/start-approval! (fixture-domain) session (:id p)
                                             "localhost" "http://localhost:1338")
-                 (catch clojure.lang.ExceptionInfo ex ex))]
+                 (catch kerror/ExceptionInfo ex ex))]
       (is (= :authority/proposal-not-found (:type (ex-data e)))))))
 
 (deftest commit-requires-an-approved-proposal
   (reset-proposals!)
   (let [p (review!)
         e (try (authority/commit! (fixture-domain) {} session (:id p))
-               (catch clojure.lang.ExceptionInfo ex ex))]
+               (catch kerror/ExceptionInfo ex ex))]
     (is (= :authority/proposal-not-found (:type (ex-data e))))
     (is (= :awaiting-passkey (:status (authority/proposal (:id p))))
         "a commit attempt must not advance an unapproved proposal")))
@@ -193,7 +193,7 @@
         p (approved! d)]
     (is (= :committed (:status (authority/commit! d {} session (:id p)))))
     (let [e (try (authority/commit! d {} session (:id p))
-                 (catch clojure.lang.ExceptionInfo ex ex))]
+                 (catch kerror/ExceptionInfo ex ex))]
       (is (= :authority/proposal-not-found (:type (ex-data e)))
           "replaying a consent must be refused"))))
 
@@ -202,7 +202,7 @@
   (let [d (fixture-domain :commit-ok? false)
         p (approved! d)]
     (authority/commit! d {} session (:id p))
-    (is (thrown? clojure.lang.ExceptionInfo (authority/commit! d {} session (:id p)))
+    (is (thrown? kerror/ExceptionInfo (authority/commit! d {} session (:id p)))
         "both terminal statuses are terminal")))
 
 ;; --- rejection and read models ---------------------------------------------
@@ -213,7 +213,7 @@
         out (authority/reject! session (:id p))]
     (is (= :rejected (:status out)))
     (is (authority/terminal? out))
-    (is (thrown? clojure.lang.ExceptionInfo (authority/reject! session (:id p))))))
+    (is (thrown? kerror/ExceptionInfo (authority/reject! session (:id p))))))
 
 (deftest proposals-are-scoped-to-their-session
   (reset-proposals!)

@@ -50,13 +50,13 @@
   mapping `biscuit.authority` documents, decided by `authority.chain`. It still
   reads `->delegated` for the one thing that mapping does not answer -- the
   holder fold -- so that there is one holder rule in the fleet, not two."
-  (:require [authority.chain :as chain]
+  (:require [kotoba.bytes :as kbytes] [authority.chain :as chain]
             [authority.grant :as grant]
             [biscuit.kotoba :as bk]
             [biscuit.token :as token]
             [ed25519.core :as ed]
             #?(:cljs ["node:crypto" :as ncrypto]))
-  #?(:clj (:import [java.nio.charset StandardCharsets]
+  #?(:clj (:import
                    [java.security MessageDigest])))
 
 (def schema "cloud.itonami.app.share-grant.v1")
@@ -75,7 +75,7 @@
 ;; ── bytes, portable ─────────────────────────────────────────────────────────
 
 (defn- utf8 [s]
-  #?(:clj (.getBytes ^String s StandardCharsets/UTF_8)
+  #?(:clj (kbytes/utf8-bytes ^String s)
      :cljs (js/Buffer.from s "utf8")))
 
 (defn- sig->wire

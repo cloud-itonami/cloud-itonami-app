@@ -7,7 +7,7 @@
   window. OCR text is untrusted context: callers must not treat it as an
   instruction channel. Chat history and derived memory are separate stores so
   deleting memory does not silently delete a user's conversations."
-  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [kotoba.io :as io]
             [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
@@ -72,7 +72,7 @@
     next-settings))
 
 (defn- executable? [path]
-  (let [file (io/file path)] (and (.isFile file) (.canExecute file))))
+  (let [file (io/file path)] (and (io/file? file) (io/can-execute? file))))
 
 (defn- run-command [args timeout-seconds]
   (let [process (.start (doto (ProcessBuilder. ^java.util.List (vec args))
@@ -136,7 +136,7 @@
     ""
     (let [binary "/opt/homebrew/bin/tesseract"
           attempt (fn [language]
-                    (run-command [binary (.getCanonicalPath file) "stdout"
+                    (run-command [binary (io/canonical-path file) "stdout"
                                   "-l" language "--psm" "11"] 30))]
       (try
         (let [text (attempt "jpn+eng")]
@@ -183,12 +183,12 @@
         id (str "frame-" (UUID/randomUUID))
         image (io/file directory (str id ".jpg"))
         now-ms (System/currentTimeMillis)]
-    (.mkdirs directory)
+    (io/mkdirs directory)
     (secure-permissions! directory "rwx------")
     (run-command ["/usr/sbin/screencapture" "-x" "-t" "jpg"
-                  (.getCanonicalPath image)] 20)
+                  (io/canonical-path image)] 20)
     (when (executable? "/usr/bin/sips")
-      (run-command ["/usr/bin/sips" "-Z" "1600" (.getCanonicalPath image)] 20))
+      (run-command ["/usr/bin/sips" "-Z" "1600" (io/canonical-path image)] 20))
     (secure-permissions! image "rw-------")
     (let [text (ocr-text image)
           previous (->> (vals (get-in (store/snapshot)
@@ -205,7 +205,7 @@
                           (not (screen-guest/frame-keep? (:text-digest previous)
                                                          (digest text))))]
       (if duplicate?
-        (do (remove-file! (.getCanonicalPath image))
+        (do (remove-file! (io/canonical-path image))
             ;; A successful capture pass (even a duplicate) means the
             ;; permission gate opened again: clear a stale failure record so
             ;; the operator's overview does not report a problem that has
@@ -215,7 +215,7 @@
         (let [frame {:id id :captured-at (store/now) :captured-at-ms now-ms
                      :application (frontmost-application)
                      :ocr text :text-digest (when-not (str/blank? text) (digest text))
-                     :image-path (.getCanonicalPath image)}]
+                     :image-path (io/canonical-path image)}]
           (store/transact! assoc-in (user-path user-id :frames id) frame)
           ;; Same heal-signal as the duplicate branch: a successful capture
           ;; means the permission gate opened again.
