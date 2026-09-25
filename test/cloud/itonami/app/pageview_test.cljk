@@ -6,7 +6,7 @@
   a string is an assertion that the string this test put at those coordinates
   came back out."
   (:require [kotoba.image :as kotoba-image] [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing use-fixtures]]
+            [kotoba.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.pageview :as pageview]
             [cloud.itonami.app.store :as store]

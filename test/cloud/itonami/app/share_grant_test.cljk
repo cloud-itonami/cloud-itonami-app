@@ -2,7 +2,7 @@
   "A Drive share as Biscuit attenuation (superproject adr-2609241800 step 6),
   on both runtimes. Every refusal pins its reason literal: a negative test that
   asserted only `false` would count a token that failed for some other reason."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.share-grant :as sg]
             [ed25519.core :as ed]))
 

@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.bundle-test
   "The workspace document has a raw CID. Offline: no PUT, no GET."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.bundle :as bundle]
             [kotoba.protocol.app :as app]
             [kotoba.protocol.cid :as cid]))

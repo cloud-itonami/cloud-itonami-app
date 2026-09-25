@@ -2,7 +2,7 @@
   (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.io :as kio] [clojure.java.io :as io]
             [kotoba.json :as json]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is]]
+            [kotoba.test :refer [deftest is]]
             [cloud.itonami.app.repository-measurement :as measurement]
             [cloud.itonami.app.repository-storage :as repository]
             [kagi.crypto :as crypto]

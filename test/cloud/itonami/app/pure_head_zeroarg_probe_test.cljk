@@ -5,7 +5,7 @@
   typed slice keeps everything scalar, so the question is purely whether
   `(app (lam [] ...))` compiles and runs on the pinned compiler."
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [kotoba.compiler.core :as compiler]
             [kotoba.kir :as ir]))
 

@@ -6,7 +6,7 @@
   what it did not file."
   (:require [kotoba.lang.error :as kerror] [kotoba.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing use-fixtures]]
+            [kotoba.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.mail-projects :as mail-projects]
             [cloud.itonami.app.mail-account]

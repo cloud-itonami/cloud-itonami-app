@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.human-work-x402-test
   (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is use-fixtures]]
+            [kotoba.test :refer [deftest is use-fixtures]]
             [cloud.itonami.app.human-work :as human-work]
             [cloud.itonami.app.human-work-x402 :as x402]
             [cloud.itonami.app.store :as store]))

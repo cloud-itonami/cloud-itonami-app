@@ -8,7 +8,7 @@
   pass while an HTTP request sat open for the length of a Goal."
   (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [kotoba.json :as json]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as identity]

@@ -14,7 +14,7 @@
   a pass is the failure this repository has spent a lot of ADRs on."
   (:require [kotoba.lang.error :as kerror] [kotoba.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.desktop :as desktop]))
 

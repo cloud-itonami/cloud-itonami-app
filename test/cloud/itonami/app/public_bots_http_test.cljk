@@ -6,7 +6,7 @@
   the caller's organization, so it needs origin + CSRF, refuses agent
   sessions, is scoped per organization, and persists."
   (:require [kotoba.io :as kio] [kotoba.json :as json]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.public-bot-catalog :as catalog]

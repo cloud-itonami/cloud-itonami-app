@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.repository-profile-ci-test
-  (:require [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is]]
+  (:require [kotoba.bytes :as kbytes] [kotoba.test :refer [deftest is]]
             [cloud.itonami.app.repository-profile-ci :as profile-ci])
   (:import
            [java.nio.file Files]))

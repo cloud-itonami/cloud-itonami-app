@@ -12,7 +12,7 @@
   than satisfied, because a real ceremony needs an authenticator and what is
   under test is the route layer behind that gate."
   (:require [kotoba.io :as kio] [kotoba.json :as json]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as local-identity]
             [cloud.itonami.app.server :as server]

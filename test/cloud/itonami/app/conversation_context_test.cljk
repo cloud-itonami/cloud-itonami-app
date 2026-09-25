@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.conversation-context-test
   (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.conversation-context :as context]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.store :as store]))

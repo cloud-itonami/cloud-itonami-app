@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.virtual-shell-test
   (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [clojure.java.io :as io]
-            [clojure.test :refer [deftest is]]
+            [kotoba.test :refer [deftest is]]
             [cloud.itonami.app.virtual-shell :as shell]
             [cloud.itonami.app.workspace-tools :as workspace-tools]))
 

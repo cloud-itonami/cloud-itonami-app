@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.provider-test
-  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.test :refer [deftest is testing]]
             [kotoba.lang.text :as str]
             [kotoba.json :as json]
             [cloud.itonami.app.provider :as provider])

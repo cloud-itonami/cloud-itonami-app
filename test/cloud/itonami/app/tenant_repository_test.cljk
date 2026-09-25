@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.tenant-repository-test
-  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.repository-storage :as repository]
             [cloud.itonami.app.store :as store]

@@ -6,7 +6,7 @@
   Of the seven 400s, two said `unavailable_error` / `code 503` (the model was
   loading) and were never retried at all, while three were authentication
   failures that must never be."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.provider-retry :as retry]))
 
 ;; ── the body decides when it has something to say ──────────────────────────

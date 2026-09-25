@@ -13,7 +13,7 @@
   (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [asn1.core :as asn1]
             [kotoba.json :as json]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.acme :as acme])
   (:import [java.math BigInteger]
            [java.security KeyFactory Signature]

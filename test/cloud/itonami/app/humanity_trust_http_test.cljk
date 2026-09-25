@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.humanity-trust-http-test
   (:require [kotoba.io :as kio] [kotoba.json :as json]
-            [clojure.test :refer [deftest is]]
+            [kotoba.test :refer [deftest is]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.humanity-trust :as humanity]
             [cloud.itonami.app.identity :as identity]

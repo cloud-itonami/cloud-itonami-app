@@ -17,7 +17,7 @@
   gating. Fixing a namespace should require deleting a line from this file."
   (:require [kotoba.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 (def known-broken
   "namespace -> why it does not compile, measured 2026-08-05.

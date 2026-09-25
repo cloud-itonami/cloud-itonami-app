@@ -8,7 +8,7 @@
   quietly shadows it. These are those failures."
   (:require [kotoba.lang.error :as kerror] [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.commands :as commands]))
 
 (def ^:private aliases (commands/alias-commands))

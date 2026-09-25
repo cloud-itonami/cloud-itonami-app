@@ -23,7 +23,7 @@
                 after the user consented
 
   Every expectation was measured from the namespace first."
-  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing use-fixtures]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.passkey :as passkey]
             [cloud.itonami.app.store :as store]))
 

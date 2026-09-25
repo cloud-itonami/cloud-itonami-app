@@ -15,7 +15,7 @@
   rather than silently mis-parsing. When a real export exists, its header row
   replaces `header` below and this paragraph goes away."
   (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.authority.api :as api]
             [cloud.itonami.app.authority.payment :as payment]
             [cloud.itonami.app.card-statement :as cs]

@@ -8,7 +8,7 @@
   publishes something a resolver can read."
   (:require [kotoba.io :as kio] [kotoba.json :as json]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as local-identity]
             [cloud.itonami.app.org-root-did :as root-did]

@@ -6,7 +6,7 @@
   Google' as an ordinary answer rather than a failure. A poller that reads a
   4xx as breakage will page somebody on the day before anyone has connected
   anything."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.identity :as identity]))
 
 (deftest with-no-connection-it-is-a-reason-not-an-exception

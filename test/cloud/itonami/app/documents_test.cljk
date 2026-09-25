@@ -7,7 +7,7 @@
   (:require [kotoba.lang.error :as kerror] [kotoba.json :as json]
             [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.capability :as capability]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.drive-crypto :as drive-crypto]

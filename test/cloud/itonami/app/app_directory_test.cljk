@@ -7,7 +7,7 @@
   person in the meantime. Both are asserted, because a fallback nothing
   exercises and a gate nothing can fail are the same kind of nothing."
   (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [kotoba.io :as io]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.app-directory :as directory]
             [cloud.itonami.app.bots :as bots]

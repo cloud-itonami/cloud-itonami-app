@@ -2,7 +2,7 @@
   "IPNS latest pointer. Offline: injected kad http-fn, disposable seed."
   (:require [kotoba.lang.error :as kerror] [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.bundle :as bundle]
             [cloud.itonami.app.latest :as latest]
             [ipns.record :as rec]

@@ -3,7 +3,7 @@
   identity/location split and the refusals — none of which need
   kotobase.net to be reachable to be wrong."
   (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.archive :as archive]
             [cloud.itonami.app.kotobase-objects :as ko]
             [drive.object :as object]

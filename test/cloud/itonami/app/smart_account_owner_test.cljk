@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.smart-account-owner-test
   (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.json :as json]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.smart-account :as smart-account]
             [cloud.itonami.app.smart-account-userop :as userop]
             [eth-crypto.core :as eth]

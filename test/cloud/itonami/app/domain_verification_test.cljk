@@ -5,7 +5,7 @@
   in `oracle-cases` and `domain-binding-kotoba-parity-test`. What this file owns
   is everything the core deliberately does not know: DNS, the probe, the store,
   and the four things the ADR says implementation has to show."
-  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.domain-verification :as verification]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.store :as store]))

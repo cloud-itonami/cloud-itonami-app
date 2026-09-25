@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.organism-messenger-transport-test
   (:require [kotoba.lang.error :as kerror] [kotoba.io :as io]
-            [clojure.test :refer [deftest is use-fixtures]]
+            [kotoba.test :refer [deftest is use-fixtures]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.organism-gateway :as gateway]
             [cloud.itonami.app.organism-messenger-transport :as transport]

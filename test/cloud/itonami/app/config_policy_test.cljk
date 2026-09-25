@@ -6,7 +6,7 @@
   environment. That is why the profile layer could be dropped on the floor for
   as long as it was: the only test that would have caught it is one nobody
   writes, because writing it means building a deployment."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.config-policy :as policy]))
 
 (def ^:private catalog

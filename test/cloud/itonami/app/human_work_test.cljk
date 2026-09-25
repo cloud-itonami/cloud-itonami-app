@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.human-work-test
-  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing use-fixtures]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.human-work :as human-work]
             [cloud.itonami.app.human-work-tools :as human-work-tools]
             [cloud.itonami.app.store :as store]))

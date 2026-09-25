@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.a2a-test
-  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.a2a :as a2a]
             [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.store :as store]))

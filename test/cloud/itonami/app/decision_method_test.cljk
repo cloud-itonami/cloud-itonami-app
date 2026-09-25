@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.decision-method-test
   (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [kotoba.io :as io]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.decision-method :as method]))
 
 (def frame

@@ -14,7 +14,7 @@
   declares, and an absent checkout is refused BY NAME rather than by
   subprocess dump."
   (:require [kotoba.io :as io]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.workforce :as subject]))
 
 (defn- temp-dir []

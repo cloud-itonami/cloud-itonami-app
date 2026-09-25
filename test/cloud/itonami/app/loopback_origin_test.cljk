@@ -2,7 +2,7 @@
   "GET / on the loopback IP must become localhost, or hosted sign-in cannot
   complete. Measured 2026-08-14: Origin 127.0.0.1:1338 -> 403 invalid-origin,
   Origin localhost:1338 -> 200 and auth.itonami.cloud/authorize."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.loopback-origin :as loopback]))
 
 (def public "http://localhost:1338")

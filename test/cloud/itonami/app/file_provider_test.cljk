@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.file-provider-test
-  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.test :refer [deftest is]]
             [cloud.itonami.app.file-provider :as provider]
             [cloud.itonami.app.store :as store]
             [drive.store.memory :as memory]))

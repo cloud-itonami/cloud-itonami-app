@@ -4,7 +4,7 @@
   that the request is well-formed and the byte contract holds, not that Storj
   accepts either. No credential for a real bucket exists in this workspace."
   (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.storj :as storj]
             [drive.object :as object]
             [kotoba.bytes :as b]

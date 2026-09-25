@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.hermes-compat-test
-  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is]]
             [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.hermes-compat :as hermes]))
 

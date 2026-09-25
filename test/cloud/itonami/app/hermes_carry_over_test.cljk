@@ -8,7 +8,7 @@
   becomes in the destination, what it never becomes, and that the inert
   default survives untouched."
   (:require [kotoba.io :as kio] [clojure.java.io :as io]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.hermes-migration :as migration])
   (:import [java.io File]))
 

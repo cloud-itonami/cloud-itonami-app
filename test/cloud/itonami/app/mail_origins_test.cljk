@@ -7,7 +7,7 @@
   makes the trust field worth having — that it is never inferred from how much
   mail arrived."
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.mail-origins :as origins]))
 
 (defn- message [from-email received & [display]]

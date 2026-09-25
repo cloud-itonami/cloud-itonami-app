@@ -19,7 +19,7 @@
 
 (ns cloud.itonami.app.native-canary-test
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is]]
+            [kotoba.test :refer [deftest is]]
             [cloud.itonami.app.native-exec :as native]))
 
 (def ^:private canary-core

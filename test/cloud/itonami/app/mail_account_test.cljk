@@ -8,7 +8,7 @@
   one error per provider meant 'Google is broken' when one of two Google
   mailboxes was fine."
   (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing use-fixtures]]
+            [kotoba.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.mail-account :as account]
             [cloud.itonami.app.mail-sync :as mail-sync]
             [cloud.itonami.app.store :as store]))

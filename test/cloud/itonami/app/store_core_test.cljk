@@ -7,7 +7,7 @@
   incidental coverage of whatever integration test happened to append a
   message. Every assertion below was unavailable while the logic sat inside
   `store`."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.store-core :as core]))
 
 (def ^:private blank (core/initial-state))

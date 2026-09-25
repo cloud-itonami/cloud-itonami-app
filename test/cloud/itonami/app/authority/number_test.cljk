@@ -6,7 +6,7 @@
 
   Plus the one thing only this layer can get wrong -- letting a caller supply a
   fact that decides whether they are allowed."
-  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.authority :as authority]
             [cloud.itonami.app.authority.api :as api]
             [cloud.itonami.app.authority.number :as number]

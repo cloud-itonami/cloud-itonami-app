@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.contracts-test
-  (:require [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.bytes :as kbytes] [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.contracts :as contracts]
             [kagitaba.contract :as contract]
             [kagitaba.item :as item]

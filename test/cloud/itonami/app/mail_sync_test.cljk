@@ -13,7 +13,7 @@
   credential; configured-and-refused is reported rather than swallowed; and a
   never-synced mailbox does not look like a failing one."
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.mail-account :as account]
             [cloud.itonami.app.mail-sync :as mail-sync]))

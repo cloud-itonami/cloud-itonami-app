@@ -8,7 +8,7 @@
   refused without the data directory's 0600 key, which is the boundary that
   actually holds: something able to read that file can rewrite state.edn."
   (:require [kotoba.json :as json]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as identity]

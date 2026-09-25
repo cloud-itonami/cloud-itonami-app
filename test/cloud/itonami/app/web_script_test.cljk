@@ -25,9 +25,9 @@
   machine without the tool teaches people to ignore it, and a gate that goes
   quiet teaches them it ran — so it neither fails nor stays silent."
   (:require [kotoba.io :as io]
-            [clojure.java.shell :as shell]
+            [kotoba.process :as shell]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is]]
+            [kotoba.test :refer [deftest is]]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.web :as web]))
 

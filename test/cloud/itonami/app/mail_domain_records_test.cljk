@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.mail-domain-records-test
   "The two records that exist and are not evidence, on both runtimes."
-  (:require #?(:clj [clojure.test :refer [deftest is testing]]
+  (:require #?(:clj [kotoba.test :refer [deftest is testing]]
                :cljs [cljs.test :refer [deftest is testing]])
             [cloud.itonami.app.mail-domain-records :as records]))
 

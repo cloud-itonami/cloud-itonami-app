@@ -2,7 +2,7 @@
   "Wire-level proof that a Hermes client can use Itonami without a browser."
   (:require [kotoba.io :as kio] [kotoba.json :as json]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.bot :as bot]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.hermes-compat :as hermes]

@@ -6,7 +6,7 @@
   ending in `+all`, which authorizes the whole internet, and a DKIM record whose
   `p=` is empty, which is how a key is revoked. Both look like presence and are
   its opposite."
-  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.domain-verification :as naming]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.mail-domain-authority :as authority]

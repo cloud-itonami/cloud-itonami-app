@@ -14,7 +14,7 @@
 
   The vocabulary is consumed, never reimplemented: every OK/reject verdict
   here comes from `valueflows.conform` and `valueflows.event` at the west pin."
-  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [kotoba.lang.text] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [kotoba.lang.text] [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.vf-journal :as vf-journal]))
 
 ;; ONE FRESH TEMP DIR PER TEST, not one per namespace: these tests assert

@@ -30,7 +30,7 @@
   not."
   (:require [kotoba.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is]]))
+            [kotoba.test :refer [deftest is]]))
 
 (def ^:private no-interface
   "Routes with no interface, on purpose or not yet, and why.

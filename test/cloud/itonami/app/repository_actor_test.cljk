@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.repository-actor-test
   (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [clojure.java.io :as io]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.repository-actor :as actor]
             [cloud.itonami.app.repository-storage :as repository]
             [langchain.edn-persist :as edn-persist]))

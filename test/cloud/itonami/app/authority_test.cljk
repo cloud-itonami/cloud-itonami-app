@@ -2,7 +2,7 @@
   "The spine's four properties, each tested as a property rather than as a
   happy path: order, content binding, the two gates not substituting, and
   single use."
-  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.authority :as authority]
             [cloud.itonami.app.store :as store]))
 

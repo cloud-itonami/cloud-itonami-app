@@ -4,7 +4,7 @@
             [cloud.itonami.app.kotobase-federation :as federation]
             [cloud.itonami.app.store :as store]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]])
+            [kotoba.test :refer [deftest is testing]])
   (:import
            [java.time Instant]))
 

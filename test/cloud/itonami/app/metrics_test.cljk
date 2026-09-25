@@ -7,7 +7,7 @@
      app has no basis to define."
   (:require [kotoba.io :as kio] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.metrics :as metrics]
             [cloud.itonami.app.store :as store])

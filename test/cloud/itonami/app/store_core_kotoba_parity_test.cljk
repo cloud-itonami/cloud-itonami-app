@@ -13,7 +13,7 @@
   `store-core/append-message` and `store-core/record-response` — which now
   call it through `kotoba-oracle` instead of `take-last` — still trim exactly
   where the old `take-last`-based implementation trimmed."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.store-core :as core]
             [kotoba.compiler.core :as compiler]
             [kotoba.kir :as ir]))
