@@ -12,7 +12,7 @@
   So these tests are built on a REAL CBOR-encoded COSE_Key, produced by the same
   encoder shape an authenticator uses, rather than on a hand-made map. A fixture
   that skipped the CBOR round-trip would have skipped the bug."
-  (:require [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.did :as did])
   (:import [com.fasterxml.jackson.dataformat.cbor CBORFactory]
            [java.io ByteArrayOutputStream]))
@@ -38,7 +38,7 @@
 (defn- fill [b] (byte-array (repeat 32 (unchecked-byte b))))
 
 (defn- refuses [f]
-  (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+  (try (f) nil (catch kerror/ExceptionInfo e (:type (ex-data e)))))
 
 ;; ---------------------------------------------------------------------------
 ;; the regression

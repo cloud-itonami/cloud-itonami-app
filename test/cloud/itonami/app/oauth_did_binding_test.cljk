@@ -9,7 +9,7 @@
   組織ごとに provider 1枠しか無く2人目が1人目を静かに上書きした、
   token 解決が `first` で『たまたま最初の接続』を選んだ、
   `:connected?` が state 全体のどこかに接続があれば true だった。"
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.store :as store]))
 
@@ -77,9 +77,9 @@
             first を取るのは同じ行為で、しかも呼び出し元には見えない"
     (with-state (fixture {"c-alice" (connection "c-alice" alice-did "user-alice" :microsoft)
                           "c-bob" (connection "c-bob" bob-did "user-bob" :microsoft)})
-      (is (thrown? clojure.lang.ExceptionInfo (identity/connection-for :microsoft)))
+      (is (thrown? kerror/ExceptionInfo (identity/connection-for :microsoft)))
       (try (identity/connection-for :microsoft)
-           (catch clojure.lang.ExceptionInfo e
+           (catch kerror/ExceptionInfo e
              (is (= :oauth/ambiguous-connection (:type (ex-data e))))
              (is (= #{alice-did bob-did} (set (:dids (ex-data e))))))))))
 
@@ -141,7 +141,7 @@
         (identity/start-oauth! {:user-id "user-new" :organization-id "org-a"}
                                :microsoft "http://localhost:1337")
         (is false "should have thrown")
-        (catch clojure.lang.ExceptionInfo e
+        (catch kerror/ExceptionInfo e
           ;; 未設定 OAuth クライアントより先に本人確認の不在で落ちてもよいし、
           ;; その逆でもよい。要点は「接続が始まらない」こと。
           (is (contains? #{:passkey/required :oauth/not-configured :identity/no-did}

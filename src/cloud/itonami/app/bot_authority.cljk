@@ -46,7 +46,7 @@
   The root key here signs authority for the whole workforce. It is a separate
   secret from `bot-identity.seed`: one names Bots, this one speaks for the
   fleet, and a compromise of either should not be a compromise of both."
-  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [ed25519.core :as ed]
             [biscuit.token :as token]
@@ -64,7 +64,7 @@
   (io/file (config/data-dir) "workforce-authority.seed"))
 
 (defn- read-seed [file]
-  (when (.isFile file)
+  (when (io/file? file)
     (let [bytes (kio/read-all-bytes file)]
       (when (= seed-bytes (alength bytes)) bytes))))
 

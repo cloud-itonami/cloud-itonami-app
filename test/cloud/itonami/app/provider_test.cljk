@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.provider-test
-  (:require [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is testing]]
             [kotoba.lang.text :as str]
             [kotoba.json :as json]
             [cloud.itonami.app.provider :as provider])
@@ -155,7 +155,7 @@
     (try
       (assert-model! p "murakumo-main" {:model "some-other-checkpoint"})
       (is false "an unreviewed alias target must be rejected")
-      (catch clojure.lang.ExceptionInfo error
+      (catch kerror/ExceptionInfo error
         (is (= :provider/model-mismatch (:type (ex-data error))))))))
 
 (deftest a-failed-5090-request-falls-back-without-relabeling-the-result
@@ -275,7 +275,7 @@
                     (provider/agent-turn
                      provider {:model "murakumo-edge" :messages [] :tools []})
                     nil
-                    (catch clojure.lang.ExceptionInfo e e))]
+                    (catch kerror/ExceptionInfo e e))]
         (is (= :provider/http-error (:type (ex-data error))))
         (is (= 503 (:status (ex-data error))))
         (is (= ["murakumo-edge"] @requested)
@@ -482,7 +482,7 @@
         (try
           ((private-fn 'request-json) :post url {:x 1})
           (is false "HTTP 400 must fail")
-          (catch clojure.lang.ExceptionInfo error
+          (catch kerror/ExceptionInfo error
             (is (= 400 (:status (ex-data error))))
             (is (= 1 (:attempts (ex-data error))))))
         (is (= 1 @attempts)))
@@ -564,7 +564,7 @@
     (try
       (normalize {:content ""} "length")
       (is false "an empty non-tool turn must be rejected")
-      (catch clojure.lang.ExceptionInfo error
+      (catch kerror/ExceptionInfo error
         (is (= :provider/empty-response (:type (ex-data error))))
         (is (= "length" (:finish-reason (ex-data error))))))
     (testing "a tool call may correctly have no prose"
@@ -607,7 +607,7 @@
   (let [parse (private-fn 'parse-arguments)]
     (testing "the offending string survives into ex-data"
       (let [error (try (parse "workspace_write_file" "{\"path\":\"REA")
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
         (is (= :provider/invalid-tool-arguments (:type (ex-data error))))
         (is (= "{\"path\":\"REA" (:arguments-sample (ex-data error))))
         (is (= 12 (:arguments-length (ex-data error))))))
@@ -617,10 +617,10 @@
       ;; `:turn/tool` was nil for all 138 of them. The caller knew the name;
       ;; this function had not asked for it.
       (let [error (try (parse "workspace_write_file" "{\"path\":\"REA")
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
         (is (= "workspace_write_file" (:tool-name (ex-data error)))))
       (let [error (try (parse "goal_plan" "[\"Osaka\"]")
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
         (is (= "goal_plan" (:tool-name (ex-data error)))
             "on the wrong-shape path too, which is a different throw site")))
 
@@ -629,7 +629,7 @@
       ;; every (:key args) lookup answered nil and the tool ran with none.
       (doseq [value ["[\"Osaka\"]" "\"Osaka\"" "42"]]
         (let [error (try (parse "some_tool" value)
-                         (catch clojure.lang.ExceptionInfo e e))]
+                         (catch kerror/ExceptionInfo e e))]
           (is (= :provider/invalid-tool-arguments (:type (ex-data error)))
               (str value " must be refused"))
           (is (= value (:arguments-sample (ex-data error)))))))
@@ -660,7 +660,7 @@
   (let [parse (private-fn 'parse-arguments)
         ended-early? (fn [v] (:json-ended-early?
                               (ex-data (try (parse "decision_frame" v)
-                                            (catch clojure.lang.ExceptionInfo e e)))))]
+                                            (catch kerror/ExceptionInfo e e)))))]
     (testing "input that simply ran out"
       (is (true? (ended-early? "{\"scope\": \"club shinshi\", \"facts\": [{\"id")))
       (is (true? (ended-early? "{\"scope\": [1,2,"))))
@@ -681,7 +681,7 @@
       (let [error (try (normalize {:content "" :tool_calls [cut]}
                                   "tool_calls"
                                   {:completion_tokens 1024} 1024)
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
         (is (= :provider/output-budget-exhausted (:type (ex-data error))))
         (is (= 1024 (:max-output-tokens (ex-data error))))
         (is (= 1024 (:completion-tokens (ex-data error))))))
@@ -692,7 +692,7 @@
       ;; them, or this trades one blind error for another.
       (let [error (try (normalize {:content "" :tool_calls [cut]}
                                   "length" {:completion_tokens 1024} 1024)
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
         (is (= "decision_frame" (:tool-name (ex-data error))))
         (is (str/starts-with? (:arguments-sample (ex-data error)) "{\"scope\""))))
 
@@ -706,7 +706,7 @@
       (let [error (try (normalize {:content "" :tool_calls [cut]}
                                   "tool_calls"
                                   {:completion_tokens 2048} 8192)
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
         (is (= :provider/output-budget-exhausted (:type (ex-data error)))
             "2048 of a requested 8192 is a server ceiling, not a model defect")
         (is (= 2048 (:completion-tokens (ex-data error)))
@@ -719,7 +719,7 @@
             error (try (normalize {:content "" :tool_calls [malformed]}
                                   "tool_calls"
                                   {:completion_tokens 40} 2048)
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
         (is (= :provider/invalid-tool-arguments (:type (ex-data error)))
             "40 of 2048 tokens with intact JSON framing is the model, not a cap")))
 
@@ -780,7 +780,7 @@
           (try
             ((private-fn 'request-json) :post url {:x 1})
             (is false "a request past the limit must fail")
-            (catch clojure.lang.ExceptionInfo error
+            (catch kerror/ExceptionInfo error
               (testing "it is not an unclassified internal error"
                 (is (= :provider/timeout (:type (ex-data error)))))
               (testing "and it carries the limit it exceeded"
@@ -904,7 +904,7 @@
         (try
           (let [thrown (try (streaming-response url {} nil nil 5)
                             nil
-                            (catch clojure.lang.ExceptionInfo e e))
+                            (catch kerror/ExceptionInfo e e))
                 data (ex-data thrown)]
             (is (= :provider/http-error (:type data)))
             (is (= 503 (:status data)))
@@ -918,7 +918,7 @@
         (try
           (let [data (ex-data (try (streaming-response url {} nil nil 5)
                                    nil
-                                   (catch clojure.lang.ExceptionInfo e e)))]
+                                   (catch kerror/ExceptionInfo e e)))]
             (is (= 502 (:status data)))
             (is (str/includes? (get-in data [:response :raw]) "Bad gateway")))
           (finally (.stop server 0)))))
@@ -929,7 +929,7 @@
         (try
           (let [data (ex-data (try (streaming-response url {} nil nil 5)
                                    nil
-                                   (catch clojure.lang.ExceptionInfo e e)))]
+                                   (catch kerror/ExceptionInfo e e)))]
             (is (= 429 (:status data)))
             (is (nil? (:response data))
                 "nil is distinguishable from a body; an empty map would not be"))
@@ -942,7 +942,7 @@
         (try
           (let [data (ex-data (try (streaming-response url {} nil nil 5)
                                    nil
-                                   (catch clojure.lang.ExceptionInfo e e)))
+                                   (catch kerror/ExceptionInfo e e)))
                 raw (get-in data [:response :raw])]
             (is (= 8192 (count raw))
                 "bounded: a refusal body is an error document, not a generation"))
@@ -987,7 +987,7 @@
     (doseq [reason ["length" "max_tokens"]]
       (let [error (try (result {:content "Report stops mid sentence"} reason
                                {:completion_tokens 128} 128)
-                       nil (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                       nil (catch kerror/ExceptionInfo e (ex-data e)))]
         (is (= :provider/output-budget-exhausted (:type error)))
         (is (= reason (:finish-reason error)))))
     (is (= "Complete report" (:content (result {:content "Complete report"} "stop"))))))
@@ -1006,12 +1006,12 @@
     (is (= "ling-3.0-tiny" (:model (run p "murakumo-main" invoke))))
     (is (= ["murakumo-main" "ling-3.0-tiny"] @calls))
     (reset! calls [])
-    (is (thrown? clojure.lang.ExceptionInfo
+    (is (thrown? kerror/ExceptionInfo
                  (run (assoc p :no-fallback-models #{"murakumo-main"}) "murakumo-main" invoke)))
     (is (= ["murakumo-main"] @calls))
     (doseq [code ["network_queue_full" "quota_exceeded"]]
       (let [seen (atom 0)]
-        (is (thrown? clojure.lang.ExceptionInfo
+        (is (thrown? kerror/ExceptionInfo
                      (run p "murakumo-main"
                           (fn [_] (swap! seen inc)
                             (throw (ex-info "limited" {:type :provider/http-error :status 429

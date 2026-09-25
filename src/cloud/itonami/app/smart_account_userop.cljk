@@ -9,7 +9,7 @@
   account's on-chain owner set.
 
   No private key enters this namespace and no signature is persisted by it."
-  (:require [kotoba.bytes :as kbytes] [asn1.core :as asn1]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [asn1.core :as asn1]
             [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.esign.assertion :as assertion]
@@ -295,7 +295,7 @@
         (refuse :wallet/user-operation-rpc-error
                 "pimlico_getUserOperationGasPrice がfast tierを返しませんでした。"))
       (gas-price-pair! fast "Pimlico fast gas price"))
-    (catch clojure.lang.ExceptionInfo error
+    (catch kerror/ExceptionInfo error
       (if (method-not-found? error)
         (let [gas-price (quantity
                          (quantity! (rpc! (:node-endpoint chain) :node

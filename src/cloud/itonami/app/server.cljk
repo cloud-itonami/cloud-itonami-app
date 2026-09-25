@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.server
-  (:require [kotoba.http.form-urlencoded :as form-urlencoded] [kotoba.bytes :as kbytes] [kotoba.json :as json]
+  (:require [kotoba.lang.error :as kerror] [kotoba.http.form-urlencoded :as form-urlencoded] [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
@@ -637,7 +637,7 @@
                      {"MCP-Protocol-Version" protocol-version})
               (send-empty! exchange 202
                            {"MCP-Protocol-Version" protocol-version}))))))
-    (catch clojure.lang.ExceptionInfo error
+    (catch kerror/ExceptionInfo error
       (let [type (:type (ex-data error))
             insufficient? (= :oauth-resource/insufficient-scope type)
             unauthenticated? (contains? #{:identity/unauthenticated
@@ -696,7 +696,7 @@
         (a2a/send-streaming-message!
          configuration session request
          #(frame! (protocol-a2a/json-rpc-result request-id {:task %})))
-        (catch clojure.lang.ExceptionInfo error
+        (catch kerror/ExceptionInfo error
           (frame! (protocol-a2a/json-rpc-error
                    request-id
                    (if (= :a2a/invalid-request (:type (ex-data error)))
@@ -734,7 +734,7 @@
                        (a2a/respond! configuration session request))))
 
             :else (send! exchange 404 {:error "not_found"}))
-          (catch clojure.lang.ExceptionInfo error
+          (catch kerror/ExceptionInfo error
             (let [type (:type (ex-data error))
                   auth? (contains? #{:identity/unauthenticated
                                      :oauth-resource/invalid-token
@@ -3174,7 +3174,7 @@
           (if (storefront-route? method path)
             (route-storefront! exchange configuration method path)
             (send! exchange 404 {:error {:type "not_found"}}))
-          (catch clojure.lang.ExceptionInfo error
+          (catch kerror/ExceptionInfo error
             (let [type (:type (ex-data error))]
               (send! exchange
                      (case type
@@ -5535,7 +5535,7 @@
 
             :else
             (send! exchange 404 {:error {:type "not_found" :path path}}))
-          (catch clojure.lang.ExceptionInfo error
+          (catch kerror/ExceptionInfo error
             (send! exchange
                    (case (:type (ex-data error))
                      :identity/unauthenticated 401
@@ -5941,7 +5941,7 @@
                  (= path "/api/integrations/kotobase/assertion"))
           (try
             (route-kotobase-federation! exchange config)
-            (catch clojure.lang.ExceptionInfo error
+            (catch kerror/ExceptionInfo error
               (send! exchange
                      (case (:type (ex-data error))
                        :identity/unauthenticated 401
@@ -6509,7 +6509,7 @@
             path (.getPath (.getRequestURI exchange))]
         (try
           (handle-bots! config exchange method path)
-          (catch clojure.lang.ExceptionInfo error
+          (catch kerror/ExceptionInfo error
             (send! exchange
                    (case (:type (ex-data error))
                      :identity/unauthenticated 401
@@ -6728,7 +6728,7 @@
             path (.getPath (.getRequestURI exchange))]
         (try
           (handle-wallet! config exchange method path)
-          (catch clojure.lang.ExceptionInfo error
+          (catch kerror/ExceptionInfo error
             (send! exchange
                    (case (:type (ex-data error))
                      :identity/unauthenticated 401
@@ -7023,7 +7023,7 @@
             path (.getPath (.getRequestURI exchange))]
         (try
           (handle-agent-bots! config exchange method path)
-          (catch clojure.lang.ExceptionInfo error
+          (catch kerror/ExceptionInfo error
             (send! exchange
                    (case (:type (ex-data error))
                      :identity/unauthenticated 401
@@ -7259,7 +7259,7 @@
             path (.getPath (.getRequestURI exchange))]
         (try
           (handle-hermes-compat! config exchange method path)
-          (catch clojure.lang.ExceptionInfo error
+          (catch kerror/ExceptionInfo error
             (send! exchange
                    (case (:type (ex-data error))
                      :identity/unauthenticated 401
@@ -7294,7 +7294,7 @@
             path (.getPath (.getRequestURI exchange))]
         (try
           (handle-chronicle! config exchange method path)
-          (catch clojure.lang.ExceptionInfo error
+          (catch kerror/ExceptionInfo error
             (send! exchange
                    (case (:type (ex-data error))
                      :identity/unauthenticated 401
@@ -7333,7 +7333,7 @@
                       (or (:attestation-uid body) (:attestationUid body)))
                      {"Cache-Control" "no-store"}))
             (send! exchange 404 {:error {:type "not_found"}}))
-          (catch clojure.lang.ExceptionInfo error
+          (catch kerror/ExceptionInfo error
             (let [data (ex-data error)
                   type (:type data)
                   status (cond
@@ -7374,7 +7374,7 @@
 
             :else
             (send! exchange 404 {:error {:type "not_found"}}))
-          (catch clojure.lang.ExceptionInfo error
+          (catch kerror/ExceptionInfo error
             (send! exchange
                    (case (:type (ex-data error))
                      :identity/invalid-origin 403
@@ -7542,7 +7542,7 @@
                                  :else
                                  (send! exchange 404
                                         {:error {:type "not_found"}})))
-                             (catch clojure.lang.ExceptionInfo error
+                             (catch kerror/ExceptionInfo error
                                (send! exchange
                                       (case (:type (ex-data error))
                                         :identity/unauthenticated 401

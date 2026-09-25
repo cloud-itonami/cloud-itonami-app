@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.folder-sync-test
-  (:require [kotoba.bytes :as kbytes] [clojure.java.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.folder-sync :as sync])
   (:import
@@ -132,7 +132,7 @@
 (deftest unsafe-remote-paths-are-refused-before-writing
   (let [{:keys [root config base]} (temporary-config)
         remote (memory-remote {"../escape.txt" "no"})]
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+    (is (thrown-with-msg? kerror/ExceptionInfo
                           #"safe relative path"
                           (sync/sync-root! config remote)))
     (is (not (.exists (io/file base "escape.txt"))))
@@ -146,7 +146,7 @@
     (.mkdirs outside)
     (Files/createSymbolicLink (.toPath link) (.toPath outside)
                               (make-array java.nio.file.attribute.FileAttribute 0))
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+    (is (thrown-with-msg? kerror/ExceptionInfo
                           #"symbolic link"
                           (sync/sync-root! config remote)))
     (is (not (.exists (io/file outside "escape.txt"))))))
@@ -176,7 +176,7 @@
 (deftest remote-files-obey-the-size-limit-before-download
   (let [{:keys [config]} (temporary-config)
         remote (memory-remote {"large.bin" "12345"})]
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+    (is (thrown-with-msg? kerror/ExceptionInfo
                           #"exceeds the configured sync limit"
                           (sync/sync-root! (assoc config :maximum-file-bytes 4)
                                            remote)))))
@@ -217,14 +217,14 @@
 (deftest ordinary-folder-sync-refuses-placeholder-residency
   (let [{:keys [config]} (temporary-config)]
     (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
+         kerror/ExceptionInfo
          #"File Provider"
          (sync/start! {:folder-sync
                        {:roots [(assoc config :actor "did:example:alice"
                                       :residency :online-only)]}})))))
 
 (deftest configured-roots-always-have-a-local-owner
-  (is (thrown-with-msg? clojure.lang.ExceptionInfo
+  (is (thrown-with-msg? kerror/ExceptionInfo
                         #"requires an actor"
                         (sync/start! {:folder-sync
                                       {:roots [{:id "hosted"

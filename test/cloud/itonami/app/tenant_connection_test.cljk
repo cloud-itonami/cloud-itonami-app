@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.tenant-connection-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.tenant-connection :as connection]))
@@ -50,13 +50,13 @@
           (is (= :tenant-connection/human-approval-required
                  (:type (ex-data
                          (try (connection/approve! agent-session id)
-                              (catch clojure.lang.ExceptionInfo e e)))))))
+                              (catch kerror/ExceptionInfo e e)))))))
         (is (= :active (:status (connection/approve! human-session id))))
         (testing "an active lease cannot be approved again without renewal"
           (is (= :tenant-connection/invalid-state
                  (:type (ex-data
                          (try (connection/approve! human-session id)
-                              (catch clojure.lang.ExceptionInfo e e)))))))
+                              (catch kerror/ExceptionInfo e e)))))))
         (is (= tenant-id
                (:tenant-id (connection/context! agent-session id
                                                   "workspace.read"))))
@@ -65,12 +65,12 @@
                  (:type (ex-data
                          (try (connection/context! agent-session id
                                                    "workspace.read")
-                              (catch clojure.lang.ExceptionInfo e e)))))))
+                              (catch kerror/ExceptionInfo e e)))))))
         (testing "another agent session cannot borrow the handle"
           (is (= :tenant-connection/forbidden
                  (:type (ex-data
                          (try (connection/revoke! (assoc agent-session :id "other") id)
-                              (catch clojure.lang.ExceptionInfo e e))))))))
+                              (catch kerror/ExceptionInfo e e))))))))
       (finally (reset! store/state previous)))))
 
 (deftest tenant-list-is-derived-only-from-memberships
@@ -92,7 +92,7 @@
                        (try (connection/request!
                              agent-session
                              {:capabilities ["workspace.read"]})
-                            (catch clojure.lang.ExceptionInfo e e)))))))
+                            (catch kerror/ExceptionInfo e e)))))))
       (testing "concurrent retries mint one connection"
         (let [request {:tenant-id "acme"
                        :capabilities ["workspace.read"]
@@ -137,5 +137,5 @@
                        agent-session id "repository.write"
                        {:publication-id "tx:two"
                         :published-byte-delta 800})
-                      (catch clojure.lang.ExceptionInfo e e)))))))
+                      (catch kerror/ExceptionInfo e e)))))))
       (finally (reset! store/state previous)))))

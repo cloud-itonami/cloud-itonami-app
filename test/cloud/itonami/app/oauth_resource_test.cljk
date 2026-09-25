@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.oauth-resource-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.oauth-resource :as oauth]
             [cloud.itonami.app.store :as store]))
 
@@ -60,7 +60,7 @@
                   (ex-data
                    (try (oauth/session configuration "secret-token" "mcp:tools"
                                        "https://other.example/mcp")
-                        (catch clojure.lang.ExceptionInfo e e)))))))
+                        (catch kerror/ExceptionInfo e e)))))))
         (testing "a missing route scope is rejected"
           (is (= :oauth-resource/insufficient-scope
                  (:type
@@ -68,5 +68,5 @@
                    (try (oauth/session configuration "secret-token"
                                        "repository:write"
                                        "https://itonami.cloud/mcp")
-                        (catch clojure.lang.ExceptionInfo e e))))))))
+                        (catch kerror/ExceptionInfo e e))))))))
       (finally (reset! store/state previous)))))

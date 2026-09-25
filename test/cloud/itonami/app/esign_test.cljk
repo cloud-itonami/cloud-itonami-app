@@ -8,7 +8,7 @@
   exactly the code path a third party would run years later. A test that needed
   a real Touch ID prompt would verify the ceremony and leave the archival path
   untested, which is the one that has to keep working."
-  (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.credential :as credential]
@@ -158,12 +158,12 @@
 
   (testing "a missing digest is refused rather than defaulted"
     (doseq [field [:document-digest :presentation-digest :nonce :signer-did]]
-      (is (thrown? clojure.lang.ExceptionInfo
+      (is (thrown? kerror/ExceptionInfo
                    (commitment/commitment (dissoc base-commitment field)))
           (str field " must be required"))))
 
   (testing "purpose is a closed set"
-    (is (thrown? clojure.lang.ExceptionInfo
+    (is (thrown? kerror/ExceptionInfo
                  (commitment/commitment (assoc base-commitment :purpose :whatever/else))))))
 
 ;; ── the outline ──────────────────────────────────────────────────────────────
@@ -235,8 +235,8 @@
       (is (false? (:verified (verify {:signature (assertion/encode (byte-array 70))})))))
 
     (testing "verifying against no challenge is a programming error, not a pass"
-      (is (thrown? clojure.lang.ExceptionInfo (verify {:expected-challenge nil})))
-      (is (thrown? clojure.lang.ExceptionInfo
+      (is (thrown? kerror/ExceptionInfo (verify {:expected-challenge nil})))
+      (is (thrown? kerror/ExceptionInfo
                    (verify {:expected-challenge (byte-array 0)}))))))
 
 (deftest assertion-requires-user-verification-and-presence
@@ -338,7 +338,7 @@
 
     (testing "a signer with no enrolled Passkey is refused, not left pending"
       (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo #"Passkey が登録されていません"
+           kerror/ExceptionInfo #"Passkey が登録されていません"
            (esign/create! {:document-id (:id document)
                            :purpose :contract/execute
                            :signer-dids ["did:key:zNobody"]
@@ -346,7 +346,7 @@
                            :object-store object-store}))))
 
     (testing "an envelope with no signers is refused"
-      (is (thrown? clojure.lang.ExceptionInfo
+      (is (thrown? kerror/ExceptionInfo
                    (esign/create! {:document-id (:id document)
                                    :purpose :contract/execute
                                    :signer-dids []
@@ -376,7 +376,7 @@
                                        :signer-dids [(:did auth)]
                                        :actor alice
                                        :object-store object-store})
-                       (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+                       (catch kerror/ExceptionInfo e (ex-data e))))))
     (testing "and no envelope was written for it"
       (is (empty? (get-in (store/snapshot) [:esign :envelopes]))))))
 
@@ -573,7 +573,7 @@
         (is (seq (:presentation view)))))
     (testing "somebody else is refused rather than shown a redacted envelope"
       (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo #"権限がありません"
+           kerror/ExceptionInfo #"権限がありません"
            (esign/envelope! (store/snapshot) (:esign/id envelope)
                             {:principal "user-mallory" :did "did:key:zMallory"}))))
     (testing "every view states that the timestamp is not a qualified one"

@@ -8,7 +8,7 @@
   3. binding is recorded even when the workspace cannot confirm it, because a
      released install has no workspace at all;
   4. nothing here writes to an analysis plane."
-  (:require [kotoba.io :as kio] [clojure.java.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.business :as business]
@@ -24,7 +24,7 @@
   (store/transact! assoc :businesses {}))
 
 (defn- refuses [f]
-  (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+  (try (f) nil (catch kerror/ExceptionInfo e (:type (ex-data e)))))
 
 (defn- face [faces k]
   (first (filter #(= k (:face %)) faces)))

@@ -4,7 +4,7 @@
   These checks do not claim production throughput or remote availability. They
   prove properties of the exact running implementation, so an operator cannot
   replace them with `true` in an evidence file."
-  (:require [kotoba.io :as kio] [clojure.java.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [clojure.java.io :as io]
             [cloud.itonami.app.local-query :as local-query]
             [cloud.itonami.app.repository-storage :as repository]
             [datascript.core :as datascript]
@@ -67,7 +67,7 @@
       :current (assoc-in base-state [:settings :order] [3])
       :basis-cid (repository/semantic-cid base-state)})
     false
-    (catch clojure.lang.ExceptionInfo error
+    (catch kerror/ExceptionInfo error
       (= :repository-storage/conflict (:type (ex-data error))))))
 
 (defn- transport-before-head? []
@@ -77,7 +77,7 @@
     (try
       (publish context prepared 0)
       false
-      (catch clojure.lang.ExceptionInfo _
+      (catch kerror/ExceptionInfo _
         (nil? (:head (repository/head-snapshot head-store owner)))))))
 
 (defn- vmk-rewrap-preserves-payload? []

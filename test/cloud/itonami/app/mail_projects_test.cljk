@@ -4,7 +4,7 @@
   The behaviours worth pinning are the refusals and the arithmetic, not the
   happy path: a filing system is trusted in proportion to how loudly it admits
   what it did not file."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.config :as config]
@@ -39,8 +39,8 @@
   is `projects/<organization-storage-id>/<slug>` and that middle segment is a
   private hash."
   [project-id]
-  (->> (file-seq (io/file (config/data-dir) "projects"))
-       (filter #(and (.isDirectory %) (= project-id (.getName %))))
+  (->> (io/file-seq (io/file (config/data-dir) "projects"))
+       (filter #(and (io/directory? %) (= project-id (io/file-name %))))
        first))
 
 (defn- git
@@ -88,17 +88,17 @@
   []
   (let [directory (io/file (config/data-dir) "age-test")
         identity-file (io/file directory "identity.txt")]
-    (when-not (.isFile identity-file)
-      (.mkdirs directory)
+    (when-not (io/file? identity-file)
+      (io/mkdirs directory)
       (let [process (.start (doto (ProcessBuilder.
                                    ^java.util.List ["/opt/homebrew/bin/age-keygen"
-                                                    "-o" (.getPath identity-file)])
+                                                    "-o" (io/path identity-file)])
                               (.redirectErrorStream true)))]
         (slurp (.getInputStream process))
         (.waitFor process)))
     (let [recipient (->> (str/split-lines (slurp identity-file))
                          (some #(second (re-matches #"# public key: (age1\S+)" %))))]
-      {:identity (.getPath identity-file) :recipient recipient})))
+      {:identity (io/path identity-file) :recipient recipient})))
 
 (def ^:private age-key (delay (age-keygen!)))
 
@@ -120,7 +120,7 @@
   (testing "a typo would otherwise file mail into a project nobody can open,
             and it would look like it worked"
     (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo #"project がありません"
+         kerror/ExceptionInfo #"project がありません"
          (mail-projects/add-rule! organization
                                   {:project "alpah"
                                    :match {:from-domain "example.com"}})))
@@ -130,10 +130,10 @@
   (project! "alpha")
   (testing "a rule with no clauses would match every message ever received"
     (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo #"条件を1つ以上"
+         kerror/ExceptionInfo #"条件を1つ以上"
          (mail-projects/add-rule! organization {:project "alpha" :match {}})))
     (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo #"条件を1つ以上"
+         kerror/ExceptionInfo #"条件を1つ以上"
          (mail-projects/add-rule! organization
                                   {:project "alpha"
                                    :match {:from-domain "   "}})))))
@@ -188,7 +188,7 @@
                                              {:project "alpha"
                                               :match {:label "finance"}}))]
     (is (:ok? (mail-projects/remove-rule! organization (:rule/id rule))))
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"rule がありません"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"rule がありません"
                           (mail-projects/remove-rule! organization "rule-nope")))))
 
 ;; ---------------------------------------------------------------------------
@@ -243,9 +243,9 @@
 (deftest assignment-refuses-what-it-cannot-resolve
   (project! "alpha")
   (seed-messages! (message "m1" "a@example.com" "x"))
-  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"そのメールはありません"
+  (is (thrown-with-msg? kerror/ExceptionInfo #"そのメールはありません"
                         (mail-projects/assign! organization "nope" "alpha" "user-1")))
-  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"project がありません"
+  (is (thrown-with-msg? kerror/ExceptionInfo #"project がありません"
                         (mail-projects/assign! organization "m1" "nope" "user-1"))))
 
 (deftest unassigning-does-not-delete-the-message
@@ -311,8 +311,8 @@
   (seed-messages! (message "m1" "a@example.com" "Quarterly invoice"))
   (mail-projects/assign! organization "m1" (fresh "artifacts") "user-1")
   (let [directory (project-directory (fresh "artifacts"))
-        envelopes (->> (file-seq (io/file directory "mail"))
-                       (filter #(str/ends-with? (.getName %) ".edn")))]
+        envelopes (->> (io/file-seq (io/file directory "mail"))
+                       (filter #(str/ends-with? (io/file-name %) ".edn")))]
     (testing "the envelope is tracked source"
       (is (= 1 (count envelopes)))
       (let [written (read-string (slurp (first envelopes)))]
@@ -356,8 +356,8 @@
       (is (str/blank? (git directory "grep" "-r" "本文" "HEAD"))))
 
     (testing "the file on disk is an age envelope, not the message"
-      (let [body (->> (file-seq (io/file directory "mail"))
-                      (filter #(str/ends-with? (.getName %) ".eml.age"))
+      (let [body (->> (io/file-seq (io/file directory "mail"))
+                      (filter #(str/ends-with? (io/file-name %) ".eml.age"))
                       first)
             ;; Annexed content is a symlink into .git/annex; follow it.
             content (slurp body)]
@@ -365,22 +365,22 @@
         (is (not (str/includes? content "本文")))))
 
     (testing "and it decrypts back to exactly what arrived"
-      (let [body (->> (file-seq (io/file directory "mail"))
-                      (filter #(str/ends-with? (.getName %) ".eml.age"))
+      (let [body (->> (io/file-seq (io/file directory "mail"))
+                      (filter #(str/ends-with? (io/file-name %) ".eml.age"))
                       first)
             process (.start (doto (ProcessBuilder.
                                    ^java.util.List
                                    ["/opt/homebrew/bin/age" "-d"
                                     "-i" (:identity @age-key)
-                                    (.getCanonicalPath body)])
+                                    (io/canonical-path body)])
                               (.redirectErrorStream true)))
             plaintext (slurp (.getInputStream process))]
         (.waitFor process)
         (is (= "body of m1 — 本文" (str/trim plaintext)))))
 
     (testing "and the envelope says how it was sealed and to whom"
-      (let [written (->> (file-seq (io/file directory "mail"))
-                         (filter #(str/ends-with? (.getName %) ".edn"))
+      (let [written (->> (io/file-seq (io/file directory "mail"))
+                         (filter #(str/ends-with? (io/file-name %) ".edn"))
                          first slurp read-string)]
         (is (= "age" (:mail/body-encryption written)))
         (is (= [(:recipient @age-key)] (:mail/body-recipients written)))
@@ -702,6 +702,6 @@
     (is (empty? (mail-projects/projects-of organization "other")))))
 
 (deftest an-unknown-thread-is-refused
-  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"そのスレッドはありません"
+  (is (thrown-with-msg? kerror/ExceptionInfo #"そのスレッドはありません"
                         (mail-projects/assign-thread! organization "nope"
                                                       "p" "user-1"))))

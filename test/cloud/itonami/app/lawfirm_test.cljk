@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.lawfirm-test
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.lawfirm :as app-lawfirm]
             [cloud.itonami.app.store :as store]
@@ -43,7 +43,7 @@
                      ["sync-inbound!" #(app-lawfirm/sync-inbound! {:since "1970-01-01"})]
                      ["publish-matter-drive!" #(app-lawfirm/publish-matter-drive! "u" "M-1")]]]
     (testing label
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"無効です" (f))))))
+      (is (thrown-with-msg? kerror/ExceptionInfo #"無効です" (f))))))
 
 ;; ---------------------------------------------------------------------------
 ;; The durable seam

@@ -6,7 +6,7 @@
   would say nothing about whether the one mutation removes what it claims to
   remove or leaves alone what it claims to leave alone. So the repositories
   here are made by git and the working trees are really deleted."
-  (:require [kotoba.io :as kio] [clojure.java.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
@@ -152,7 +152,7 @@
 (deftest a-registry-it-cannot-read-refuses-instead-of-reporting-clean
   (let [root (temp-dir "itonami-git-hygiene-nomanifest-")]
     (init-repo! root "orgs/test/only")
-    (is (thrown? clojure.lang.ExceptionInfo (subject/status root))
+    (is (thrown? kerror/ExceptionInfo (subject/status root))
         "a scan that could not read the manifest must not look like a clean fleet")))
 
 (deftest an-unfetched-checkout-is-counted-as-unreadable-not-as-clean

@@ -3,7 +3,7 @@
   authority cannot be reached by a typo, that the transport records why a hand-off
   could not happen, and -- the one that matters most -- that a CLIENT CANNOT
   SUPPLY ITS OWN POSTURE."
-  (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.authority :as authority]
             [cloud.itonami.app.authority.api :as api]
@@ -38,7 +38,7 @@
   (store/transact! assoc :authority {:proposals {}}))
 
 (defn- refuses [f]
-  (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+  (try (f) nil (catch kerror/ExceptionInfo e (:type (ex-data e)))))
 
 (def ^:private lifecycle-request
   {:op :profile/lifecycle :eid eid :iccid iccid-a :operation :disable

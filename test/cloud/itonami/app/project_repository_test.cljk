@@ -11,7 +11,7 @@
 
   So these tests exist to say what survived the rescue actually works, rather
   than that it compiles."
-  (:require [kotoba.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.config :as config]
@@ -124,9 +124,9 @@
 (deftest a-project-id-is-checked-before-anything-is-written
   (testing "blank and over-long ids are refused by name rather than producing a
             repository nobody asked for"
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Project ID"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"Project ID"
                           (projects/create-project! (scope "   ") {})))
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"80"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"80"
                           (projects/create-project!
                            (scope (apply str (repeat 81 "x"))) {})))
     (is (empty? (:items (projects/local-projects-snapshot (scope)))))))

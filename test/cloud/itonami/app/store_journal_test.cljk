@@ -13,7 +13,7 @@
 
   Nothing in the old code could have noticed. A journal was replayed because it
   was there."
-  (:require [kotoba.lang.edn :as edn]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.host :as host]
@@ -98,11 +98,11 @@
     (testing "shorter than :from -- refused by name"
       (is (= :store/invalid-journal-append
              (try (apply-op {:runs {:x {:messages [:a]}}} op)
-                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))
+                  (catch kerror/ExceptionInfo e (:type (ex-data e)))))))
     (testing "long enough but carrying a DIFFERENT tail -- refused by name"
       (is (= :store/invalid-journal-append
              (try (apply-op {:runs {:x {:messages [:a :b :x :y]}}} op)
-                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+                  (catch kerror/ExceptionInfo e (:type (ex-data e)))))))))
 
 ;; ── the guard ──────────────────────────────────────────────────────────────
 
@@ -205,7 +205,7 @@
         file (io/file dir "state.journal.edn")]
     (host/append-durable! (.getPath file) "12345678" 16)
     (testing "the second append would pass the bound, so it is refused"
-      (is (thrown? clojure.lang.ExceptionInfo
+      (is (thrown? kerror/ExceptionInfo
                    (host/append-durable! (.getPath file) "123456789" 16))))
     (is (= 8 (host/file-size (.getPath file))) "and nothing was written")))
 

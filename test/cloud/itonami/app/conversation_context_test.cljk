@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.conversation-context-test
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.conversation-context :as context]
             [cloud.itonami.app.documents :as documents]
@@ -21,9 +21,9 @@
           [{:kind :project :target " alpha "}
            {:kind "project" :target "alpha"}
            {:kind "folder" :target "folder-1"}]))))
-  (is (thrown? clojure.lang.ExceptionInfo
+  (is (thrown? kerror/ExceptionInfo
                (context/normalize-refs [{:kind "account" :target "secret"}])))
-  (is (thrown? clojure.lang.ExceptionInfo
+  (is (thrown? kerror/ExceptionInfo
                (context/normalize-refs
                 (repeat 13 {:kind "project" :target "alpha"}))))
 
@@ -94,6 +94,6 @@
                        session [{:kind "folder" :target (:id folder)}]))
              "Research")))
       (testing "a saved reference is checked again rather than trusted"
-        (is (thrown? clojure.lang.ExceptionInfo
+        (is (thrown? kerror/ExceptionInfo
                      (context/resolve-refs session
                                            [{:kind "project" :target "hidden"}])))))))

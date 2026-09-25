@@ -5,7 +5,7 @@
   page is known rather than assumed: an assertion that the rendering contains
   a string is an assertion that the string this test put at those coordinates
   came back out."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.image :as kotoba-image] [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.pageview :as pageview]
@@ -38,7 +38,7 @@
   (:item (documents/upload! name media-type bytes actor object-store)))
 
 (defn- error-type [f]
-  (:type (try (f) (catch clojure.lang.ExceptionInfo e (ex-data e)))))
+  (:type (try (f) (catch kerror/ExceptionInfo e (ex-data e)))))
 
 ;; A parse cache lives across calls now, so each test starts from cold.
 (use-fixtures :each (fn [f] (pageview/forget-cached!) (f)))
@@ -229,11 +229,10 @@
                                 "/Length 4 >>\nstream\nABCD\nendstream")))
             out (pageview/image (:id item) alice 0 0 object-store)]
         (is (= "image/png" (:media-type out)))
-        (let [img (javax.imageio.ImageIO/read
-                   (java.io.ByteArrayInputStream. ^bytes (:bytes out)))]
+        (let [img (kotoba-image/read-image ^bytes (:bytes out))]
           (is (some? img) "javax.imageio read what png.encode wrote")
-          (is (= 2 (.getWidth img)))
-          (is (= 2 (.getHeight img))))))))
+          (is (= 2 (kotoba-image/width img)))
+          (is (= 2 (kotoba-image/height img))))))))
 
 (deftest an-image-shape-this-cannot-encode-is-named-not-guessed
   ;; A wrongly encoded image OPENS, which is why this refuses instead. Five
@@ -389,10 +388,9 @@
                                          "\u0000\u0001\u0040\u0002\u0080\u0003\u00ff\u0004"))
             out (pageview/image (:id item) alice 0 0 object-store)]
         (is (= "image/png" (:media-type out)))
-        (let [img (javax.imageio.ImageIO/read
-                   (java.io.ByteArrayInputStream. ^bytes (:bytes out)))]
-          (is (= 2 (.getWidth img)))
-          (is (= 0 (bit-and (.getRGB img 0 0) 0xff)) "the high byte, not the low"))))))
+        (let [img (kotoba-image/read-image ^bytes (:bytes out))]
+          (is (= 2 (kotoba-image/width img)))
+          (is (= 0 (bit-and (kotoba-image/get-rgb img 0 0) 0xff)) "the high byte, not the low"))))))
 
 (deftest an-indexed-image-goes-through-its-palette
   (with-state
@@ -403,11 +401,10 @@
                                 "/ColorSpace [/Indexed /DeviceRGB 1 <FF000000FF00>]")
                            "\u0000\u0001\u0000\u0001"))
             out (pageview/image (:id item) alice 0 0 object-store)
-            img (javax.imageio.ImageIO/read
-                 (java.io.ByteArrayInputStream. ^bytes (:bytes out)))]
+            img (kotoba-image/read-image ^bytes (:bytes out))]
         (is (= "image/png" (:media-type out)))
-        (is (= 0xFF0000 (bit-and (.getRGB img 0 0) 0xFFFFFF)) "code 0 is the red entry")
-        (is (= 0x00FF00 (bit-and (.getRGB img 1 0) 0xFFFFFF)) "code 1 is the green one")))))
+        (is (= 0xFF0000 (bit-and (kotoba-image/get-rgb img 0 0) 0xFFFFFF)) "code 0 is the red entry")
+        (is (= 0x00FF00 (bit-and (kotoba-image/get-rgb img 1 0) 0xFFFFFF)) "code 1 is the green one")))))
 
 (deftest a-cmyk-image-is-converted-the-same-way-a-cmyk-rule-is
   ;; So an image and a fill in the same document agree about what a colour
@@ -420,9 +417,8 @@
                                          (apply str (repeat 16 "\u0000"))))
             out (pageview/image (:id item) alice 0 0 object-store)]
         (is (= "image/png" (:media-type out)))
-        (let [img (javax.imageio.ImageIO/read
-                   (java.io.ByteArrayInputStream. ^bytes (:bytes out)))]
-          (is (= 0xFFFFFF (bit-and (.getRGB img 0 0) 0xFFFFFF))
+        (let [img (kotoba-image/read-image ^bytes (:bytes out))]
+          (is (= 0xFFFFFF (bit-and (kotoba-image/get-rgb img 0 0) 0xFFFFFF))
               "all zero ink is white"))))))
 
 (deftest a-shape-nothing-can-encode-is-still-refused-by-name

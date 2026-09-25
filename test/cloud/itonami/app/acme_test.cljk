@@ -10,7 +10,7 @@
   Both of those are places where a wrong answer is silent. An ECDSA signature
   reassembled at the wrong offsets is not malformed, it is merely invalid, and
   the CA's error names none of it."
-  (:require [kotoba.bytes :as kbytes] [asn1.core :as asn1]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [asn1.core :as asn1]
             [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
@@ -286,7 +286,7 @@
                             :csr-key key
                             :poll {:attempts 2 :sleep-ms 0}
                             :sleep (constantly nil)})
-                          (catch clojure.lang.ExceptionInfo e e))]
+                          (catch kerror/ExceptionInfo e e))]
           (is (= :acme/authorization-failed (:type (ex-data thrown))))
           (is (str/includes? (ex-message thrown) "the CA could not fetch it")
               "the CA's own sentence, not a status code"))))
@@ -314,7 +314,7 @@
                                       "detail" "no account exists with that key"})
                :headers {}})]
     (let [thrown (try (acme/directory "https://ca.test/dir")
-                      (catch clojure.lang.ExceptionInfo e e))]
+                      (catch kerror/ExceptionInfo e e))]
       (is (= :acme/unexpected-response (:type (ex-data thrown))))
       (is (= "urn:ietf:params:acme:error:unauthorized"
              (:acme-error (ex-data thrown))))

@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.virtual-shell-test
-  (:require [kotoba.io :as kio] [clojure.java.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [clojure.java.io :as io]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.virtual-shell :as shell]
             [cloud.itonami.app.workspace-tools :as workspace-tools]))
@@ -43,5 +43,5 @@
                        "cloud-itonami-vshell-worktree-")]
     (spit (io/file root ".git") "gitdir: /outside/grant\n")
     (with-redefs [workspace-tools/admit-root (constantly (.getPath root))]
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"standalone Git clone"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"standalone Git clone"
                             (shell/admit-workspace (.getPath root)))))))

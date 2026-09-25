@@ -5,7 +5,7 @@
   reason this namespace exists at all: the hand-rolled Gmail reader it sits
   beside could only ever be exercised by pointing it at somebody's real
   mailbox, so for its whole life it never was."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.mail-imap :as mail-imap]
             [imap.transport :as transport]))
@@ -226,6 +226,6 @@
 (deftest a-missing-password-is-refused-before-a-socket-is-opened
   (testing "naming the account, so somebody can fix the one that is broken"
     (let [error (try (mail-imap/sync! account {:password ""})
-                     (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                     (catch kerror/ExceptionInfo e (ex-data e)))]
       (is (= :mail/missing-credential (:type error)))
       (is (= (:id account) (:id error))))))

@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.sso-login-test
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.store :as store]))
@@ -69,7 +69,7 @@
             (finish! :google {:sub "different-provider-subject"
                               :email "new@example.jp"})
             (is false "email equality must not merge accounts")
-            (catch clojure.lang.ExceptionInfo error
+            (catch kerror/ExceptionInfo error
               (is (= :sso/link-required (:type (ex-data error))))))))
       (finally
         (reset! store/state previous)))))

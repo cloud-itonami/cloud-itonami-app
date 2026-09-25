@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.cli-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
             [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.agent-session :as agent-session]
@@ -32,7 +32,7 @@
            (:type
             (ex-data
              (try (cli/run {} ["tenant" "status"])
-                  (catch clojure.lang.ExceptionInfo e e))))))))
+                  (catch kerror/ExceptionInfo e e))))))))
 
 (deftest hosted-api-url-is-shared-by-cli-and-mcp-clients
   (binding [client/*environment*
@@ -47,7 +47,7 @@
     (is (= :app-client/insecure-api-url
            (:type (ex-data
                    (try (client/base-url {})
-                        (catch clojure.lang.ExceptionInfo e e))))))))
+                        (catch kerror/ExceptionInfo e e))))))))
 
 (deftest bots-cli-submits-a-bounded-long-running-task
   (let [seen (atom nil)]
@@ -121,7 +121,7 @@
       (is (= :west-refactor/workspace-mismatch
              (:type (ex-data (try (cli/bot-refactor-start
                                    {} {:id "bot-1" :repo "example" :root "/tmp/ws"})
-                                  (catch clojure.lang.ExceptionInfo e e)))))))))
+                                  (catch kerror/ExceptionInfo e e)))))))))
 
 (deftest west-refactor-start-submits-the-fixed-contract
   (let [seen (atom nil)

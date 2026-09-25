@@ -3,7 +3,7 @@
 
   Tests the fleet namespace rather than agent-control, which requires
   agent.run and so only loads under the :dev alias's sibling layout."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.fleet :as fleet]))
 
 (deftest search-reports-the-total-not-just-the-page
@@ -49,15 +49,15 @@
     (is (= "/orders" (fleet/valid-path! "/orders")))
     (is (= "/" (fleet/valid-path! nil)))
     (doseq [bad ["orders" "//evil.example" "/a/../../b" (apply str "/" (repeat 300 "x"))]]
-      (is (thrown? clojure.lang.ExceptionInfo (fleet/valid-path! bad))
+      (is (thrown? kerror/ExceptionInfo (fleet/valid-path! bad))
           (str (pr-str bad) " should be rejected"))))
 
   (testing "an unknown repo and an undeployed one fail differently"
     ;; 1,197 of 1,206 actors have no endpoint. Telling the caller "not
     ;; deployed" is more useful than letting it read a connection error, and it
     ;; is a different fact from "no such actor".
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"カタログにありません"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"カタログにありません"
                           (fleet/call-tool {:repo "no-such-actor"})))
     (let [undeployed (first (remove fleet/callable? (fleet/actors)))]
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"未デプロイ"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"未デプロイ"
                             (fleet/call-tool {:repo (:repo undeployed)}))))))

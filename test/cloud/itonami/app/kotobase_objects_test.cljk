@@ -2,7 +2,7 @@
   "Offline. The transport is a map, so what is under test is the DAG, the
   identity/location split and the refusals — none of which need
   kotobase.net to be reachable to be wrong."
-  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.archive :as archive]
             [cloud.itonami.app.kotobase-objects :as ko]
@@ -126,7 +126,7 @@
 (deftest a-reference-the-bytes-do-not-have-is-refused
   (let [{:keys [held transport]} (fake-archive)
         store (ko/store transport)]
-    (is (thrown? clojure.lang.ExceptionInfo
+    (is (thrown? kerror/ExceptionInfo
                  (object/-put-object store "bafkreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                                      (bytes-of 100))))
     (is (empty? @held) "nothing is stored under a name that lies")))
@@ -146,7 +146,7 @@
           ref (ko/content-ref store body)]
       (object/-put-object store ref body)
       (swap! held assoc (archive/location-cid ref) (bytes-of 999))
-      (is (thrown? clojure.lang.ExceptionInfo (object/-get-object store ref))))))
+      (is (thrown? kerror/ExceptionInfo (object/-get-object store ref))))))
 
 (deftest deletion-is-refused-rather-than-pretended
   (let [{:keys [held transport]} (fake-archive)

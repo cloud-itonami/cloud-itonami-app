@@ -14,7 +14,7 @@
   take the HOST-native conservative answer (keep the frame / refuse the
   act) rather than a bridged one, and the refusal is the same shape the
   pre-gate behavior had."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as io]
             [kotoba.kir :as kir]
             [kotoba.lang.edn :as edn]))
 

@@ -9,7 +9,7 @@
   Admission and approval are exhausted rather than sampled. Both are
   conjunctions, and a conjunction is exactly the shape where a dropped term
   survives every example somebody thought to write down."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.bot :as bot]
             [cloud.itonami.app.connectors :as connectors]
             [cloud.itonami.app.work-governance :as governance]))
@@ -69,7 +69,7 @@
     (testing "and work-governance is what refuses a system claiming person
               authority — the refusal is theirs, not a second copy here"
       (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo #"cannot acquire person authority"
+           kerror/ExceptionInfo #"cannot acquire person authority"
            (governance/performer
             {:performer/id "bot-1" :performer/organization "org-1"
              :performer/kind :system
@@ -99,10 +99,10 @@
     (is (= [skill] (:bot/skills plain)))
     (is (empty? (bot/admitted-tools plain catalog #{"com.google.gmail"})))
     (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo #"invalid workforce Skill package"
+         kerror/ExceptionInfo #"invalid workforce Skill package"
          (a-bot {:bot/skills [(assoc skill :sha256 "not-a-digest")]})))
     (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo #"duplicate workforce Skill package"
+         kerror/ExceptionInfo #"duplicate workforce Skill package"
          (a-bot {:bot/skills [skill skill]})))))
 
 (deftest bot-keeps-sidebar-presentation
@@ -116,13 +116,13 @@
 (deftest a-bot-refuses-a-stored-status
   ;; Status is computed from what is outstanding. A stored one could disagree
   ;; with reality, and the disagreement would be invisible.
-  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"does not carry a status"
+  (is (thrown-with-msg? kerror/ExceptionInfo #"does not carry a status"
                         (a-bot {:bot/status :idle}))))
 
 (deftest an-avatar-outside-the-palette-is-refused-not-substituted
-  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"unknown avatar colour"
+  (is (thrown-with-msg? kerror/ExceptionInfo #"unknown avatar colour"
                         (a-bot {:bot/avatar {:avatar/color :chartreuse}})))
-  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"unknown avatar glyph"
+  (is (thrown-with-msg? kerror/ExceptionInfo #"unknown avatar glyph"
                         (a-bot {:bot/avatar {:avatar/glyph :dodecahedron}}))))
 
 (deftest an-avatar-that-arrived-over-the-wire-is-the-one-that-was-picked
@@ -134,7 +134,7 @@
     (is (= {:avatar/color :orange :avatar/glyph :drop}
            (:bot/avatar (a-bot {:bot/avatar {:color "orange" :glyph "drop"}})))))
   (testing "and the refusal still fires on it, rather than defaulting"
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"unknown avatar colour"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"unknown avatar colour"
                           (a-bot {:bot/avatar {:color "chartreuse"}}))))
   (testing "an absent avatar is still the default — that IS a choice nobody made"
     (is (= bot/default-avatar (:bot/avatar (a-bot {}))))))
@@ -305,11 +305,11 @@
     (is (= ["A" "B"] (mapv :option/key (:card/options card)))
         "keys are assigned, so a label may be edited without moving an answer")
     (is (= "A" (-> answered first :message/cards first :card/answer)))
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"already answered"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"already answered"
                           (bot/answer-choice answered "card-1" "B")))))
 
 (deftest a-choice-refuses-an-answer-that-names-no-option
-  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"answer names no option"
+  (is (thrown-with-msg? kerror/ExceptionInfo #"answer names no option"
                         (bot/choice-card {:id "c" :prompt "?" :answer "Z"
                                           :options [{:option/label "a"}
                                                     {:option/label "b"}]}))))
@@ -373,7 +373,7 @@
     ;; request. Accepting the kind would let a screen promise what no tool can
     ;; deliver.
     (doseq [kind [:pull-request :deploy nil "file"]]
-      (is (thrown? clojure.lang.ExceptionInfo
+      (is (thrown? kerror/ExceptionInfo
                    (bot/artifact-card {:id "a" :kind kind :path "p"})))))
 
   (testing "an artifact is a card kind like the others"

@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.core-test
-  (:require [kotoba.io :as kio] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [clojure.test :refer [deftest is testing]]
             [kotoba.lang.edn :as edn]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config-loader]
@@ -84,7 +84,7 @@
     (is (= :organism-local (get-in assignment [:ao.worker/authority :memory])))
     (is (not (contains? public :credential)))
     (is (not (contains? public :private-memory)))
-    (is (thrown? clojure.lang.ExceptionInfo
+    (is (thrown? kerror/ExceptionInfo
                  (organism-worker/assignment
                   (assoc-in tamaki-worker-assignment
                             [:ao.worker/authority :memory]
@@ -258,7 +258,7 @@
     ;; The icon is the one thing here that can be declared and still not exist.
     ;; kotoba-shell fails the run in that case, so catch it at this distance
     ;; instead of at launch.
-    (is (.isFile icon) (str "app.kotoba.edn names a missing icon: " (:app/icon manifest)))
+    (is (io/file? icon) (str "app.kotoba.edn names a missing icon: " (:app/icon manifest)))
     (is (empty? (:macos/permissions manifest)))
     (is (= :kotoba/web (get-in manifest [:runtime :surface])))
     (is (= {:width 1100 :height 760 :min-width 430 :min-height 640}
@@ -658,8 +658,8 @@
         root temporary
         inbox (io/file root "m365-archive/mail/受信トレイ")
         drive (io/file root "m365-archive/onedrive/資料")]
-    (.mkdirs inbox)
-    (.mkdirs drive)
+    (io/mkdirs inbox)
+    (io/mkdirs drive)
     (spit (io/file inbox "20260728T010203Z_sample.eml")
           (str "From: Example Person <sender@example.com>\r\n"
                "Subject: 進捗の確認\r\nMessage-ID: <sample@example.com>\r\n\r\n"
@@ -679,7 +679,7 @@
         (is (= "plan.txt" (:name file)))
         (is (= "資料" (:folder file)))
         (is (not (contains? file :path)))
-        (is (not (.isAbsolute (io/file (:id file)))))))))
+        (is (not (io/absolute? (io/file (:id file)))))))))
 
 (deftest workspace-cache-is-isolated-by-feature
   (workspace/clear-cache!)
@@ -781,16 +781,16 @@
 (deftest worker-validates-prompts-and-clears-only-finished-runs
   (with-worker-sandbox
     (fn []
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"指示"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"指示"
                             (worker/enqueue! config {:prompt "   "})))
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"見つかりません"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"見つかりません"
                             (worker/cancel! "wrk-missing")))
       (with-redefs [provider/chat-stream!
                     (fn [_ _ on-delta] (on-delta "ok") {:content "ok"})]
         (let [queued (worker/enqueue! config {:prompt "一件目"})]
           (is (true? (worker/await-idle! 10000)))
           (is (= 1 (count (:items (worker/snapshot config)))))
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"終了"
+          (is (thrown-with-msg? kerror/ExceptionInfo #"終了"
                                 (worker/cancel! (:id queued))))
           (worker/clear-finished!)
           (is (empty? (:items (worker/snapshot config)))))))))
@@ -900,13 +900,13 @@
             (is (= "personal" (get-in public [:organization :kind]))))
           ;; and that name is then unavailable to an organization
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"既に使用"
+               kerror/ExceptionInfo #"既に使用"
                (local-identity/create-organization!
                 (local-identity/session token)
                 {:organization-id "owner" :organization-name "Owner Inc"})))
           ;; nobody else works inside a person's name
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"個人テナント"
+               kerror/ExceptionInfo #"個人テナント"
                (local-identity/add-user!
                 (local-identity/session token)
                 {:display-name "Member" :email "member@example.jp"
@@ -977,7 +977,7 @@
               "an invited person lands in the organization that invited them")
           ;; The other direction of the one owner namespace.
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"Organization ID として使用"
+               kerror/ExceptionInfo #"Organization ID として使用"
                (local-identity/add-user!
                 session {:display-name "Clash" :account-id "example"
                          :role "member"})))))
@@ -1101,7 +1101,7 @@
                  (count (:organization-invitations
                          (local-identity/public-state member-token)))))
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"別のUser"
+               kerror/ExceptionInfo #"別のUser"
                (local-identity/accept-organization-invitation!
                 (local-identity/session owner-token)
                 {:invitation-code code})))
@@ -1116,7 +1116,7 @@
                                     (:organizations accepted)))))
             (is (empty? (:organization-invitations accepted))))
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"無効"
+               kerror/ExceptionInfo #"無効"
                (local-identity/accept-organization-invitation!
                 (local-identity/session member-token)
                 {:invitation-code code})))))
@@ -1139,8 +1139,8 @@
                                          :runner "codex"
                                          :model "gpt"
                                          :goal "private prompt"}}})]
-    (.mkdirs organisms)
-    (.mkdirs state-dir)
+    (io/mkdirs organisms)
+    (io/mkdirs state-dir)
     (spit (io/file organisms "cloud-itonami-worker.edn")
           (pr-str tamaki-worker-assignment))
     (spit (io/file organisms "other-worker.edn")
@@ -1290,7 +1290,7 @@
             (is (not= person-did even-did)
                 "the person's DID is not the Passkey's P-256 did:key")
             (is (thrown-with-msg?
-                 clojure.lang.ExceptionInfo #"Passkey"
+                 kerror/ExceptionInfo #"Passkey"
                  (local-identity/configure-organization!
                   session {:organization-id "example"})))
             (store/transact!
@@ -1427,7 +1427,7 @@
           (is (true? (:passkey-required? public)))
           (is (string? (:token resumed)))
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"Passkey"
+               kerror/ExceptionInfo #"Passkey"
                (local-identity/require-passkey! session)))
           (is (= "example.cloud-itonami.app"
                  (get-in public [:organization :domain])))
@@ -1435,17 +1435,17 @@
           (is (string? (:enrollment-code invitation)))
           (is (not (str/includes? persisted (:enrollment-code invitation))))
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"無効"
+               kerror/ExceptionInfo #"無効"
                (local-identity/start-enrollment!
                 "member" "wrong-code" "localhost"
                 "http://localhost:1338")))
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"既に"
+               kerror/ExceptionInfo #"既に"
                (local-identity/add-user!
                 session {:display-name "Duplicate"
                          :account-id "member" :role "member"})))
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"再開条件"
+               kerror/ExceptionInfo #"再開条件"
                (local-identity/resume-owner-onboarding!)))))
       (finally
         (reset! store/state previous)))))
@@ -1496,7 +1496,7 @@
                (get-in (store/snapshot)
                        [:identity :webauthn-transactions transaction-id :used?])))
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"使用済み"
+               kerror/ExceptionInfo #"使用済み"
                (local-identity/finish-passkey-registration!
                 session transaction-id {:id "invalid"})))))
       (finally
@@ -1507,7 +1507,7 @@
   ;; landed with `send_message` and without this checkbox, which made the tool
   ;; unreachable by the only person allowed to grant it.
   (let [html (web/page-html {})
-        js (slurp (clojure.java.io/file "resources/cloud/itonami/app/interaction.js"))]
+        js (slurp (kotoba.io/file "resources/cloud/itonami/app/interaction.js"))]
     (is (not (str/includes? html "id=\"bots-writes\""))
         "authority flags do not burden Bot creation")
     (doseq [label ["ファイル・Git・接続先への書き込みを許可"
@@ -1522,7 +1522,7 @@
 
 (deftest machine-agent-settings-explain-and-gate-browser-and-computer
   (let [html (web/page-html {})
-        js (slurp (clojure.java.io/file "resources/cloud/itonami/app/interaction.js"))]
+        js (slurp (kotoba.io/file "resources/cloud/itonami/app/interaction.js"))]
     (doseq [id ["agent-machine-settings" "agent-machine-browser"
                 "agent-machine-computer" "agent-machine-save"
                 "agent-machine-domains" "agent-machine-prepare-computer"
@@ -1541,7 +1541,7 @@
   ;; false about the switch they were being asked to turn on, which is worse
   ;; than saying nothing.
   (let [html (web/page-html {})
-        js (slurp (clojure.java.io/file "resources/cloud/itonami/app/interaction.js"))]
+        js (slurp (kotoba.io/file "resources/cloud/itonami/app/interaction.js"))]
     (is (not (str/includes? html "shell・メール送信・Git変更を待たずに実行"))
         "the screen still describes the allowlist that no longer exists")
     (is (str/includes? js "許可済みの操作を待たずに実行"))

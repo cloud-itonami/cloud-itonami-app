@@ -9,7 +9,7 @@
   So the routes are re-scanned here, from the same `.cljc` the generator uses, and
   compared against the checked-in resource. Adding a route without running
   `kbb --backend sci --classpath src dev/gen_commands.cljk` fails the suite."
-  (:require [kotoba.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as io]
             [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
@@ -131,7 +131,7 @@
                                       {:title "Explicit"})))))
 
     (testing "a missing path parameter names itself rather than sending {document}"
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"--document"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"--document"
                             (commands/request command {"title" "New"} nil)))))
 
   (testing "a read puts what is left in the query string, not a body"
@@ -217,7 +217,7 @@
 (deftest an-unknown-command-says-where-to-look
   (with-redefs [agent-session/session-token (constantly "agent-token")]
     (let [error (try (cli/run {} ["wrokspace" "inbox"])
-                     (catch clojure.lang.ExceptionInfo e e))]
+                     (catch kerror/ExceptionInfo e e))]
       (is (= :cli/usage (:type (ex-data error))))
       (is (str/includes? (ex-message error) "itonami commands wrokspace")))))
 

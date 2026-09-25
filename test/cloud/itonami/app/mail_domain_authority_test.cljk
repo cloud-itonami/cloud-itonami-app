@@ -6,7 +6,7 @@
   ending in `+all`, which authorizes the whole internet, and a DKIM record whose
   `p=` is empty, which is how a key is revoked. Both look like presence and are
   its opposite."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.domain-verification :as naming]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.mail-domain-authority :as authority]
@@ -134,14 +134,14 @@
                                  ["v=DKIM1; k=rsa; p="]))]
             (let [thrown (try (authority/verify! (:session-a f)
                                                  {:authority-id (:id started)})
-                              (catch clojure.lang.ExceptionInfo e e))]
+                              (catch kerror/ExceptionInfo e e))]
               (is (= :mail-domain-authority/not-authorized
                      (:type (ex-data thrown))))
               (is (re-find #"DKIM 公開鍵がありません" (ex-message thrown))))))
         (testing "an SPF record that does not close is refused by name"
           (binding [naming/*txt-resolver*
                     (zone (assoc published "example.com" ["v=spf1 +all"]))]
-            (is (thrown-with-msg? clojure.lang.ExceptionInfo #"-all / ~all"
+            (is (thrown-with-msg? kerror/ExceptionInfo #"-all / ~all"
                                   (authority/verify!
                                    (:session-a f)
                                    {:authority-id (:id started)})))))
@@ -177,17 +177,17 @@
                                    {:domain "example.com" :selector "sel"})]
         (binding [naming/*txt-resolver* (zone published)]
           (authority/verify! (:session-a f) {:authority-id (:id mine)}))
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"別の Organization"
+        (is (thrown-with-msg? kerror/ExceptionInfo #"別の Organization"
                               (authority/start! (:session-b f)
                                                 {:domain "example.com"
                                                  :selector "sel"})))
         (testing "and a service-owned name is refused from the profile"
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"サービス管理"
+          (is (thrown-with-msg? kerror/ExceptionInfo #"サービス管理"
                                 (authority/start! (:session-a f)
                                                   {:domain (str "mail." suffix)
                                                    :selector "sel"}))))
         (testing "a selector is required and validated"
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"セレクタ"
+          (is (thrown-with-msg? kerror/ExceptionInfo #"セレクタ"
                                 (authority/start! (:session-a f)
                                                   {:domain "other.example"}))))))))
 
@@ -246,7 +246,7 @@
                                                      "did:key:zAda"))))
         (testing "somebody else is refused, and told why"
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"別の Organization"
+               kerror/ExceptionInfo #"別の Organization"
                (authority/assert-sender-permitted! "ben@example.com"
                                                    "did:key:zBen"))))
         (testing "a domain nobody has proven is nobody's business"

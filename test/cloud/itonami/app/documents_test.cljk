@@ -4,7 +4,7 @@
   The object store is `drive.store.memory` rather than the filesystem one,
   and the app state is a local atom rather than the process-wide one, so
   nothing here writes to the data dir."
-  (:require [kotoba.json :as json]
+  (:require [kotoba.lang.error :as kerror] [kotoba.json :as json]
             [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
@@ -195,7 +195,7 @@
         ;; Bob has his own Drive, so this is `:no-such-item` rather than a
         ;; permission answer — the item is not in the workspace he is asking.
         ;; Either way it is refused, and neither leaks the content.
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"見つかりません"
+        (is (thrown-with-msg? kerror/ExceptionInfo #"見つかりません"
                               (documents/content (:id item) bob object-store)))
         (is (empty? (documents/documents (store/snapshot) bob)))))))
 
@@ -208,11 +208,11 @@
         ;; one: drive answers, correctly, that he may not have it.
         (swap! state assoc-in [:drive :workspaces bob]
                (get-in @state [:drive :workspaces alice]))
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"権限がありません"
+        (is (thrown-with-msg? kerror/ExceptionInfo #"権限がありません"
                               (documents/content (:id item) bob object-store)))
         (is (= :drive/not-permitted
                (try (documents/content (:id item) bob object-store)
-                    (catch clojure.lang.ExceptionInfo error
+                    (catch kerror/ExceptionInfo error
                       (:type (ex-data error))))))))))
 
 (deftest an-unknown-kind-is-refused-before-anything-is-written
@@ -223,7 +223,7 @@
       ;; the check is the table, not a list written out here.
       (is (= :drive/unknown-kind
              (try (documents/create! :podcast "第1回" alice object-store)
-                  (catch clojure.lang.ExceptionInfo error (:type (ex-data error))))))
+                  (catch kerror/ExceptionInfo error (:type (ex-data error))))))
       (is (empty? (documents/documents @state alice))))))
 
 ;; ── editing ─────────────────────────────────────────────────────────────────
@@ -262,7 +262,7 @@
             broken (assoc-in payload ["sheets/tabs" "sheet1" "sheets/cells"]
                              {"[0 1]" {"sheets/value" "x"}})
             error (try (save! (:id item) broken alice object-store)
-                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                       (catch kerror/ExceptionInfo e (ex-data e)))]
         (is (= :drive/invalid-document (:type error)))
         (is (= [":cell/invalid"] (mapv :code (:problems error))))
         ;; Nothing was written: still one version, and the bytes are the ones
@@ -281,7 +281,7 @@
                           [{"forms/id" "name" "forms/field-type" "telepathy"
                             "forms/label" "name" "forms/required?" false}])
             error (try (save! (:id item) broken alice object-store)
-                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                       (catch kerror/ExceptionInfo e (ex-data e)))]
         (is (= :drive/invalid-document (:type error)))
         (is (= [":field/unknown-type"] (mapv :code (:problems error))))))))
 
@@ -326,7 +326,7 @@
       (let [{:keys [item]} (documents/create! :forms "問い合わせ" alice object-store)]
         (is (= :drive/invalid-document
                (try (documents/rename! (:id item) "   " alice object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))
         (is (= "問い合わせ"
                (:name (first (documents/documents (store/snapshot) alice)))))))))
 
@@ -339,10 +339,10 @@
                (get-in @state [:drive :workspaces alice]))
         (is (= :drive/not-permitted
                (try (save! (:id item) payload bob object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))
         (is (= :drive/not-permitted
                (try (documents/rename! (:id item) "改題" bob object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 (deftest a-trashed-document-cannot-be-edited
   (with-state
@@ -352,7 +352,7 @@
         (documents/trash! (:id item) alice)
         (is (= :drive/not-found
                (try (save! (:id item) payload alice object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 (deftest trashing-hides-it-and-refuses-its-bytes
   (with-state
@@ -360,7 +360,7 @@
       (let [{:keys [item]} (documents/create! :sheets "旧計画" alice object-store)]
         (is (:ok? (documents/trash! (:id item) alice)))
         (is (empty? (documents/documents @state alice)))
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"ゴミ箱"
+        (is (thrown-with-msg? kerror/ExceptionInfo #"ゴミ箱"
                               (documents/content (:id item) alice object-store)))
         ;; Reversible: trash is not forget, and the version history is
         ;; still there.
@@ -398,7 +398,7 @@
       (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
         (is (= :drive/not-trashed
                (try (documents/purge! (:id item) alice object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))
         (is (= 1 (count (documents/documents @state alice))))))))
 
 (deftest restoring-brings-it-back-with-its-versions
@@ -438,10 +438,10 @@
                (get-in @state [:drive :workspaces alice]))
         (is (= :drive/not-permitted
                (try (documents/purge! (:id item) bob object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))
         (is (= :drive/not-permitted
                (try (documents/restore! (:id item) bob)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 ;; ── version history ─────────────────────────────────────────────────────────
 
@@ -462,7 +462,7 @@
         ;; document.
         (is (= :drive/not-found
                (try (documents/version-content (:id item) 3 alice object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 (deftest an-earlier-version-of-a-trashed-document-is-refused
   ;; The check `read-item` would have made, made here too — reaching an older
@@ -474,7 +474,7 @@
         (documents/trash! (:id item) alice)
         (is (= :drive/not-found
                (try (documents/version-content (:id item) 1 alice object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 (deftest an-earlier-version-is-refused-to-a-principal-who-may-not-read-it
   (with-state
@@ -484,7 +484,7 @@
                (get-in @state [:drive :workspaces alice]))
         (is (= :drive/not-permitted
                (try (documents/version-content (:id item) 1 bob object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 ;; ── warnings ────────────────────────────────────────────────────────────────
 
@@ -652,7 +652,7 @@
                              {"[0 1]" {"sheets/value" "x"}})]
         (is (= :drive/invalid-document
                (try (save! (:id item) broken alice object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 ;; ── answering a form ────────────────────────────────────────────────────────
 
@@ -710,13 +710,13 @@
         ;; …and not read back what anyone answered.
         (is (= :drive/not-permitted
                (:type (try (documents/export (:id item) "csv" bob object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))
         ;; Not even as an editor: editing the questions is not owning the
         ;; answers.
         (documents/grant! (:id item) bob "editor" alice)
         (is (= :drive/not-permitted
                (:type (try (documents/export (:id item) "csv" bob object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))
         (is (some? (documents/export (:id item) "csv" alice object-store)))))))
 
 (deftest responses-become-a-workbook-in-the-drive
@@ -750,7 +750,7 @@
         (documents/submit! (:id item) {"name" "田中"} bob object-store)
         (is (= :drive/not-permitted
                (:type (try (documents/responses-sheet! (:id item) bob object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))))))
 
 (deftest the-pane-is-told-which-exports-refuse
   ;; The role is per item and the format table is per kind, so the pane
@@ -822,7 +822,7 @@
       (let [item (contact-form object-store)
             error (try (documents/submit! (:id item) {"email" "a@example.com"}
                                           alice object-store)
-                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                       (catch kerror/ExceptionInfo e (ex-data e)))]
         (is (= :drive/invalid-submission (:type error)))
         (is (= [{:code ":submission/missing-required" :field "name"
                  :message "required answer is missing"}]
@@ -835,7 +835,7 @@
       (let [item (contact-form object-store)
             error (try (documents/submit! (:id item) {"name" "Bob" "email" "not-an-address"}
                                           alice object-store)
-                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                       (catch kerror/ExceptionInfo e (ex-data e)))]
         (is (= :drive/invalid-submission (:type error)))
         (is (= [":submission/invalid-email"] (mapv :code (:problems error))))))))
 
@@ -861,7 +861,7 @@
       (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
         (is (= :drive/unknown-kind
                (try (documents/submit! (:id item) {} alice object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 (deftest responses-belong-to-the-owner
   (with-state
@@ -872,7 +872,7 @@
         ;; An editor may change the questions and still not read the answers.
         (is (= :drive/not-permitted
                (try (documents/submissions (:id item) bob)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))
         (is (= 1 (count (:submissions (documents/submissions (:id item) alice)))))))))
 
 (deftest a-form-can-be-answered-through-a-share-link
@@ -891,7 +891,7 @@
         (is (= :drive/not-found
                (try (documents/submit-via-link! token {"name" "Carol"} "user-carol"
                                                 now-ms object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 (deftest a-stranger-cannot-answer-a-form-they-cannot-read
   (with-state
@@ -899,7 +899,7 @@
       (let [item (contact-form object-store)]
         (is (= :drive/not-found
                (try (documents/submit! (:id item) {"name" "Mallory"} bob object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 ;; ── slides ──────────────────────────────────────────────────────────────────
 
@@ -950,7 +950,7 @@
             payload (:payload (documents/content (:id item) alice object-store))
             error (try (save! (:id item) (assoc payload "slides/slides" "nope")
                                           alice object-store)
-                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                       (catch kerror/ExceptionInfo e (ex-data e)))]
         ;; A 422 with the surface's own code, not a 500 out of the converter
         ;; — which is what this was before the rehydrators learned to hand
         ;; malformed input on rather than throw at it.
@@ -1037,14 +1037,14 @@
         (is (some? payload) "reading is what a viewer is for")
         (is (= :drive/not-permitted
                (try (save! (:id item) payload bob object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 (deftest only-the-owner-may-trash-purge-or-re-share
   (with-state
     (fn [_ object-store]
       (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
             _ (documents/grant! (:id item) bob "editor" alice)
-            type-of (fn [f] (try (f) nil (catch clojure.lang.ExceptionInfo e
+            type-of (fn [f] (try (f) nil (catch kerror/ExceptionInfo e
                                            (:type (ex-data e)))))]
         ;; An editor may change it — that is what editing means — but not make
         ;; it disappear from the owner's Drive, and not widen the access the
@@ -1064,10 +1064,10 @@
         ;; whom can purge it is a transfer dressed as a share.
         (is (= :drive/invalid-share
                (try (documents/grant! (:id item) bob "owner" alice)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))
         (is (= :drive/invalid-share
                (try (documents/grant! (:id item) alice "editor" alice)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))
         (is (= ["editor" "commenter" "viewer"] (:roles (documents/sharing (:id item) alice))))))))
 
 (deftest revoking-takes-the-document-away-again
@@ -1084,7 +1084,7 @@
           ;; answer as well as the one that leaks least.
           (is (= :drive/not-found
                  (try (documents/content (:id item) bob object-store)
-                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))))
+                      (catch kerror/ExceptionInfo e (:type (ex-data e)))))))))))
 
 ;; ── going back to an earlier version ────────────────────────────────────────
 
@@ -1140,7 +1140,7 @@
             etag (:etag (:item (documents/content (:id item) alice object-store)))]
         (is (= :drive/already-current
                (try (documents/restore-version! (:id item) 1 alice etag object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 (deftest a-restore-carries-an-etag-like-any-other-save
   (with-state
@@ -1153,7 +1153,7 @@
           (with-paragraph item "ふたつめ" alice object-store)
           (is (= :drive/stale-version
                  (try (documents/restore-version! (:id item) 1 bob stale object-store)
-                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))))
+                      (catch kerror/ExceptionInfo e (:type (ex-data e)))))))))))
 
 (deftest a-viewer-cannot-restore
   (with-state
@@ -1164,7 +1164,7 @@
         (let [etag (:etag (:item (documents/content (:id item) bob object-store)))]
           (is (= :drive/not-permitted
                  (try (documents/restore-version! (:id item) 1 bob etag object-store)
-                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))))
+                      (catch kerror/ExceptionInfo e (:type (ex-data e)))))))))))
 
 (deftest the-history-is-addressable-and-says-what-each-version-cost
   (with-state
@@ -1190,7 +1190,7 @@
       (let [{:keys [item]} (documents/create! :docs "私信" alice object-store)]
         (is (= :drive/not-found
                (try (documents/history (:id item) bob)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 ;; ── forgetting part of a history ────────────────────────────────────────────
 
@@ -1218,7 +1218,7 @@
         (with-paragraph item "ひとつめ" alice object-store)
         (is (= :drive/invalid-document
                (try (documents/prune! (:id item) alice 0 object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))
         (is (= 2 (:versions (first (documents/documents (store/snapshot) alice)))))))))
 
 (deftest a-prune-renumbers-what-is-left
@@ -1246,7 +1246,7 @@
             "and version 1 is now the newest content, not the oldest")
         (is (= :drive/not-found
                (try (documents/version-content (:id item) 2 alice object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 (deftest only-the-owner-may-prune
   (with-state
@@ -1258,7 +1258,7 @@
         ;; of how it got that way.
         (is (= :drive/not-permitted
                (try (documents/prune! (:id item) bob 1 object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 (deftest pruning-with-nothing-to-prune-is-not-an-error
   (with-state
@@ -1530,7 +1530,7 @@
     (fn [_ object-store]
       (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
             error (try (documents/export (:id item) "csv" alice object-store)
-                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                       (catch kerror/ExceptionInfo e (ex-data e)))]
         (is (= :drive/unsupported-format (:type error)))
         ;; What a document *can* be, named in the refusal — a surface with
         ;; no writer for csv still has two of its own.
@@ -1544,7 +1544,7 @@
       (is (= :drive/unsupported-format
              (try (documents/import! "numbers" "売上" (.getBytes "x" "UTF-8")
                                      alice object-store)
-                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+                  (catch kerror/ExceptionInfo e (:type (ex-data e)))))))))
 
 (deftest bytes-that-are-not-the-file-they-claim-to-be-are-refused
   (with-state
@@ -1557,7 +1557,7 @@
                               ["pptx" (.getBytes "x" "UTF-8")]]]
         (is (= :drive/unsupported-format
                (try (documents/import! format "壊れ" bytes alice object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e)))))
             format))
       ;; And nothing was left behind at all. This used to allow up to two,
       ;; because `create!` ran before the refusal and left a seeded document
@@ -1580,7 +1580,7 @@
         (is (= :drive/invalid-document
                (try (documents/import! "edn" "壊れ" (.getBytes broken "UTF-8")
                                        alice object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 (deftest a-title-does-not-become-a-path
   (with-state
@@ -1600,7 +1600,7 @@
       (let [{:keys [item]} (documents/create! :docs "私信" alice object-store)]
         (is (= :drive/not-found
                (try (documents/export (:id item) "edn" bob object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))
         (documents/grant! (:id item) bob "viewer" alice)
         (is (:bytes (documents/export (:id item) "edn" bob object-store)))))))
 
@@ -1784,7 +1784,7 @@
     (fn [_ object-store]
       (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
             error (try (documents/export (:id item) "xlsx" alice object-store)
-                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                       (catch kerror/ExceptionInfo e (ex-data e)))]
         (is (= :drive/unsupported-format (:type error)))
         (is (= ["docx" "edn" "md"] (:available error))))
       ;; And a workbook is offered exactly the three it has writers for.
@@ -1813,7 +1813,7 @@
                            (:etag (:item a)) object-store)
         (let [error (try (documents/update! (:id item) (add (:payload b) "bob") bob
                                             (:etag (:item b)) object-store)
-                         (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                         (catch kerror/ExceptionInfo e (ex-data e)))]
           (is (= :drive/stale-version (:type error)))
           (is (= alice (:updated-by error)) "and it says whose save it lost to")
           (is (= 2 (:versions error))))
@@ -1855,7 +1855,7 @@
             payload (:payload (documents/content (:id item) alice object-store))]
         (is (= :drive/stale-version
                (try (documents/update! (:id item) payload alice nil object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 (deftest renaming-carries-no-etag-because-it-cannot-be-stale
   (with-state
@@ -1928,7 +1928,7 @@
         ;; A viewer is shown the conversation and does not get a say in it.
         (is (= :drive/not-permitted
                (try (documents/resolve-comment! (:id item) (:id root) true bob)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))
         (documents/grant! (:id item) bob "commenter" alice)
         ;; Reversible, which is why this is wider than deleting.
         (is (zero? (:unresolved (documents/resolve-comment! (:id item) (:id root) true bob))))))))
@@ -1941,7 +1941,7 @@
         (documents/resolve-comment! (:id item) (:id root) true alice)
         (is (= :drive/comment-resolved
                (try (documents/comment! (:id item) "やっぱり" nil alice (:id root))
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))
         (documents/resolve-comment! (:id item) (:id root) false alice)
         (is (:ok? (documents/comment! (:id item) "やっぱり" nil alice (:id root))))))))
 
@@ -1975,7 +1975,7 @@
       (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
         (is (= :drive/not-found
                (try (documents/comment! (:id item) "返信" nil alice "cmt-nonexistent")
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 ;; ── references between documents ────────────────────────────────────────────
 
@@ -2106,7 +2106,7 @@
         (is (:ok? (documents/comment! (:id item) "ここは要検討" "title" bob)))
         (is (= :drive/not-permitted
                (try (save! (:id item) payload bob object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))
         (let [{:keys [comments]} (documents/comments (:id item) alice)]
           (is (= 1 (count comments)))
           (is (= {:author bob :text "ここは要検討" :anchor "title"}
@@ -2123,7 +2123,7 @@
         (is (= 1 (count (:comments (documents/comments (:id item) bob)))))
         (is (= :drive/not-permitted
                (try (documents/comment! (:id item) "口を出したい" nil bob)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 (deftest commenting-does-not-touch-the-document
   (with-state
@@ -2143,7 +2143,7 @@
       (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
         (is (= :drive/invalid-comment
                (try (documents/comment! (:id item) "   " nil alice)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))
         (is (empty? (:comments (documents/comments (:id item) alice))))))))
 
 (deftest a-comment-is-deleted-by-its-author-or-the-owner
@@ -2157,7 +2157,7 @@
         ;; somebody said about it.
         (is (= :drive/not-permitted
                (try (documents/delete-comment! (:id item) (:id from-carol) bob)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))
         (is (:ok? (documents/delete-comment! (:id item) (:id from-carol) "user-carol")))
         (is (empty? (:comments (documents/comments (:id item) alice))))
         ;; And the owner may, on someone else's.
@@ -2172,7 +2172,7 @@
         (documents/trash! (:id item) alice)
         (is (= :drive/not-found
                (try (documents/comments (:id item) alice)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 (deftest a-stranger-sees-no-comments
   (with-state
@@ -2181,7 +2181,7 @@
         (documents/comment! (:id item) "内緒" nil alice)
         (is (= :drive/not-found
                (try (documents/comments (:id item) bob)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 ;; ── a grant is a signed capability ──────────────────────────────────────────
 
@@ -2292,7 +2292,7 @@
         (is (empty? (documents/documents @state bob)))
         (is (= :drive/not-found
                (try (documents/content (:id item) bob object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))
         ;; The entry itself was not deleted — the owner can still see who it
         ;; was issued to, and that it has lapsed.
         (is (= [bob] (mapv :principal (:grants (documents/sharing (:id item) alice)))))
@@ -2371,7 +2371,7 @@
         ;; why: a link may read and never write.
         (is (= :drive/invalid-share
                (try (documents/create-link! (:id item) "editor" nil alice now-ms)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))
         (is (= ["viewer" "commenter"]
                (:link-roles (documents/sharing (:id item) alice))))))))
 
@@ -2380,7 +2380,7 @@
     (fn [_ object-store]
       (let [{:keys [item]} (documents/create! :docs "期限つき" alice object-store)
             {:keys [token]} (documents/create-link! (:id item) "viewer" 24 alice now-ms)
-            type-of (fn [f] (try (f) nil (catch clojure.lang.ExceptionInfo e
+            type-of (fn [f] (try (f) nil (catch kerror/ExceptionInfo e
                                            (:type (ex-data e)))))]
         (is (:ok? (documents/link-content token bob (+ now-ms 1000) object-store)))
         (is (= :drive/not-found
@@ -2404,7 +2404,7 @@
         ;; already reach the port.
         (is (= :identity/unauthenticated
                (try (documents/link-content token "" now-ms object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 (deftest a-link-to-a-trashed-document-does-not-read-it
   (with-state
@@ -2416,7 +2416,7 @@
         ;; document it points at hands out deleted content otherwise.
         (is (= :drive/not-found
                (try (documents/link-content token bob now-ms object-store)
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 (deftest the-drive-view-keeps-the-archive-and-labels-both-sides
   (with-state
@@ -2599,10 +2599,10 @@
         ;; throws, which is every bug as well as this rule.
         (is (= :drive/invalid-move
                (:type (try (documents/move! (:id work) (:id q1) alice)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))
         (is (= :drive/invalid-move
                (:type (try (documents/move! (:id work) (:id work) alice)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))
         ;; And a legitimate move still works, so the guard is not refusing
         ;; everything.
         (is (:ok? (documents/move! (:id q1) nil alice)))))))
@@ -2658,14 +2658,14 @@
         (is (= :drive/not-permitted
                (:type (try (documents/create! :docs "侵入" bob object-store
                                               {:folder (:id work)})
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))
         ;; And a folder nobody shared with them is not even visible as a
         ;; place — told it is not there rather than that they may not.
         (let [private (:item (documents/create-folder! "私用" alice))]
           (is (= :drive/not-found
                  (:type (try (documents/create! :docs "侵入" bob object-store
                                                 {:folder (:id private)})
-                             (catch clojure.lang.ExceptionInfo e (ex-data e)))))))))))
+                             (catch kerror/ExceptionInfo e (ex-data e)))))))))))
 
 (deftest a-move-may-not-leave-the-drive-it-is-in
   ;; `ws/move` rewrites one tree. A destination in another Drive would leave
@@ -2679,7 +2679,7 @@
             mine (:item (documents/create! :docs "自分の" alice object-store))]
         (is (= :drive/not-found
                (:type (try (documents/move! (:id mine) (:id theirs) alice)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))))))
 
 (deftest a-folder-you-may-only-read-is-not-one-you-may-create-in
   ;; The permission rule itself, asked where it can be: inside one Drive.
@@ -2753,7 +2753,7 @@
         ;; And the file is gone rather than merely hidden.
         (is (= :drive/not-found
                (:type (try (documents/content (:id a) alice object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))))))
 
 (deftest purging-a-folder-does-not-resurrect-what-was-inside-it
   ;; `trashed?` walks upwards. A folder dropped before its contents would
@@ -2773,7 +2773,7 @@
         (is (empty? (documents/documents (store/snapshot) alice)))
         (is (= :drive/not-found
                (:type (try (documents/content (:id deep) alice object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))))))
 
 (deftest a-folder-inside-a-trashed-folder-is-not-a-second-thing-to-restore
   (with-state
@@ -2936,7 +2936,7 @@
                       (.toByteArray out))]]
         (is (= :drive/unsupported-format
                (:type (try (documents/import! "docx" "壊れ" junk alice object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e)))))))
+                           (catch kerror/ExceptionInfo e (ex-data e)))))))
       (is (empty? (documents/documents @state alice)) "and nothing was created"))))
 
 ;; ── make a copy ─────────────────────────────────────────────────────────────
@@ -2997,7 +2997,7 @@
           (is (= [(:id item)] (mapv :id (documents/documents @state bob))))
           (is (= :drive/not-found
                  (:type (try (documents/content (:id copy) bob object-store)
-                             (catch clojure.lang.ExceptionInfo e (ex-data e)))))))))))
+                             (catch kerror/ExceptionInfo e (ex-data e)))))))))))
 
 (deftest a-copy-carries-no-comments-and-no-responses
   ;; They are about the document somebody said them about. A copy with its
@@ -3071,7 +3071,7 @@
       (let [{:keys [item]} (documents/create! :docs "私用" alice object-store)]
         (is (= :drive/not-found
                (:type (try (documents/copy! (:id item) bob object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))))))
 
 (deftest a-created-document-is-validated-like-a-saved-one
   ;; `create!` now takes the contents, which means it takes contents that
@@ -3096,7 +3096,7 @@
         (is (= :drive/invalid-document
                (:type (try (documents/import! "edn" "壊れ" (.getBytes broken "UTF-8")
                                               alice object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))
         (is (empty? (documents/documents @state alice))
             "and nothing was created before the check"))))) 
 
@@ -3168,7 +3168,7 @@
         (documents/purge! (:id b) alice object-store)
         (is (= :drive/not-found
                (:type (try (documents/file-bytes (:id b) alice object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))))))
 
 (deftest another-drive-holding-the-same-plaintext-is-independent
   (with-state
@@ -3195,18 +3195,18 @@
         ;; for "that is not a document".
         (is (= :drive/not-a-document
                (:type (try (documents/content (:id item) alice object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))
         ;; The same answer from the other reader of the same bytes. This one
         ;; had no guard, so the two disagreed about what a document is and
         ;; `esign/create!` — its only caller — produced that 500 instead.
         (is (= :drive/not-a-document
                (:type (try (documents/source-bytes (:id item) alice object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))
         ;; And a document is not a file.
         (let [doc (:item (documents/create! :docs "設計" alice object-store))]
           (is (= :drive/not-a-file
                  (:type (try (documents/file-bytes (:id doc) alice object-store)
-                             (catch clojure.lang.ExceptionInfo e (ex-data e)))))))))))
+                             (catch kerror/ExceptionInfo e (ex-data e)))))))))))
 
 (deftest an-empty-upload-is-refused
   ;; Its PieceCID would be the CID of nothing, shared by every empty upload
@@ -3217,7 +3217,7 @@
       (is (= :drive/invalid-document
              (:type (try (documents/upload! "空.pdf" "application/pdf"
                                             (byte-array 0) alice object-store)
-                         (catch clojure.lang.ExceptionInfo e (ex-data e)))))))))
+                         (catch kerror/ExceptionInfo e (ex-data e)))))))))
 
 (deftest a-file-can-be-filed-shared-and-trashed-like-anything-else
   (with-state
@@ -3292,7 +3292,7 @@
                                               alice object-store)]
         (is (= :drive/not-found
                (:type (try (documents/file-bytes (:id item) bob object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))
         (documents/grant! (:id item) bob "viewer" alice)
         (is (:inline? (documents/file-bytes (:id item) bob object-store)))))))
 
@@ -3447,7 +3447,7 @@
       (let [item (memo-with-paragraph object-store "元の本文")]
         (documents/grant! (:id item) bob "commenter" alice)
         ;; bob cannot save…
-        (is (thrown? clojure.lang.ExceptionInfo
+        (is (thrown? kerror/ExceptionInfo
                      (save! (:id item) {:docs/id "x"} bob object-store)))
         ;; …and can propose.
         (let [{:keys [suggestion]} (documents/suggest! (:id item) "p1" "直した本文"
@@ -3503,7 +3503,7 @@
             (is (= "alice の書き直し" (:current listed))))
           (let [error (try (documents/accept-suggestion! (:id item) (:id sug) alice
                                                          object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                           (catch kerror/ExceptionInfo e (ex-data e)))]
             (is (= :drive/suggestion-stale (:type error)))
             (is (= "元の本文" (:was error)))
             (is (= "alice の書き直し" (:now error))))
@@ -3522,10 +3522,10 @@
         (is (= :drive/suggestion-settled
                (:type (try (documents/accept-suggestion! (:id item) (:id sug) alice
                                                          object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))
         (is (= :drive/suggestion-settled
                (:type (try (documents/reject-suggestion! (:id item) (:id sug) alice)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))))))
 
 (deftest declining-and-withdrawing-are-the-same-operation
   ;; A writer may decline anyone's; the person who made one may take it
@@ -3558,7 +3558,7 @@
           (is (= :drive/not-permitted
                  (:type (try (documents/accept-suggestion! (:id item) (:id sug) bob
                                                            object-store)
-                             (catch clojure.lang.ExceptionInfo e (ex-data e)))))))))))
+                             (catch kerror/ExceptionInfo e (ex-data e)))))))))))
 
 (deftest a-stranger-may-not-propose
   (with-state
@@ -3566,7 +3566,7 @@
       (let [item (memo-with-paragraph object-store "元の本文")]
         (is (= :drive/not-found
                (:type (try (documents/suggest! (:id item) "p1" "案" bob object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))))))
 
 (deftest a-proposal-must-be-about-a-block-that-exists
   (with-state
@@ -3574,10 +3574,10 @@
       (let [item (memo-with-paragraph object-store "元の本文")]
         (is (= :drive/not-found
                (:type (try (documents/suggest! (:id item) "nope" "案" alice object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))
         (is (= :drive/invalid-suggestion
                (:type (try (documents/suggest! (:id item) "p1" "   " alice object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))))))
 
 (deftest only-a-document-takes-suggestions
   (with-state
@@ -3585,7 +3585,7 @@
       (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)]
         (is (= :drive/not-a-document
                (:type (try (documents/suggest! (:id item) "A1" "案" alice object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))))))
 
 (deftest a-viewer-may-not-propose-either
   ;; The line `comment-roles` already draws: a viewer is someone the
@@ -3597,7 +3597,7 @@
         (documents/grant! (:id item) bob "viewer" alice)
         (is (= :drive/not-permitted
                (:type (try (documents/suggest! (:id item) "p1" "案" bob object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))
         ;; And they can still read it and what has been proposed for it.
         (is (some? (documents/suggestions (:id item) bob object-store)))))))
 
@@ -3741,7 +3741,7 @@
         (is (= :drive/not-found
                (:type (try (documents/export (:id item) "csv" alice object-store
                                              {:tab "無い"})
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))))))
 
 (deftest a-formula-reaches-into-another-tab-only-when-asked
   ;; `A1` means this tab's A1, and `原価表!A1` means that tab's. The first
@@ -3797,7 +3797,7 @@
                            {"売上" {"sheets/id" "売上" "sheets/range" "A1:A2"}})
             error (try (documents/update! (:id item) payload alice
                                           (:etag (:item before)) object-store)
-                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                       (catch kerror/ExceptionInfo e (ex-data e)))]
         (is (= :drive/invalid-document (:type error)))
         (is (= ":named-range/invalid" (:code (first (:problems error)))))))))
 
@@ -4273,7 +4273,7 @@
                                               (pdf-bytes "q") alice object-store)]
         (is (= :drive/not-a-document
                (:type (try (documents/printable (:id item) alice object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))))))
 
 (deftest printing-goes-through-the-same-acl-as-reading
   (with-state
@@ -4281,7 +4281,7 @@
       (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
         (is (= :drive/not-found
                (:type (try (documents/printable (:id item) bob object-store)
-                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+                           (catch kerror/ExceptionInfo e (ex-data e))))))
         (documents/grant! (:id item) bob "viewer" alice)
         (is (:ok? (documents/printable (:id item) bob object-store)))))))
 
@@ -4355,7 +4355,7 @@
         (is (:ok? (documents/submit! (:id item) {"colour" "赤"} alice object-store)))
         (let [refused (try (documents/submit! (:id item) {"colour" "緑"} alice object-store)
                            nil
-                           (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                           (catch kerror/ExceptionInfo e (ex-data e)))]
           (is (= :drive/invalid-submission (:type refused)))
           (is (= ":submission/answer-not-an-option"
                  (:code (first (:problems refused))))))))))
@@ -4375,7 +4375,7 @@
                                          "forms/required?" true}])
                                 alice object-store)
                          nil
-                         (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                         (catch kerror/ExceptionInfo e (ex-data e)))]
         (is (= :drive/invalid-document (:type refused)))
         (is (some #(= ":field/choice-without-options" (:code %)) (:problems refused))
             (pr-str (:problems refused)))))))
@@ -4559,7 +4559,7 @@
                                              {:tab tab :range "A2:B4" :by "B"}
                                              alice (:etag (:item before)) object-store)
                       nil
-                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))))
+                      (catch kerror/ExceptionInfo e (:type (ex-data e)))))))))))
 
 (deftest a-range-with-a-formula-is-refused-with-a-reason
   ;; `sheets.model/sort-range` returns the tab unchanged; an app that just
@@ -4575,7 +4575,7 @@
                (try (documents/sort-range! (:id item) {:tab tab :range "A2:B4" :by "B"}
                                            alice etag object-store)
                     nil
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))
         (is (= 2 (:versions (first (documents/documents (store/snapshot) alice))))
             "and nothing was written")))))
 
@@ -4588,7 +4588,7 @@
             refuse (fn [request]
                      (try (documents/sort-range! (:id item) request alice etag object-store)
                           nil
-                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+                          (catch kerror/ExceptionInfo e (:type (ex-data e)))))]
         (is (= :sheets/invalid-range (refuse {:tab tab :range "みかん" :by "B"})))
         (is (= :sheets/invalid-range (refuse {:tab tab :range "A2:B4" :by "Z"}))
             "a column outside the range would sort by nothing")
@@ -4648,7 +4648,7 @@
             refuse (fn [request]
                      (try (documents/shift-rows! (:id item) request alice etag object-store)
                           nil
-                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+                          (catch kerror/ExceptionInfo e (:type (ex-data e)))))]
         (is (= :sheets/invalid-range (refuse {:tab tab :axis "row" :at 0 :action "insert"})))
         (is (= :sheets/invalid-range (refuse {:tab tab :axis "row" :at "みかん"
                                               :action "insert"})))

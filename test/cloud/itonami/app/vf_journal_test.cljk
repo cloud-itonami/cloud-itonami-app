@@ -14,7 +14,7 @@
 
   The vocabulary is consumed, never reimplemented: every OK/reject verdict
   here comes from `valueflows.conform` and `valueflows.event` at the west pin."
-  (:require [kotoba.io :as kio] [kotoba.lang.text] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [kotoba.lang.text] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.vf-journal :as vf-journal]))
 
 ;; ONE FRESH TEMP DIR PER TEST, not one per namespace: these tests assert
@@ -112,7 +112,7 @@
                                            #":root \"[0-9a-f]{64}\""
                                            (str ":root \"" (apply str (repeat 64 "0")) "\""))]
        (spit file patched)
-       (is (thrown? clojure.lang.ExceptionInfo
+       (is (thrown? kerror/ExceptionInfo
                     (vf-journal/load-inventory org)))))))
 
 (deftest status-names-where-the-economy-stands

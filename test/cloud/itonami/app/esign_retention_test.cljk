@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.esign-retention-test
   "Erasure by key destruction, the 電子帳簿保存法 search index, and the rule that
   keeps the two from cancelling each other out."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [asn1.core :as asn1]
             [cloud.itonami.app.esign :as esign]
@@ -79,15 +79,15 @@
   (is (some? (retention/entry base-entry)))
   (doseq [field [:transaction-date :amount-minor :counterparty]]
     (testing (str "missing " field)
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"検索要件に必要な項目"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"検索要件に必要な項目"
                             (retention/entry (dissoc base-entry field))))))
 
   (testing "and so is the operator's stated basis — retaining personal data in
             the clear is a legal position, not a default this code takes"
-    (is (thrown? clojure.lang.ExceptionInfo (retention/entry (dissoc base-entry :basis)))))
+    (is (thrown? kerror/ExceptionInfo (retention/entry (dissoc base-entry :basis)))))
 
   (testing "the date must be YYYY-MM-DD, because range search is string comparison"
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"YYYY-MM-DD"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"YYYY-MM-DD"
                           (retention/entry (assoc base-entry :transaction-date "2026/7/30"))))))
 
 (deftest search-combines-the-three-criteria

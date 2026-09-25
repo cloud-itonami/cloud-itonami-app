@@ -11,7 +11,7 @@
   What stays in this namespace is the part that is genuinely this app's:
   turning a Gmail message into the shape every account kind reports, so the
   sync above it never learns which protocol a mailbox was reached over."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
             [gmail.history :as history]
             [gmail.labels :as labels]
             [gmail.mime :as mime]
@@ -177,7 +177,7 @@
       {:messages (vec (mapcat #(thread-messages token names %) changed))
        :deleted (vec deleted)
        :cursor {:history-id (str (or (:historyId page) history-id))}})
-    (catch clojure.lang.ExceptionInfo error
+    (catch kerror/ExceptionInfo error
       (if (= 404 (:status (ex-data error)))
         (full-sync! token options)
         (throw error)))))

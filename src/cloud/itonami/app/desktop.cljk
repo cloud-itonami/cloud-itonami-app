@@ -32,7 +32,7 @@
       document edited. `set-value!` returns what it observes afterwards so a
       caller can see the difference rather than assume it."
   (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config])
   (:import [java.security MessageDigest]
@@ -66,8 +66,8 @@
         candidate (if (str/blank? (str override))
                     (repo-file "target" "cloud-itonami-desktop-macos")
                     (io/file override))]
-    (when (and (.isFile candidate) (.canExecute candidate))
-      (.getCanonicalPath candidate))))
+    (when (and (io/file? candidate) (io/can-execute? candidate))
+      (io/canonical-path candidate))))
 
 (defn cua-driver-path
   "Resolve the official signed CuaDriver CLI without depending on launchd PATH."
@@ -82,8 +82,8 @@
                             "/usr/local/bin/cua-driver"])]
     (some (fn [path]
             (let [file (io/file path)]
-              (when (and (.isFile file) (.canExecute file))
-                (.getCanonicalPath file))))
+              (when (and (io/file? file) (io/can-execute? file))
+                (io/canonical-path file))))
           candidates)))
 
 (defn- macos? []
@@ -112,11 +112,11 @@
   []
   (or (helper-path)
       (let [script (repo-file "bin" "cloud-itonami-build-desktop-macos")]
-        (when (and (macos?) (.isFile script))
-          (let [{:keys [exit out]} (exec! [(.getCanonicalPath script)] 180)]
+        (when (and (macos?) (io/file? script))
+          (let [{:keys [exit out]} (exec! [(io/canonical-path script)] 180)]
             (when (zero? exit)
               (let [path (str/trim (last (str/split-lines out)))]
-                (when (.isFile (io/file path)) path))))))))
+                (when (io/file? (io/file path)) path))))))))
 
 (defn- cua-call!
   [tool input timeout-seconds]
@@ -366,13 +366,13 @@
   (if (cua?)
     (let [directory (io/file (config/data-dir) "agent-screenshots")
           file (io/file directory (str "window-" (random-uuid) ".png"))
-          _ (.mkdirs directory)
-          state (cua-tree* application 400 (.getCanonicalPath file))
+          _ (io/mkdirs directory)
+          state (cua-tree* application 400 (io/canonical-path file))
           snapshot (get @cua-snapshots application)]
-      (when-not (and (.isFile file) (pos? (.length file)))
+      (when-not (and (io/file? file) (pos? (io/length file)))
         (throw (ex-info "ウインドウのキャプチャに失敗しました。"
                         {:type :desktop/capture-failed})))
-      {:image-path (.getCanonicalPath file)
+      {:image-path (io/canonical-path file)
        :media-type "image/png"
        :application application
        :window (:window state)
@@ -384,20 +384,20 @@
         [x y w h] (:frame target)
         directory (io/file (config/data-dir) "agent-screenshots")
         file (io/file directory (str "window-" (random-uuid) ".png"))
-        _ (.mkdirs directory)
+        _ (io/mkdirs directory)
         region? (not= "window-id" (:match target))
         args (if region?
                ["/usr/sbin/screencapture" "-x" "-o"
-                (str "-R" x "," y "," w "," h) (.getCanonicalPath file)]
+                (str "-R" x "," y "," w "," h) (io/canonical-path file)]
                ["/usr/sbin/screencapture" "-x" "-o"
-                (str "-l" (:window-id target)) (.getCanonicalPath file)])
+                (str "-l" (:window-id target)) (io/canonical-path file)])
         {:keys [exit]} (exec! args 30)]
-    (when-not (and (zero? exit) (.isFile file) (pos? (.length file)))
+    (when-not (and (zero? exit) (io/file? file) (pos? (io/length file)))
       (throw (ex-info "ウインドウのキャプチャに失敗しました。"
                       {:type :desktop/capture-failed
                        :match (:match target)
                        :onscreen (:onscreen target)})))
-    {:image-path (.getCanonicalPath file)
+    {:image-path (io/canonical-path file)
      :media-type "image/png"
      :application application
      :window (:title target)

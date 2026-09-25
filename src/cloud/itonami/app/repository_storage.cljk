@@ -4,7 +4,7 @@
   Plaintext is accepted and returned only at this local boundary. Block
   transports receive ciphertext byte arrays. A signed Kotobase head is
   advanced only after the transport confirms every referenced block."
-  (:require [kotoba.bytes :as kbytes] [kotoba.lang.edn :as edn]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.lang.edn :as edn]
             [kotoba.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.coll :as set]
@@ -504,7 +504,7 @@
         {:revision (long (or (:epoch body) 0))
          :head (when head-edn (decode-wire-string head-edn))
          :history []})
-      (catch clojure.lang.ExceptionInfo error
+      (catch kerror/ExceptionInfo error
         (let [{:keys [status body]} (ex-data error)]
           (if (and (= 404 status)
                    (= "EncryptedGraphNotFound" (:error body)))
@@ -1201,7 +1201,7 @@
                        (assoc request
                               :expected-cid (semantic-cid (:state workspace))))
                       :attempts attempt)}
-              (catch clojure.lang.ExceptionInfo error {:error error}))]
+              (catch kerror/ExceptionInfo error {:error error}))]
         (if-let [error (:error result)]
           (if (and (= :repository-storage/edit-conflict
                       (:type (ex-data error)))

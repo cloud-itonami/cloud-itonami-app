@@ -44,7 +44,7 @@
   the UI and marks each item with `:origin`, because \"can I edit this\" has
   different answers on either side and a merged list that did not say so
   would be inviting the wrong one."
-  (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
@@ -1121,7 +1121,7 @@
               ;; dragged onto its own child is an ordinary mistake and
               ;; deserves to be told so, not to look like a broken server.
               moved (try (ws/move workspace id parent)
-                         (catch clojure.lang.ExceptionInfo e
+                         (catch kerror/ExceptionInfo e
                            (throw (ex-info "そのフォルダの中には移動できません。"
                                            (assoc (ex-data e)
                                                   :type :drive/invalid-move)))))]
@@ -2742,7 +2742,7 @@
              :let [document (try (resource-of (:id candidate) actor object-store)
                                  ;; A document whose bytes are gone should not
                                  ;; make the backlinks of a different one fail.
-                                 (catch clojure.lang.ExceptionInfo _ nil))]
+                                 (catch kerror/ExceptionInfo _ nil))]
              block (reference-blocks document)
              :when (= id (:docs/target block))]
          {:id (:id candidate)
@@ -3535,7 +3535,7 @@
                                                 ;; A document whose bytes are
                                                 ;; gone must not fail the
                                                 ;; whole search.
-                                                (catch clojure.lang.ExceptionInfo _ nil))]
+                                                (catch kerror/ExceptionInfo _ nil))]
                                           (text-of (keyword (:kind candidate)) resource)))))]
                     :when (or in-title? hit)]
                 {:id (:id candidate)

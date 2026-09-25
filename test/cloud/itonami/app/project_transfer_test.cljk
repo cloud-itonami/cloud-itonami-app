@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.project-transfer-test
   "Moving a project between two of one person's tenants (ADR-0024)."
-  (:require [kotoba.lang.edn :as edn]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
@@ -116,7 +116,7 @@
         (let [from (seed! temporary :member {})]
           (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
             (is (thrown-with-msg?
-                 clojure.lang.ExceptionInfo #"owner または admin"
+                 kerror/ExceptionInfo #"owner または admin"
                  (project-transfer/transfer-project!
                   (session :passkey)
                   {:project-id "notes" :to-tenant "etzhayyim"})))
@@ -127,7 +127,7 @@
         (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
                       local-identity/require-passkey! identity]
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"Passkey session"
+               kerror/ExceptionInfo #"Passkey session"
                (project-transfer/transfer-project!
                 (session :agent)
                 {:project-id "notes" :to-tenant "etzhayyim"})))))
@@ -137,7 +137,7 @@
                                  :published-at (store/now)})
         (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"公開済み"
+               kerror/ExceptionInfo #"公開済み"
                (project-transfer/transfer-project!
                 (session :passkey)
                 {:project-id "notes" :to-tenant "etzhayyim"})))))
@@ -145,7 +145,7 @@
         (seed! temporary :owner {})
         (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"membership"
+               kerror/ExceptionInfo #"membership"
                (project-transfer/transfer-project!
                 (session :passkey)
                 {:project-id "notes" :to-tenant "somebody-else"}))))))))

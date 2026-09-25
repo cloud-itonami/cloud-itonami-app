@@ -11,7 +11,7 @@
 
   So the interesting case here is not 'no server'. It is a server that IS
   healthy and IS someone else's, and a server that cannot say which it is."
-  (:require [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.server-process :as server-process])
   (:import [com.sun.net.httpserver HttpHandler HttpServer]
@@ -75,7 +75,7 @@
           (is (= :server-process/foreign-server (:type (ex-data refusal))))
           (is (re-find #"000000000000" (ex-message refusal))
               "the message carries what was measured, not just a verdict"))
-        (is (thrown? clojure.lang.ExceptionInfo
+        (is (thrown? kerror/ExceptionInfo
                      (server-process/ensure-running! configuration))
             "ensure-running! refuses rather than adopting it")))))
 

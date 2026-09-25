@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.latest-test
   "IPNS latest pointer. Offline: injected kad http-fn, disposable seed."
-  (:require [kotoba.lang.edn :as edn]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.bundle :as bundle]
@@ -31,7 +31,7 @@
                {:status 404 :body []})))))
 
 (deftest parse-seed-refuses-short-hex
-  (is (thrown? clojure.lang.ExceptionInfo (latest/parse-seed "abcd")))
+  (is (thrown? kerror/ExceptionInfo (latest/parse-seed "abcd")))
   (is (bytes? (latest/parse-seed (apply str (repeat 64 "a"))))))
 
 (deftest delegated-router-reads-bypass-a-stale-http-cache
@@ -111,7 +111,7 @@
   (let [path (temp-lock {:kotoba.app/id "cloud.itonami.app"
                          :kotoba.app/version "0.1.0"
                          :kotoba.app/kind "appview"})]
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+    (is (thrown-with-msg? kerror/ExceptionInfo
                           #"lock has no bundle CID"
                           (latest/publish! {:seed disposable-seed
                                             :lock-path path
@@ -121,7 +121,7 @@
   (let [{:keys [manifest]} (bundle/snapshot)
         path (temp-lock manifest)
         mute (fn [_] {:status 500 :body []})]
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+    (is (thrown-with-msg? kerror/ExceptionInfo
                           #"IPNS publish refused"
                           (latest/publish! {:seed disposable-seed
                                             :lock-path path

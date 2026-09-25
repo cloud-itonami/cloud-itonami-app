@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.bulky-waste-test
-  (:require [clojure.test :refer [deftest is testing use-fixtures]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.bulky-waste :as bulky]
             [cloud.itonami.app.human-work :as human-work]
             [cloud.itonami.app.store :as store]))
@@ -50,7 +50,7 @@
 
 (defn- error-type [f]
   (try (f) nil
-       (catch clojure.lang.ExceptionInfo error (:type (ex-data error)))))
+       (catch kerror/ExceptionInfo error (:type (ex-data error)))))
 
 (defn- open-job! []
   (let [job (bulky/create-job! job-request owner)]

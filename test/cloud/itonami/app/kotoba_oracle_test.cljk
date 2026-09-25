@@ -15,8 +15,8 @@
   delegation that fell back to a host implementation would pass every parity
   test ever written, because a host copy is exactly what those tests compare
   against."
-  (:require [kotoba.lang.edn :as edn]
-            [clojure.java.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.edn :as edn]
+            [kotoba.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.app.kotoba-oracle-gen :as gen]
@@ -44,7 +44,7 @@
 (deftest a-missing-artifact-throws-rather-than-deciding-anything
   ;; The seam's one refusal. If it fell back instead, the first thing anyone
   ;; would notice is that a decision quietly stopped being the shipped one.
-  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"shipped decision core is missing"
+  (is (thrown-with-msg? kerror/ExceptionInfo #"shipped decision core is missing"
                         (oracle/kir :not-a-core))))
 
 (deftest the-host-reads-the-artifact-rather-than-keeping-a-copy

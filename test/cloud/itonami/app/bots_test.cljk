@@ -5,7 +5,7 @@
   Nothing here calls a model or reaches the network. The two places that would
   — `advance!` and `run-tool!` — are behind the connection gate, and every test
   that would cross it redefines the seam instead."
-  (:require [kotoba.io :as kio] [agent.run :as agent-run]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [agent.run :as agent-run]
             [kotoba.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
@@ -430,7 +430,7 @@
                  (:context-refs legacy-public)))
           (is (some #(str/includes? (:content %) "Reference only")
                     legacy-transcript)))
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"見つかりません"
+        (is (thrown-with-msg? kerror/ExceptionInfo #"見つかりません"
                               (bots/update! nil alice bot-id
                                             {:context-project-id "missing"})))))))
 
@@ -770,7 +770,7 @@
           (testing "a named organization nobody in the catalog names is refused, not emptied"
             (let [error (try (bots/provision-workforce! {} alice-in-typo catalog)
                              nil
-                             (catch clojure.lang.ExceptionInfo e e))]
+                             (catch kerror/ExceptionInfo e e))]
               (is (= :workforce/no-business-for-tenant (:type (ex-data error))))
               (is (= "etzhayym" (:tenant (ex-data error))))
               (is (= ["etzhayyim"] (:catalog-organizations (ex-data error))))
@@ -851,7 +851,7 @@
                           "a job inferring in the other tenant holds the one slot")
                       (is (= :workforce-capacity (:reason (first (:skipped result))))))))))
             (testing "sessions of two people are refused"
-              (is (thrown-with-msg? clojure.lang.ExceptionInfo #"one person"
+              (is (thrown-with-msg? kerror/ExceptionInfo #"one person"
                                     (bots/fire-due-workforce! {} [alice bob] now))))))))))
 
 (deftest provisioning-never-takes-a-delegation-away-and-applies-the-standing-one
@@ -1325,7 +1325,7 @@
                (try (bots/send-mail! {} alice (:bot/id b)
                                      {:to "x@example.com" :subject "x" :text "x"})
                     nil
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 (defn- git-workspace []
   (let [root (kio/temp-dir
@@ -1349,11 +1349,11 @@
         (testing "a colleague in the same organization does not"
           (is (empty? (:bots (bots/overview nil bob)))))
         (testing "and cannot reach it by id"
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"このセッションのもの"
+          (is (thrown-with-msg? kerror/ExceptionInfo #"このセッションのもの"
                                 (bots/messages bob (:bot/id b)))))
         (testing "nor from another organization"
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"このセッションのもの"
+               kerror/ExceptionInfo #"このセッションのもの"
                (bots/messages (assoc alice :organization-id "org-2")
                               (:bot/id b)))))))))
 
@@ -1521,7 +1521,7 @@
                    (bots/send-stream! nil alice (:bot/id b) "確認して"
                                       "run-failed-1" (constantly nil))
                    nil
-                   (catch clojure.lang.ExceptionInfo error
+                   (catch kerror/ExceptionInfo error
                      (:type (ex-data error)))))))
         (let [turn (:last-turn (first (:bots (bots/overview nil alice))))]
           (is (= "failed" (:state turn)))
@@ -2057,7 +2057,7 @@
                       (fn [_ _ _]
                         (throw (ex-info "model provider streaming request failed"
                                         {:type :provider/http-error :status 503})))]
-          (is (thrown? clojure.lang.ExceptionInfo
+          (is (thrown? kerror/ExceptionInfo
                        (bots/send-stream! nil alice (:bot/id b) "続けて"
                                           "provider-failure-visible-1"
                                           (constantly nil))))
@@ -2141,7 +2141,7 @@
                    (try
                      (bots/queue-followup! alice bot-id run-id "遅すぎる追加")
                      nil
-                     (catch clojure.lang.ExceptionInfo error
+                     (catch kerror/ExceptionInfo error
                        (:type (ex-data error))))))))))))
 
 (deftest a-bot-pins-its-model-provider-without-bypassing-policy
@@ -2254,7 +2254,7 @@
           (try
             (bots/send! nil alice (:bot/id b) "二つ調べて")
             (is false "a batch must not be reduced to its first call")
-            (catch clojure.lang.ExceptionInfo error
+            (catch kerror/ExceptionInfo error
               (is (= :agent/multiple-tool-calls (:type (ex-data error)))))))))))
 
 (deftest isolated-agent-turn-does-not-inherit-private-conversation
@@ -2648,17 +2648,17 @@
         ;; before that check, so an agent session is told no rather than told
         ;; there is nothing to approve.
         (is (thrown-with-msg?
-             clojure.lang.ExceptionInfo #"このセッションでは行えません"
+             kerror/ExceptionInfo #"このセッションでは行えません"
              (bots/decide! nil (assoc alice :kind :agent) (:bot/id b)
                            "card-1" "approved")))
         (testing "and a person who does not own it is refused earlier still"
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"このセッションのもの"
+               kerror/ExceptionInfo #"このセッションのもの"
                (bots/decide! nil bob (:bot/id b) "card-1" "approved"))))
         (testing "the owner gets past the approval gate and fails on the
                   absence of a held call, which is the next question"
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"承認待ちの操作がありません"
+               kerror/ExceptionInfo #"承認待ちの操作がありません"
                (bots/decide! nil alice (:bot/id b) "card-1" "approved"))))))))
 
 ;; ── an approval belongs to the instruction it was asked under ───────────
@@ -2839,7 +2839,7 @@
                  {:pending-card "card-1"
                   :pending-call {:id "call-1" :name tool :input {}}})
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"承認待ちの操作がありません"
+               kerror/ExceptionInfo #"承認待ちの操作がありません"
                (bots/decide! nil (assoc alice :kind :agent)
                              (:bot/id b) "card-1" "approved"))
               (str tool " was refused by the session gate rather than reaching it")))))))
@@ -2857,7 +2857,7 @@
                  {:pending-card "card-1"
                   :pending-call {:id "call-1" :name tool :input {}}})
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"このセッションでは行えません"
+               kerror/ExceptionInfo #"このセッションでは行えません"
                (bots/decide! nil (assoc alice :kind :agent)
                              (:bot/id b) "card-1" "approved"))
               tool))))))
@@ -2897,7 +2897,7 @@
 
             (testing "answering it now says which refusal it is"
               (is (thrown-with-msg?
-                   clojure.lang.ExceptionInfo #"もう古い指示のもの"
+                   kerror/ExceptionInfo #"もう古い指示のもの"
                    (bots/decide! nil alice (:bot/id b) (:id card) "approved"))))))))))
 
 (deftest a-decision-already-given-is-not-unmade-by-a-later-instruction
@@ -2958,7 +2958,7 @@
           (is (= before (count (bots/messages alice (:bot/id b))))
               "archiving took the record along with the ability, and only the
                second was asked for")
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"停止しています"
+          (is (thrown-with-msg? kerror/ExceptionInfo #"停止しています"
                                 (bots/send! nil alice (:bot/id b) "まだ動く?"))))))))
 
 (deftest renaming-a-bot-changes-nothing-about-its-reach
@@ -3094,7 +3094,7 @@
       (bots/label-account! alice "conn-2" "work")
       (is (= #{"jun@example.com" "work"}
              (set (map :label (identity/accounts-for "did:key:alice")))))
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"同じ名前"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"同じ名前"
                             (bots/label-account! alice "conn-1" "work"))))))
 
 (deftest tokens-resolve-by-connection-rather-than-by-provider
@@ -3295,13 +3295,13 @@
         (agent-control/call-browser-tool! browser-on "bot-a" "computer_click"
                                           {:x 1 :y 1 :application "Safari"})
         (is false "computer_click must not be callable as a browser tool")
-        (catch clojure.lang.ExceptionInfo e
+        (catch kerror/ExceptionInfo e
           (is (= :agent/unknown-tool (:type (ex-data e))))))
       (try
         (agent-control/call-browser-tool! {} "bot-a" "browser_open"
                                           {:url "https://example.com"})
         (is false "a disabled browser must not execute")
-        (catch clojure.lang.ExceptionInfo e
+        (catch kerror/ExceptionInfo e
           (is (= :agent/browser-disabled (:type (ex-data e)))))))))
 
 (deftest call-browser-tool-checks-the-bots-own-host-row-before-navigation
@@ -3325,7 +3325,7 @@
               (agent-control/call-browser-tool! browser-on "bot-a" "browser_open"
                                                 {:url "https://evil.example/"} bot)
               (is false "a host outside the Bot's row must be refused")
-              (catch clojure.lang.ExceptionInfo e
+              (catch kerror/ExceptionInfo e
                 (is (= :bot/host-denied (:type (ex-data e))))
                 (is (= "evil.example" (:host (ex-data e))))
                 (is (= :bounds/host-not-allowed (:reason (ex-data e))))))
@@ -3334,7 +3334,7 @@
               (agent-control/call-browser-tool! browser-on "bot-a" "browser_open"
                                                 {:url "https://example.com/"} {:bot/allowed-hosts #{}})
               (is false "an empty host list denies every destination")
-              (catch clojure.lang.ExceptionInfo e
+              (catch kerror/ExceptionInfo e
                 (is (= :bot/host-denied (:type (ex-data e))))))
             ;; No list: reported as :bounds/no-host-list and PASSES, so wiring
             ;; the row in cannot stop a Bot that never declared one.
@@ -3402,7 +3402,7 @@
       (try
         (agent-control/call-computer-tool! {} "computer_tree" {:application "Safari"})
         (is false "a disabled machine must not execute")
-        (catch clojure.lang.ExceptionInfo error
+        (catch kerror/ExceptionInfo error
           (is (= :agent/computer-disabled (:type (ex-data error)))))))))
 
 ;; ── peer notes (ADR-0061 / ADR-0062) ────────────────────────────────────
@@ -3459,7 +3459,7 @@
       (let [source (make-bot alice {:name "alpha" :peers? true})
             depth-var (ns-resolve 'cloud.itonami.app.bots
                                   '*message-agent-depth*)]
-        (is (thrown? clojure.lang.ExceptionInfo
+        (is (thrown? kerror/ExceptionInfo
                      (with-bindings {depth-var bots/max-message-agent-depth}
                        ((private-fn 'message-agent!)
                         {} source "beta" "continue the chain"))))))))
@@ -3493,22 +3493,22 @@
             closed (make-bot alice {:name "closed"})
             strangers (make-bot bob {:name "beta"})]
         (testing "a Bot cannot write to itself"
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"自分自身"
+          (is (thrown-with-msg? kerror/ExceptionInfo #"自分自身"
                                 ((send-peer!) a "alpha" "hi"))))
         (testing "a name nobody has"
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"ありません"
+          (is (thrown-with-msg? kerror/ExceptionInfo #"ありません"
                                 ((send-peer!) a "nobody" "hi"))))
         (testing "another person's Bot is not found, not forbidden"
           ;; `forbidden` would confirm it exists, which is the answer the
           ;; refusal is trying not to give.
           (is (= :peer/not-found
                  (:type (try ((send-peer!) a (:bot/id strangers) "hi")
-                             (catch clojure.lang.ExceptionInfo e (ex-data e)))))))
+                             (catch kerror/ExceptionInfo e (ex-data e)))))))
         (testing "a Bot that never opted in is not a mailbox"
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"ピアの受け取り"
+          (is (thrown-with-msg? kerror/ExceptionInfo #"ピアの受け取り"
                                 ((send-peer!) a "closed" "hi"))))
         (testing "an empty note"
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"空の"
+          (is (thrown-with-msg? kerror/ExceptionInfo #"空の"
                                 ((send-peer!) a "beta" "   "))))
         (testing "a handle naming another machine says so, rather than delivering here"
           ;; ADR-0062 landed the judgement, not the transport. Delivering
@@ -3516,7 +3516,7 @@
           ;; success.
           (is (= :peer/no-remote-transport
                  (:type (try ((send-peer!) a (str "bot:" (:bot/id b) "@studio") "hi")
-                             (catch clojure.lang.ExceptionInfo e (ex-data e)))))))
+                             (catch kerror/ExceptionInfo e (ex-data e)))))))
         (is (= 0 (count (filter #(= "hi" (:text %))
                                 (bots/messages alice (:bot/id b)))))
             "a refused note was delivered anyway")))))
@@ -3537,7 +3537,7 @@
            handle (fn [bot dev] (str "bot:" (:bot/id bot) "@" dev))
            refusal (fn [& args]
                      (try (apply (send-peer!) args) ::delivered
-                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+                          (catch kerror/ExceptionInfo e (:type (ex-data e)))))
            notes (fn [bot text]
                    (count (filter #(= text (:text %))
                                   (bots/messages alice (:bot/id bot)))))]
@@ -3558,7 +3558,7 @@
          (testing "another device is still refused, and says which"
            (device/reset-for-test! "studio")
            (let [data (try ((send-peer!) a (handle b "laptop") "yo")
-                           (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                           (catch kerror/ExceptionInfo e (ex-data e)))]
              (is (= :peer/no-remote-transport (:type data)))
              (is (= "laptop" (:device data)))
              (is (= "studio" (:local-device data))
@@ -3579,7 +3579,7 @@
       (let [a (make-bot alice {:name "alpha" :peers? true})
             one (make-bot alice {:name "twin" :peers? true})
             _two (make-bot alice {:name "twin" :peers? true})]
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"複数"
+        (is (thrown-with-msg? kerror/ExceptionInfo #"複数"
                               ((send-peer!) a "twin" "hi")))
         ;; The handle is what disambiguates, and it has to work.
         (is (str/includes? ((send-peer!) a (str "bot:" (:bot/id one)) "hi")
@@ -3697,13 +3697,13 @@
     (fn []
       (let [mine (make-bot alice {:name "mine"})
             theirs (make-bot bob {:name "theirs"})]
-        (is (thrown? clojure.lang.ExceptionInfo
+        (is (thrown? kerror/ExceptionInfo
                      (bots/create-group! alice {:name "x"
                                                 :members [(:bot/id mine)
                                                           (:bot/id theirs)]})))
         (is (empty? (bots/groups alice))
             "a refused group was stored anyway")
-        (is (thrown? clojure.lang.ExceptionInfo
+        (is (thrown? kerror/ExceptionInfo
                      (bots/group-messages bob
                                           (:group/id (bots/create-group!
                                                       alice {:name "y"
@@ -4358,7 +4358,7 @@
                       (fn [_ _]
                         (throw (ex-info "model provider request failed"
                                         {:type :provider/http-error :status 400})))]
-          (is (thrown? clojure.lang.ExceptionInfo
+          (is (thrown? kerror/ExceptionInfo
                        ((deref advance!) {} b {:id "goal-run-record-1" :goal? true
                                                :messages [] :tools [] :turn-count 0})))
           (let [run (get-in @store/state [:bots :runs bot-id])]
@@ -5278,7 +5278,7 @@
             stranger (make-bot bob {:name "bob's bot"})
             error (try (bots/rename! nil alice (:bot/id target) "borrowed authority"
                                      {:by :bot :by-bot-id (:bot/id stranger)})
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
         (is (= :bot/forbidden (:type (ex-data error))))
         (is (= "bot-a" (:bot/name (get-in @store/state
                                           [:bots :bots (:bot/id target)])))
@@ -5289,7 +5289,7 @@
     (fn []
       (let [bot-id (:bot/id (make-bot alice {:name "keep"}))
             blank (try (bots/rename! nil alice bot-id "   " nil)
-                       (catch clojure.lang.ExceptionInfo e e))
+                       (catch kerror/ExceptionInfo e e))
             ;; Exactly at the bound passes and one over fails -- the pair that
             ;; makes the comparison itself observable. Without the boundary
             ;; case, flipping `>` to `>=` here would keep every test green.
@@ -5300,7 +5300,7 @@
         (bots/rename! nil alice bot-id at-bound nil)
         (is (= at-bound (:bot/name (get-in @store/state [:bots :bots bot-id]))))
         (let [error (try (bots/rename! nil alice bot-id over nil)
-                         (catch clojure.lang.ExceptionInfo e e))]
+                         (catch kerror/ExceptionInfo e e))]
           (is (= :bot/invalid (:type (ex-data error))))
           (is (= at-bound (:bot/name (get-in @store/state [:bots :bots bot-id])))
               "the refused name did not partly land"))))))
@@ -5468,7 +5468,7 @@
       (let [bot-id (:bot/id (make-bot alice {:name "walker"}))
             _ (goal-run-with-events! alice bot-id "run-traj-3" [] [])
             error (try (bots/trajectory bob bot-id "run-traj-3")
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
         (is (= :bot/forbidden (:type (ex-data error))))))))
 
 (deftest invented-tool-can-be-corrected-without-execution
@@ -5596,7 +5596,7 @@
                {:job/bot bot-id :job/run {:agent.run/status :checkpointed}})
         (with-redefs [provider/agent-turn (fn [& _] (swap! calls inc) {:content "answer" :tool-calls []})]
           (let [e (try (bots/send! nil alice bot-id "new message") nil
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
             (is (= :bot/goal-in-progress (:type (ex-data e))))
             (is (= saved (get-in @store/state [:bots :runs bot-id])))
             (is (zero? @calls))))))))
@@ -5780,14 +5780,14 @@
             propose (deref #'bots/propose-skill!)
             record (deref #'bots/record-turn!)
             receipt {:sha256 "verified-output" :at "2026-01-01T00:00:00Z"}]
-        (is (thrown? clojure.lang.ExceptionInfo
+        (is (thrown? kerror/ExceptionInfo
                      (propose b {:name "Read" :procedure "List first" :source_turn "missing" :tool "workspace_list"})))
         (swap! store/state assoc-in [:bots :skill-evidence id "source" "workspace_list"] receipt)
         (record id "source" {:turn/state :completed})
         (let [skill (propose b {:name "Read" :procedure "List first" :source_turn "source" :tool "workspace_list"})
               sid (:id skill) later {:sha256 "later-output" :at "2099-01-01T00:00:00Z"}]
           (is (= :candidate (:status skill)))
-          (is (thrown? clojure.lang.ExceptionInfo (bots/learned-skills bob id)))
+          (is (thrown? kerror/ExceptionInfo (bots/learned-skills bob id)))
           (swap! store/state assoc-in [:bots :skill-evidence id "unrelated" "workspace_list"] later)
           (record id "unrelated" {:turn/state :completed})
           (is (= :candidate (:status (first (bots/learned-skills alice id))))
@@ -5804,16 +5804,16 @@
           ((deref #'bots/use-skill!) b sid)
           (record id "regression" {:turn/state :failed})
           (is (= :suspended (:status (first (bots/learned-skills alice id)))))
-          (is (thrown? clojure.lang.ExceptionInfo ((deref #'bots/use-skill!) b sid))))))))
+          (is (thrown? kerror/ExceptionInfo ((deref #'bots/use-skill!) b sid))))))))
 
 (deftest group-schedules-are-owned-and-bounded
   (with-store
     (fn []
       (let [b (make-bot alice {:name "speaker"})
             g (bots/create-group! alice {:name "Standup" :members [(:bot/id b)]}) id (:group/id g)]
-        (is (thrown? clojure.lang.ExceptionInfo
+        (is (thrown? kerror/ExceptionInfo
                      (bots/configure-group-schedule! bob id {:enabled false})))
-        (is (thrown? clojure.lang.ExceptionInfo
+        (is (thrown? kerror/ExceptionInfo
                      (bots/configure-group-schedule! alice id {:enabled true :interval-minutes 0 :prompt "status"})))
         (is (true? (:enabled (bots/configure-group-schedule! alice id
                               {:enabled true :interval-minutes 60 :prompt "status"}))))
@@ -5832,7 +5832,7 @@
              (bots/start-group-turn! nil alice id "status" "request-12345" :schedule)
              (is (true? (deref entered 5000 false)))
              (is (= "request-12345" (:id (bots/start-group-turn! nil alice id "status" "request-12345" :schedule))))
-             (is (thrown? clojure.lang.ExceptionInfo
+             (is (thrown? kerror/ExceptionInfo
                           (bots/start-group-turn! nil alice id "again" "request-67890" :person)))
              (deliver release true)
              (loop [remaining 500]
@@ -5939,8 +5939,8 @@
           (is (= ["old question"] (mapv :content (:items (messenger/messages "org-1" "alice" cid {})))))
           (messenger/send-message! "org-1" "alice" cid {:content "new question" :idempotency-key "new-question"})
           (is (= ["old question" "new question"] (mapv :text (bots/messages alice id))))
-          (is (thrown? clojure.lang.ExceptionInfo (bots/messenger-binding bob :direct id)))
-          (is (thrown? clojure.lang.ExceptionInfo (bots/messenger-binding (assoc alice :organization-id "org-2") :direct id)))
+          (is (thrown? kerror/ExceptionInfo (bots/messenger-binding bob :direct id)))
+          (is (thrown? kerror/ExceptionInfo (bots/messenger-binding (assoc alice :organization-id "org-2") :direct id)))
           (is (= 2 (count (:items (messenger/messages "org-1" id cid {}))))))))))
 
 (deftest messenger-group-message-replies-in-place-and-retries-once
@@ -6002,10 +6002,10 @@
           (is (= 1 (count (:history updated))))
           (is (str/includes? (profile/prompt (profile/read-profile a)) "Confirmed preference"))
           (is (not (str/includes? (profile/prompt (profile/read-profile b)) "Confirmed preference"))))
-        (is (thrown? clojure.lang.ExceptionInfo (profile/apply-update! a 1 {"SOUL.md" "stale"} {})))
-        (is (thrown? clojure.lang.ExceptionInfo (profile/apply-update! a 2 {"../../escape" "bad"} {})))
-        (is (thrown? clojure.lang.ExceptionInfo (profile/apply-update! a 2 {"MEMORY.md" (str "api" "_key=" (apply str (repeat 16 "x")))} {})))
-        (is (thrown? clojure.lang.ExceptionInfo (bots/profile bob (:bot/id a))))))))
+        (is (thrown? kerror/ExceptionInfo (profile/apply-update! a 1 {"SOUL.md" "stale"} {})))
+        (is (thrown? kerror/ExceptionInfo (profile/apply-update! a 2 {"../../escape" "bad"} {})))
+        (is (thrown? kerror/ExceptionInfo (profile/apply-update! a 2 {"MEMORY.md" (str "api" "_key=" (apply str (repeat 16 "x")))} {})))
+        (is (thrown? kerror/ExceptionInfo (bots/profile bob (:bot/id a))))))))
 
 (defn- wait-profile-review []
   (loop [n 1000]

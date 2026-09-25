@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.capture-test
-  (:require [kotoba.io :as kio] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.capture :as capture]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.store :as store]))
@@ -57,7 +57,7 @@
         (is (= 1 (count (:items (capture/snapshot "alice" "org-1")))))
         (is (empty? (:items (capture/snapshot "bob" "org-1"))))
         (is (empty? (:items (capture/snapshot "alice" "org-2"))))
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"見つかりません"
+        (is (thrown-with-msg? kerror/ExceptionInfo #"見つかりません"
                               (capture/clarify! (:capture/id item) "bob" "org-1"
                                                 {:outcome :reference})))))))
 
@@ -84,9 +84,9 @@
 (deftest invalid-input-fails-before-writing
   (with-store
     (fn []
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"空の記録"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"空の記録"
                             (capture/create! "alice" "org-1" {:text "  \n"})))
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"未知の記録モード"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"未知の記録モード"
                             (capture/create! "alice" "org-1"
                                              {:text "hello" :mode :automatic-analysis})))
       (is (empty? (:items (capture/snapshot "alice" "org-1")))))))

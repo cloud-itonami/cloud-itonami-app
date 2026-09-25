@@ -5,7 +5,7 @@
   of another tenant's — to a set that until now only described an agent acting
   inside its own workspace. The risk changes with the direction, so the
   approval screen has to be able to say which it is."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.tenant-connection :as tc]))
 
@@ -58,7 +58,7 @@
 
 (deftest an-unknown-capability-is-still-refused-at-request
   ;; describe- is lenient for display; validation is not.
-  (is (thrown? clojure.lang.ExceptionInfo
+  (is (thrown? kerror/ExceptionInfo
                (#'tc/validate-capabilities ["calendar.freebusy.read" "made.up"])))
   (is (= ["calendar.freebusy.read"]
          (#'tc/validate-capabilities ["calendar.freebusy.read"]))))

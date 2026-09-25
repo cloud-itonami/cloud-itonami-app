@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.commerce-test
-  (:require [kotoba.io :as kio] [kotoba.lang.text :as str]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.commerce :as commerce]
             [cloud.itonami.app.config :as config]
@@ -12,7 +12,7 @@
               :locality "千代田区" :line1 "千代田1-1"})
 
 (defn- refuses [f]
-  (try (f) nil (catch clojure.lang.ExceptionInfo error (:type (ex-data error)))))
+  (try (f) nil (catch kerror/ExceptionInfo error (:type (ex-data error)))))
 
 (defn- with-commerce-store [f]
   (let [temporary (kio/temp-dir

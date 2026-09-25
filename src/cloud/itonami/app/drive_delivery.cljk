@@ -14,7 +14,7 @@
   (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [biscuit.authorizer :as authorizer]
             [biscuit.token :as biscuit]
             [kotoba.lang.edn :as edn]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.drive-crypto :as crypto]
@@ -38,7 +38,7 @@
   (io/file (config/data-dir) "drive-delivery-authority.seed"))
 
 (defn- read-seed [file]
-  (when (.isFile file)
+  (when (io/file? file)
     (let [value (kio/read-all-bytes file)]
       (when (= seed-bytes (alength value)) value))))
 

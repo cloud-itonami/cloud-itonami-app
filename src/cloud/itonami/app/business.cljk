@@ -50,7 +50,7 @@
   and says so in its own payload rather than implying a scoping that is not
   there."
   (:require [kotoba.lang.edn :as edn]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.operator :as operator]
             [cloud.itonami.app.store :as store])
@@ -140,12 +140,12 @@
                     ":business :workspace-root に superproject の path を設定すると、"
                     "canvas / repo / 法人実体 の面を解決します")}
 
-      (not (.isDirectory file))
+      (not (io/directory? file))
       {:configured? true :state :missing :root configured
        :detail (str "設定された workspace checkout がありません: " configured)}
 
       :else
-      {:configured? true :state :present :root (.getPath file) :file file})))
+      {:configured? true :state :present :root (io/path file) :file file})))
 
 (defn wire-workspace
   "The workspace map with the live `java.io.File` handle removed.
@@ -173,7 +173,7 @@
   failure is reported rather than folded into absence: 'the plane is not there'
   and 'the plane is corrupt' need different fixes."
   [file]
-  (when (and file (.isFile file))
+  (when (and file (io/file? file))
     (try (edn/read-string (slurp file))
          (catch Exception _ unreadable))))
 
@@ -209,7 +209,7 @@
   reading 5,200 entities to answer a question this view does not ask."
   [ws lei]
   (when-let [root (:file ws)]
-    (.isFile (io/file root (str "orgs/cloud-itonami/cloud-itonami-lei-"
+    (io/file? (io/file root (str "orgs/cloud-itonami/cloud-itonami-lei-"
                                 (str/lower lei) "/blueprint.edn")))))
 
 ;; ---------------------------------------------------------------------------
@@ -272,7 +272,7 @@
     (nil? key*) {:face face :label (face-labels face) :source (face-sources face)
                  :key nil :bound? false :state :unbound :detail "未紐付け"}
     (not= :present (:state ws)) (unresolvable face key* ws)
-    (.isFile (io/file (:file ws) key*))
+    (io/file? (io/file (:file ws) key*))
     {:face face :label (face-labels face) :source key*
      :key key* :bound? true :state :resolved
      :detail (str "ファイルを確認: " key*)}

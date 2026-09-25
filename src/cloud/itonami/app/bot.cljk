@@ -48,7 +48,7 @@
   all of that. The split is the same one `work-governance` and `work-runtime`
   already have, for the same reason: a Bot must not become execution authority
   merely by being on screen."
-  (:require [kotoba.lang.coll :as set]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.app.work-governance :as governance])
@@ -84,7 +84,7 @@
   [id]
   #?(:clj
      (let [digest (.digest (MessageDigest/getInstance "SHA-256")
-                           (.getBytes (str id) "UTF-8"))]
+                           (kbytes/utf8-bytes (str id)))]
        (reduce (fn [acc b] (+ (* acc 256) (bit-and (long b) 0xff)))
                0 (take 6 digest)))
      :cljs

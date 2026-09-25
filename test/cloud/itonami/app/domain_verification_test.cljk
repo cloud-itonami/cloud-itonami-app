@@ -5,7 +5,7 @@
   in `oracle-cases` and `domain-binding-kotoba-parity-test`. What this file owns
   is everything the core deliberately does not know: DNS, the probe, the store,
   and the four things the ADR says implementation has to show."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.domain-verification :as verification]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.store :as store]))
@@ -106,14 +106,14 @@
   (with-state
     (fn [f]
       (testing "the suffix managed names are issued from"
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"サービス管理"
+        (is (thrown-with-msg? kerror/ExceptionInfo #"サービス管理"
                               (verification/start! (:session-a f)
                                                    {:domain (str "team." suffix)})))
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"サービス管理"
+        (is (thrown-with-msg? kerror/ExceptionInfo #"サービス管理"
                               (verification/start! (:session-a f)
                                                    {:domain suffix}))))
       (testing "and the origin this deployment serves itself on"
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"サービス管理"
+        (is (thrown-with-msg? kerror/ExceptionInfo #"サービス管理"
                               (verification/start! (:session-a f)
                                                    {:domain "team.itonami.cloud"}))))
       (testing "a customer's own name is not refused"
@@ -135,7 +135,7 @@
           (is (some? (:activation-nonce (record (:id started))))))
         (testing "absence is recorded but never treated as proof"
           (binding [verification/*txt-resolver* (constantly [])]
-            (is (thrown-with-msg? clojure.lang.ExceptionInfo #"まだ確認"
+            (is (thrown-with-msg? kerror/ExceptionInfo #"まだ確認"
                                   (verification/claim!
                                    (:session-a f)
                                    {:verification-id (:id started)})))))
@@ -167,7 +167,7 @@
   (with-state
     (fn [f]
       (let [started (verification/start! (:session-a f) {:domain "example.com"})]
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"別の Organization"
+        (is (thrown-with-msg? kerror/ExceptionInfo #"別の Organization"
                               (verification/claim!
                                (:session-b f) {:verification-id (:id started)})))
         (binding [verification/*txt-resolver*
@@ -176,11 +176,11 @@
         (testing "a claimed name is closed to another tenant at the START"
           ;; Refused before anyone is told to publish a record that could never
           ;; count — `:claimed` reserves the name, not only `:live`.
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"別の Organization"
+          (is (thrown-with-msg? kerror/ExceptionInfo #"別の Organization"
                                 (verification/start! (:session-b f)
                                                      {:domain "example.com"}))))
         (is (thrown-with-msg?
-             clojure.lang.ExceptionInfo #"Passkey session"
+             kerror/ExceptionInfo #"Passkey session"
              (verification/start!
               (assoc (:session-a f) :kind :agent :issued-via :local-ownership)
               {:domain "agent.example"})))))))
@@ -199,7 +199,7 @@
                                  :error "document returned HTTP 404"})]
             (let [thrown (try (verification/activate!
                                {} (:session-a f) {:verification-id (:id claimed)})
-                              (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                              (catch kerror/ExceptionInfo e (ex-data e)))]
               (is (= :domain-verification/not-answering (:type thrown)))
               (is (= "document returned HTTP 404" (:probe-error thrown))
                   "the measurement is reported, not reduced to a boolean")))
@@ -383,12 +383,12 @@
   (with-state
     (fn [f]
       (is (= "example.com" (verification/assert-claimable! "Example.COM.")))
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"完全なドメイン名"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"完全なドメイン名"
                             (verification/assert-claimable! "https://x/y")))
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"サービス管理"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"サービス管理"
                             (verification/assert-claimable! (str "x." suffix))))
       (claim! (:session-b f) "taken.example")
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"別の Organization"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"別の Organization"
                             (verification/assert-claimable! "taken.example"))))))
 
 (deftest a-challenge-is-replaced-rather-than-accumulated

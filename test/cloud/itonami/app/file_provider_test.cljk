@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.file-provider-test
-  (:require [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is]]
             [cloud.itonami.app.file-provider :as provider]
             [cloud.itonami.app.store :as store]
             [drive.store.memory :as memory]))
@@ -40,7 +40,7 @@
         (is (= #{(:id folder) (:id file)}
                (set (map :id (:items (provider/children actor provider/root-id))))))
         (provider/set-mode! actor (:id file) :paused :online-only)
-        (is (thrown? clojure.lang.ExceptionInfo
+        (is (thrown? kerror/ExceptionInfo
                      (provider/materialize actor (:id file) object-store)))
         (is (true? (provider/delete! actor (:id file))))
         (is (= [(:id folder)]
