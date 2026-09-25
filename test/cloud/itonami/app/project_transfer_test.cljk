@@ -2,7 +2,7 @@
   "Moving a project between two of one person's tenants (ADR-0024)."
   (:require [kotoba.lang.error :as kerror] [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as local-identity]
             [cloud.itonami.app.project-repository :as project-repository]

@@ -2,7 +2,7 @@
   "L2 graph CID. Offline: in-memory chain store, no PUT."
   (:require [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is]]
+            [kotoba.test :refer [deftest is]]
             [chain.core :as chain]
             [cloud.itonami.app.bundle :as bundle]
             [cloud.itonami.app.graph :as graph]

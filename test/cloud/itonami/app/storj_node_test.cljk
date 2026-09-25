@@ -6,7 +6,7 @@
   and the store is the one that could quietly lose a piece."
   (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.storj-node :as node]
             [storj.node.protocols :as p]))
 

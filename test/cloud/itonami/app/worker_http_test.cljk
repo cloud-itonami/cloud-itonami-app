@@ -7,7 +7,7 @@
   real ceremony needs an authenticator, and what is under test here is the
   route layer behind that gate."
   (:require [kotoba.io :as kio] [kotoba.json :as json]
-            [clojure.test :refer [deftest is]]
+            [kotoba.test :refer [deftest is]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as local-identity]
             [cloud.itonami.app.organism-gateway :as organism-gateway]

@@ -3,7 +3,7 @@
   is what made 127.0.0.1 unable to reach auth.itonami.cloud at all."
   (:require [kotoba.io :as kio] [kotoba.json :as json]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is]]
+            [kotoba.test :refer [deftest is]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as local-identity]
             [cloud.itonami.app.server :as server]

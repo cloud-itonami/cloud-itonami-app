@@ -33,7 +33,7 @@
   full. A conjunction is exactly the shape where sampling misses a dropped
   term."
   (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-control]
             [cloud.itonami.app.bots]
             [cloud.itonami.app.model-routing :as routing]

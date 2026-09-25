@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.fleet-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotoba.lang.coll]
             [kotoba.lang.text]
             [cloud.itonami.app.fleet :as fleet]))

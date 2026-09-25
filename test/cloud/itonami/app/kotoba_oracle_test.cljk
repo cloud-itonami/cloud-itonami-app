@@ -17,7 +17,7 @@
   against."
   (:require [kotoba.lang.error :as kerror] [kotoba.lang.edn :as edn]
             [kotoba.io :as io]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.app.kotoba-oracle-gen :as gen]
             [cloud.itonami.app.did-web :as did-web]

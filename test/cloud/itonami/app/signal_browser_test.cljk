@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.signal-browser-test
-  (:require [clojure.java.shell :as shell]
+  (:require [kotoba.process :as shell]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is]]))
+            [kotoba.test :refer [deftest is]]))
 
 (deftest browser-key-management-ratchet-and-group-session
   (let [{:keys [exit out err]} (shell/sh "node" "test/signal_browser_test.js")]

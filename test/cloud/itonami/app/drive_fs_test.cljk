@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.drive-fs-test
   "The Drive answering the thirteen questions NFS asks, and the two seams
   that decide who may ask them."
-  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.drive-fs :as drive-fs]
             [cloud.itonami.app.nfs :as nfs-service]

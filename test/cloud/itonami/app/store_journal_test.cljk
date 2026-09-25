@@ -15,7 +15,7 @@
   was there."
   (:require [kotoba.lang.error :as kerror] [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.host :as host]
             [cloud.itonami.app.host-bounds :as host-bounds]
             [cloud.itonami.app.store :as store]

@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.bot-identity-test
   (:require [clojure.java.io :as io]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.bot-identity :as bot-identity])
   (:import [java.nio.file Files LinkOption]
            [java.nio.file.attribute FileAttribute]))

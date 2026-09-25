@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.folder-sync-test
   (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [clojure.java.io :as io]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.folder-sync :as sync])
   (:import
            [java.nio.file Files]))

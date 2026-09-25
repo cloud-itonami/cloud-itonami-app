@@ -10,7 +10,7 @@
   untested, which is the one that has to keep working."
   (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing use-fixtures]]
+            [kotoba.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.credential :as credential]
             [cloud.itonami.app.did :as app-did]
             [cloud.itonami.app.documents :as documents]

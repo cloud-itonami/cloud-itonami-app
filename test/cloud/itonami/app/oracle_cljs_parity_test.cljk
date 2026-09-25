@@ -11,7 +11,7 @@
   exactly the point. It is here so that the table has a home on the runtime
   that CI already runs, and so `uncovered` is enforced even when nobody runs
   the nbb half."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.oracle-cases :as cases]))
 
 (deftest every-shipped-export-has-a-case

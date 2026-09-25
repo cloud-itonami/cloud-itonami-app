@@ -4,7 +4,7 @@
   test that depends on mainnet being reachable fails for reasons that have
   nothing to do with this code."
   (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.filecoin :as filecoin]
             [drive.object :as object]
             [kotoba.bytes :as b]))

@@ -9,7 +9,7 @@
   Host→tenant resolution and the 404 when no domain is published stay on the
   host. This file publishes a domain so the route would 200 without Kotoba."
   (:require [kotoba.io :as kio] [kotoba.json :as json]
-            [clojure.test :refer [deftest is]]
+            [kotoba.test :refer [deftest is]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.did-web :as did-web]
             [cloud.itonami.app.health :as health]

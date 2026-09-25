@@ -4,7 +4,7 @@
   central-auth-http-test; these tests keep shipped configuration fail-closed."
   (:require [kotoba.lang.edn :as edn]
             [kotoba.io :as io]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.store :as store]))
 

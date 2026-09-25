@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.messenger-test
-  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.io :as kio] [clojure.test :refer [deftest is testing use-fixtures]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.io :as kio] [kotoba.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.messenger :as messenger]
             [cloud.itonami.app.store :as store])

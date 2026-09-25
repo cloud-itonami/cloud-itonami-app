@@ -11,7 +11,7 @@
   These tests pin the distinction the fix rests on: an mtime that moved with no
   edit must NOT move the revision, and an edit must."
   (:require [kotoba.io :as kio] [kotoba.io :as io]
-            [clojure.test :refer [deftest is testing]]))
+            [kotoba.test :refer [deftest is testing]]))
 
 (def ^:private inventory
   "The private inventory under test, reached by var so the namespace keeps its

@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.chronicle-test
   (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is use-fixtures]]
+            [kotoba.test :refer [deftest is use-fixtures]]
             [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.store :as store]))
 

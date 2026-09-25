@@ -5,7 +5,7 @@
   2. an account number is never stored, only fingerprinted;
   3. an account belongs to an organization, so another organization cannot read
      or spend from it."
-  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.funding :as funding]
             [cloud.itonami.app.store :as store]))
 

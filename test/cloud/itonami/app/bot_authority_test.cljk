@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.bot-authority-test
   (:require [kotoba.io :as io]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.bot-authority :as bot-authority]
             [cloud.itonami.app.bot-identity :as bot-identity]))
 

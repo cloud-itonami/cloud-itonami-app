@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.identity-lifecycle-test
   (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.store :as store]))
 

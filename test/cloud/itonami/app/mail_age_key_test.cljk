@@ -7,7 +7,7 @@
   resolution to stop."
   (:require [kotoba.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.mail-age-key :as age-key]))
 
 (def ^:private recipient-a

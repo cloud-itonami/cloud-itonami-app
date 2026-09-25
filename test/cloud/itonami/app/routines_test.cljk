@@ -13,7 +13,7 @@
   ends the loop, which is enough for every assertion here and reaches no
   network."
   (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.config :as config]

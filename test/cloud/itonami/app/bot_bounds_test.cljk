@@ -6,7 +6,7 @@
   and mean opposite things — one checked a ceiling and found room, the other
   found no ceiling. A caller that folded them would report a bot as bounded
   because it was allowed to run."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.bot-bounds :as bounds]))
 
 (defn- turn [n] {:turn/usage {:total_tokens n}})

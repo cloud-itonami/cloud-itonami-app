@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.tls-binding-test
   "The certificate decisions that are not TLS, on both runtimes."
-  (:require #?(:clj [clojure.test :refer [deftest is testing]]
+  (:require #?(:clj [kotoba.test :refer [deftest is testing]]
                :cljs [cljs.test :refer [deftest is testing]])
             [cloud.itonami.app.tls-binding :as tls-binding]))
 

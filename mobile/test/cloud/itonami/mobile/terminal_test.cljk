@@ -13,7 +13,7 @@
   failed for another cause as a discrimination it did not make."
   (:require [kotoba.lang.edn :as edn]
             [kotoba.io :as io]
-            [clojure.test :refer [deftest is testing use-fixtures]]
+            [kotoba.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.commands :as commands]
             [cloud.itonami.mobile.terminal :as terminal]))
 

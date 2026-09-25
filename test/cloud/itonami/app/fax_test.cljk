@@ -4,7 +4,7 @@
   provisioned and a live call costs money and rings a real phone line."
   (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.fax :as fax]
             [cloud.itonami.app.lawfirm :as app-lawfirm]
             [lawfirm.actor :as lf-actor]

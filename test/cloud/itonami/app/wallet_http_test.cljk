@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.wallet-http-test
   (:require [kotoba.io :as kio] [kotoba.json :as json]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as identity]

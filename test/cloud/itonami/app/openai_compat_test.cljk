@@ -11,7 +11,7 @@
   chunk order depend on a model's token boundaries."
   (:require [kotoba.io :as kio] [kotoba.json :as json]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as local-identity]
             [cloud.itonami.app.provider :as provider]

@@ -7,7 +7,7 @@
   2. its digest material must cover every field that changes what would happen.
      A field left out of the material is a field an attacker may edit after the
      human consented."
-  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.authority :as authority]
             [cloud.itonami.app.authority.card :as card-adapter]
             [cloud.itonami.app.authority.esim :as esim-adapter]

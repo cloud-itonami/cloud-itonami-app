@@ -5,7 +5,7 @@
   ALL THREE run from one tick and that no count is folded into another — an
   operator reading a single number cannot tell four names and no mail domains
   from two of each."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.binding-sweep :as sweep]
             [cloud.itonami.app.domain-verification :as naming]
             [cloud.itonami.app.mail-domain-authority :as mail-authority]

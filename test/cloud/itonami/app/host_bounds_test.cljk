@@ -11,7 +11,7 @@
   filesystem and process libraries and `bin/test-portable-cljs` grants no
   classpath beyond `src` and `test`. The decisions have no dependencies, so
   they live where that is true."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.host-bounds :as host]))
 
 (deftest the-two-bounds-are-different-on-purpose

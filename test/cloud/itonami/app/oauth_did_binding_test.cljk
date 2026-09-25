@@ -9,7 +9,7 @@
   組織ごとに provider 1枠しか無く2人目が1人目を静かに上書きした、
   token 解決が `first` で『たまたま最初の接続』を選んだ、
   `:connected?` が state 全体のどこかに接続があれば true だった。"
-  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.store :as store]))
 

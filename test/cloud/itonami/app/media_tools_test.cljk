@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.media-tools-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.bot-authority :as bot-authority]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.media-tools :as media-tools]

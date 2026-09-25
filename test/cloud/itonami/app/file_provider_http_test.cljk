@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.file-provider-http-test
   (:require [kotoba.bytes :as kbytes] [kotoba.io :as kio] [kotoba.json :as json]
-            [clojure.test :refer [deftest is]]
+            [kotoba.test :refer [deftest is]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.file-provider :as provider]

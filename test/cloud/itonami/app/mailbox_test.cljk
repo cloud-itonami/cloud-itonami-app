@@ -7,7 +7,7 @@
   app asks the model the right questions and stores only the difference."
   (:require [kotoba.lang.error :as kerror] [kotoba.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing use-fixtures]]
+            [kotoba.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.mailbox :as app-mailbox]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.workspace :as workspace]))

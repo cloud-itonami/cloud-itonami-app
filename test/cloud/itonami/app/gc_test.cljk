@@ -9,7 +9,7 @@
   'measured and fine' is the exact defect the receipt exists to prevent."
   (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.bot-slo :as bot-slo]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.gc :as gc]

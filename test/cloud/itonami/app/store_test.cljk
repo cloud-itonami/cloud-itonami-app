@@ -8,7 +8,7 @@
   instants they stand for."
   (:require [kotoba.lang.edn :as edn]
             [kotoba.io :as io]
-            [clojure.test :refer [deftest is]]
+            [kotoba.test :refer [deftest is]]
             [cloud.itonami.app.store :as store]
             [langchain.edn-persist :as edn-persist])
   (:import [java.time Instant]))

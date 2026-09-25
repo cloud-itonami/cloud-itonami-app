@@ -28,7 +28,7 @@
   behind a CDN or a reverse proxy already has certificates and should not be
   asking a CA for more; a rate limit spent on a name somebody else terminates is
   spent for nothing."
-  (:require [kotoba.bytes :as kbytes] [clojure.java.shell :as shell]
+  (:require [kotoba.bytes :as kbytes] [kotoba.process :as shell]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.acme :as acme]
             [cloud.itonami.app.store :as store]

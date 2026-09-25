@@ -7,7 +7,7 @@
   untested against the data they are written for."
   (:require [kotoba.json :as json]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.business-tools :as business-tools]
             [cloud.itonami.app.bot-tools :as bot-tools]
             [cloud.itonami.app.config :as config]

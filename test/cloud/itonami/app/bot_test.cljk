@@ -9,7 +9,7 @@
   Admission and approval are exhausted rather than sampled. Both are
   conjunctions, and a conjunction is exactly the shape where a dropped term
   survives every example somebody thought to write down."
-  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.bot :as bot]
             [cloud.itonami.app.connectors :as connectors]
             [cloud.itonami.app.work-governance :as governance]))

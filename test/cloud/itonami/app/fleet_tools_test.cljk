@@ -3,7 +3,7 @@
 
   Tests the fleet namespace rather than agent-control, which requires
   agent.run and so only loads under the :dev alias's sibling layout."
-  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.fleet :as fleet]))
 
 (deftest search-reports-the-total-not-just-the-page

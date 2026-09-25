@@ -4,7 +4,7 @@
   could not happen, and -- the one that matters most -- that a CLIENT CANNOT
   SUPPLY ITS OWN POSTURE."
   (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.json :as json]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.authority :as authority]
             [cloud.itonami.app.authority.api :as api]
             [cloud.itonami.app.authority.esim :as esim-adapter]

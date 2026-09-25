@@ -8,7 +8,7 @@
   HTTP face (authentication, CSRF, organization scoping, persistence) is
   `public_bots_http_test.clj`, origin `.clj` with the rest of the loopback
   web tests."
-  (:require #?(:clj [clojure.test :refer [deftest is testing]]
+  (:require #?(:clj [kotoba.test :refer [deftest is testing]]
                :cljs [cljs.test :refer [deftest is testing]])
             [cloud.itonami.app.public-bot-catalog :as catalog]))
 

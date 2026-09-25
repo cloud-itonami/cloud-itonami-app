@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.cli-test
-  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.agent-session :as agent-session]

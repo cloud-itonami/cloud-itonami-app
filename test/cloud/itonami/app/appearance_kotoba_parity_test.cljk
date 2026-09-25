@@ -28,7 +28,7 @@
   Same caveat as the sibling suites: the native compile rows assert the core
   is expressible on native, not that anything runs there."
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.appearance :as appearance]
             [cloud.itonami.app.kotoba-oracle :as oracle]
             [kotoba.compiler.core :as compiler]

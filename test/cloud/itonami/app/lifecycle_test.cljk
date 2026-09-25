@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.lifecycle-test
-  (:require #?(:clj [clojure.test :refer [deftest is testing]]
+  (:require #?(:clj [kotoba.test :refer [deftest is testing]]
                :cljs [cljs.test :refer [deftest is testing]])
             [kotoba.lang.text :as str]
             [cloud.itonami.app.lifecycle :as lifecycle]))

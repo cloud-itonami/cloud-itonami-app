@@ -7,7 +7,7 @@
   every test file on the path."
   (:require [kotoba.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :as test]
+            [kotoba.test :as test]
             [cloud.itonami.app.authority-test]
             [cloud.itonami.app.vf-journal-test]
             [cloud.itonami.app.vf-authority-test]

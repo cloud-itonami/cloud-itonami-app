@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.work-partition-store-test
   (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.test :refer [deftest is]]
+            [kotoba.test :refer [deftest is]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.work-partition-store :as partitions]))
 

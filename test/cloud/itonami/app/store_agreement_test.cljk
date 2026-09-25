@@ -11,7 +11,7 @@
 
   So the interesting case here is not 'no server'. It is a server that IS
   healthy and IS someone else's, and a server that cannot say which it is."
-  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.server-process :as server-process])
   (:import [com.sun.net.httpserver HttpHandler HttpServer]

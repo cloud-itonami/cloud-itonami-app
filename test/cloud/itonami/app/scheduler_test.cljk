@@ -5,7 +5,7 @@
   the RSVP states, the conflict rule. The app had been calling three of that
   library's functions and none of these, so what is under test here is
   mostly whether the app hands the model the right questions."
-  (:require [kotoba.lang.error :as kerror] [clojure.test :refer [deftest is testing use-fixtures]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.scheduler :as scheduler]
             [cloud.itonami.app.store :as store]))
 

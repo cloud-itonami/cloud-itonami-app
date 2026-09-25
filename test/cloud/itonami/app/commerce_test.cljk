@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.commerce-test
   (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.commerce :as commerce]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.store :as store]))

@@ -6,7 +6,7 @@
   beside could only ever be exercised by pointing it at somebody's real
   mailbox, so for its whole life it never was."
   (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.mail-imap :as mail-imap]
             [imap.transport :as transport]))
 

@@ -7,7 +7,7 @@
   nothing else moves. The boundary from ADR-2608153000 holds throughout:
   no flow rate is written, no event is converted into a rate, and a
   resource with no correspondence calibrates nothing."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.vf-journal :as vf-journal]
             [cloud.itonami.app.vf-calibrate :as vfc]

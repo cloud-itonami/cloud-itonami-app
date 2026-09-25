@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.workspace-tools-test
   (:require [kotoba.lang.error :as kerror] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.workspace-tools :as workspace])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))

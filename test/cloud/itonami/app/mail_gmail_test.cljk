@@ -6,7 +6,7 @@
   nothing read — so a full sync of a large inbox took the newest hundred,
   reported success, and said nothing about the rest. That is the failure these
   pin: not an error, a silent ceiling."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.mail-gmail :as gmail]
             [gmail.threads :as threads]))
 

@@ -12,7 +12,7 @@
   真実性. That is the whole point of keeping them separate: a single combined
   number would let one closed limb read as compliance."
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is]]
+            [kotoba.test :refer [deftest is]]
             [cloud.itonami.app.esign.retention :as retention]
             [kotoba.compiler.core :as compiler]
             [kotoba.kir :as ir]))

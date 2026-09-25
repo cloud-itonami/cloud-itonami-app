@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.core-test
-  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [kotoba.test :refer [deftest is testing]]
             [kotoba.lang.edn :as edn]
             [kotoba.io :as io]
             [kotoba.lang.coll :as set]
