@@ -9,6 +9,7 @@ providers:
   murakumo:
     base_url: https://api.murakumo.cloud/v1
     api_mode: chat_completions
+    key_env: MURAKUMO_API_TOKEN
     models:
       mishima:
         context_length: 131072
