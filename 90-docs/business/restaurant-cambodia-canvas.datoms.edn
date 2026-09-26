@@ -1,0 +1,15 @@
+{:db/id :itonami.business/restaurant-cambodia
+ :business/type "restaurant"
+ :business/location "cambodia"
+ :isc/isic "5610"
+ :isc/isco "3111"
+ :isc/isic-label "Restaurants and mobile food service activities"
+ :isc/isco-label "Cooks"
+ :business/description "Japanese restaurant serving authentic cuisine"
+ :business/key-metrics
+ {:initial-investment-usd 200000
+  :permit-time-days 30
+  :foreign-ownership-allowed true
+  :min-capital-riel 10000000
+  :power-dependency-high
+  :competition-level-high}}

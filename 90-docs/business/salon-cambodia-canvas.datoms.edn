@@ -1,0 +1,15 @@
+{:db/id :itonami.business/salon-cambodia
+ :business/type "salon"
+ :business/location "cambodia"
+ :isc/isic "9602"
+ :isc/isco "5141"
+ :isc/isic-label "Fitness"
+ :isc/isco-label "Personal Appearance Workers"
+ :business/description "Japanese hair/nail salon offering beauty treatments"
+ :business/key-metrics
+ {:initial-investment-usd 15000
+  :permit-time-days 10
+  :foreign-ownership-allowed true
+  :min-capital-riel 1000000
+  :power-dependency-low
+  :competition-level-high}}

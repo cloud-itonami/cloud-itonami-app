@@ -1,0 +1,15 @@
+{:db/id :itonami.business/bakery-cafe-cambodia
+ :business/type "bakery-cafe"
+ :business/location "cambodia"
+ :isc/isic "1071"
+ :isc/isco "7512"
+ :isc/isic-label "Bakery Products"
+ :isc/isco-label "Bakers, Pastry-cooks and Confectionery Makers"
+ :business/description "Japanese-style bakery/cafe serving bread, pastries, and coffee"
+ :business/key-metrics
+ {:initial-investment-usd 50000
+  :permit-time-days 20
+  :foreign-ownership-allowed true
+  :min-capital-riel 4000000
+  :power-dependency-medium
+  :competition-level-medium}}
