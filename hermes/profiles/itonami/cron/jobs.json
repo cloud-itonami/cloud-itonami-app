@@ -124,7 +124,7 @@
       "base_url": null,
       "context_from": null,
       "deliver": "local",
-      "enabled": true,
+      "enabled": false,
       "enabled_toolsets": [
         "terminal"
       ],
