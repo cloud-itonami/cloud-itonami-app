@@ -8,8 +8,8 @@
             [cloud.itonami.app.filecoin :as filecoin]
             [drive.object :as object]
             [kotoba.bytes :as b])
-  (:import [com.sun.net.httpserver HttpServer HttpHandler]
-           [java.net InetSocketAddress]))
+  #?(:clj (:import [com.sun.net.httpserver HttpServer HttpHandler]
+                   [java.net InetSocketAddress])))
 
 (def payload (b/utf8-bytes "cloud-itonami-app · filecoin piece addressing"))
 
@@ -116,26 +116,27 @@
                                :fetch (fn [_] {:status 200 :bytes payload})})]
     (is (= (b/->bytes payload) (object/-get-object store ref)))))
 
-(deftest read-through-preserves-binary-bytes-over-http
-  (let [payload (byte-array (concat [0 127 -128 -1]
-                                    (.getBytes (str (random-uuid)) "UTF-8")))
-        ref (filecoin/piece-ref payload)
-        server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
-    (.createContext
-     server "/piece/"
-     (reify HttpHandler
-       (handle [_ exchange]
-         (let [path (.getPath (.getRequestURI exchange))
-               body (if (= path (str "/piece/" ref)) payload (byte-array 0))
-               status (if (pos? (alength body)) 200 404)]
-           (.sendResponseHeaders exchange status (alength body))
-           (with-open [out (.getResponseBody exchange)] (.write out body))))))
-    (.start server)
-    (try
-      (let [origin (str "http://127.0.0.1:" (.getPort (.getAddress server)))
-            store (filecoin/store {:provider-url origin})]
-        (is (= (b/->bytes payload) (object/-get-object store ref))))
-      (finally (.stop server 0)))))
+#?(:clj
+   (deftest read-through-preserves-binary-bytes-over-http
+     (let [payload (byte-array (concat [0 127 -128 -1]
+                                       (.getBytes (str (random-uuid)) "UTF-8")))
+           ref (filecoin/piece-ref payload)
+           server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+       (.createContext
+        server "/piece/"
+        (reify HttpHandler
+          (handle [_ exchange]
+            (let [path (.getPath (.getRequestURI exchange))
+                  body (if (= path (str "/piece/" ref)) payload (byte-array 0))
+                  status (if (pos? (alength body)) 200 404)]
+              (.sendResponseHeaders exchange status (alength body))
+              (with-open [out (.getResponseBody exchange)] (.write out body))))))
+       (.start server)
+       (try
+         (let [origin (str "http://127.0.0.1:" (.getPort (.getAddress server)))
+               store (filecoin/store {:provider-url origin})]
+           (is (= (b/->bytes payload) (object/-get-object store ref))))
+         (finally (.stop server 0))))))
 
 (deftest read-through-discards-bytes-that-do-not
   ;; The measured mainnet case: 11 of 13 providers reporting they held a live
