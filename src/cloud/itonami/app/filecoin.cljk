@@ -58,10 +58,10 @@
   (:require [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
-            [cloud.itonami.app.http-client :as http]
             [drive.object :as object]
             [kotoba.bytes :as b]
             [filecoin.client :as client]
+            [filecoin.protocols :as protocols]
             [filecoin.cloud.chain :as chain]
             [filecoin.cloud.evm :as evm]
             [filecoin.cloud.pdp :as pdp]
@@ -130,24 +130,12 @@
                              :url (provider/cdn-url client-address domain ref)})))))
 
 (defn- get-bytes
-  "`GET url` → raw bytes, bypassing `filecoin.protocols/IHttp`.
-
-  IHttp specifies `body` as a **String** and `filecoin.transport` builds it
-  with `BodyHandlers/ofString`, which decodes as UTF-8 and rewrites every byte
-  above 0x7f. A piece cannot survive that, so the body travels over the shim
-  as base64 and is decoded here. Widening IHttp is the fix and belongs in
-  `io-filecoin`; until then this bypass is deliberate and is why `http` is
-  unused on this path.
-
-  (The previous version read `(.getBytes body \"ISO-8859-1\")`, which looks
-  like a latin-1 round trip but is not one — the damage happened during
-  decoding, before this code saw the string.)"
+  "`GET url` → raw bytes through the binary-safe Filecoin transport."
   [^String url]
-  (let [resp (http/request {:url url :method :get :timeout-seconds 30})
-        b64 (:body resp)]
+  (let [resp (protocols/request (transport/http {:timeout-ms 30000})
+                                {:url url :method :get :response-type :bytes})]
     {:status (:status resp)
-     :bytes (when (seq (str b64))
-              (b/base64-decode-bytes ^String b64))}))
+     :bytes (:body resp)}))
 
 (defn- fetch-piece
   "Read-through retrieval for a piece that is not staged. Returns bytes or
