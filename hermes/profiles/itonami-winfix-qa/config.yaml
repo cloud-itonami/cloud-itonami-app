@@ -105,7 +105,7 @@ mcp_servers:
     command: /bin/sh
     args:
       - -c
-      - cd "~/github/com-junkawasaki/orgs/cloud-itonami/cloud-itonami-app" && exec /opt/homebrew/bin/kbb --backend sci --classpath bin bin/itonami-mcp
+      - cd "~/github/cloud-itonami/cloud-itonami-app" && exec /opt/homebrew/bin/kbb --backend sci --classpath bin bin/itonami-mcp
     env:
       CLOUD_ITONAMI_DATA_DIR: ~/.cloud-itonami/data
     connect_timeout: 120.0
