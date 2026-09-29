@@ -5,7 +5,7 @@
 ## Context
 
 The runtime rule (ADR-0065, ADR-2608095000, ADR-0049, and the workspace
-CLAUDE.md) says new code goes on ClojureScript or Kotoba and `:clj` is a frozen
+AGENTS.md) says new code goes on ClojureScript or Kotoba and `:clj` is a frozen
 compat layer. A PreToolUse hook enforces the *new* half — it refuses a new
 `.clj` outright. Nothing measured the *stock*, so "how much is left" was
 answerable only by counting files by extension.

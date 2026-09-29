@@ -12,7 +12,7 @@
 ;; It refuses to run against a store that holds a finished registration, so it
 ;; cannot add a user to somebody's real app.
 ;;
-;; nbb rather than .mjs: CLAUDE.md forbids new Node harnesses in raw JS.
+;; nbb rather than .mjs: AGENTS.md forbids new Node harnesses in raw JS.
 ;;
 ;; ## Why this exists, measured
 ;;

@@ -46,7 +46,7 @@ first line.
 
 The server line has three states, not two: answering (with the store id it
 reported), refused, and -- when the request could not be made at all -- said
-as such. CLAUDE.md's sixth question is the reason: a check that could not run
+as such. AGENTS.md's sixth question is the reason: a check that could not run
 must not return the value of a check that ran and passed. The session line
 names *which* source answered (environment variable or Keychain item), because
 a stale export and a fresh login produce an identical working CLI right up to

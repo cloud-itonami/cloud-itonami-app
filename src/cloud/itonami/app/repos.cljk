@@ -47,8 +47,8 @@
   [:stage :structural :activity :impl :coverage])
 
 (def ^:private axis-labels
-  {:stage "宣言された段階 (README/CLAUDE.md の stage marker)"
-   :structural "構造 (README / LICENSE / tests / CLAUDE.md)"
+  {:stage "宣言された段階 (README/AGENTS.md の stage marker)"
+   :structural "構造 (README / LICENSE / tests / AGENTS.md)"
    :activity "活動 (push 時刻の新しさ + commit 数)"
    :impl "実装量 (heuristic proxy)"
    :coverage "テスト網羅"})
