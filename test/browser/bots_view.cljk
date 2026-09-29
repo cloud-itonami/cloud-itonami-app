@@ -7,7 +7,7 @@
 ;; running app, which is a different thing to have and a different thing to
 ;; fail at.
 ;;
-;; nbb rather than .mjs: CLAUDE.md forbids new Node harnesses in raw JS.
+;; nbb rather than .mjs: AGENTS.md forbids new Node harnesses in raw JS.
 ;;
 ;; ## Why this exists, measured
 ;;

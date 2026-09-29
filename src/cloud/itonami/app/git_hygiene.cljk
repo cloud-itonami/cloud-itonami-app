@@ -29,7 +29,7 @@
     stash                   the runbook requires archiving to
                             `.git/stash-archive-<date>/` before any drop, and
                             'I am sure it landed' is explicitly not a reason
-                            to skip that (CLAUDE.md, measured incident)
+                            to skip that (AGENTS.md, measured incident)
     branch / dirty tree     retiring these needs push and server-side merge;
                             this Bot has no network and no credential
 

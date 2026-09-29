@@ -81,7 +81,7 @@ ESC during a run posts to `/v1/runs/<id>/stop`. What is printed is what the
 server answered -- 中断しました on a 2xx, 中断できません: HTTP n otherwise,
 中断を送れません when nothing answered. The first draft printed 中断を要求しました
 before the request resolved, which is true of a POST that 404s, and an operator
-who reads it stops watching a run that is still going. That is CLAUDE.md's
+who reads it stops watching a run that is still going. That is AGENTS.md's
 sixth question in the smallest possible space.
 
 An interrupt the operator asked for returns to the prompt; only a turn that

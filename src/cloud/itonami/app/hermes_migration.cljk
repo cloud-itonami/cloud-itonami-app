@@ -35,12 +35,12 @@
 (def ^:private credential-file-names #{".env" "auth.json"})
 (def ^:private default-portable-roots
   #{"config.yaml" "SOUL.md" "MEMORY.md" "USER.md" "todo.json"
-    "system_prompt.md" "AGENTS.md" "CLAUDE.md" ".cursorrules"
+    "system_prompt.md" "AGENTS.md" "AGENTS.md" ".cursorrules"
     "desktop.json" "skills" "cron" "scripts" "sessions" "plugins"
     "memories" "knowledge" "preferences"})
 (def ^:private runtime-context-files
   ["SOUL.md" "USER.md" "MEMORY.md" "system_prompt.md"
-   "AGENTS.md" "CLAUDE.md" ".cursorrules"])
+   "AGENTS.md" "AGENTS.md" ".cursorrules"])
 (def ^:private max-runtime-context-bytes (* 64 1024))
 
 (declare delete-tree! run-process! regular-file?)

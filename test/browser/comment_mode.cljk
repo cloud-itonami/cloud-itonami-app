@@ -10,7 +10,7 @@
 ;; `issue_comment_http_test`, which proves the route refuses without CSRF and
 ;; that `handle-bots!` gates it behind a human session.
 ;;
-;; nbb rather than .mjs: CLAUDE.md forbids new Node harnesses in raw JS.
+;; nbb rather than .mjs: AGENTS.md forbids new Node harnesses in raw JS.
 ;;
 ;; ## Why this exists
 ;;

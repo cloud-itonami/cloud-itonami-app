@@ -32,7 +32,7 @@ Every pty check written for the input area ran a slash command or a run in the
 same breath, and both redraw through other paths (`say!`, the progress tick).
 Not one of them typed a character, changed nothing else, and looked.
 
-That is the shape CLAUDE.md's fifth question asks about -- a check that has
+That is the shape AGENTS.md's fifth question asks about -- a check that has
 only ever been run in a state where something else would have made it pass.
 The fix is not only the missing redraw:
 

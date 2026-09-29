@@ -80,7 +80,7 @@ def stream_remote(inventory, host, manifest_path):
     write_manifest(manifest_path, manifest)
     root_source = min((s for s, _ in mappings), key=lambda p: len(str(p)))
     operational_dirs = ('scripts', 'manifest', '.agents/skills', '.claude/skills')
-    operational_files = {'AGENTS.md', 'CLAUDE.md', 'SECURITY.md', 'package.json', 'package-lock.json', 'deps.edn', 'nbb.edn'}
+    operational_files = {'AGENTS.md', 'AGENTS.md', 'SECURITY.md', 'package.json', 'package-lock.json', 'deps.edn', 'nbb.edn'}
     child_sources = [s for s, _ in mappings if s != root_source]
     def included_root_path(path):
         if not path.is_relative_to(root_source): return False

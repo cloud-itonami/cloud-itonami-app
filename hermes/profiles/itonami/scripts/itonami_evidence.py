@@ -16,7 +16,7 @@ TWO ROOTS, ON PURPOSE.
               populated, and the ISIC and COFOG mirrors live there. Read only.
   WORK_ROOT   a worktree of the same repository. The bot may branch and commit
               here. Nothing writes to READ_ROOT, because other sessions are
-              working in it and CLAUDE.md forbids it.
+              working in it and AGENTS.md forbids it.
 
 THE EXIT CODE IS LOAD-BEARING IN ONE DIRECTION.
 

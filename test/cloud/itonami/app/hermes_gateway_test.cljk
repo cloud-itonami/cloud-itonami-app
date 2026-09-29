@@ -3,7 +3,7 @@
 
   Run: kbb --backend sci --classpath src:test:<text>/src test/cloud/itonami/app/hermes_gateway_test.cljk
 
-  Refusals pin the `:refuse` literal (CLAUDE.md question 6): a test that only
+  Refusals pin the `:refuse` literal (AGENTS.md question 6): a test that only
   asserts `refusal?` would count a run refused for another reason."
   (:require [cljs.test :refer [deftest is testing run-tests]]
             [cloud.itonami.app.hermes-gateway :as hg]))

@@ -68,7 +68,7 @@ registry leaves the help.
 `/bots` read `:data` from `/api/agent-bots`, which answers under `:bots`. On
 this machine, against a live resident holding more than twenty Bots, it
 printed nothing: HTTP 200, a working server, an empty screen. That is
-CLAUDE.md's sixth question in miniature -- a lookup that could not find its
+AGENTS.md's sixth question in miniature -- a lookup that could not find its
 data returning what a lookup that found none returns. It now reads both shapes
 and says so when the list is genuinely empty.
 
