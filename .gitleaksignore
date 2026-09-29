@@ -39,3 +39,8 @@ a6b86ad192e4fbfaac43ebd89dd7545340f05b6f:test/cloud/itonami/app/credential_http_
 
 # Synthetic credential-shaped text used to assert profile rejection; never a key.
 63c42cc3ca1a959c4150dc330afca135739af1f6:test/cloud/itonami/app/bots_test.cljk:generic-api-key:5959
+
+# Public did:key zero-seed test vector in the 2026-09-24 Hermes migration notes.
+# These identify a derived public key; the zero seed is explicitly synthetic.
+0d904a5b7ac9badfb7055d0ca6277d5dbb50d95e:hermes/profiles/itonami/skills/java-kotoba-migration/references/kotoba-guest-porting.md:generic-api-key:121
+0d904a5b7ac9badfb7055d0ca6277d5dbb50d95e:hermes/profiles/itonami/skills/java-kotoba-migration/SKILL.md:generic-api-key:174
