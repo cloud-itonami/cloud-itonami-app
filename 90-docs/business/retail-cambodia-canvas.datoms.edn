@@ -1,0 +1,15 @@
+{:db/id :itonami.business/retail-cambodia
+ :business/type "retail"
+ :business/location "cambodia"
+ :isc/isic "4711"
+ :isc/isco "5223"
+ :isc/isic-label "Retail sale in non-specialized stores"
+ :isc/isco-label "Retail Salespersons"
+ :business/description "Japanese retail shop selling imported goods"
+ :business/key-metrics
+ {:initial-investment-usd 80000
+  :permit-time-days 20
+  :foreign-ownership-allowed true
+  :min-capital-riel 4000000
+  :power-dependency-low
+  :competition-level-high}}

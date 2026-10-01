@@ -1,0 +1,33 @@
+{:vf/business-analysis "itonami-business-vf"
+ :vf/analysis-date "2026-09-25"
+ :vf/entities
+ [{:vf/entity :itonami.business/bakery-cafe-cambodia
+   :vf/action :vf/produce
+   :vf/resource :raw-material/bakery-product
+   :vf/quantity {:unit "unit" :value 1000}
+   :vf/price {:currency "USD" :amount 5.0}}
+  {:vf/entity :itonami.business/salon-cambodia
+   :vf/action :vf/provide
+   :vf/resource :service/hair-treatment
+   :vf/quantity {:unit "hour" :value 8}
+   :vf/price {:currency "USD" :amount 35.0}}
+  {:vf/entity :itonami.business/school-cambodia
+   :vf/action :vf/teach
+   :vf/resource :service/education
+   :vf/quantity {:unit "hour" :value 20}
+   :vf/price {:currency "USD" :amount 15.0}}
+  {:vf/entity :itonami.business/retail-cambodia
+   :vf/action :vf/sell
+   :vf/resource :good/imported-product
+   :vf/quantity {:unit "unit" :value 500}
+   :vf/price {:currency "USD" :amount 20.0}}
+  {:vf/entity :itonami.business/restaurant-cambodia
+   :vf/action :vf/cook
+   :vf/resource :food/japanese-dish
+   :vf/quantity {:unit "serving" :value 200}
+   :vf/price {:currency "USD" :amount 12.0}}
+  {:vf/entity :itonami.business/fitness-cambodia
+   :vf/action :vf/train
+   :vf/resource :service/fitness-class
+   :vf/quantity {:unit "hour" :value 10}
+   :vf/price {:currency "USD" :amount 25.0}}]}

@@ -1,0 +1,11 @@
+{:db/id :itonami.maturity/cambodia-business-analysis
+ :maturity/analysis-date "2026-09-25"
+ :maturity/scores
+ {:bakery-cafe {:overall 85 :market-fit 90 :regulatory 85 :operations 80 :financial 85}
+  :salon {:overall 82 :market-fit 85 :regulatory 90 :operations 85 :financial 80}
+  :school {:overall 80 :market-fit 80 :regulatory 95 :operations 85 :financial 75}
+  :retail {:overall 65 :market-fit 70 :regulatory 85 :operations 65 :financial 60}
+  :restaurant {:overall 60 :market-fit 65 :regulatory 70 :operations 60 :financial 55}
+  :fitness {:overall 55 :market-fit 60 :regulatory 75 :operations 55 :financial 50}}
+ :maturity/ranking [:bakery-cafe :salon :school :retail :restaurant :fitness]
+ :maturity/notes "Ranking based on JETRO 2025/2026 reports, NIS statistics, and World Bank Enterprise Surveys"
