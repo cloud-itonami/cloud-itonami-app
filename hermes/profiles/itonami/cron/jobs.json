@@ -20,7 +20,7 @@
       "script": "itonami_evidence.py",
       "skill": null,
       "skills": [],
-      "workdir": "~/.gftd/worktrees/itonami-growth-bot"
+      "workdir": null
     },
     {
       "base_url": "https://api.murakumo.cloud/v1",
@@ -42,7 +42,7 @@
       "script": "itonami_evidence.py",
       "skill": null,
       "skills": [],
-      "workdir": "~/.gftd/worktrees/itonami-growth-bot"
+      "workdir": null
     },
     {
       "base_url": null,
@@ -90,7 +90,7 @@
       "script": null,
       "skill": null,
       "skills": [],
-      "workdir": "~/github/com-junkawasaki"
+      "workdir": null
     },
     {
       "base_url": null,
@@ -118,13 +118,13 @@
       "script": null,
       "skill": null,
       "skills": [],
-      "workdir": "~/github/com-junkawasaki"
+      "workdir": null
     },
     {
       "base_url": null,
       "context_from": null,
       "deliver": "local",
-      "enabled": true,
+      "enabled": false,
       "enabled_toolsets": [
         "terminal"
       ],
@@ -166,7 +166,7 @@
       "script": null,
       "skill": null,
       "skills": [],
-      "workdir": "~/github/com-junkawasaki"
+      "workdir": null
     },
     {
       "base_url": null,
@@ -190,7 +190,7 @@
       "script": null,
       "skill": null,
       "skills": [],
-      "workdir": "~/github/com-junkawasaki"
+      "workdir": null
     },
     {
       "base_url": null,
@@ -298,6 +298,50 @@
         "display": "every 60m"
       },
       "script": "b2_soak_tick.py",
+      "skill": null,
+      "skills": [],
+      "workdir": null
+    },
+    {
+      "base_url": null,
+      "context_from": null,
+      "deliver": "local",
+      "enabled": true,
+      "enabled_toolsets": null,
+      "id": "e86c68686732",
+      "model": null,
+      "name": "openrouter-quota-test",
+      "no_agent": false,
+      "prompt": "You are a quota test agent. Return a single short sentence confirming you ran. Use minimal tokens. No tools needed. Just reply: \"quota test tick complete\"",
+      "provider": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 1,
+        "display": "every 1m"
+      },
+      "script": null,
+      "skill": null,
+      "skills": [],
+      "workdir": null
+    },
+    {
+      "base_url": null,
+      "context_from": null,
+      "deliver": "local",
+      "enabled": true,
+      "enabled_toolsets": null,
+      "id": "e63477869293",
+      "model": null,
+      "name": "ISIC/ISCO registration check",
+      "no_agent": false,
+      "prompt": "ISIC/ISCO registration check",
+      "provider": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 4 * * *",
+        "display": "0 4 * * *"
+      },
+      "script": "iscic-register-evidence.py",
       "skill": null,
       "skills": [],
       "workdir": null
