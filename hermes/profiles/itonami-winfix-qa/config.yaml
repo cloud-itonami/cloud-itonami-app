@@ -10,6 +10,9 @@ providers:
     base_url: https://api.murakumo.cloud/v1
     api_mode: chat_completions
     models:
+      mishima:
+        context_length: 131072
+        max_tokens: 1024
       nex-n2.5-mini-uncensored:
         context_length: 65536
         max_tokens: 8192
@@ -52,6 +55,9 @@ providers:
       qwen3.8-flash-next-whitehacker:
         context_length: 131072
 fallback_providers:
+  - provider: murakumo
+    model: mishima
+    base_url: https://api.murakumo.cloud/v1
   - provider: openrouter-free
     model: z-ai/glm-5.3-flash
     base_url: https://openrouter.ai/api/v1
@@ -93,13 +99,13 @@ auxiliary:
     base_url: https://api.kotoba.cloud/v1
     model: qwen3.8-flash-next-whitehacker
     provider: kotoba
-_config_version: 45
+_config_version: 46
 mcp_servers:
   cloud-itonami-app:
     command: /bin/sh
     args:
       - -c
-      - cd "~/github/com-junkawasaki/orgs/cloud-itonami/cloud-itonami-app" && exec /opt/homebrew/bin/kbb --backend sci --classpath bin bin/itonami-mcp
+      - cd "~/github/cloud-itonami/cloud-itonami-app" && exec /opt/homebrew/bin/kbb --backend sci --classpath bin bin/itonami-mcp
     env:
       CLOUD_ITONAMI_DATA_DIR: ~/.cloud-itonami/data
     connect_timeout: 120.0
@@ -116,3 +122,5 @@ agent:
 cron:
   bot_chat_delivery_timeout_seconds: 900
   max_parallel_jobs: 12
+gateway:
+  cron_only: true
