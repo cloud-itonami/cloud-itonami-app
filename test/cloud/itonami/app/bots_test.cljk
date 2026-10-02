@@ -2941,6 +2941,28 @@
         (is (= "approved" (:decision (held-card b))))
         (is (= "answered" (:standing (held-card b))))))))
 
+(deftest a-human-approval-records-who-decided
+  ;; The card that a person answers must carry the person's did:key, the way
+  ;; the agent branch records :agent-session and the omakase branch records
+  ;; :bot — otherwise who approved this write exists nowhere durable.
+  (with-store
+    (fn []
+      (connect! "conn-1" :google "sub-1" "jun@example.com")
+      (let [b (make-bot alice {:writes? true})
+            ran (atom [])]
+        (with-redefs-fn {(run-tool-var) (fn [_ _ _ n _] (swap! ran conj n) {:text "sent" :images []})}
+          (fn []
+            (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                          provider/agent-turn (proposes-write)]
+              (bots/send! nil alice (:bot/id b) "メール送って")
+              (bots/decide! nil alice (:bot/id b) (:id (held-card b)) "approved"))))
+        (is (= "approved" (:decision (held-card b))))
+        (is (= "did:key:alice" (:card/decided-by (held-card b)))
+            "the human approval carries the deciding person's did:key")
+        (is (:card/decided-at (held-card b)))
+        (is (nil? (:card/decision-mode (held-card b)))
+            "a human decision is not omakase")))))
+
 (deftest an-archived-bot-keeps-its-conversation-and-stops-working
   (with-store
     (fn []

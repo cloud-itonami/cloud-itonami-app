@@ -8226,7 +8226,9 @@
                                                                :card/decided-at (store/now))
                                                 (= :agent (:kind session))
                                                 (assoc :card/decision-mode :omakase
-                                                       :card/decided-by :agent-session))
+                                                       :card/decided-by :agent-session)
+                                                (not= :agent (:kind session))
+                                                (assoc :card/decided-by (identity/session-did session)))
                                               %)
                                            cards))))
                          messages)))
