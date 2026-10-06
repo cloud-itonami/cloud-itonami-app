@@ -25,21 +25,33 @@ for i, source in enumerate(cp):
     if src.is_dir():
         shutil.copytree(src, out / dest)
         for renamed in src.rglob('*.cljk'):
-            if not renamed.is_relative_to(root):
-                if renamed.parent.name == 'cloud_kotoba_dds' and renamed.stem in {'chat', 'styles'}:
-                    target = out / dest / renamed.relative_to(src).with_suffix('.cljc')
-                    shutil.copy2(renamed, target)
-                continue  # dependency fixtures may intentionally use .cljk
-            relative = str(renamed.relative_to(root))
+            relative = str(renamed.relative_to(root)) if renamed.is_relative_to(root) else None
+            # New canonical .cljk sources need not have a pre-rename entry.
+            # JVM .cljc accepts plain Clojure and reader conditionals. Preserve
+            # explicit platform suffixes and recorded collisions when present.
             extension = origins.get(relative)
             if extension is None:
-                raise SystemExit(f'Missing cljk origin: {relative}')
+                extension = '.cljs' if renamed.name.endswith('.cljs.cljk') else '.clj' if renamed.name.endswith('.clj.cljk') else '.cljc'
             original = renamed.name[:-5]
             if not original.endswith(extension): original += extension
             target = out / dest / renamed.relative_to(src).parent / original
             if target.exists() and target.read_bytes() != renamed.read_bytes():
+                if relative is None:
+                    continue  # dependency's explicit JVM source takes precedence
                 raise SystemExit(f'Conflicting JVM source: {target}')
-            shutil.copy2(renamed, target)
+            text = renamed.read_text()
+            # Kotoba's compiler treats export vectors as symbolic metadata;
+            # stock Clojure evaluates ns metadata. Quote only that annotation
+            # in the generated JVM adapter, leaving canonical sources intact.
+            text = re.sub(r'(:kotoba/export\s+)(\[[^\]]*\])', r"\1'\2", text)
+            # error.cljk documents that stock JVM catch resolves classes,
+            # not Vars containing a Class. The Kotoba alias is the same class.
+            text = re.sub(r'(\(catch\s+)kerror/ExceptionInfo\b', r'\1clojure.lang.ExceptionInfo', text)
+            # The app persists full EDN (including sets). kotoba.lang.edn's
+            # restricted interchange parser rejects dispatch forms; use the
+            # JVM's non-evaluating EDN reader for the generated host adapter.
+            text = re.sub(r'\[kotoba\.lang\.edn\s+:as\s+edn\]', '[clojure.edn :as edn]', text)
+            target.write_text(text)
     else:
         (out / dest).parent.mkdir(exist_ok=True)
         shutil.copy2(src, out / dest)

@@ -1,0 +1,24 @@
+;; Invoke with the packaged classpath and a fresh, explicit data-dir property.
+(require '[cloud.itonami.app.server :as server]
+         '[cloud.itonami.app.config :as config]
+         '[cloud.itonami.app.web :as web]
+         '[clojure.edn :as edn])
+(assert (.startsWith (str (config/data-dir)) "/private/tmp/itonami-native-smoke-")
+(assert (= #{:a :b} (edn/read-string "#{:a :b}")))
+(assert (seq web/bot-component-css))
+(assert (seq web/bot-component-js))
+(let [configuration (-> (config/load-config)
+                        (assoc-in [:server :port] 1352)
+                        (assoc-in [:bots :tick :enabled?] false)
+                        (assoc-in [:bots :recover-on-start?] false)
+                        (assoc-in [:updates :enabled?] false)
+                        (assoc-in [:domain-binding :recheck?] false))]
+  (try
+    (server/start! configuration)
+    (let [health (slurp "http://127.0.0.1:1352/health")
+          page (slurp "http://127.0.0.1:1352/")]
+      (assert (re-find #"cloud-itonami-app" health))
+      (assert (re-find #"<!doctype html>" page))
+      (println "native resident: real HTTP health and page passed"))
+    (finally (server/stop!))))
+(shutdown-agents)
