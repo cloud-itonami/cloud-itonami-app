@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.work-approval
   "Passkey-bound organizational approval decisions for governed WorkItems."
-  (:require [clojure.set :as set]
+  (:require [kotoba.lang.coll :as set]
             [cloud.itonami.app.passkey :as passkey]
             [cloud.itonami.app.work-governance :as governance]
             [cloud.itonami.app.work-runtime :as runtime])

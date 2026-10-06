@@ -1,8 +1,8 @@
 (ns cloud.itonami.app.workspace
   "Read-only adapters for the existing Kotoba and Cloud Itonami workspace systems."
-  (:require [calendar.model :as calendar]
+  (:require [kotoba.bytes :as kbytes] [calendar.model :as calendar]
             [cloud.itonami.app.identity :as local-identity]
-            [clojure.data.json :as json]
+            [kotoba.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [drive.model :as drive]
@@ -15,7 +15,6 @@
            [java.nio.file Files LinkOption Path]
            [java.time Duration Instant ZoneId ZonedDateTime]
            [java.time.format DateTimeFormatter]
-           [java.util Base64]
            [java.util.concurrent TimeUnit]))
 
 (defonce cache (atom {}))
@@ -89,7 +88,7 @@
 (defn- decode-transfer [value encoding charset]
   (try
     (case (some-> encoding str/lower)
-      "base64" (String. (.decode (Base64/getMimeDecoder) value)
+      "base64" (String. (kbytes/base64mime-decode-bytes value)
                         (Charset/forName charset))
       "quoted-printable" (decode-quoted-printable value charset false)
       (String. (.getBytes value StandardCharsets/ISO_8859_1)
@@ -107,7 +106,7 @@
            (fn [[_ charset encoding encoded]]
              (try
                (if (= "b" (str/lower encoding))
-                 (String. (.decode (Base64/getDecoder) encoded)
+                 (String. (kbytes/base64-decode-bytes encoded)
                           (Charset/forName charset))
                  (decode-quoted-printable encoded charset true))
                (catch Exception _ "(復号できない文字列)"))))

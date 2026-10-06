@@ -29,7 +29,7 @@
 
   Replay folds every event and CHECKS the recorded root; a journal whose
   replayed root disagrees with a recorded root is corrupt and refuses to load."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
@@ -70,7 +70,7 @@
   (let [s (pr-str (sort-by first (seq inventory)))]
     (apply str (map #(format "%02x" %)
                     (.digest (java.security.MessageDigest/getInstance "SHA-256")
-                             (.getBytes s java.nio.charset.StandardCharsets/UTF_8))))))
+                             (kbytes/utf8-bytes s))))))
 
 (defn root [inventory] (inventory-root inventory))
 
@@ -125,7 +125,7 @@
   (let [conform-result (conform/conform-event ev)]
     (if (not (:ok? conform-result))
       {:appended? false :stage :conform :errors (:errors conform-result)}
-      (let [entry-id (str "vfe-" (java.util.UUID/randomUUID))
+      (let [entry-id (str "vfe-" (random-uuid))
             file (org-journal-file org)
             inventory (load-inventory org)
             fold (event/apply-event inventory ev)]

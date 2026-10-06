@@ -19,7 +19,7 @@
   called the core. It does not call the core — nothing does yet — and when
   something does, that call site is what should own this derivation."
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.organism-worker :as ow]
             [kotoba.compiler.core :as compiler]
             [kotoba.kir :as ir]))

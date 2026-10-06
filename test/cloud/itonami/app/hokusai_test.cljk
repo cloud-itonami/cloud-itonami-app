@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.hokusai-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.hokusai :as hokusai]))
 
 (deftest submit-refuses-rather-than-repairs

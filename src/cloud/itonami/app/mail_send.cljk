@@ -22,7 +22,7 @@
   either route sees it. A malformed recipient should be refused here, where
   the error names the field, rather than at a provider, where it comes back
   as a 400 with a body nobody reads."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.mail-account :as account]
             [cloud.itonami.app.mail-gmail :as gmail]
@@ -32,9 +32,7 @@
             [cloud.itonami.app.store :as store]
             [mail.message :as message]
             [mail.receipt :as receipt]
-            [smtp.client :as smtp])
-  (:import [java.nio.charset StandardCharsets]
-           [java.util Base64]))
+            [smtp.client :as smtp]))
 
 (def schema "cloud.itonami.app.mail-send.v1")
 
@@ -86,8 +84,8 @@
     (if (every? #(< (int %) 128) value)
       value
       (str "=?UTF-8?B?"
-           (.encodeToString (Base64/getEncoder)
-                            (.getBytes value StandardCharsets/UTF_8))
+           (kbytes/base64-encode
+                            (kbytes/utf8-bytes value))
            "?="))))
 
 (defn- email
@@ -126,15 +124,15 @@
          "\r\n\r\n"
          ;; base64, so a body with non-ASCII in it survives a transport that
          ;; is only guaranteed to carry 7 bits.
-         (->> (.encodeToString (Base64/getEncoder)
-                               (.getBytes (str body) StandardCharsets/UTF_8))
+         (->> (kbytes/base64-encode
+                               (kbytes/utf8-bytes (str body)))
               (partition-all 76)
               (map #(apply str %))
               (str/join "\r\n")))))
 
 (defn- base64url [text]
-  (.encodeToString (.withoutPadding (Base64/getUrlEncoder))
-                   (.getBytes (str text) StandardCharsets/UTF_8)))
+  (kbytes/base64url-encode
+                   (kbytes/utf8-bytes (str text)) {:pad? false}))
 
 ;; ---------------------------------------------------------------------------
 ;; Routes

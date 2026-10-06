@@ -34,9 +34,17 @@
 (def out-dir "target/amu")
 
 (defn- sh [cmd args]
+  ;; Windows: Node >= 18.20 refuses to spawn .cmd/.bat without a shell
+  ;; (CVE-2024-27980), and it cannot exec a shebang script at all — so an
+  ;; `amu` that is any launcher script would die with empty output and
+  ;; exit != 0 before amu printed a word (measured on the windows runner,
+  ;; 2026-09-13). Routing through the shell makes both shapes spawnable.
+  ;; amu's argv carries no shell metacharacters and every path is absolute,
+  ;; so the same call is used on POSIX.
   (let [{:keys [status stdout stderr]}
         (js->clj (cp/spawnSync cmd (clj->js args)
-                               #js {:encoding "utf8" :stdio "pipe"})
+                               #js {:encoding "utf8" :stdio "pipe"
+                                    :shell true})
                  :keywordize-keys true)]
     {:exit (or status 1) :stdout (str stdout) :stderr (str stderr)}))
 

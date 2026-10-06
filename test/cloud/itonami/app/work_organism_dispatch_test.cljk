@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.work-organism-dispatch-test
-  (:require [clojure.test :refer [deftest is use-fixtures]]
+  (:require [kotoba.test :refer [deftest is use-fixtures]]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.organism-gateway :as gateway]
             [cloud.itonami.app.store :as store]

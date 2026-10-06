@@ -94,7 +94,7 @@
   content-addressed store. Writing signed content to Filecoin or IPFS first and
   deciding erasure afterwards is not recoverable — which is why
   `cloud.itonami.app.filecoin` staging is not in this path."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [cloud.itonami.app.credential :as credential]
             [webauthn.assurance :as assurance]
             [cloud.itonami.app.did :as did]
@@ -108,8 +108,7 @@
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.config :as config]
             [asn1.core :as asn1])
-  (:import [java.security SecureRandom]
-           [java.util Base64]))
+  (:import [java.security SecureRandom]))
 
 (def schema "cloud.itonami.app.esign.v1")
 (def evidence-schema "cloud.itonami.app.esign.evidence.v1")
@@ -142,7 +141,7 @@
 (defn- nonce []
   (let [bytes (byte-array 16)]
     (.nextBytes (SecureRandom.) bytes)
-    (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) bytes)))
+    (kbytes/base64url-encode bytes {:pad? false})))
 
 (defn- refuse! [message type detail]
   (throw (ex-info message (assoc detail :type type))))

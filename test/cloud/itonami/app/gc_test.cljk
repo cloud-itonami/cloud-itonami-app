@@ -7,9 +7,9 @@
   pressure levels pin their literals — `:unknown` is asserted to be distinct
   from `:ok`, because 'could not measure' printing the same thing as
   'measured and fine' is the exact defect the receipt exists to prevent."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.bot-slo :as bot-slo]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.gc :as gc]
@@ -321,13 +321,12 @@
   transact!, so `sweep!` exercises its real plan-archive-drop path without
   touching the developer store."
   [f]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-gc-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-gc-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config/data-dir (fn [] temporary)
                     store/transact! (fn [f & args]
                                       (apply swap! store/state f args))]
         (f))
@@ -350,7 +349,7 @@
                                               {:type :fs/disk-pressure})))]
           (is (= :fs/disk-pressure
                  (try (gc/sweep! {}) :no-throw
-                      (catch clojure.lang.ExceptionInfo e
+                      (catch kerror/ExceptionInfo e
                         (:type (ex-data e))))))))
       (testing "and nothing was dropped"
         (is (some? (get-in (store/snapshot) [:bots :goal-jobs "dead"])))

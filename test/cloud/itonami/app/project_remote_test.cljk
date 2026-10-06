@@ -6,7 +6,7 @@
   bucket layout, credential resolution, the refusal when there are none, and the
   one parsing rule that has now bitten this codebase twice."
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.project-remote :as remote]))
 
 (defn- with-environment [values f]

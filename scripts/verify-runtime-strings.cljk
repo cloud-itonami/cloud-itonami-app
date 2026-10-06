@@ -1,0 +1,121 @@
+(ns verify-runtime-strings
+  "Template literals whose TEXT carries Japanese, in the browser scripts.
+
+  Such a string never exists as one literal in the source, so the render-time
+  locale table (locale/substitute :exact?) cannot translate it; since
+  2026-09-16 the scripts build runtime strings with
+  `fmt('… {hole} …', {hole})` → shinkansen.locale.format, whose pattern IS a
+  plain literal. This script is the guard that keeps it so.
+
+  It tokenises the script (line and block comments, quoted strings and regex
+  literals are skipped; `${…}` holes are matched by brace depth with nested
+  templates and quotes honoured) rather than pairing backticks with a regex —
+  the regex measure counted 119 while the tokenised count was 369, because a
+  backtick in a comment paired with a real one and swallowed the code between.
+  Japanese inside a hole is fine (it is a quoted literal the table translates);
+  Japanese in the template's own text is the finding.
+
+  Prints one line per finding (file:line  text) and `SCANNED<TAB><templates>`;
+  exit 1 when there is a finding, 2 when a script could not be read or
+  tokenised (never a silent pass).
+
+  Run: kbb --backend sci scripts/verify-runtime-strings.cljk"
+  (:require ["fs" :as fs] ["path" :as path] [clojure.string :as str]))
+
+(def scripts ["resources/cloud/itonami/app/interaction.js"
+              "resources/cloud/itonami/app/signal.js"])
+
+(def jp-re #"[぀-ヿ一-鿿]")
+
+(defn- scan-template
+  "i at the opening backtick → [end-index-after-close text-outside-holes]."
+  [src i]
+  (let [n (count src)]
+    (loop [j (inc i) text ""]
+      (when (>= j n) (throw (ex-info "unterminated template" {:at i})))
+      (let [c (.charAt src j)]
+        (cond
+          (= c "\\") (recur (+ j 2) (str text (subs src j (min n (+ j 2)))))
+          (= c "`") [(inc j) text]
+          (and (= c "$") (= (.charAt src (inc j)) "{"))
+          (let [k (loop [k (+ j 2) depth 1]
+                    (when (>= k n) (throw (ex-info "unterminated hole" {:at j})))
+                    (let [ch (.charAt src k)]
+                      (cond
+                        (or (= ch "'") (= ch "\""))
+                        (recur (loop [m (inc k)]
+                                 (cond (= (.charAt src m) "\\") (recur (+ m 2))
+                                       (= (.charAt src m) ch) (inc m)
+                                       :else (recur (inc m))))
+                               depth)
+                        (= ch "`") (recur (first (scan-template src k)) depth)
+                        (= ch "{") (recur (inc k) (inc depth))
+                        (= ch "}") (if (= depth 1) k (recur (inc k) (dec depth)))
+                        :else (recur (inc k) depth))))]
+            (recur (inc k) text))
+          :else (recur (inc j) (str text c)))))))
+
+(defn- regex-start? [src i]
+  (let [p (loop [p (dec i)] (if (and (>= p 0) (#{" " "\t"} (.charAt src p))) (recur (dec p)) p))]
+    (or (< p 0)
+        (contains? #{"(" "," "=" ":" "[" "!" "&" "|" "?" "{" "}" ";" "\n"} (.charAt src p))
+        (= ">" (.charAt src p))
+        (str/ends-with? (subs src (max 0 (- p 5)) (inc p)) "return"))))
+
+(defn- templates
+  "All top-level template literals of `src` → [{:line :text}]."
+  [src]
+  (let [n (count src)]
+    (loop [i 0 acc []]
+      (if (>= i n)
+        acc
+        (let [c (.charAt src i)]
+          (cond
+            (str/starts-with? (subs src i (min n (+ i 2))) "//")
+            (let [e (.indexOf src "\n" i)] (recur (if (neg? e) n e) acc))
+            (str/starts-with? (subs src i (min n (+ i 2))) "/*")
+            (recur (+ 2 (.indexOf src "*/" i)) acc)
+            (or (= c "'") (= c "\""))
+            (recur (loop [m (inc i)]
+                     (cond (>= m n) n
+                           (= (.charAt src m) "\\") (recur (+ m 2))
+                           (= (.charAt src m) c) (inc m)
+                           :else (recur (inc m))))
+                   acc)
+            (and (= c "/") (regex-start? src i))
+            (recur (loop [k (inc i) in-class false]
+                     (cond (>= k n) n
+                           (= (.charAt src k) "\\") (recur (+ k 2) in-class)
+                           (= (.charAt src k) "[") (recur (inc k) true)
+                           (= (.charAt src k) "]") (recur (inc k) false)
+                           (and (= (.charAt src k) "/") (not in-class)) (inc k)
+                           (= (.charAt src k) "\n") (inc k)
+                           :else (recur (inc k) in-class)))
+                   acc)
+            (= c "`")
+            (let [[e text] (scan-template src i)
+                  line (inc (count (re-seq #"\n" (subs src 0 i))))]
+              (recur e (conj acc {:line line :text text})))
+            :else (recur (inc i) acc)))))))
+
+(def results
+  (for [rel scripts]
+    (let [file (path/resolve rel)]
+      (if-not (fs/existsSync file)
+        {:file rel :error "missing"}
+        (try
+          (let [ts (templates (fs/readFileSync file "utf8"))]
+            {:file rel :templates (count ts)
+             :findings (filter #(re-find jp-re (:text %)) ts)})
+          (catch :default e {:file rel :error (str e)}))))))
+
+(doseq [{:keys [file error findings]} results]
+  (when error (println (str "REFUSE\t" file "\t" error)))
+  (doseq [{:keys [line text]} findings]
+    (println (str file ":" line "\t" (pr-str text)))))
+(let [errors (filter :error results)
+      total (reduce + 0 (map #(or (:templates %) 0) results))
+      n (reduce + 0 (map #(count (:findings %)) results))]
+  (println (str "SCANNED\t" total "\ttemplate literals in " (count scripts) " scripts; with Japanese text: " n))
+  (cond (seq errors) (js/process.exit 2)
+        (pos? n) (js/process.exit 1)))

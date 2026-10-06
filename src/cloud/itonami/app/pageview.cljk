@@ -47,7 +47,7 @@
   The declared media type selects the parser and is not trusted for anything
   else. A file claiming `application/pdf` that is not one produces no pages,
   which is `:pageview/no-pages` — a thing this cannot show, reported as such."
-  (:require [cloud.itonami.app.documents :as documents]
+  (:require [kotoba.http.form-urlencoded :as form-urlencoded] [cloud.itonami.app.documents :as documents]
             [hanmen.page :as hpage]
             [hanmen.pdf :as hpdf]
             [hanmen.svg :as hsvg]
@@ -242,7 +242,7 @@
   that URL is decided."
   [id page-index index]
   (str "/api/workspace/drive/documents/"
-       (java.net.URLEncoder/encode ^String id java.nio.charset.StandardCharsets/UTF_8)
+       (form-urlencoded/form-encode ^String id)
        "/pages/" page-index "/images/" index))
 
 (defn- samples-per-pixel [bytes width height]

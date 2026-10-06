@@ -28,7 +28,7 @@ failed the same way:
 
 **33 of 231 Bots** carried the same kind of pin (21 on the GLM id, 12 on the
 Qwen one). The other 198 were already on `murakumo-main`, which is what
-CLAUDE.md's model-alias rule says to use and the only id in the gateway
+AGENTS.md's model-alias rule says to use and the only id in the gateway
 registry that answers at all: of the nine listed, `murakumo-main` returns text,
 `murakumo-edge` returns HTTP 200 with empty content, and the rest are
 unreachable or payment-gated.

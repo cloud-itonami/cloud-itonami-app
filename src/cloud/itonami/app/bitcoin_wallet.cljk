@@ -1,13 +1,13 @@
 (ns cloud.itonami.app.bitcoin-wallet
   "Watch-only Bitcoin balances and Passkey-bound PSBT approvals."
-  (:require [cloud.itonami.app.bitcoin :as bitcoin]
+  (:require [kotoba.http.form-urlencoded :as form-urlencoded] [cloud.itonami.app.bitcoin :as bitcoin]
             [cloud.itonami.app.bitcoin-node :as bitcoin-node]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.passkey :as passkey]
             [cloud.itonami.app.store :as store]
-            [clojure.data.json :as json]
+            [kotoba.json :as json]
             [kotoba.lang.text :as str])
-  (:import [java.net URLEncoder]
+  (:import
            [java.nio.charset StandardCharsets]
            [java.util UUID]))
 
@@ -30,8 +30,7 @@
     (when-not base-url
       (throw (ex-info "Bitcoin explorer が設定されていません。"
                       {:type :bitcoin/explorer-not-configured})))
-    (let [address (URLEncoder/encode (:address link)
-                                     StandardCharsets/UTF_8)
+    (let [address (form-urlencoded/form-encode (:address link))
           response (http/request
                     {:url (str base-url "/address/" address)
                      :method :get
@@ -68,8 +67,7 @@
     (when-not base-url
       (throw (ex-info "Bitcoin explorer が設定されていません。"
                       {:type :bitcoin/explorer-not-configured})))
-    (let [address (URLEncoder/encode (:address link)
-                                     StandardCharsets/UTF_8)
+    (let [address (form-urlencoded/form-encode (:address link))
           response (http/request
                     {:url (str base-url "/address/" address "/txs")
                      :method :get

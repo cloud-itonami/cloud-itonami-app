@@ -6,11 +6,11 @@
   derives that from the bearer. A supervisor can call `poll!`, produce a normal
   message (not an execution intent), `reply!`, and `ack!` after its durable
   checkpoint succeeds."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.http.form-urlencoded :as form-urlencoded] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.organism-messenger-transport :as transport])
-  (:import [java.net URLEncoder]
+  (:import
            [java.nio.charset StandardCharsets]))
 
 (def schema "cloud.itonami.app.organism-messenger-client.v1")
@@ -53,7 +53,7 @@
    (let [query (str "?limit=" (min 100 (max 1 (long limit)))
                     (when-not (str/blank? (str cursor))
                       (str "&cursor="
-                           (URLEncoder/encode (str cursor) StandardCharsets/UTF_8))))]
+                           (form-urlencoded/form-encode (str cursor)))))]
      (request! worker-id :get (str "/api/ao/messenger/poll" query) nil))))
 
 (defn acknowledge! [worker-id message-ids]
@@ -71,7 +71,7 @@
                    :encryption-mode "local-plaintext"})]
     (request! worker-id :post
               (str "/api/ao/messenger/conversations/"
-                   (URLEncoder/encode conversation-id StandardCharsets/UTF_8)
+                   (form-urlencoded/form-encode conversation-id)
                    "/messages")
               message)))
 

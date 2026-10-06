@@ -26,7 +26,7 @@
   They stay in-process, because routing a pure read of a resource through HTTP
   would add a running-server requirement to the one capability that does not
   need one."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.http-client :as http])

@@ -5,9 +5,9 @@
   (Measured: `storj_test.clj` was added and the count did not move.) So the
   list stays explicit, and `-main` refuses to run a suite that does not cover
   every test file on the path."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :as test]
+            [kotoba.test :as test]
             [cloud.itonami.app.authority-test]
             [cloud.itonami.app.vf-journal-test]
             [cloud.itonami.app.vf-authority-test]
@@ -124,7 +124,6 @@
             [cloud.itonami.app.project-repository-test]
             [cloud.itonami.app.project-remote-test]
             [cloud.itonami.app.project-transfer-test]
-            [cloud.itonami.app.repo-profile-test]
             [cloud.itonami.app.repos-test]
             [cloud.itonami.app.repository-storage-test]
             [cloud.itonami.app.repository-qualification-test]
@@ -251,6 +250,8 @@
             [cloud.itonami.app.wallet-test]
             [cloud.itonami.app.smart-account-owner-test]
             [cloud.itonami.app.wallet-http-test]
+            [cloud.itonami.app.public-bots-http-test]
+            [cloud.itonami.app.workspace-apps-http-test]
             [cloud.itonami.app.wallet-send-test]
             [cloud.itonami.app.commerce-test]
             [cloud.itonami.app.storefront-http-test]))
@@ -310,7 +311,6 @@
     cloud.itonami.app.metrics-test
     cloud.itonami.app.portfolio-test
     cloud.itonami.app.bot-bounds-test
-    cloud.itonami.app.repo-profile-test
     cloud.itonami.app.policy-kotoba-parity-test
     cloud.itonami.app.native-canary-test
     cloud.itonami.app.health-kotoba-parity-test
@@ -495,6 +495,8 @@
     cloud.itonami.app.wallet-test
     cloud.itonami.app.smart-account-owner-test
     cloud.itonami.app.wallet-http-test
+    cloud.itonami.app.workspace-apps-http-test
+    cloud.itonami.app.public-bots-http-test
     cloud.itonami.app.wallet-send-test
     cloud.itonami.app.commerce-test
     cloud.itonami.app.storefront-http-test])
@@ -502,9 +504,9 @@
 (defn- test-namespaces-on-disk
   "Every `*_test.clj` under test/, as the namespace symbol it declares."
   []
-  (->> (file-seq (io/file "test"))
-       (filter #(.isFile ^java.io.File %))
-       (map #(.getPath ^java.io.File %))
+  (->> (io/file-seq (io/file "test"))
+       (filter #(io/file? %))
+       (map #(io/path %))
        (filter #(str/ends-with? % "_test.clj"))
        (map #(-> %
                  (str/replace #"^test/" "")

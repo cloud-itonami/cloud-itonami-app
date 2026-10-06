@@ -6,7 +6,7 @@
   host, and the four-target compiles that keep the core inside the native
   word-typed slice. `kotoba-oracle-test` checks the shipped artifact is
   current. `health-http-test` checks the handler actually reads it."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.health :as health]
             [kotoba.compiler.core :as compiler]))
 

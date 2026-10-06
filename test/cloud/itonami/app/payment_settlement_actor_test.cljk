@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.payment-settlement-actor-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [cloud.itonami.app.authority.transport :as transport]
             [cloud.itonami.app.payment-settlement-actor :as actor]))
 

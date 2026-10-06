@@ -1,6 +1,6 @@
 #!/usr/bin/env kbb
 ;; Read-only monitoring: never require app/store or display stored content.
-(require '[clojure.edn :as edn] '[kotoba.lang.text :as str])
+(require '[kotoba.lang.edn :as edn] '[kotoba.lang.text :as str])
 
 (defn fail [kind] (throw (ex-info "Status unavailable" {:kind kind})))
 (defn digest [s]

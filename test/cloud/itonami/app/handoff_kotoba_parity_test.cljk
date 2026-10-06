@@ -29,7 +29,7 @@
   checked by reading `->request`, and the test that would fail if somebody
   added one is the record-shape mismatch the compiler raises."
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.handoff :as handoff]
             [kotoba.compiler.core :as compiler]
             [kotoba.kir :as ir]))

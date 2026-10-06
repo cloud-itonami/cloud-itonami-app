@@ -1,8 +1,8 @@
 (ns cloud.itonami.app.controller-standby
   "Health-only migration listener. Never loads application state or credentials."
   (:import [com.sun.net.httpserver HttpServer HttpHandler]
-           [java.net InetSocketAddress]
-           [java.nio.charset StandardCharsets]))
+           [java.net InetSocketAddress])
+  (:require [kotoba.bytes :as kbytes]))
 
 (def health-body
   "{\"ok\":true,\"service\":\"cloud-itonami-app\",\"mode\":\"standby\",\"executionEnabled\":false}")
@@ -17,9 +17,8 @@
        (handle [_ exchange]
          (let [health? (and (= "GET" (.getRequestMethod exchange))
                             (= "/health" (.getPath (.getRequestURI exchange))))
-               body (.getBytes (if health? health-body
-                                   "{\"error\":\"controller_standby\",\"executionEnabled\":false}")
-                               StandardCharsets/UTF_8)]
+               body (kbytes/utf8-bytes (if health? health-body
+                                   "{\"error\":\"controller_standby\",\"executionEnabled\":false}"))]
            (.set (.getResponseHeaders exchange) "Content-Type" "application/json")
            (.set (.getResponseHeaders exchange) "Cache-Control" "no-store")
            (.sendResponseHeaders exchange (if health? 200 503) (alength body))

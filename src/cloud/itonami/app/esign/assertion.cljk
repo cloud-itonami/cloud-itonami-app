@@ -37,16 +37,15 @@
   something else entirely.
 
   No store, no clock, no network."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.did :as did]
             [cloud.itonami.app.esign.commitment :as commitment])
   (:import [java.math BigInteger]
-           [java.nio.charset StandardCharsets]
            [java.security AlgorithmParameters KeyFactory Signature]
            [java.security.spec ECGenParameterSpec ECParameterSpec ECPoint
             ECPublicKeySpec]
-           [java.util Arrays Base64]))
+           [java.util Arrays]))
 
 (def schema "cloud.itonami.app.esign.assertion.v1")
 
@@ -58,10 +57,10 @@
   and refusing it would fail a verification for a reason unrelated to the
   signature."
   ^bytes [value]
-  (.decode (Base64/getUrlDecoder) ^String (str/replace (str value) "=" "")))
+  (kbytes/base64url-decode-bytes ^String (str/replace (str value) "=" "")))
 
 (defn encode ^String [^bytes value]
-  (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) value))
+  (kbytes/base64url-encode value {:pad? false}))
 
 (defn- p256-parameters ^ECParameterSpec []
   (let [parameters (AlgorithmParameters/getInstance "EC")]
@@ -131,7 +130,7 @@
   (let [client-bytes (decode client-data-json)
         auth-bytes (decode authenticator-data)
         signature-bytes (decode signature)
-        client-data (json/read-str (String. client-bytes StandardCharsets/UTF_8)
+        client-data (json/read-str (kbytes/utf8-string client-bytes)
                                    :key-fn keyword)
         parsed (parse-authenticator-data auth-bytes)]
     (cond
@@ -185,4 +184,4 @@
   compare without knowing how it is encoded."
   [rp-id]
   (commitment/hex
-   (commitment/sha256 (.getBytes ^String (str rp-id) StandardCharsets/UTF_8))))
+   (commitment/sha256 (kbytes/utf8-bytes ^String (str rp-id)))))

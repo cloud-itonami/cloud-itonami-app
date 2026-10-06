@@ -1,10 +1,25 @@
 (ns cloud.itonami.app.web
   "DADS-backed WebKit workspace hosted by kotoba-lang/shell."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.lang.text :as str]
             [cloud.itonami.app.appearance :as appearance]
             [hanmen.svg :as hanmen-svg]
             [jp-go-dds.core :as dds]
-            [jp-go-dds.page :as page]))
+            [jp-go-dds.page :as page]
+            [jp-go-dds.tokens :as tokens]
+            [cloud-kotoba-dds.chat :as chat]
+            [cloud-kotoba-dds.bots :as bots]
+            [cloud-kotoba-dds.switch :as switch]
+            [cloud-kotoba-dds.tokens :as ck]
+            [cloud-kotoba-dds.menu :as menu]
+            [cloud-kotoba-dds.status :as status]
+            [cloud-kotoba-dds.composer :as composer]
+            [cloud-kotoba-dds.thread :as thread]
+            [cloud-kotoba-dds.sheet :as sheet]
+            [jp-go-dds.behavior :as behavior]
+            [cloud-kotoba-dds.styles :as chat-styles]
+            [shinkansen.interaction :as interaction]
+            [shinkansen.theme :as theme]
+            [cloud.itonami.app.app-directory :as app-directory]))
 
 (def base-css
   "
@@ -310,6 +325,27 @@
      showing, the status reads in flow, under the gate it talks about. */
   body:has(.signin-view:not([hidden])) .global-status{position:static;
     max-width:60rem;box-shadow:none;margin:1rem clamp(1rem,4vw,3rem) 0}
+  body[data-current-view='signin'] .workspace{display:block;min-height:100dvh;padding-bottom:0}
+  body[data-current-view='signin'] .sidebar,
+  body[data-current-view='signin'] .topbar{display:none}
+  body[data-current-view='signin'] #main-content{padding:clamp(1.25rem,5vw,4rem) 1rem}
+  body[data-current-view='signin'] .signin-view{max-width:28rem;margin:0 auto;padding:0}
+  body[data-current-view='signin']:has(.signin-view:not([hidden])) .global-status{max-width:28rem;margin:0 auto 1.25rem;box-sizing:border-box}
+  .signin-view .view-header{margin-bottom:1.5rem}
+  .signin-view .view-header h1{font-size:clamp(1.5rem,4vw,2rem);line-height:1.4}
+  .signin-view .view-lead{font-size:1rem;line-height:1.6;margin:.5rem 0 0}
+  .signin-view .local-actions{display:flex;flex-direction:column;align-items:stretch;gap:.75rem}
+  .signin-view .local-actions a{box-sizing:border-box;text-align:center;min-height:3rem}
+  .signin-view #itonami-cloud-signin{width:100%;justify-content:center}
+  .signin-view .signin-column{gap:1rem}
+  /* Phone entrance: QR left, one line of help right. 132px reads from a
+     phone camera at arm's length; smaller failed in the DST QR probe. */
+  .signin-qr{display:flex;align-items:center;gap:1rem;margin-top:.75rem}
+  .signin-qr img{width:132px;height:132px;background:#fff;border:1px solid var(--color-neutral-solid-gray-200);border-radius:.375rem;box-sizing:border-box}
+  .signin-qr .form-help{margin:0;font-size:.8125rem}
+  .signin-qr code{font-size:.8125rem;word-break:break-all}
+  .signin-help{font-size:.875rem;line-height:1.6}
+  .signin-help summary{cursor:pointer;min-height:2.75rem;display:flex;align-items:center}
   .signin-brand{display:flex;align-items:center;gap:.75rem;margin-bottom:1.25rem}
   .signin-brand img{width:3rem;height:3rem;border-radius:.75rem;display:block}
   .signin-brand span{font-size:1.0625rem;font-weight:700;
@@ -329,7 +365,7 @@
     align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap}
   .capture-chronicle__list{list-style:none;margin:.75rem 0 0;padding:0;display:grid;gap:.5rem}
   .capture-chronicle__item{display:grid;gap:.35rem;width:100%;text-align:left;padding:.75rem;
-    border:1px solid var(--color-neutral-solid-gray-300);border-radius:.5rem;background:white}
+    border:1px solid var(--color-neutral-solid-gray-300);border-radius:.5rem;background:var(--color-neutral-white)}
   .capture-chronicle__item:hover{border-color:var(--color-key-600)}
   .capture-source{margin:1rem 0;padding:.75rem;border-left:4px solid var(--color-key-600);
     background:var(--color-neutral-solid-gray-50)}.capture-source__text{white-space:pre-wrap;
@@ -365,166 +401,23 @@
   /* Bots is an application pane, not a long document. Its rail and composer
      stay in the viewport while only the thread scrolls. */
   .bots-view{max-width:none;padding:0;height:calc(100dvh - 5rem);overflow:hidden}
-  .bots-shell{display:grid;grid-template-columns:17rem 1fr;height:100%;min-height:0}
-  .bots-rail{display:flex;flex-direction:column;min-height:0;gap:.25rem;
-    padding:.75rem;border-right:1px solid var(--color-neutral-solid-gray-200);
-    background:var(--color-neutral-solid-gray-50)}
-  .bots-rail__search{position:relative;flex:0 0 auto}
-  .bots-rail__search::before{content:'⌕';position:absolute;left:.625rem;top:50%;
-    transform:translateY(-50%);color:var(--color-neutral-solid-gray-500);pointer-events:none}
-  .bots-rail__search input{width:100%;min-height:2.5rem;border:1px solid transparent;
-    border-radius:.625rem;background:var(--color-neutral-solid-gray-100);
-    padding:.5rem .625rem .5rem 2rem;font:inherit;color:inherit}
-  .bots-rail__search input:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
-    outline-offset:1px;border-color:var(--color-key-600);background:var(--color-neutral-white)}
-  .bots-rail__list{list-style:none;margin:0;padding:0;display:grid;gap:.125rem;
-    overflow-y:auto;min-height:0}
-  .bots-rail__empty{margin:.5rem .25rem;color:var(--color-neutral-solid-gray-600);
+  /* The rail (search, groups, rows, pinned grid, launcher) is
+     cloud-kotoba-dds's Bots workspace pattern — styles/bots-css, included
+     above. What stays here is the host's: the empty state and the named
+     status colours of the dot. */
+  .ck-bots__empty{margin:.5rem .25rem;color:var(--color-neutral-solid-gray-600);
     font-size:.875rem}
-  .bots-rail__group{position:sticky;top:0;z-index:1;margin:0;padding:.625rem .5rem .25rem;
-    background:var(--color-neutral-solid-gray-50);color:var(--color-neutral-solid-gray-600);
-    font-size:.75rem;font-weight:700;letter-spacing:.02em}
-  .bots-rail__item{display:flex;align-items:center;gap:.625rem;width:100%;border:0;
-    border-radius:.5rem;background:transparent;padding:.5rem;cursor:pointer;
-    text-align:left;min-height:3rem}
-  .bots-rail__item:hover{background:var(--color-neutral-solid-gray-100)}
-  .bots-rail__item[aria-current='true']{background:var(--color-key-50)}
-  .bots-rail__item:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
-    outline-offset:1px}
-  .bots-rail__item[data-unread='true'] .bots-rail__name{font-weight:700}
-  .bots-rail__item[data-unread='true'] .bots-dot{background:var(--color-key-600)}
-  .bots-rail-menu{position:fixed;z-index:80;min-width:18.5rem;
-    max-width:min(22rem,calc(100vw - 1rem));padding:.375rem 0;margin:0;
-    border:1px solid var(--color-neutral-solid-gray-200);border-radius:.875rem;
-    background:var(--color-neutral-white);box-shadow:0 .5rem 1.5rem rgb(0 0 0 / .16);
-    list-style:none}
-  .bots-rail-menu[hidden]{display:none}
-  .bots-rail-menu__item{display:flex;align-items:center;gap:.75rem;width:100%;
-    min-height:2.75rem;border:0;background:transparent;padding:.375rem 1rem;
-    color:var(--color-neutral-solid-gray-900);font:inherit;font-size:.9375rem;
-    text-align:left;cursor:pointer}
-  .bots-rail-menu__item:hover{background:var(--color-neutral-solid-gray-50)}
-  .bots-rail-menu__item:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
-    outline-offset:-4px}
-  .bots-rail-menu__icon{width:1.25rem;height:1.25rem;flex:0 0 auto}
-  .bots-rail-menu__sep{height:1px;margin:.375rem .75rem;border:0;
-    background:var(--color-neutral-solid-gray-200)}
-  .bots-rail-menu__item--danger{color:var(--color-semantic-error-1)}
-  .bots-rail-menu__item--danger:hover{background:var(--color-primitive-red-50)}
-  .bots-rail__copy{flex:1;min-width:0;display:grid;gap:.125rem}
-  .bots-rail__headline{display:flex;align-items:baseline;gap:.5rem;min-width:0}
-  .bots-rail__name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .bots-rail__time{margin-left:auto;flex:none;font-size:.75rem;
-    color:var(--color-neutral-solid-gray-600)}
-  .bots-rail__last{font-size:.8125rem;color:var(--color-neutral-solid-gray-600);
-    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  /* The avatar. One element, two custom properties, so the same markup is a
-     swatch in the picker and a face in the rail. Eyes are pseudo-elements:
-     decorative life never becomes extra DOM or an accessible-name fragment. */
-  .bot-avatar{display:inline-flex;align-items:center;justify-content:center;
-    width:2rem;height:2rem;flex:0 0 auto;background:var(--bot-color,#4a6fd4);
-    color:var(--color-neutral-white);font-size:.875rem;position:relative;
-    animation:bot-breathe var(--bot-breathe-time,4.8s) ease-in-out var(--bot-phase,0s) infinite;
-    transform-origin:50% 80%}
-  .bot-avatar::before,.bot-avatar::after{content:'';position:absolute;z-index:1;
-    pointer-events:none}
-  /* Two white eyes from one box and its shadow. */
-  .bot-avatar::before{width:.42em;height:.5em;left:calc(50% - .52em);top:38%;
-    border-radius:50%;background:var(--color-neutral-white);
-    box-shadow:.62em 0 0 var(--color-neutral-white);transform-origin:50% 55%;
-    animation:bot-blink 6.4s ease-in-out var(--bot-phase,0s) infinite}
-  /* Two pupils move together, giving a readable wandering gaze without JS. */
-  .bot-avatar::after{width:.18em;height:.24em;left:calc(50% - .4em);top:44%;
-    border-radius:50%;background:var(--color-neutral-solid-gray-900);
-    box-shadow:.62em 0 0 var(--color-neutral-solid-gray-900);
-    animation:bot-look var(--bot-look-time,7.2s) ease-in-out var(--bot-phase,0s) infinite}
-  .bot-avatar[data-glyph='bean'],.bot-avatar[data-glyph='wave']{--bot-phase:-1.3s}
-  .bot-avatar[data-glyph='block'],.bot-avatar[data-glyph='drop']{--bot-phase:-2.6s}
-  .bot-avatar[data-glyph='wide'],.bot-avatar[data-glyph='cloud']{--bot-phase:-3.9s}
-  .bot-avatar[data-glyph='wedge']{--bot-phase:-5.2s}
-  .bot-avatar[data-status='working']{--bot-breathe-time:2.4s;--bot-look-time:4.2s}
-  .bot-avatar[data-status='waiting-approval'],
-  .bot-avatar[data-status='waiting-connection']{--bot-look-time:4.8s}
-  /* Mood is a deterministic projection of operational state plus the avatar
-     variant. It adds character without replacing the readable status text. */
-  .bot-avatar[data-mood='hurry']{animation:bot-hurry .42s steps(2,end) infinite}
-  .bot-avatar[data-mood='hurry']::after{box-shadow:.62em 0 0 var(--color-neutral-solid-gray-900),
-    1.18em -.72em 0 .08em #73eff7}
-  .bot-avatar[data-mood='nap'],.bot-avatar[data-mood='sleep']{
-    animation:bot-nap 2.8s steps(2,end) infinite}
-  .bot-avatar[data-mood='nap']::before,.bot-avatar[data-mood='sleep']::before{
-    height:.12em;top:48%;border-radius:999px;background:var(--color-neutral-solid-gray-800);
-    box-shadow:.62em 0 0 var(--color-neutral-solid-gray-800);animation:none}
-  .bot-avatar[data-mood='nap']::after,.bot-avatar[data-mood='sleep']::after{
-    content:'z';width:auto;height:auto;left:auto;right:-.35em;top:-.45em;
-    color:var(--color-neutral-solid-gray-700);background:transparent;box-shadow:none;
-    font-size:.72em;font-weight:800;animation:bot-dream 2.8s steps(2,end) infinite}
-  .bot-avatar[data-mood='joy']{animation:bot-joy .8s steps(2,end) infinite}
-  .bot-avatar[data-mood='joy']::before{height:.2em;top:40%;transform:scaleY(.6);
-    animation:none}
-  .bot-avatar[data-mood='joy']::after{width:.58em;height:.3em;left:calc(50% - .29em);top:58%;
-    border-radius:0 0 999px 999px;border-bottom:.12em solid var(--color-neutral-solid-gray-900);
-    background:transparent;box-shadow:none;animation:none}
-  .bot-avatar[data-mood='nervous']{animation:bot-nervous .32s steps(2,end) infinite}
-  .bot-avatar[data-mood='nervous']::before{transform:scale(1.15);animation:none}
-  .bot-avatar[data-mood='nervous']::after{animation:bot-nervous-look .64s steps(2,end) infinite}
-  .bot-avatar[data-mood='upset']::before{height:.22em;top:42%;border-radius:999px;
-    transform:rotate(-8deg);animation:none}
-  .bot-avatar[data-mood='upset']::after{width:.55em;height:.22em;left:calc(50% - .275em);top:66%;
-    border-radius:999px 999px 0 0;border-top:.1em solid var(--color-neutral-solid-gray-900);
-    background:transparent;box-shadow:none;animation:none}
-  /* Disabled remains still even though its projected mood is sleep. */
-  .bot-avatar[data-status='disabled']{animation:none;filter:saturate(.35)}
-  .bot-avatar[data-status='disabled']::before{animation:none;transform:scaleY(.22)}
-  .bot-avatar[data-status='disabled']::after{animation:none}
-  @keyframes bot-breathe{0%,100%{transform:translateY(0) scale(1)}
-    50%{transform:translateY(-.08rem) scale(1.025)}}
-  @keyframes bot-blink{0%,42%,46%,100%{transform:scaleY(1)}
-    43%,45%{transform:scaleY(.08)}}
-  @keyframes bot-look{0%,18%,82%,100%{transform:translateX(0)}
-    28%,42%{transform:translateX(.1em)}
-    58%,72%{transform:translateX(-.08em)}}
-  @keyframes bot-hurry{0%,100%{transform:translateX(-.08rem) rotate(-2deg)}
-    50%{transform:translateX(.08rem) rotate(2deg)}}
-  @keyframes bot-nap{0%,100%{transform:translateY(0)}50%{transform:translateY(.08rem)}}
-  @keyframes bot-dream{0%,100%{transform:translateY(0);opacity:.55}
-    50%{transform:translateY(-.18rem);opacity:1}}
-  @keyframes bot-joy{0%,100%{transform:translateY(0) rotate(-2deg)}
-    50%{transform:translateY(-.16rem) rotate(3deg)}}
-  @keyframes bot-nervous{0%,100%{transform:rotate(-2deg)}50%{transform:rotate(2deg)}}
-  @keyframes bot-nervous-look{0%,100%{transform:translateX(-.08em)}
-    50%{transform:translateX(.1em)}}
-  .bot-avatar--xl{width:4.5rem;height:4.5rem;font-size:1.75rem}
-  .bot-avatar[data-glyph='circle']{border-radius:50%}
-  .bot-avatar[data-glyph='bean']{border-radius:50% 50% 45% 55% / 55% 45% 55% 45%}
-  .bot-avatar[data-glyph='block']{border-radius:.375rem}
-  .bot-avatar[data-glyph='wide']{border-radius:999px;width:2.75rem}
-  .bot-avatar--xl[data-glyph='wide']{width:6rem}
-  .bot-avatar[data-glyph='wedge']{border-radius:.25rem;
-    clip-path:polygon(50% 0,100% 100%,0 100%)}
-  .bot-avatar[data-glyph='cloud']{border-radius:60% 60% 40% 40% / 70% 70% 30% 30%}
-  .bot-avatar[data-glyph='wave']{border-radius:40% 60% 60% 40% / 60% 40% 60% 40%}
-  .bot-avatar[data-glyph='drop']{border-radius:50% 50% 50% 0}
-  .bot-avatar[data-color='clay']{--bot-color:#8a6552}
-  .bot-avatar[data-color='red']{--bot-color:var(--color-semantic-error-1)}
-  .bot-avatar[data-color='orange']{--bot-color:#e07a26}
-  .bot-avatar[data-color='amber']{--bot-color:#c9930b}
-  .bot-avatar[data-color='green']{--bot-color:var(--color-semantic-success-1)}
-  .bot-avatar[data-color='teal']{--bot-color:#12817c}
-  .bot-avatar[data-color='blue']{--bot-color:var(--color-key-600)}
-  .bot-avatar[data-color='violet']{--bot-color:#6b4cc4}
-  .bot-avatar[data-color='pink']{--bot-color:#c2418a}
-  .bot-avatar[data-color='slate']{--bot-color:var(--color-neutral-solid-gray-600)}
+  /* Identity and motion come from cloud-kotoba-dds; the host owns sizes. */
+  .bot-avatar{width:2rem;height:2rem}
+  .bot-avatar--xl{width:4.5rem;height:4.5rem}
   /* The status dot. Named states rather than a colour, because 'waiting for
      you' and 'working' must not be told apart by hue alone. */
-  .bots-dot{width:.625rem;height:.625rem;border-radius:50%;flex:0 0 auto;
-    border:2px solid var(--color-neutral-white)}
-  .bots-dot[data-status='working']{background:var(--color-semantic-success-1)}
-  .bots-dot[data-status='waiting-approval']{background:var(--color-primitive-yellow-300)}
-  .bots-dot[data-status='waiting-connection']{background:#e07a26}
-  .bots-dot[data-status='idle']{background:var(--color-neutral-solid-gray-300)}
-  .bots-dot[data-status='disabled']{background:var(--color-neutral-solid-gray-200)}
-  .bots-main{position:relative;display:flex;flex-direction:column;min-height:0;min-width:0}
+  .ck-bots__dot[data-status='working']{background:var(--color-semantic-success-1)}
+  .ck-bots__dot[data-status='waiting-approval']{background:var(--color-primitive-yellow-300)}
+  .ck-bots__dot[data-status='waiting-connection']{background:var(--color-semantic-warning-orange-1)}
+  .ck-bots__dot[data-status='idle']{background:var(--color-neutral-solid-gray-300)}
+  .ck-bots__dot[data-status='disabled']{background:var(--color-neutral-solid-gray-200)}
+  .ck-bots__main{position:relative}
   .bots-routines-panel{position:absolute;z-index:6;inset:0 0 0 auto;width:min(100%,36rem);
     overflow-y:auto;padding:1rem;border-left:1px solid var(--color-neutral-solid-gray-200);
     background:var(--color-neutral-white);display:grid;align-content:start;gap:1rem}
@@ -533,7 +426,7 @@
     border:1px solid var(--color-neutral-solid-gray-200);background:var(--color-neutral-solid-gray-50)}
   .bots-routine-create label{display:grid;gap:.25rem;font-size:.8125rem;font-weight:600}
   .bots-routine-create input,.bots-routine-create select{width:100%;padding:.625rem .75rem;
-    border:1px solid var(--color-neutral-solid-gray-300);border-radius:.5rem;background:white}
+    border:1px solid var(--color-neutral-solid-gray-300);border-radius:.5rem;background:var(--color-neutral-white)}
   .bots-routines-list{display:grid;gap:.75rem;margin:0;padding:0;list-style:none}
   .bots-routine{display:grid;gap:.625rem;padding:1rem;border-radius:.75rem;
     border:1px solid var(--color-neutral-solid-gray-200)}
@@ -569,13 +462,68 @@
   .bots-quality-gate__mark[data-state='pass']{color:var(--color-semantic-success-1)}
   .bots-quality-gate__mark[data-state='fail']{color:var(--color-semantic-error-1)}
   .bots-quality-gate__target{font-size:.75rem;color:var(--color-neutral-solid-gray-600)}
-  .bots-conversations{position:absolute;z-index:4;inset:0 0 0 auto;width:min(100%,42rem);
-    overflow-y:auto;padding:1rem;border-left:1px solid var(--color-neutral-solid-gray-200);
-    background:var(--color-neutral-white);display:grid;
-    align-content:start;gap:1rem}
+  .bots-conversations{position:absolute;z-index:4;inset:0;width:100%;min-height:0;
+    overflow:hidden;padding:1rem;box-sizing:border-box;
+    background:var(--color-neutral-white);display:flex;flex-direction:column;gap:.5rem}
   .bots-conversations[hidden]{display:none}
-  .bots-conversations__layout{display:grid;grid-template-columns:minmax(12rem,.7fr) minmax(16rem,1.3fr);
-    gap:1rem;min-height:0}
+  .bots-conversations>.section-heading{display:flex;align-items:center;justify-content:space-between;gap:1rem}
+  .bots-conversations>.section-heading h2{font-size:1rem;margin:0}
+  .bots-conversations>.form-help{margin:0;font-size:.75rem}
+  #room-status:empty{display:none}
+  #bots-room-shortcuts{flex:0 0 auto;max-height:25%;overflow:auto}
+  .room-message-heading{display:flex;align-items:center;gap:.5rem;font-size:.75rem;color:var(--color-neutral-solid-gray-600)}
+  .room-message-heading .bot-avatar{width:1.75rem;height:1.75rem;flex:0 0 auto}
+  .room-message-heading time{margin-left:auto;white-space:nowrap}
+  #room-panel{display:flex;flex:1;flex-direction:column;min-width:0;min-height:0;gap:.5rem;overflow:hidden}
+  #room-title{margin:0;font-size:1.125rem}
+  #room-members-summary{margin:0;font-size:.75rem}
+  #room-thread{flex:1;min-height:8rem;max-height:none;overflow:auto;list-style:none;margin:0;padding:.5rem 0;display:block}
+  #room-thread>.record-list__row{display:block;padding:.75rem;margin:0 0 .75rem;border:0;border-radius:1rem;background:var(--color-neutral-solid-gray-50)}
+  #room-thread .record-list__meta{display:block;margin:.375rem 0 0;font-size:.9375rem;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
+  #room-bot-options{max-height:12rem;overflow:auto}
+  .room-member-option{display:flex;gap:.5rem;padding:.25rem}
+  #room-create[open]{max-height:60%;overflow:auto;flex-shrink:0}
+  #room-create-form,#room-schedule-form{display:grid;gap:.5rem}
+  #room-schedule-form{max-height:35vh;overflow:auto}
+  #room-composer{position:static;flex:0 0 auto;display:flex;align-items:flex-end;gap:.5rem;padding:.5rem 0 0;background:var(--color-neutral-white)}
+  #room-composer>label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+  #room-input{display:block;flex:1;min-width:0;width:100%;min-height:3.5rem;max-height:8rem;resize:vertical;padding:.75rem;border:1px solid var(--color-neutral-solid-gray-300);border-radius:1rem;box-sizing:border-box;font:inherit}
+  #room-send{padding:.625rem .875rem;border:0;border-radius:999px;background:var(--color-key-600);color:white;font:inherit;cursor:pointer}
+  #room-send:disabled{opacity:.5;cursor:default}
+  #bots-learning-panel{font-size:.875rem;padding:.5rem 1rem}
+  .bots-conversations__layout{display:flex;flex:1;flex-direction:column;gap:.5rem;min-height:0}
+  #room-list{display:flex;flex:0 0 auto;gap:.5rem;max-height:3rem;overflow:auto;list-style:none;margin:0;padding:0}
+  #room-list>li{flex:0 0 auto}
+  #room-list button{white-space:nowrap;padding:.375rem .625rem;border-radius:999px;font-size:.8125rem}
+
+  #group-chat-header{display:none;flex:1;min-width:0}
+  body.group-chat-open #group-chat-header{display:flex}
+  body.group-chat-open #bots-titlebar-identity,body.group-chat-open #bots-context-button,
+  body.group-chat-open #bots-titlebar-context>.bot-actions-menu,body.group-chat-open #bots-new{display:none!important}
+  .group-chat-avatars{display:flex;padding-right:.5rem}
+  .group-chat-avatars .bot-avatar{width:2rem;height:2rem;margin-right:-.5rem;border:2px solid white;border-radius:50%}
+  #group-chat-header .bots-titlebar__copy{flex:1;overflow:hidden}
+  #group-chat-header .bots-titlebar__status{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #group-chat-details{margin-left:auto;white-space:nowrap;flex:none}
+  body.group-chat-open .bots-conversations>.section-heading,
+  body.group-chat-open .bots-conversations>.form-help:not(#room-status),
+  body.group-chat-open #room-create,body.group-chat-open #room-list{display:none}
+  body.group-chat-open .bots-conversations{padding:.75rem 1rem;gap:0}
+  #room-thread{width:100%;box-sizing:border-box;max-width:52rem}
+  #room-thread>.bots-msg{list-style:none;margin:0 0 1rem;display:block}
+  #room-thread .ck-bots__bubble{width:fit-content;max-width:100%;box-sizing:border-box}
+  #room-thread .room-message-heading{margin:0 0 .375rem}
+  #room-thread .room-message-body{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
+  #room-thread .bots-msg[data-role='person']{margin-left:2rem}
+  #room-thread .bots-msg[data-role='person'] .ck-bots__bubble{margin-left:auto}
+  #room-thread .room-scheduled{font-size:.75rem;color:var(--color-neutral-solid-gray-600);text-align:center;margin:1rem}
+  #room-thread .room-scheduled p{font-size:.8125rem;text-align:left;white-space:pre-wrap}
+  #room-composer{width:100%;max-width:52rem;align-self:center}
+  #room-details{position:absolute;z-index:6;right:1rem;top:.5rem;width:min(24rem,calc(100% - 2rem));max-height:calc(100% - 1rem);overflow:auto;padding:1rem;box-sizing:border-box;border:1px solid var(--color-neutral-solid-gray-200);border-radius:1rem;background:var(--color-neutral-white);box-shadow:0 8px 32px #0002}
+  #room-details>.section-heading{display:flex;justify-content:space-between;align-items:center}
+  #room-participants{padding:0;list-style:none}
+  #room-participants li{display:flex;align-items:center;gap:.5rem;padding:.5rem 0}
+  #room-participants .bot-avatar{width:2rem;height:2rem;flex:none}
   .bots-onboard{overflow-y:auto;padding:clamp(1rem,4vw,3rem);max-width:52rem;
     margin:0 auto;width:100%}
   .bots-onboard__step{display:grid;gap:1rem;justify-items:stretch}
@@ -682,27 +630,12 @@
   .bots-run__step--verified{color:var(--color-semantic-success-2)}
   .bots-thread__messages{list-style:none;margin:0 auto;padding:0;display:grid;
     gap:.75rem;max-width:44rem}
+  /* a message bubble is cloud-kotoba-dds's .ck-bots__bubble (bots-css +
+     thread/css: fill, radius, markdown typography, the waiting shimmer);
+     .bots-msg is this app's entry wrapper — a bubble plus the cards that
+     follow it — and the resident entries below are its own */
   .bots-msg{display:grid;gap:.5rem}
-  .bots-msg__bubble{padding:.75rem .875rem;border-radius:.75rem;
-    background:var(--color-neutral-solid-gray-50);
-    line-height:1.7;overflow-wrap:anywhere}
-  .bots-msg__bubble> :first-child{margin-top:0}
-  .bots-msg__bubble> :last-child{margin-bottom:0}
-  .bots-msg__bubble p{white-space:pre-wrap;margin:.5rem 0}
-  .bots-msg__bubble ul,.bots-msg__bubble ol{margin:.5rem 0;padding-left:1.5rem}
-  .bots-msg__bubble li+li{margin-top:.25rem}
-  .bots-msg__bubble pre{max-width:100%;overflow:auto;margin:.625rem 0;padding:.75rem;
-    border-radius:.5rem;background:var(--color-neutral-solid-gray-900);
-    color:var(--color-neutral-white);white-space:pre}
-  .bots-msg__bubble code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-    font-size:.9em;background:var(--color-neutral-solid-gray-100);padding:.1em .3em;
-    border-radius:.25rem}
-  .bots-msg__bubble pre code{background:transparent;padding:0;color:inherit}
-  .bots-msg__bubble blockquote{margin:.5rem 0;padding-left:.75rem;
-    border-left:4px solid var(--color-neutral-solid-gray-300);
-    color:var(--color-neutral-solid-gray-700)}
   .bots-msg[data-role='person']{justify-items:end}
-  .bots-msg[data-role='person'] .bots-msg__bubble{background:var(--color-key-50)}
   .bots-msg[data-role='resident']{justify-items:center}
   .bots-msg__resident{max-width:min(34rem,92%);color:var(--color-neutral-solid-gray-600);
     font-size:.8125rem}
@@ -785,21 +718,9 @@
   .bots-option__key{display:inline-flex;align-items:center;justify-content:center;
     width:1.5rem;height:1.5rem;border-radius:.25rem;font-size:.75rem;
     background:var(--color-neutral-solid-gray-100)}
-  .bots-composer{display:flex;flex-wrap:wrap;gap:.5rem;align-items:flex-end;padding:.75rem 1rem;
-    border-top:1px solid var(--color-neutral-solid-gray-200)}
-  .bots-composer textarea{flex:1;resize:none;padding:.625rem .75rem;
-    border-radius:.75rem;border:1px solid var(--color-neutral-solid-gray-300);
-    max-height:12rem;font:inherit}
-  @media (max-width:60rem){
-    /* Keep Bot identity and waiting state reachable at every desktop width.
-       The compact rail spends width on recognition, not repeated labels. */
-    .bots-shell{grid-template-columns:4rem minmax(0,1fr)}
-    .bots-rail{display:flex;padding:.5rem .375rem}
-    .bots-rail__search{display:none}
-    .bots-rail__item{position:relative;justify-content:center;padding:.5rem .25rem}
-    .bots-rail__copy,.bots-rail__empty,.bots-rail__group{display:none}
-    .bots-rail__item .bots-dot{position:absolute;right:.3rem;bottom:.3rem}
-  }
+  /* the composer is cloud-kotoba-dds.composer over the bots pattern
+     (.ck-bots__composer grid); this app only draws its top edge */
+  .bots-composer{border-top:1px solid var(--ck-surface-border)}
   .chat-shell{position:relative;display:flex;flex-direction:column;
     height:calc(100vh - 5rem);min-height:32rem;background:var(--color-neutral-white)}
   .chat-header{display:flex;align-items:center;justify-content:space-between;gap:1rem;
@@ -1316,11 +1237,11 @@
     border:1px solid var(--color-neutral-solid-gray-300);border-radius:.625rem;padding:1rem;
     background:#111827;color:#e5e7eb;font:13px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace}
   .site-preview{width:100%;min-height:30rem;border:1px solid var(--color-neutral-solid-gray-200);
-    border-radius:.75rem;background:white}
+    border-radius:.75rem;background:var(--color-neutral-white)}
   .project-board{display:grid;grid-template-columns:repeat(5,minmax(12rem,1fr));gap:.75rem;overflow-x:auto}
   .project-column{min-height:10rem;padding:.75rem;border-radius:.625rem;background:var(--color-neutral-solid-gray-50)}
   .project-column h3{margin:.25rem 0 .75rem;font-size:.875rem}.project-column ul{list-style:none;margin:0;padding:0;display:grid;gap:.5rem}
-  .project-issue{padding:.75rem;border:1px solid var(--color-neutral-solid-gray-200);border-radius:.5rem;background:white;font-size:.8125rem}
+  .project-issue{padding:.75rem;border:1px solid var(--color-neutral-solid-gray-200);border-radius:.5rem;background:var(--color-neutral-white);font-size:.8125rem}
   .governance-editor{margin-top:1.25rem;padding-top:1.25rem;
     border-top:1px solid var(--color-neutral-solid-gray-200)}
   .governance-collection{display:grid;gap:.625rem}
@@ -1346,7 +1267,7 @@
   .organization-tree li::before{content:\"\";position:absolute;left:0;top:1rem;width:.65rem;
     border-top:1px solid var(--color-neutral-solid-gray-300)}
   .organization-tree__node{display:flex;justify-content:space-between;gap:.5rem;padding:.625rem;
-    border:1px solid var(--color-neutral-solid-gray-200);border-radius:.5rem;background:white}
+    border:1px solid var(--color-neutral-solid-gray-200);border-radius:.5rem;background:var(--color-neutral-white)}
   .organization-tree__node small{color:var(--color-neutral-solid-gray-600)}
   .organization-studio__directory{display:grid;gap:.5rem;list-style:none;margin:0;padding:0}
   .organization-studio__directory li{display:grid;grid-template-columns:minmax(0,1fr) auto;
@@ -1447,13 +1368,14 @@
     background:linear-gradient(90deg,var(--color-neutral-solid-gray-50),var(--color-neutral-solid-gray-100),var(--color-neutral-solid-gray-50));
     background-size:200% 100%;animation:pulse 1.4s infinite}
   @keyframes pulse{to{background-position:-200% 0}}
-  @media(max-width:64rem){.local-grid,.settings-grid,.organization-studio__grid,.site-layout{
+  /* App surfaces use the same compact layout on every tablet/desktop. */
+  .local-grid,.settings-grid,.organization-studio__grid,.site-layout{
     grid-template-columns:1fr}.organization-studio__summary{grid-template-columns:1fr 1fr}
     .storefront-shell{grid-template-columns:1fr}.storefront-cart{position:static}
     .governance-row{grid-template-columns:1fr 1fr}.governance-row>*:last-child{justify-self:start}
-    .messenger-shell{grid-template-columns:minmax(13rem,.65fr) minmax(22rem,1.35fr)}
-    .messenger-context{grid-column:1/-1;border-left:0;border-top:1px solid var(--color-neutral-solid-gray-200)}}
-  @media(max-width:56rem){
+    .messenger-shell{grid-template-columns:minmax(0,.65fr) minmax(0,1.35fr)}
+    .messenger-context{grid-column:1/-1;border-left:0;border-top:1px solid var(--color-neutral-solid-gray-200)}
+  @media(width < 48rem){
     .workspace{grid-template-columns:13rem minmax(0,1fr)}
     .sidebar{padding:1rem .75rem;gap:.75rem}
     .brand__eyebrow,.brand__note,.brand__mark,.sidebar__status{display:none}
@@ -1487,10 +1409,8 @@
     .connector-card .tool-button{grid-column:1/-1;width:100%}
     .local-actions{justify-content:stretch}.local-actions .dads-button{width:100%}
   }
-  /* Keep the phone navigation for genuinely narrow windows. The installed
-     desktop now opens as a workspace, where a recent-conversation rail is
-     materially faster than the former face-only strip. */
-  @media (max-width:56rem){
+  /* Exactly two layouts: phone below 48rem, tablet/desktop from 48rem. */
+  @media (width < 48rem){
     :root{--mobile-nav-height:calc(4.5rem + env(safe-area-inset-bottom))}
     body[data-identity-gate='required'] .workspace{padding-bottom:0}
     body[data-identity-gate='required'] .sidebar{display:none}
@@ -1589,27 +1509,8 @@
       clip-path:inset(50%);width:1px;height:1px;overflow:hidden;white-space:nowrap}
     .view{padding:1rem}.view-header h1{font-size:1.75rem;line-height:1.3}.view-lead{line-height:1.7}
     .bots-view{height:calc(100dvh - 4rem - env(safe-area-inset-top) - var(--mobile-nav-height));padding:0}
-    /* Keep the Bot picker a vertical column at phone width. A horizontal
-       strip was the exception that appeared only after shrinking; the rest
-       of the layout already stacks faces. Search stays hidden in the 4rem
-       column (same as the tablet rail). The selected Bot's name remains in
-       the titlebar; every avatar button carries its full accessible name. */
-    .bots-shell{display:grid;grid-template-columns:4rem minmax(0,1fr)}
-    .bots-main{min-width:0;min-height:0}
-    .bots-conversations{width:100%;border-left:0}
-    .bots-quality-panel{width:100%;border-left:0}
-    .bots-routines-panel{width:100%;border-left:0}
+    .bots-conversations,.bots-quality-panel,.bots-routines-panel{width:100%;border-left:0}
     .bots-conversations__layout{grid-template-columns:1fr}
-    .bots-rail{display:flex;flex-direction:column;min-height:0;padding:.5rem .375rem;
-      border-right:1px solid var(--color-neutral-solid-gray-200);border-bottom:0;
-      overflow:hidden}
-    .bots-rail__search{display:none}
-    .bots-rail__list{display:flex;flex-direction:column;align-items:stretch;gap:.375rem;
-      overflow-x:hidden;overflow-y:auto;scrollbar-width:thin}
-    .bots-rail__list>li{flex:0 0 auto;width:100%}
-    .bots-rail__item{position:relative;justify-content:center;width:100%;padding:.5rem .25rem}
-    .bots-rail__copy,.bots-rail__empty,.bots-rail__group{display:none}
-    .bots-rail__item .bots-dot{position:absolute;right:.3rem;bottom:.3rem}
     .bots-mobile-context{display:flex}
     .global-status{top:calc(4.5rem + env(safe-area-inset-top));left:1rem;right:1rem}
     .permission-request-bar{bottom:calc(var(--mobile-nav-height) + .75rem);
@@ -1717,7 +1618,6 @@
   @media (prefers-reduced-motion: reduce){
     .typing span{animation:none;opacity:1}
     .skeleton{animation:none;background:var(--color-neutral-solid-gray-100)}
-    .bot-avatar,.bot-avatar::before,.bot-avatar::after{animation:none}
   }
   ")
 
@@ -1732,27 +1632,52 @@
   .workspace-wallet{margin-left:auto;white-space:nowrap;color:var(--color-key-900);
     border:1px solid var(--color-neutral-solid-gray-200);border-radius:.75rem;padding:.5rem .75rem}
   .bots-view{height:calc(100dvh - var(--workspace-header-height,5rem))}
-  .bots-composer__label,.bots-composer__help{flex-basis:100%}
-  .bots-composer__help{color:var(--color-neutral-solid-gray-600)}
   .bots-thread__messages{max-width:52rem;margin-inline:auto;width:100%}
-  .bots-composer,.bots-main,.bots-rail{background:var(--color-neutral-white)}
-  .bots-composer textarea{min-height:5rem}
   #plugin-filter{width:100%;max-width:36rem}
-  @media(min-width:56.01rem){
+
+  .bots-list-toggle{display:none}
+  [data-view-panel='marketplace']>.view-header,[data-view-panel='apps']>.view-header{padding-top:0}
+  [data-view-panel='marketplace'] .view-header h1,[data-view-panel='apps'] .view-header h1{display:none}
+  @media(width < 48rem){
+    .bots-list-toggle{display:block}.topbar #bots-list-toggle{width:auto;min-width:4.5rem;flex-shrink:0}.topbar #bots-new{min-width:2.75rem;width:2.75rem;font-size:0}.topbar #bots-new::after{content:'＋';font-size:1rem}
+    .topbar{padding-block:.25rem}.bots-view{height:calc(100dvh - var(--workspace-header-height,4rem) - var(--mobile-nav-height))}
+  }
+  .market-tabs,.market-filters,.market-actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+  .market-tabs{margin-block:1rem}.market-tabs button{border:1px solid var(--color-neutral-solid-gray-300);border-radius:999px;padding:.5rem 1.25rem;background:var(--color-neutral-white);min-height:2.75rem}
+  .market-tabs [aria-selected='true']{background:var(--color-key-900);color:var(--color-neutral-white)}
+  #market-search{width:100%;padding:.75rem 1rem;border:1px solid var(--color-neutral-solid-gray-300);border-radius:999px;font:inherit;box-sizing:border-box}
+  .market-filters{margin-top:.75rem}.market-filters label{display:flex;gap:.5rem;align-items:center;min-height:2.75rem}
+  .market-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin-top:1rem}
+  .market-card{display:flex;align-items:center;gap:1rem;padding:1rem;border:1px solid var(--color-neutral-solid-gray-200);border-radius:1rem;background:var(--color-neutral-white);min-width:0}
+  .market-copy{flex:1;min-width:0}.market-copy h3{margin:0;font-size:1rem}.market-copy p{margin:.25rem 0;color:var(--color-neutral-solid-gray-600);font-size:.875rem;overflow-wrap:anywhere}
+  .market-icon{font-size:1.5rem;flex:0 0 2.5rem;text-align:center}.market-actions{flex-direction:column;align-items:stretch}
+  .market-create{min-height:5rem;cursor:pointer;font:inherit}.installed-apps-nav h2{font-size:.75rem;color:var(--color-neutral-solid-gray-600)}
+  .installed-app-link{display:flex;padding:.5rem .75rem;min-height:2.75rem;align-items:center;box-sizing:border-box;text-decoration:none;color:inherit;border:0;background:transparent;font:inherit;width:100%;border-radius:.5rem}
+  .installed-app-link:hover,.installed-app-link[aria-current='page']{background:var(--color-neutral-solid-gray-100)}
+  .ck-bots__launcher summary,.ck-bots__launcher details>a{display:flex;align-items:center;min-height:2.75rem;color:inherit;text-decoration:none;padding-inline:.5rem}
+  .ck-bots__launcher details[open]>div{max-height:12rem;overflow:auto}
+  .settings-manual{margin-top:1.5rem}.settings-manual>summary{padding:1rem;cursor:pointer}.settings-manual>.workspace-wallet{display:inline-flex;margin:1rem}
+  #settings-bot-dialog .dads-modal-dialog__dialog{--modal-dialog-width:min(36rem,100%)}
+  #settings-bot-request{width:100%;box-sizing:border-box;font:inherit;padding:.75rem;margin-bottom:.5rem}
+  #settings-bot-list{max-height:40dvh;overflow:auto}.bot-actions-menu{position:relative}.bot-actions-menu>summary{cursor:pointer;min-height:2.75rem;display:flex;align-items:center;padding:.5rem}
+  .bot-actions-menu__items{position:absolute;right:0;top:100%;z-index:60;display:flex;flex-direction:column;gap:.5rem;padding:1rem;width:15rem;background:var(--color-neutral-white);border:1px solid var(--color-neutral-solid-gray-200);border-radius:.75rem;box-shadow:0 .5rem 1.5rem var(--color-neutral-solid-gray-200)}
+  .bots-titlebar__identity{flex:1;min-width:0}.bots-titlebar__copy{min-width:0}.bots-titlebar__name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.bots-titlebar__status{white-space:normal}
+  body[data-current-view='bots'] #current-view{display:none}body[data-current-view='bots'] #bots-titlebar-context{flex:1;min-width:0}
+  .topbar{min-width:0}.topbar__title{white-space:nowrap}.topbar>button{flex-shrink:0}
+  @media(width < 48rem){.market-grid{grid-template-columns:minmax(0,1fr)}.market-card{gap:.75rem;padding:.75rem}.bots-titlebar__status{font-size:.75rem}.topbar #bots-new{font-size:.75rem;padding:.25rem}.topbar #bots-context-button{font-size:.75rem;padding:.25rem}.topbar>.comment-mode-toggle{display:none}}
+
+  @media(width >= 48rem){
     .workspace{grid-template-columns:14rem minmax(0,1fr)}
     .sidebar{overflow-y:auto}
-    .bots-shell{grid-template-columns:19rem minmax(0,1fr)}
-    .bots-rail__item{padding:1rem .75rem}
-    .bots-composer{padding:1rem 1.5rem}
     .bots-titlebar{flex-wrap:wrap}
     body[data-current-view='bots'] .workspace{display:block}
     body[data-current-view='bots'] .sidebar{position:fixed;top:0;left:0;width:19rem;
-      height:5rem;z-index:40;padding:.5rem 1rem;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+      height:var(--workspace-header-height,5rem);overflow:hidden;z-index:40;padding:.5rem 1rem;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
     body[data-current-view='bots'] .sidebar>:not(.account-entry){display:none}
     body[data-current-view='bots'] .topbar{padding-left:20rem}
     .bots-plugin-link{padding:1rem .75rem;margin-top:auto}
   }
-  @media(max-width:56rem){
+  @media(width < 48rem){
     .bots-view{height:calc(100dvh - var(--workspace-header-height,4rem) - var(--mobile-nav-height))}
     .bots-plugin-link{display:none}
     .account-entry{position:fixed;top:.5rem;left:.5rem;z-index:50;padding:.25rem}
@@ -1761,7 +1686,90 @@
     .topbar{padding-left:3.5rem;flex-wrap:wrap}
     .workspace-wallet{max-width:11rem;overflow:hidden;text-overflow:ellipsis}
   }
+
+  /* the App overlay: a DADS modal-dialog (jp-go-dds.core/modal-dialog on the
+     behavior layer). DADS sizes the panel to its content; this workspace
+     wants a fixed window the views scroll inside, so the panel is sized here
+     and the body is the scroller. Colours are the panel's own (--ck-*). */
+  #workspace-overlay .dads-modal-dialog__dialog{--modal-dialog-width:min(54rem,calc(100vw - 3rem));height:min(48rem,calc(100dvh - 4rem));max-height:calc(100dvh - 2rem);border-radius:1.25rem;border-color:var(--ck-surface-border);background:var(--ck-surface-raised);color:var(--ck-text);overflow:hidden}
+  #workspace-overlay .dads-modal-dialog__body{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:0 2rem 2rem}
+  #workspace-overlay .dads-modal-dialog__heading{font-size:1.25rem}
+  #workspace-overlay-content>.view{padding:0;max-width:none;min-width:0}
+  #workspace-overlay-content>.view>.view-header{display:none}
+  .bots-account{position:relative}.bots-account>summary{display:flex;align-items:center;gap:.625rem;padding:.5rem;cursor:pointer;list-style:none;min-height:2.75rem}
+  .bots-account>summary::-webkit-details-marker{display:none}.bots-account>summary .identity-summary__avatar{width:2rem;height:2rem;font-size:.875rem}
+  .bots-account>summary>span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.875rem}.bots-account small{display:none}
+  .bots-account__menu{position:absolute;bottom:100%;left:0;width:100%;box-sizing:border-box;padding:.5rem;background:var(--color-neutral-white);border:1px solid var(--color-neutral-solid-gray-200);border-radius:.75rem;box-shadow:0 .5rem 1.5rem var(--color-neutral-solid-gray-200);z-index:55}
+  .bots-account__menu .account-entry{position:static;padding:.5rem}.bots-account__menu .workspace-switcher{margin:0}.bots-account__menu .account-entry>span{display:none}.bots-account .bots-account__menu .workspace-switcher{display:block;position:static;width:auto}.bots-account__menu .workspace-switcher__label{position:static;width:auto;height:auto;clip:auto;white-space:normal}
+  @media(width >= 48rem){
+    body[data-current-view='bots'] .sidebar{display:none}
+    /* the fixed rail is the pattern's --fixed-rail variant; the desktop app's
+       traffic lights sit over the rail's top, hence the extra top padding */
+    body[data-current-view='bots'] .ck-bots__rail{padding-top:2.5rem}
+    body[data-current-view='bots'] .topbar{padding-left:20rem}
+  }
+  @media(width < 48rem){
+    #workspace-overlay .dads-modal-dialog__dialog{--modal-dialog-width:calc(100vw - 1rem);height:calc(100dvh - 1rem);border-radius:1rem}
+    #workspace-overlay .dads-modal-dialog__heading{font-size:1.125rem}
+    #workspace-overlay .dads-modal-dialog__body{padding:0 1rem 1rem}
+    .topbar{padding-left:.75rem}.topbar #bots-new{font-size:0}
+  }
   ")
+
+(defn two-size-css
+  "Align the pinned shared styles with this host's single 48rem boundary.
+   This changes only known width queries, retaining shared declarations and
+   accessibility queries. The rendered-page test rejects new width thresholds."
+  [css]
+  (-> css
+      (str/replace #"\(max-width:\s*(?:600px|767px|48rem|47\.99rem|30rem)\)" "(width < 48rem)")
+      (str/replace #"\(min-width:\s*48rem\)" "(width >= 48rem)")))
+
+(defn- page-with-two-size-styles [options body]
+  ;; page/->page also inserts DADS extension CSS. Adapt only style blocks,
+  ;; including that layer; never rewrite message text or scripts.
+  (let [html (str/replace (page/->page options body) #"(?s)<style>(.*?)</style>"
+                          (fn [[_ css]] (str "<style>" (two-size-css css) "</style>")))]
+    ;; A configured `[:ui :appearance] dark` is the server-rendered theme:
+    ;; `<html data-theme="dark">`, which the stored choice (theme/head-script)
+    ;; then overrides. jp-go-dds.page owns the <html> tag, so it is stamped here.
+    (if (= "dark" (:theme-default options))
+      (str/replace-first html "<html " "<html data-theme=\"dark\" ")
+      html)))
+
+
+(def ^:private resource-roots
+  "Where a classpath resource may live on this runtime. The JVM found
+   `cloud_kotoba_dds/*` and `jp_go_dds/dds.css` through git deps; without a
+   classpath the same files are read from the sibling checkouts beside this
+   one. The first root that holds the path wins, and an empty result is an
+   error, not an empty string."
+  (let [repo (js/process.cwd)
+        orgs (str repo "/../../kotoba-lang")]
+    #js [repo
+         orgs
+         (str orgs "/cloud-kotoba-dds/resources")
+         (str orgs "/jp-go-digital-design-system/resources")]))
+
+(def ^:private fs-read-text
+  "Resource text, read once at load. Replaces JVM (slurp (io/resource ...)):
+   the same paths, resolved against the repository and its sibling library
+   checkouts on any runtime."
+  (let [node-fs (js/require "fs")]
+    (fn [rel]
+      (let [roots (seq resource-roots)
+            alt (if (.startsWith rel "resources/")
+                  (subs rel (count "resources/")) rel)]
+        (loop [roots roots]
+          (when roots
+            (let [root (first roots)
+                  candidates [(.join (js/require "path") root rel)
+                              (.join (js/require "path") root alt)]]
+              (if-let [hit (some (fn [p] (when (.existsSync node-fs p) p)) candidates)]
+                (.readFileSync node-fs hit "utf8")
+                (recur (next roots))))))))))
+(def bot-component-css (fs-read-text "resources/cloud_kotoba_dds/bot.css"))
+(def bot-component-js (fs-read-text "resources/cloud_kotoba_dds/bot.js"))
 
 (def app-css
   "The app's own rules, plus the ones `hanmen` needs for a rendered page to
@@ -1776,7 +1784,7 @@
   The 8-bit appearance layer (`cloud.itonami.app.appearance/css`) is
   concatenated LAST so that its overrides win, and so that the same token
   guard covers it: every `--eightbit-*` it references it also declares."
-  (str base-css "\n" bot-workspace-css "\n  " hanmen-svg/stylesheet "\n" appearance/css "\n"))
+  (str tokens/bridge-css "\n" ck/css "\n" behavior/css "\n" bot-component-css "\n" (two-size-css chat-styles/css) "\n" (two-size-css chat-styles/bots-css) "\n" composer/css "\n" thread/css "\n" sheet/css "\n" (two-size-css switch/css) "\n" menu/css "\n" status/css "\n" base-css "\n" bot-workspace-css "\n  " hanmen-svg/stylesheet "\n" appearance/css "\n"))
 
 (def interaction-js
   "The page's interaction layer, which is JavaScript and now lives in a
@@ -1793,13 +1801,13 @@
 
   Read once at load. The page is assembled per request and re-reading a
   third of a megabyte for each one would be work nobody asked for."
-  (slurp (io/resource "cloud/itonami/app/interaction.js")))
+  (fs-read-text "resources/cloud/itonami/app/interaction.js"))
 
 (def signal-js
   "Browser-owned X25519/Ed25519, Double Ratchet, and group sender-key state.
   Loaded before the interaction layer so the messenger never races crypto
   initialization."
-  (slurp (io/resource "cloud/itonami/app/signal.js")))
+  (fs-read-text "resources/cloud/itonami/app/signal.js"))
 
 (defn- nav-item [view title icon badge-id]
   ;; Real `#/name` links (kami-app-nle / ADR-2608080100). The fragment is
@@ -2103,6 +2111,46 @@
          [:div {:class "connector-list" :id "connector-list"}
           [:div {:class "skeleton"}]]])
 
+(defn- app-marketplace-views []
+  [:div
+   ;; the App overlay is a DADS modal-dialog on jp-go-dds.behavior: the
+   ;; platform's focus trap, Escape, and focus returned to the opener on
+   ;; close (interaction.js opens it with jpGoDds.behavior.openDialog and
+   ;; listens to `close`); a click on the backdrop closes it
+   (dds/modal-dialog {:id "workspace-overlay" :heading "App" :close-label "会話に戻る"
+                      :backdrop-click :close
+                      :attrs {:class "workspace-overlay"
+                              :data-app-views (str/join " " (map :id app-directory/workspace-apps))}}
+     [:div {:id "workspace-overlay-content"}])
+   [:section {:class "view" :data-view-panel "apps" :hidden true}
+    (view-header "App" "インストールした App を開く。")
+    [:div {:class "button-row"} [:a {:class "primary-action" :href "#/marketplace"} "App を探す"]]
+    [:p {:id "apps-status" :role "status"}]
+    [:div {:class "market-grid" :id "installed-app-grid"}]]
+   [:section {:class "view" :data-view-panel "marketplace" :hidden true}
+    (view-header "マーケットプレイス" "仕事に合わせて、Plugin・Bot・App を追加。")
+    [:div {:class "market-tabs" :role "tablist" :aria-label "種類"}
+     (for [[id label] [["plugin" "Plugin"] ["bot" "Bot"] ["app" "App"]]]
+       [:button {:type "button" :role "tab" :id (str "market-tab-" id)
+                 :data-market-tab id :aria-selected (= id "plugin")
+                 :aria-controls "market-results" :tabindex (if (= id "plugin") 0 -1)} label])]
+    [:label {:class "visually-hidden" :for "market-search"} "マーケットプレイスを検索"]
+    [:input {:id "market-search" :type "search" :placeholder "名前や用途で検索"}]
+    [:div {:class "market-filters"}
+     [:label [:input {:id "market-installed-only" :type "checkbox"}] "追加済みだけ"]]
+    [:p {:id "market-status" :role "status" :aria-live "polite"}]
+    [:div {:class "market-grid" :id "market-results" :role "tabpanel"
+           :aria-labelledby "market-tab-plugin"}]]
+   ;; the 「設定を頼む」 sheet is cloud-kotoba-dds.sheet (a bottom sheet on the
+   ;; compact band, centred above it); the behavior layer returns focus to
+   ;; the button that opened it
+   (sheet/settings-sheet {:id "settings-bot-dialog" :heading "設定を頼む Bot"}
+     [:label {:for "settings-bot-request"} "変更したいこと"]
+     [:textarea {:id "settings-bot-request" :rows 3}]
+     [:p "会話に下書きを渡します。変更内容を確認してから送信できます。"]
+     [:div {:id "settings-bot-list"}]
+     (status/line {:id "settings-bot-status" :label "設定の依頼の結果"}))])
+
 (defn- workspace-navigation [brand cloud? residency]
   [:aside {:class "sidebar" :aria-label "メインメニュー"}
        [:div {:class "brand" :id "signed-out-brand"}
@@ -2124,39 +2172,12 @@
        [:nav {:class "local-nav" :aria-label "機能メニュー"}
         [:div {:class "nav-primary authenticated-only" :hidden true}
          (nav-item "bots" "あなたの Bot" "◕" "bots-count")
-         (nav-item "plugins" "プラグイン" "▤" nil)
-         (nav-item "wallet" "ウォレット" "◈" "wallet-count")
-         (nav-item "messenger" "Messenger" "◇" "messenger-count")]
+         (nav-item "apps" "App" "▦" nil)
+         (nav-item "marketplace" "マーケットプレイス" "⊞" nil)]
         [:div {:class "nav-overflow-panel" :id "mobile-overflow-panel"}
-         [:details {:class "nav-secondary nav-section authenticated-only" :hidden true}
-          [:summary {:class "nav-section__summary"} "その他の機能"]
-          (nav-item "storefront" "Store" "▤" nil)
-          (nav-item "projects" "Projects" "▦" "projects-count")
-          (nav-item "sites" "Sites" "▦" "sites-count")
-          (nav-item "drive" "Drive" "◇" "drive-count")
-         (nav-item "resources" "Resources" "❋" "resources-count")
-          (nav-section
-           "business-design" "事業設計" "◱"
-           [(nav-item "portfolio" "Portfolio" "▤" "portfolio-count")
-            (nav-item "canvas" "Canvas" "◱" "canvas-count")
-            (nav-item "loops" "Loops" "∞" "loops-count")
-            (nav-item "metrics" "Metrics" "⌸" "metrics-count")
-            (nav-item "repos" "Repos" "⌗" "repos-count")])
-          (nav-section
-          "operations" "運営" "◉"
-           [(nav-item "organization" "Organization" "⌘" "organization-count")
-            (nav-item "operator" "事業者" "◐" "operator-count")
-            (nav-item "inbox" "Mail archive" "□" "inbox-count")
-            (nav-item "fleet" "Fleet" "◉" "fleet-count")
-            (nav-item "worker" "Worker" "◐" "worker-count")
-            (nav-item "organisms" "Organisms" "◎" "organism-count")
-            (nav-item "scheduler" "Scheduler" "○" "scheduler-count")])
-          (nav-section
-           "trust-records" "信頼・記録" "▣"
-           [(nav-item "contracts" "Contracts" "◫" "contracts-count")
-            (nav-item "esign" "eSign" "✍" "esign-count")
-            (nav-item "credentials" "Credentials" "▣" "credentials-count")
-            (nav-item "storage" "Storage" "◈" "storage-count")])]
+         [:section {:class "installed-apps-nav authenticated-only" :hidden true}
+          [:h2 "インストール済み App"]
+          [:div {:data-installed-apps "sidebar"}]]
          [:div {:class "sidebar__utility"}
           (nav-item "signin" "サインイン" "↪" nil)
          [:div {:class "authenticated-only" :hidden true}
@@ -2182,41 +2203,350 @@
          (if (= :cloud residency) "cloud-agent · murakumo.cloud" "local-agent · この端末")]
         [:span {:id "workspace-status"} "既存サービスを確認中…"]]])
 
+(defn- settings-view [mode locale]
+  [:section {:class "view" :data-view-panel "settings" :hidden true}
+         (view-header "アカウント" "プロフィール、接続、Bot の設定を管理します。")
+         [:section {:class "settings-assistant local-card"}
+          [:h2 "設定は Bot に頼む"]
+          [:p "変更したいことを伝えて、担当する Bot を選びます。"]
+          [:button {:class "primary-action" :type "button" :data-ask-settings "全体"} "Bot に設定を頼む"]
+          [:div {:class "button-row"}
+           [:button {:class "tool-button" :type "button" :data-ask-settings "通知と定期実行"} "通知・定期実行"]
+           [:button {:class "tool-button" :type "button" :data-ask-settings "サービス接続"} "サービス接続"]
+           [:button {:class "tool-button" :type "button" :data-ask-settings "モデルと実行環境"} "モデル・実行環境"]]]
+         [:details {:class "settings-manual" :id "settings-manual"}
+          [:summary "アカウント・権限を確認 / 自分で設定する"]
+          [:div {:class "button-row"} (comment-mode-toggle)
+           ;; light / dark / system — the shinkansen contract, answered by
+           ;; its runtime; the 8-bit appearance is reached by ?appearance=8bit
+           (switch/theme-switch {:id "theme-switch" :current :system})
+           ;; the language switch (shinkansen.locale): the runtime writes the
+           ;; negotiation cookie and reloads; the resident serves the variant
+           (switch/locale-switch {:id "locale-switch" :current locale
+                                  :locales [{:locale "ja" :label "日本語" :href "#"}
+                                            {:locale "en" :label "English" :href "#"}]})]
+        [:a {:class "workspace-wallet authenticated-only" :id "workspace-wallet"
+             :href "#/wallet" :hidden true :aria-label "ウォレットを開く"}
+         [:span {:id "workspace-wallet-label"} "ウォレットを確認"]]
+         (context-capture-settings)
+         (model-routing-settings)
+         (agent-machine-settings)
+         [:div {:class "local-card" :id "desktop-update-card"}
+          (dds/heading 2 "Desktop update" {:size "20"})
+          [:p {:class "view-lead" :id "desktop-update-status"
+               :role "status" :aria-live "polite"}
+           "更新状態を確認しています…"]
+          [:p {:class "form-help"}
+           "公開Releaseはアプリ内のEd25519公開鍵で署名を検証し、packageのSHA-256とsizeが一致した場合だけ次回起動用に準備します。"]
+          [:div {:class "button-row"}
+           [:button {:class "primary-action" :id "desktop-update-action" :type "button"}
+            "更新を確認"]]]
+         [:div {:class "settings-notice" :id "connection-notice" :hidden true}]
+         [:div {:class "settings-stack" :id "identity-workspace" :hidden true}
+          [:div {:class "identity-summary"}
+           [:div {:class "identity-summary__avatar" :id "identity-avatar"
+                  :aria-hidden "true"} "U"]
+           [:div {:class "identity-summary__copy"}
+            [:p {:class "identity-summary__name" :id "identity-name"} "User"]
+            [:p {:class "identity-summary__meta" :id "identity-email"} "—"]
+            [:p {:class "identity-summary__meta" :id "identity-did"} "—"]]
+           [:span {:class "state-chip"} "サインイン済み"]]
+          [:div {:class "local-card" :id "auth-methods-card"}
+           (dds/heading 2 "サインイン方法" {:size "24"})
+           [:p {:class "view-lead" :id "current-auth-method"}
+            "現在の認証方法を確認中…"]
+           [:ul {:class "data-list" :id "linked-auth-methods"}]
+           [:p {:class "form-help"}
+            "同じEmailでも自動統合しません。既存Userへサインインした状態で接続してください。"]
+           [:div {:class "button-row"}
+            [:button {:class "primary-action" :id "itonami-cloud-link"
+                      :type "button"} "auth.itonami.cloud を接続"]]]
+          [:div {:class "local-card" :id "session-management-card"}
+           (dds/heading 2 "ログイン中の端末" {:size "24"})
+           [:p {:class "view-lead"}
+            "このUserの有効なセッションを確認し、不要な端末をログアウトできます。"]
+           [:ul {:class "data-list" :id "auth-session-list"}
+            [:li "セッションを確認中…"]]
+           [:div {:class "button-row"}
+            [:button {:class "tool-button" :id "sign-out-current"
+                      :type "button"} "この端末からログアウト"]]]
+          [:div {:class "settings-grid"}
+           [:div {:class "settings-stack"}
+            [:div {:class "local-card"}
+             (dds/heading 2 "Passkey" {:size "24"})
+             [:p {:class "view-lead" :id "passkey-state"} "Passkey 状態を確認中…"]
+             [:button {:class "primary-action" :id "passkey-register"
+                       :type "button"} "Passkey を登録"]]
+            [:div {:class "local-card"}
+             (dds/heading 2 "Private Email Relay" {:size "24"})
+             [:p {:class "view-lead" :id "cloud-alias-state"}
+              "グローバル予約状態を確認中…"]
+             [:div {:class "field"}
+              [:label {:for "cloud-alias-destination"} "実メール転送先"]
+              [:input {:id "cloud-alias-destination" :type "email"
+                       :autocomplete "email"
+                       :placeholder "private@example.jp"}]]
+             [:p {:class "form-help"}
+              "公開アドレスへの受信を転送し、返信時も実メールアドレスを相手に開示しません。"]
+             [:button {:class "primary-action" :id "cloud-alias-reserve"
+                       :type "button"} "グローバル予約して確認メールを送信"]]
+            [:div {:class "local-card"}
+             (dds/heading 2 "プラグイン" {:size "24"})
+             [:p "Bot が使うサービスを接続・管理します。"]
+             [:a {:href "#/plugins"} "プラグインを開く →"]]
+            ;; Mailboxes, listed one per account rather than one per provider:
+            ;; the same person's work Gmail and personal Gmail are two rows
+            ;; with two sync states, because "Google: エラー" does not say
+            ;; which of the two stopped working.
+            [:div {:class "local-card"}
+             (dds/heading 2 "メールアカウント" {:size "24"})
+             [:p {:class "view-lead"}
+              "Gmail と Microsoft 365 は上の「サービス接続」から、同じ提供者の2つ目以降のアカウントも同じ手順で追加できます。OAuth を持たないメールボックスは IMAP か POP3 で接続します。"]
+             [:p {:class "source-note" :id "mail-account-state"}
+              "メールアカウントを確認中…"]
+             [:ul {:class "member-list" :id "mail-account-list"}]
+             [:form {:class "settings-form" :id "mail-account-form"}
+              (dds/heading 3 "IMAP / POP3 でメールボックスを追加" {:size "16"})
+              [:div {:class "field"}
+               [:label {:for "mail-account-protocol"} "受信プロトコル"]
+               [:select {:id "mail-account-protocol" :name "protocol"}
+                [:option {:value "imap" :selected true} "IMAP（推奨）"]
+                [:option {:value "pop3"} "POP3"]]
+               [:span {:class "form-help"}
+                "POP3 はフォルダも既読状態もサーバーに持てません。IMAP が使えるなら IMAP を選んでください。"]]
+              [:div {:class "field"}
+               [:label {:for "mail-account-address"} "メールアドレス"]
+               [:input {:id "mail-account-address" :name "address"
+                        :type "email" :required true :autocomplete "email"
+                        :placeholder "me@example.com"}]]
+              [:div {:class "field"}
+               [:label {:for "mail-account-host"} "受信サーバー"]
+               [:input {:id "mail-account-host" :name "host" :required true
+                        :autocomplete "off" :placeholder "imap.example.com"}]]
+              [:div {:class "field"}
+               [:label {:for "mail-account-smtp-host"} "SMTP サーバー（任意）"]
+               [:input {:id "mail-account-smtp-host" :name "smtp-host"
+                        :autocomplete "off"
+                        :placeholder "空欄なら IMAP と同じホスト"}]]
+              [:div {:class "field"}
+               [:label {:for "mail-account-password"} "パスワード（アプリパスワード）"]
+               [:input {:id "mail-account-password" :name "password"
+                        :type "password" :required true
+                        :autocomplete "new-password"}]
+               [:span {:class "form-help"}
+                "macOS Keychain に保存します。state.edn には保存しません。"]]
+              [:button {:class "tool-button" :id "mail-account-submit"
+                        :type "submit"} "メールボックスを追加"]]]
+            [:div {:class "security-callout"}
+             [:strong "認証境界"]
+             " Passkey は challenge・origin・RP ID・署名・user verification・counter をサーバーで検証します。OAuth は state を一度だけ使用し、PKCE S256 と10分の期限を適用します。"]]
+           [:aside {:class "settings-stack"}
+            [:div {:class "local-card"}
+             (dds/heading 2 "Organization" {:size "20"})
+             [:p {:class "identity-summary__name" :id "organization-name"} "—"]
+             [:p {:class "identity-summary__meta" :id "organization-domain"} "—"]
+             [:p {:class "identity-summary__meta" :id "organization-did"} "—"]
+             [:form {:class "settings-form" :id "organization-form"}
+              [:div {:class "field"}
+               [:label {:for "organization-id"} "Organization ID"]
+               [:input {:id "organization-id" :name "organization-id"
+                        :required true :autocomplete "off"
+                        :pattern "[a-z0-9][a-z0-9._-]{1,30}[a-z0-9]"
+                        :placeholder "my-organization"}]
+               [:span {:class "form-help"}
+                "設定後は変更できません。管理ドメインと owner の公開アドレスを発行します。"]]
+              [:button {:class "primary-action" :id "organization-submit"
+                        :type "submit"} "Organization ID を設定"]]
+             [:form {:class "settings-form" :id "organization-create-form"}
+              (dds/heading 3 "別のOrganizationを作成" {:size "16"})
+              [:div {:class "field"}
+               [:label {:for "new-organization-name"} "表示名"]
+               [:input {:id "new-organization-name" :name "organization-name"
+                        :autocomplete "organization"
+                        :placeholder "Etzhayyim"}]]
+              [:div {:class "field"}
+               [:label {:for "new-organization-id"} "Organization ID"]
+               [:input {:id "new-organization-id" :name "organization-id"
+                        :required true :autocomplete "off"
+                        :pattern "[a-z0-9][a-z0-9._-]{1,30}[a-z0-9]"
+                        :placeholder "etzhayyim"}]]
+              [:button {:class "tool-button" :id "organization-create"
+                        :type "submit"} "Organizationを追加"]]
+             ;; Here rather than in the Projects panel: that panel reads GitHub
+             ;; Projects v2, and this moves a LOCAL project between tenants —
+             ;; a question about tenants, which is what this card is (ADR-0024).
+             [:form {:class "settings-form" :id "project-transfer-form"}
+              (dds/heading 3 "Project を別の tenant へ移動" {:size "16"})
+              [:div {:class "field"}
+               [:label {:for "project-transfer-project"} "Project ID"]
+               [:input {:id "project-transfer-project" :name "project"
+                        :required true :autocomplete "off"
+                        :placeholder "my-project"}]]
+              [:div {:class "field"}
+               [:label {:for "project-transfer-tenant"} "移動先"]
+               [:select {:id "project-transfer-tenant" :name "tenant"
+                         :required true}]
+               [:span {:class "form-help" :id "project-transfer-help"}
+                (str "両方の tenant で owner または admin 権限が必要です。"
+                     "公開済みの Project は移動できません。")]]
+              [:button {:class "tool-button" :id "project-transfer-submit"
+                        :type "submit"} "移動する"]]
+             [:form {:class "settings-form"
+                     :id "organization-invitation-form"}
+              (dds/heading 3 "既存Organizationへ参加" {:size "16"})
+              [:p {:class "form-help" :id "organization-invitation-state"}
+               "参加待ちの招待を確認中…"]
+              [:div {:class "field"}
+               [:label {:for "organization-invitation-code"} "招待コード"]
+               [:input {:id "organization-invitation-code"
+                        :name "invitation-code"
+                        :required true
+                        :autocomplete "one-time-code"}]]
+              [:button {:class "tool-button"
+                        :id "organization-invitation-accept"
+                        :type "submit"}
+               "招待を承認して参加"]]
+             [:ul {:class "member-list" :id "member-list"}]]
+            [:div {:class "local-card" :id "domain-verification-card"}
+             (dds/heading 2 "会社ドメイン" {:size "20"})
+             ;; Two steps, and the card says why there are two (ADR-0043). The
+             ;; TXT record proves the zone is yours; it does not make the name
+             ;; resolve here, and a tenant named by an address that answers
+             ;; nothing is what the second step exists to prevent.
+             [:p {:class "form-help"}
+              "会社ドメインでこのOrganizationを名乗るには2段階が必要です。①DNS の TXT レコードで、そのドメインを管理していることを確認します（DNSの書き込み権限をCloud Itonamiへ渡す必要はありません）。②ドメインをこの deployment に向けてから有効化します。①だけではまだ名前になりません。"]
+             [:p {:class "source-note" :id "domain-verification-state"
+                  :role "status" :aria-live "polite"}
+              "所有権確認を読み込み中…"]
+             [:form {:class "settings-form" :id "domain-verification-form"}
+              [:div {:class "field"}
+               [:label {:for "company-domain"} "会社ドメイン"]
+               [:input {:id "company-domain" :name "domain" :required true
+                        :type "text" :inputmode "url" :autocomplete "url"
+                        :placeholder "example.co.jp"}]
+               [:span {:class "form-help"}
+                "URLやワイルドカードではなく、会社が管理する完全なドメイン名を入力します。"]]
+              [:button {:class "primary-action" :id "domain-verification-start"
+                        :type "submit"}
+               "TXTレコードを発行"]]
+             [:div {:class "settings-form" :id "domain-verification-record"
+                    :hidden true}
+              [:div {:class "field"}
+               [:label {:for "domain-verification-record-name"} "TXT ホスト名"]
+               [:code {:id "domain-verification-record-name"} "—"]]
+              [:div {:class "field"}
+               [:label {:for "domain-verification-record-value"} "TXT 値"]
+               [:code {:id "domain-verification-record-value"} "—"]]
+              [:p {:class "form-help" :id "domain-verification-expiry"} "—"]
+              [:div {:class "record-actions"}
+               [:button {:class "tool-button" :id "domain-verification-copy"
+                         :type "button"}
+                "TXTをコピー"]
+               [:button {:class "primary-action" :id "domain-verification-claim"
+                         :type "button"}
+                "DNSを確認"]]]
+             ;; Step 2. Shown once the claim holds — until then there is nothing
+             ;; to point anywhere, and offering activation would invite an owner
+             ;; to cut production DNS over to a name they have not reserved.
+             [:div {:class "settings-form" :id "domain-verification-activation"
+                    :hidden true}
+              (dds/heading 3 "この deployment に向ける" {:size "16"})
+              [:p {:class "form-help"}
+               "所有権の確認だけでは、まだこのOrganizationの名前になりません。ドメインをこの deployment に向け、証明書が有効になってから有効化してください。有効化は、この URL がこの deployment の応答を返すことを実際に取得して確かめます。"]
+              [:div {:class "field"}
+               [:label {:for "domain-verification-activation-url"} "確認するURL"]
+               [:code {:id "domain-verification-activation-url"} "—"]]
+              [:p {:class "source-note" :id "domain-verification-probe"
+                   :role "status" :aria-live "polite"} "—"]
+              [:div {:class "record-actions"}
+               [:button {:class "primary-action"
+                         :id "domain-verification-activate" :type "button"}
+                "有効化"]
+               [:button {:class "tool-button" :id "domain-verification-recheck"
+                         :type "button"}
+                "再確認"]]]]
+            [:div {:class "local-card"}
+             (dds/heading 2 "Agent tenant connections" {:size "20"})
+             [:p {:class "form-help"}
+              "Agentの申請を確認し、tenant・capability・期限・予算を固定して承認します。Agent自身は承認できません。"]
+             [:p {:class "source-note" :id "tenant-connection-state"
+                  :role "status" :aria-live "polite"}
+              "接続申請を確認中…"]
+             [:ul {:class "member-list" :id "tenant-connection-list"}
+              [:li {:class "skeleton"}]]]
+            [:div {:class "local-card" :id "member-card"}
+             (dds/heading 2 "User を追加" {:size "20"})
+             [:form {:class "settings-form" :id "member-form"}
+              [:div {:class "field"}
+               [:label {:for "member-name"} "表示名"]
+               [:input {:id "member-name" :name "display-name" :required true
+                        :autocomplete "off"}]]
+              [:div {:class "field"}
+               [:label {:for "member-account-id"} "アカウントID"]
+               [:input {:id "member-account-id" :name "account-id"
+                        :required true :autocomplete "off"
+                        :pattern "[a-z0-9][a-z0-9._-]{1,30}[a-z0-9]"}]
+               [:span {:class "form-help"} "管理ドメインのアドレスを発行"]]
+              [:div {:class "field"}
+               [:label {:for "member-email"} "連絡先メール（任意）"]
+               [:input {:id "member-email" :name "contact-email" :type "email"
+                        :autocomplete "off"}]]
+              [:div {:class "field"}
+               [:label {:for "member-role"} "ロール"]
+               [:select {:id "member-role" :name "role"}
+                [:option {:value "member"} "Member"]
+                [:option {:value "admin"} "Admin"]]]
+              [:button {:class "primary-action" :type "submit"} "User を登録"]]
+             [:p {:class "security-callout" :id "enrollment-result"
+                  :hidden true :aria-live "polite"}]]]]]]])
+
 (defn page-html [configuration]
   (let [cloud? (get-in configuration [:routing :cloud-enabled?])
         provider (get-in configuration [:routing :default-provider])
         model (get-in configuration [:routing :default-model])
         brand (get-in configuration [:brand :name] "Cloud Itonami")
         mode (appearance/resolve-mode configuration)
+        ;; the document's language. Variants are rendered per locale
+        ;; (scripts/render-ui-preview.cljk) and the resident serves the one
+        ;; the shinkansen_locale cookie / Accept-Language negotiates.
+        locale (or (some-> (get-in configuration [:ui :locale]) str not-empty) "ja")
         residency (appearance/residency-plane configuration)
-        css (slurp (io/resource "jp_go_dds/dds.css"))]
-    (page/->page
+        ;; dds.css carries the primitives; the modal-dialog component css is
+        ;; per-component upstream (jp-go-dds.css), read here for the two dialogs
+        css (two-size-css (str (fs-read-text "resources/jp_go_dds/dds.css") "\n"
+                               (fs-read-text "resources/jp_go_dds/components/modal-dialog.css")))]
+    (page-with-two-size-styles
      {:title (str "Bots | " brand)
       :description "安全第一（緑十字）のAIワークスペース"
-      ;; The dark layer is appended here rather than folded into `app-css`
-      ;; because it is DERIVED from `css` — it inverts the vendored ramps, so
-      ;; it cannot be a load-time `def` the way the authored appearances are.
-      ;; Last, so its `:root:has(…)` block sits after everything that declares
-      ;; a `--color-*`.
-      :css css :app-css (str app-css "\n" (appearance/dark-css css))
+      :lang locale
+      :theme-default mode
+      ;; `:dark? true`: jp-go-dds emits its dark layer (snapshot, the inverted
+      ;; ramps under `:root:root[data-theme="dark"]` and under the OS media
+      ;; block, light written back under `[data-theme="light"]`) and both
+      ;; theme-color metas. The theme is the shinkansen contract since
+      ;; 2026-09-16; this app draws no dark of its own any more.
+      :css css :app-css app-css :dark? true
       :head [[:link {:rel "icon" :type "image/png" :href "/icon.png"}]
              [:link {:rel "apple-touch-icon" :href "/icon.png"}]
-             [:script signal-js] [:script interaction-js]]}
+             ;; the stored theme lands before paint — a flash on every load otherwise
+             [:script theme/head-script]
+             [:script signal-js] [:script interaction/runtime] [:script bot-component-js]
+             [:script bots/script] [:script switch/script] [:script menu/script] [:script status/script]
+             ;; the behavior layer (dialogs: focus trap, Escape, focus return)
+             ;; and the composer / thread runtimes, before the app's own
+             [:script behavior/script] [:script composer/script] [:script thread/script]
+             [:script interaction-js]]}
      ;; `data-appearance` is the whole of a mode (ADR-0091): the server renders
      ;; the configured default, `interaction.js` flips it to the device's
      ;; remembered choice, and the stylesheet reads it. Nothing else differs.
-     [:div {:class "workspace" :data-brand brand :data-appearance mode
+     [:div {:class "workspace" :data-brand brand
+            :data-appearance (if (= "dark" mode) "light" mode)
             :data-residency (name residency)}
       (comment-layer)
       (workspace-navigation brand cloud? residency)
       [:div {:class "main"}
        [:header {:class "topbar" :data-kotoba-window-drag "true"}
         [:h2 {:class "topbar__title" :id "current-view"} "あなたの Bot"]
-        [:a {:class "workspace-wallet authenticated-only" :id "workspace-wallet"
-             :href "#/wallet" :hidden true :aria-label "ウォレットを開く"}
-         [:span {:id "workspace-wallet-label"} "ウォレットを確認"]]
-        (comment-mode-toggle)
-        (appearance/toggle-button mode)
         [:div {:class "topbar__context authenticated-only" :id "project-titlebar-context"
                :data-topbar-view "chat" :hidden true}
          [:button {:class "context-button" :id "chat-context-button" :type "button"
@@ -2225,6 +2555,7 @@
           "参照 0"]]
         [:div {:class "topbar__context authenticated-only" :id "bots-titlebar-context"
                :data-topbar-view "bots" :hidden true}
+         [:button {:class "tool-button bots-list-toggle" :id "bots-list-toggle" :type "button" :aria-controls "bots-list" :aria-expanded "false"} "Bot 一覧"]
          [:button {:class "context-button" :id "bots-context-button" :type "button"
                    :aria-expanded "false" :aria-controls "conversation-context-panel"
                    :title "このBotにProject、フォルダ、データを追加" :disabled true}
@@ -2247,24 +2578,36 @@
                     :type "text" :maxlength "60" :autocomplete "off" :hidden true
                     :placeholder "役割を短く（例: 価格の見直し）"}]
            [:span {:class "bots-titlebar__status" :id "bots-titlebar-status"}]]]
+         [:div {:id "group-chat-header" :class "bots-titlebar__identity"}
+          [:div {:id "group-chat-avatars" :class "group-chat-avatars" :aria-hidden true}]
+          [:div {:class "bots-titlebar__copy"}
+           [:span {:id "room-title" :class "bots-titlebar__name"} "グループチャット"]
+           [:span {:id "room-members-summary" :class "bots-titlebar__status"}]]
+          [:button {:id "group-chat-details" :class "tool-button" :type "button"
+                    :aria-expanded "false" :aria-controls "room-details" :aria-label "参加者・詳細"} "詳細"]]
+         [:details {:class "bot-actions-menu"}
+          [:summary {:aria-label "Bot の操作"} "操作"]
+          [:div {:class "bot-actions-menu__items"}
+           [:button {:class "tool-button" :type "button" :data-ask-settings "この Bot"} "設定を Bot に頼む"]
          [:button {:class "tool-button" :id "bots-thread-tools" :type "button"
                    :aria-expanded "false" :aria-controls "bots-thread-panel"
-                   :title "この Bot が届く範囲" :hidden true} "▤"]
+                   :title "この Bot が届く範囲" :hidden true} "権限・詳細"]
          [:button {:class "tool-button" :id "bots-routines" :type "button"
                    :aria-expanded "false" :aria-controls "bots-routines-panel"
                    :aria-label "このBotの定期ジョブ" :title "このBotの定期ジョブ"
-                   :hidden true} "◷"]
+                   :hidden true} "定期ジョブ"]
          [:button {:class "tool-button" :id "bots-conversations" :type "button"
                    :aria-expanded "false" :aria-controls "bots-conversations-panel"
-                   :aria-label "Bot同士の会話を読む" :title "Bot同士の会話を読む"}
-          "↔" [:span {:class "bots-conversations__count" :id "rooms-count"} "—"]]
+                   :aria-label "グループチャットを作成" :title "グループチャットを作成"}
+          "グループチャット " [:span {:class "bots-conversations__count" :id "rooms-count"} "—"]]
          [:button {:class "tool-button" :id "bots-quality" :type "button"
                    :aria-expanded "false" :aria-controls "bots-quality-panel"
                    :aria-label "Bots の安定性と出力品質" :title "Bots の安定性と出力品質"}
-          "◎"]
+          "稼働状況"]
          [:button {:class "tool-button" :id "bots-workforce" :type "button"
                    :aria-label "会社Botを常駐化"
-                   :title "8事業の職務Botを常駐化"} "▦"]
+                   :title "8事業の職務Botを常駐化"} "会社 Bot を追加"]
+]]
          [:button {:class "tool-button" :id "bots-new" :type "button"
                    :aria-label "新しい Bot を作る"} "＋ 新しい Bot"]]]
        [:main {:id "main-content"}
@@ -2340,16 +2683,26 @@
         ;; the markup here is the frame, because the number of Bots and the
         ;; number of cards in a turn are both unknown until it answers.
         [:section {:class "view bots-view" :data-view-panel "bots" :hidden true}
-         [:div {:class "bots-shell" :id "bots-shell"}
-          [:aside {:class "bots-rail"}
-           [:label {:class "bots-rail__search" :for "bots-filter"}
-            [:span {:class "visually-hidden"} "Botを検索"]
-            [:input {:id "bots-filter" :type "search" :placeholder "Botを検索"
-                     :autocomplete "off"}]]
-           [:ul {:class "bots-rail__list" :id "bots-list"}]
-           [:p {:class "bots-rail__empty" :id "bots-rail-empty"} "まだ Bot がいません"]
-           [:a {:class "bots-plugin-link" :href "#/plugins"} "プラグインを接続 →"]]
-          [:div {:class "bots-main"}
+         ;; The rail is cloud-kotoba-dds's Bots workspace pattern (owner decision
+         ;; 2026-09-16, Plan A): structure, surfaces, radii and the two bands come
+         ;; from `styles/bots-css`; the ids stay because interaction.js addresses
+         ;; the rail by them, and rows are drawn by `cloudKotobaBots.row` with the
+         ;; same markup and `bots/select` action the hiccup emits.
+         (bots/workspace {:id "bots-shell" :class "ck-bots--fixed-rail" :aria-label "Bots"}
+          (bots/rail {:aria-label "Bot 一覧"}
+           (bots/rail-search {:id "bots-filter" :placeholder "Botを検索" :aria-label "Botを検索"})
+           (bots/pinned-grid {:id "bots-pinned" :hidden true})
+           (bots/rail-list {:id "bots-rail-list"}
+            [:div {:class "ck-bots__group" :id "bots-room-shortcuts" :aria-label "共有会話" :hidden true}]
+            [:div {:id "bots-list"}]
+            [:p {:class "ck-bots__empty" :id "bots-rail-empty"} "まだ Bot がいません"])
+           (bots/rail-launcher {}
+            (bots/launcher-link {:href "#/apps" :label "App" :mark "▦"})
+            (bots/launcher-link {:href "#/marketplace" :label "マーケットプレイス" :mark "⊞"})
+            [:details {:class "bots-account" :id "bots-account"}
+             [:summary {:id "bots-account-summary"} "アカウント"]
+             [:div {:class "bots-account__menu" :id "bots-account-menu"}]]))
+          (bots/main {}
            [:aside {:class "bots-routines-panel" :id "bots-routines-panel" :hidden true
                     :aria-label "このBotの定期ジョブ"}
             [:div {:class "section-heading"}
@@ -2444,26 +2797,52 @@
              [:p {:class "drive-create__status" :id "bots-create-status"
                   :aria-live "polite"}]
              [:div {:class "bots-suggestions" :id "bots-suggestions"}]]]
-           ;; Bot-to-Bot rooms are an attributed audit trail inside Bots, not
-           ;; another place to issue work. Creation and sending remain API/CLI
-           ;; operations; this surface only lets a person follow what was said.
+           ;; Shared conversations accept owner participation. Tool authority
+           ;; remains in each Bot's own admitted work context.
            [:aside {:class "bots-conversations" :id "bots-conversations-panel"
-                    :hidden true :aria-label "Bot同士の会話"}
+                    :hidden true :aria-label "グループチャット"}
             [:div {:class "section-heading"}
-             (dds/heading 2 "Bot同士の会話" {:size "24"})
+             (dds/heading 2 "新しいグループ" {:size "24"})
              [:button {:class "tool-button" :id "bots-conversations-close"
                        :type "button" :aria-label "会話一覧を閉じる"} "閉じる"]]
             [:p {:class "form-help"}
-             "表示専用です。誰が何を言ったかを辿れます。ここからBotへ指示やツール実行はできません。"]
+             "名前と参加する Bot を選んでください。"]
+            [:details {:id "room-create"}
+             [:summary "新しい会話"]
+             [:form {:id "room-create-form"}
+              [:label {:for "room-name"} "会話の名前"]
+              [:input {:id "room-name" :required true :maxlength 100}]
+              [:fieldset {:id "room-bot-options"} [:legend "参加する Bot"]]
+              [:button {:type "submit"} "作成"]]]
+            [:p {:class "form-help" :id "room-status" :aria-live "polite"}]
             [:div {:class "bots-conversations__layout"}
              [:ul {:class "record-list__items" :id "room-list"}
               [:li {:class "empty-state"} "まだBot同士の会話はありません。"]]
              [:div {:id "room-panel" :hidden true}
-              (dds/heading 3 "" {:size "20" :id "room-title"})
-              [:p {:class "source-note" :id "room-members-summary"}]
-              [:ul {:class "record-list__items" :id "room-thread"}
+              [:aside {:id "room-details" :hidden true :aria-label "参加者・詳細"}
+               [:div {:class "section-heading"} [:strong "参加者・詳細"]
+                [:button {:id "room-details-close" :type "button" :class "tool-button"} "閉じる"]]
+               [:ul {:id "room-participants"}]
+               [:details [:summary {:id "room-schedule-label"} "定期対話"]
+               [:form {:id "room-schedule-form"}
+                [:label [:input {:id "room-schedule-enabled" :type "checkbox"}] "定期的に話す"]
+                [:label {:for "room-interval"} "間隔（分）"]
+                [:input {:id "room-interval" :type "number" :min 5 :max 10080 :value 60}]
+                [:label {:for "room-topic"} "話す内容"]
+                [:textarea {:id "room-topic" :maxlength 2000}]
+                [:button {:type "submit"} "保存"]]]]
+              [:ul {:class "bots-thread__messages" :id "room-thread"}
                [:li {:class "empty-state"} "まだ発言はありません。"]]
-              [:p {:class "form-help" :id "room-status" :aria-live "polite"}]]]]
+              (chat/composer {:id "room-composer"}
+                [:label {:for "room-input"} "会話に参加"]
+                (chat/prompt {:id "room-input" :required true :placeholder "メッセージ"})
+                (chat/composer-actions {}
+                  [:button {:id "room-send" :type "submit"} "送信"]))]]]
+
+           [:details {:id "bots-learning-panel"}
+            [:summary "この Bot のプロフィール・学習"]
+            [:p {:class "form-help"} "候補を別の実行で試し、必要なツールの成功と実行完了を検証します。失敗した試行は停止します。"]
+            [:ul {:id "bots-learning-list"}]]
            ;; The direct Bot thread is the product's chat surface.
            [:div {:class "bots-thread" :id "bots-thread" :hidden true}
             [:div {:class "bots-mobile-context" :id "bots-mobile-context" :hidden true}
@@ -2489,20 +2868,23 @@
               [:p {:class "bots-trajectory__meta" :id "bots-trajectory-status"
                    :role "status" :aria-live "polite"}]
               [:ol {:class "bots-trajectory__list" :id "bots-trajectory-list"}]]
-             [:ol {:class "bots-thread__messages" :id "bots-messages"}]]
-            [:form {:class "bots-composer" :id "bots-form"}
-             [:label {:class "bots-composer__label" :for "bots-input"} "何を頼みますか？"]
-             [:textarea {:id "bots-input" :rows "2" :maxlength "8000"
-                         :placeholder "この Bot に頼む" :autocomplete "off"
-                         :aria-describedby "bots-input-help"}]
-             [:button {:class "primary-action" :id "bots-send" :type "submit"
-                       :disabled true} "送信"]
-             [:button {:class "tool-button" :id "bots-cancel" :type "button"
-                       :hidden true} "中止"]
-             [:small {:class "bots-composer__help" :id "bots-input-help"}
-              "Enter で改行 · ⌘ / Ctrl + Enter で送信"]]
-            [:p {:class "drive-create__status" :id "bots-thread-status-line"
-                 :aria-live "polite"}]]]]]
+             ;; the thread: bubbles are cloud-kotoba-dds.thread (streamed
+             ;; answers through cloudKotobaThread.run); this is their container
+             [:div {:class "bots-thread__messages" :id "bots-messages"
+                    :role "log" :aria-label "会話"}]]
+            ;; the composer is cloud-kotoba-dds.composer: Enter newline, ⌘⏎
+            ;; send, autosize, running state — interaction.js attaches
+            ;; cloudKotobaComposer and answers bots/send / bots/stop
+            (composer/form {:id "bots-form" :input-id "bots-input"
+                            :label "何を頼みますか？" :placeholder "この Bot に頼む"
+                            :help "Enter で改行 · ⌘ / Ctrl + Enter で送信"
+                            :maxlength "8000"
+                            :send-attrs {:id "bots-send"}
+                            :stop-attrs {:id "bots-cancel"}
+                            :attrs {:class "bots-composer"}})
+            ;; the status line is cloud-kotoba-dds.status; interaction.js
+            ;; speaks through cloudKotobaStatus.say
+            (status/line {:id "bots-thread-status-line" :label "操作の結果"})]))]
         [:section {:class "legacy-surface" :hidden true}
          (view-header "Capture"
                       "考えを評価・分類せず、そのまま手元に残します。AIには送られません。整理は後から行います。")
@@ -3774,7 +4156,7 @@
           [:div {:class "view-header__copy"}
            (dds/heading 1 "サインイン" {:size "36" :id "registration-title"})
            [:p {:class "view-lead" :id "registration-lead"}
-            "Web3 の本人確認を、パスキーで安全に始めます。"]]]
+            "パスキーを使って続ける"]]]
          [:div {:class "security-callout" :id "passkey-gate-notice"
                 :role "status" :aria-live "polite"}
           [:strong {:id "signin-gate-headline"} "パスキーでサインインしてください。"]
@@ -3793,8 +4175,40 @@
                         {:type :text
                          :id "itonami-enrolment-link"
                          :href "https://itonami.cloud/ja/signin/"})]
-           [:p {:class "form-help"}
-            "鍵は 1Password / Bitwarden / iCloud キーチェーン / Google パスワードマネージャー のいずれかに保存してください。登録は itonami.cloud で行います。"]]
+           ;; Phone entrance. The QR encodes the HOSTED identity URL — the
+           ;; phone cannot assert against this server (rp-id localhost, a
+           ;; host only the Mac resolves; measured 2026-09-14) — so the
+           ;; camera reader hands the phone the hosted passkey ceremony,
+           ;; which works over any network from anywhere. The image is the
+           ;; server's own /api/auth/itonami/qr (SVG, generated per
+           ;; request); the text URL below it covers a reader that will not
+           ;; open a browser. Markup only: the script touches nothing here,
+           ;; so a dead image server would still render this card.
+           [:div {:class "signin-qr" :id "itonami-auth-qr"}
+            [:img {:id "itonami-auth-qr-img"
+                   :src "/api/auth/itonami/qr"
+                   :alt "スマートフォンで読み取ると auth.itonami.cloud のパスキー画面を開きます"
+                   :width "132" :height "132"}]
+            [:p {:class "form-help"}
+             "スマートフォンで読み取って、ネットワーク経由でどこからでもサインイン。開く先は "
+             [:code "auth.itonami.cloud"] " です。"]]
+           [:details {:class "signin-help"}
+            [:summary "パスキーについて"]
+            [:p {:class "form-help"}
+             "スマートフォンやパスワードマネージャーの鍵でサインインします。新しい鍵は itonami.cloud で登録できます。"]]
+           ;; Cross-device link. The QR entrance finishes on the phone; this
+           ;; card is how the Mac learns the phone finished. The phone's
+           ;; controller-link page (auth.kotoba.cloud/connect?target=itonami)
+           ;; shows a one-time code; typing it here redeems it server-side and
+           ;; the pending handoff wakes the app in place.
+           [:div {:class "settings-form" :id "itonami-link-code-card"}
+            [:p {:class "form-label"} "iPhone とつなげる（接続コード）"]
+            [:div {:class "local-actions"}
+             [:input {:type "text" :id "itonami-link-code"
+                      :autocomplete "off" :placeholder "iPhone に表示された接続コード"
+                      :maxlength "64"}]
+             (dds/button "つなげる" {:type :solid-fill :id "itonami-link-apply"})]
+            [:p {:class "form-help" :id "itonami-link-status" :role "status"}]]]
           ;; Everything below is still Passkey: device-local recovery,
           ;; device-local registration, and joining by invitation. One fold, so
           ;; the screen shows one decision until someone asks for more. The
@@ -3831,277 +4245,6 @@
                         :required true :autocomplete "one-time-code"}]]
               [:button {:class "tool-button" :id "enrollment-submit" :type "submit"}
                "Passkey を登録して参加"]]]])]]
+        (app-marketplace-views)
         (plugins-view)
-        [:section {:class "view" :data-view-panel "settings" :hidden true}
-         (view-header "アカウント" "プロフィール、接続、Bot の設定を管理します。")
-         (context-capture-settings)
-         (model-routing-settings)
-         (agent-machine-settings)
-         [:div {:class "local-card" :id "desktop-update-card"}
-          (dds/heading 2 "Desktop update" {:size "20"})
-          [:p {:class "view-lead" :id "desktop-update-status"
-               :role "status" :aria-live "polite"}
-           "更新状態を確認しています…"]
-          [:p {:class "form-help"}
-           "公開Releaseはアプリ内のEd25519公開鍵で署名を検証し、packageのSHA-256とsizeが一致した場合だけ次回起動用に準備します。"]
-          [:div {:class "button-row"}
-           [:button {:class "primary-action" :id "desktop-update-action" :type "button"}
-            "更新を確認"]]]
-         [:div {:class "settings-notice" :id "connection-notice" :hidden true}]
-         [:div {:class "settings-stack" :id "identity-workspace" :hidden true}
-          [:div {:class "identity-summary"}
-           [:div {:class "identity-summary__avatar" :id "identity-avatar"
-                  :aria-hidden "true"} "U"]
-           [:div {:class "identity-summary__copy"}
-            [:p {:class "identity-summary__name" :id "identity-name"} "User"]
-            [:p {:class "identity-summary__meta" :id "identity-email"} "—"]
-            [:p {:class "identity-summary__meta" :id "identity-did"} "—"]]
-           [:span {:class "state-chip"} "サインイン済み"]]
-          [:div {:class "local-card" :id "auth-methods-card"}
-           (dds/heading 2 "サインイン方法" {:size "24"})
-           [:p {:class "view-lead" :id "current-auth-method"}
-            "現在の認証方法を確認中…"]
-           [:ul {:class "data-list" :id "linked-auth-methods"}]
-           [:p {:class "form-help"}
-            "同じEmailでも自動統合しません。既存Userへサインインした状態で接続してください。"]
-           [:div {:class "button-row"}
-            [:button {:class "primary-action" :id "itonami-cloud-link"
-                      :type "button"} "auth.itonami.cloud を接続"]]]
-          [:div {:class "local-card" :id "session-management-card"}
-           (dds/heading 2 "ログイン中の端末" {:size "24"})
-           [:p {:class "view-lead"}
-            "このUserの有効なセッションを確認し、不要な端末をログアウトできます。"]
-           [:ul {:class "data-list" :id "auth-session-list"}
-            [:li "セッションを確認中…"]]
-           [:div {:class "button-row"}
-            [:button {:class "tool-button" :id "sign-out-current"
-                      :type "button"} "この端末からログアウト"]]]
-          [:div {:class "settings-grid"}
-           [:div {:class "settings-stack"}
-            [:div {:class "local-card"}
-             (dds/heading 2 "Passkey" {:size "24"})
-             [:p {:class "view-lead" :id "passkey-state"} "Passkey 状態を確認中…"]
-             [:button {:class "primary-action" :id "passkey-register"
-                       :type "button"} "Passkey を登録"]]
-            [:div {:class "local-card"}
-             (dds/heading 2 "Private Email Relay" {:size "24"})
-             [:p {:class "view-lead" :id "cloud-alias-state"}
-              "グローバル予約状態を確認中…"]
-             [:div {:class "field"}
-              [:label {:for "cloud-alias-destination"} "実メール転送先"]
-              [:input {:id "cloud-alias-destination" :type "email"
-                       :autocomplete "email"
-                       :placeholder "private@example.jp"}]]
-             [:p {:class "form-help"}
-              "公開アドレスへの受信を転送し、返信時も実メールアドレスを相手に開示しません。"]
-             [:button {:class "primary-action" :id "cloud-alias-reserve"
-                       :type "button"} "グローバル予約して確認メールを送信"]]
-            [:div {:class "local-card"}
-             (dds/heading 2 "プラグイン" {:size "24"})
-             [:p "Bot が使うサービスを接続・管理します。"]
-             [:a {:href "#/plugins"} "プラグインを開く →"]]
-            ;; Mailboxes, listed one per account rather than one per provider:
-            ;; the same person's work Gmail and personal Gmail are two rows
-            ;; with two sync states, because "Google: エラー" does not say
-            ;; which of the two stopped working.
-            [:div {:class "local-card"}
-             (dds/heading 2 "メールアカウント" {:size "24"})
-             [:p {:class "view-lead"}
-              "Gmail と Microsoft 365 は上の「サービス接続」から、同じ提供者の2つ目以降のアカウントも同じ手順で追加できます。OAuth を持たないメールボックスは IMAP か POP3 で接続します。"]
-             [:p {:class "source-note" :id "mail-account-state"}
-              "メールアカウントを確認中…"]
-             [:ul {:class "member-list" :id "mail-account-list"}]
-             [:form {:class "settings-form" :id "mail-account-form"}
-              (dds/heading 3 "IMAP / POP3 でメールボックスを追加" {:size "16"})
-              [:div {:class "field"}
-               [:label {:for "mail-account-protocol"} "受信プロトコル"]
-               [:select {:id "mail-account-protocol" :name "protocol"}
-                [:option {:value "imap" :selected true} "IMAP（推奨）"]
-                [:option {:value "pop3"} "POP3"]]
-               [:span {:class "form-help"}
-                "POP3 はフォルダも既読状態もサーバーに持てません。IMAP が使えるなら IMAP を選んでください。"]]
-              [:div {:class "field"}
-               [:label {:for "mail-account-address"} "メールアドレス"]
-               [:input {:id "mail-account-address" :name "address"
-                        :type "email" :required true :autocomplete "email"
-                        :placeholder "me@example.com"}]]
-              [:div {:class "field"}
-               [:label {:for "mail-account-host"} "受信サーバー"]
-               [:input {:id "mail-account-host" :name "host" :required true
-                        :autocomplete "off" :placeholder "imap.example.com"}]]
-              [:div {:class "field"}
-               [:label {:for "mail-account-smtp-host"} "SMTP サーバー（任意）"]
-               [:input {:id "mail-account-smtp-host" :name "smtp-host"
-                        :autocomplete "off"
-                        :placeholder "空欄なら IMAP と同じホスト"}]]
-              [:div {:class "field"}
-               [:label {:for "mail-account-password"} "パスワード（アプリパスワード）"]
-               [:input {:id "mail-account-password" :name "password"
-                        :type "password" :required true
-                        :autocomplete "new-password"}]
-               [:span {:class "form-help"}
-                "macOS Keychain に保存します。state.edn には保存しません。"]]
-              [:button {:class "tool-button" :id "mail-account-submit"
-                        :type "submit"} "メールボックスを追加"]]]
-            [:div {:class "security-callout"}
-             [:strong "認証境界"]
-             " Passkey は challenge・origin・RP ID・署名・user verification・counter をサーバーで検証します。OAuth は state を一度だけ使用し、PKCE S256 と10分の期限を適用します。"]]
-           [:aside {:class "settings-stack"}
-            [:div {:class "local-card"}
-             (dds/heading 2 "Organization" {:size "20"})
-             [:p {:class "identity-summary__name" :id "organization-name"} "—"]
-             [:p {:class "identity-summary__meta" :id "organization-domain"} "—"]
-             [:p {:class "identity-summary__meta" :id "organization-did"} "—"]
-             [:form {:class "settings-form" :id "organization-form"}
-              [:div {:class "field"}
-               [:label {:for "organization-id"} "Organization ID"]
-               [:input {:id "organization-id" :name "organization-id"
-                        :required true :autocomplete "off"
-                        :pattern "[a-z0-9][a-z0-9._-]{1,30}[a-z0-9]"
-                        :placeholder "my-organization"}]
-               [:span {:class "form-help"}
-                "設定後は変更できません。管理ドメインと owner の公開アドレスを発行します。"]]
-              [:button {:class "primary-action" :id "organization-submit"
-                        :type "submit"} "Organization ID を設定"]]
-             [:form {:class "settings-form" :id "organization-create-form"}
-              (dds/heading 3 "別のOrganizationを作成" {:size "16"})
-              [:div {:class "field"}
-               [:label {:for "new-organization-name"} "表示名"]
-               [:input {:id "new-organization-name" :name "organization-name"
-                        :autocomplete "organization"
-                        :placeholder "Etzhayyim"}]]
-              [:div {:class "field"}
-               [:label {:for "new-organization-id"} "Organization ID"]
-               [:input {:id "new-organization-id" :name "organization-id"
-                        :required true :autocomplete "off"
-                        :pattern "[a-z0-9][a-z0-9._-]{1,30}[a-z0-9]"
-                        :placeholder "etzhayyim"}]]
-              [:button {:class "tool-button" :id "organization-create"
-                        :type "submit"} "Organizationを追加"]]
-             ;; Here rather than in the Projects panel: that panel reads GitHub
-             ;; Projects v2, and this moves a LOCAL project between tenants —
-             ;; a question about tenants, which is what this card is (ADR-0024).
-             [:form {:class "settings-form" :id "project-transfer-form"}
-              (dds/heading 3 "Project を別の tenant へ移動" {:size "16"})
-              [:div {:class "field"}
-               [:label {:for "project-transfer-project"} "Project ID"]
-               [:input {:id "project-transfer-project" :name "project"
-                        :required true :autocomplete "off"
-                        :placeholder "my-project"}]]
-              [:div {:class "field"}
-               [:label {:for "project-transfer-tenant"} "移動先"]
-               [:select {:id "project-transfer-tenant" :name "tenant"
-                         :required true}]
-               [:span {:class "form-help" :id "project-transfer-help"}
-                (str "両方の tenant で owner または admin 権限が必要です。"
-                     "公開済みの Project は移動できません。")]]
-              [:button {:class "tool-button" :id "project-transfer-submit"
-                        :type "submit"} "移動する"]]
-             [:form {:class "settings-form"
-                     :id "organization-invitation-form"}
-              (dds/heading 3 "既存Organizationへ参加" {:size "16"})
-              [:p {:class "form-help" :id "organization-invitation-state"}
-               "参加待ちの招待を確認中…"]
-              [:div {:class "field"}
-               [:label {:for "organization-invitation-code"} "招待コード"]
-               [:input {:id "organization-invitation-code"
-                        :name "invitation-code"
-                        :required true
-                        :autocomplete "one-time-code"}]]
-              [:button {:class "tool-button"
-                        :id "organization-invitation-accept"
-                        :type "submit"}
-               "招待を承認して参加"]]
-             [:ul {:class "member-list" :id "member-list"}]]
-            [:div {:class "local-card" :id "domain-verification-card"}
-             (dds/heading 2 "会社ドメイン" {:size "20"})
-             ;; Two steps, and the card says why there are two (ADR-0043). The
-             ;; TXT record proves the zone is yours; it does not make the name
-             ;; resolve here, and a tenant named by an address that answers
-             ;; nothing is what the second step exists to prevent.
-             [:p {:class "form-help"}
-              "会社ドメインでこのOrganizationを名乗るには2段階が必要です。①DNS の TXT レコードで、そのドメインを管理していることを確認します（DNSの書き込み権限をCloud Itonamiへ渡す必要はありません）。②ドメインをこの deployment に向けてから有効化します。①だけではまだ名前になりません。"]
-             [:p {:class "source-note" :id "domain-verification-state"
-                  :role "status" :aria-live "polite"}
-              "所有権確認を読み込み中…"]
-             [:form {:class "settings-form" :id "domain-verification-form"}
-              [:div {:class "field"}
-               [:label {:for "company-domain"} "会社ドメイン"]
-               [:input {:id "company-domain" :name "domain" :required true
-                        :type "text" :inputmode "url" :autocomplete "url"
-                        :placeholder "example.co.jp"}]
-               [:span {:class "form-help"}
-                "URLやワイルドカードではなく、会社が管理する完全なドメイン名を入力します。"]]
-              [:button {:class "primary-action" :id "domain-verification-start"
-                        :type "submit"}
-               "TXTレコードを発行"]]
-             [:div {:class "settings-form" :id "domain-verification-record"
-                    :hidden true}
-              [:div {:class "field"}
-               [:label {:for "domain-verification-record-name"} "TXT ホスト名"]
-               [:code {:id "domain-verification-record-name"} "—"]]
-              [:div {:class "field"}
-               [:label {:for "domain-verification-record-value"} "TXT 値"]
-               [:code {:id "domain-verification-record-value"} "—"]]
-              [:p {:class "form-help" :id "domain-verification-expiry"} "—"]
-              [:div {:class "record-actions"}
-               [:button {:class "tool-button" :id "domain-verification-copy"
-                         :type "button"}
-                "TXTをコピー"]
-               [:button {:class "primary-action" :id "domain-verification-claim"
-                         :type "button"}
-                "DNSを確認"]]]
-             ;; Step 2. Shown once the claim holds — until then there is nothing
-             ;; to point anywhere, and offering activation would invite an owner
-             ;; to cut production DNS over to a name they have not reserved.
-             [:div {:class "settings-form" :id "domain-verification-activation"
-                    :hidden true}
-              (dds/heading 3 "この deployment に向ける" {:size "16"})
-              [:p {:class "form-help"}
-               "所有権の確認だけでは、まだこのOrganizationの名前になりません。ドメインをこの deployment に向け、証明書が有効になってから有効化してください。有効化は、この URL がこの deployment の応答を返すことを実際に取得して確かめます。"]
-              [:div {:class "field"}
-               [:label {:for "domain-verification-activation-url"} "確認するURL"]
-               [:code {:id "domain-verification-activation-url"} "—"]]
-              [:p {:class "source-note" :id "domain-verification-probe"
-                   :role "status" :aria-live "polite"} "—"]
-              [:div {:class "record-actions"}
-               [:button {:class "primary-action"
-                         :id "domain-verification-activate" :type "button"}
-                "有効化"]
-               [:button {:class "tool-button" :id "domain-verification-recheck"
-                         :type "button"}
-                "再確認"]]]]
-            [:div {:class "local-card"}
-             (dds/heading 2 "Agent tenant connections" {:size "20"})
-             [:p {:class "form-help"}
-              "Agentの申請を確認し、tenant・capability・期限・予算を固定して承認します。Agent自身は承認できません。"]
-             [:p {:class "source-note" :id "tenant-connection-state"
-                  :role "status" :aria-live "polite"}
-              "接続申請を確認中…"]
-             [:ul {:class "member-list" :id "tenant-connection-list"}
-              [:li {:class "skeleton"}]]]
-            [:div {:class "local-card" :id "member-card"}
-             (dds/heading 2 "User を追加" {:size "20"})
-             [:form {:class "settings-form" :id "member-form"}
-              [:div {:class "field"}
-               [:label {:for "member-name"} "表示名"]
-               [:input {:id "member-name" :name "display-name" :required true
-                        :autocomplete "off"}]]
-              [:div {:class "field"}
-               [:label {:for "member-account-id"} "アカウントID"]
-               [:input {:id "member-account-id" :name "account-id"
-                        :required true :autocomplete "off"
-                        :pattern "[a-z0-9][a-z0-9._-]{1,30}[a-z0-9]"}]
-               [:span {:class "form-help"} "管理ドメインのアドレスを発行"]]
-              [:div {:class "field"}
-               [:label {:for "member-email"} "連絡先メール（任意）"]
-               [:input {:id "member-email" :name "contact-email" :type "email"
-                        :autocomplete "off"}]]
-              [:div {:class "field"}
-               [:label {:for "member-role"} "ロール"]
-               [:select {:id "member-role" :name "role"}
-                [:option {:value "member"} "Member"]
-                [:option {:value "admin"} "Admin"]]]
-              [:button {:class "primary-action" :type "submit"} "User を登録"]]
-             [:p {:class "security-callout" :id "enrollment-result"
-                  :hidden true :aria-live "polite"}]]]]]]]]])))
+        (settings-view mode locale)]]])))

@@ -7,7 +7,7 @@
 ;; ## Why this exists
 ;;
 ;; The runtime rule (ADR-0065, ADR-2608095000, ADR-0049, and the workspace
-;; CLAUDE.md) says new code goes on ClojureScript or Kotoba and `:clj` is a
+;; AGENTS.md) says new code goes on ClojureScript or Kotoba and `:clj` is a
 ;; frozen compat layer. A PreToolUse hook enforces the "new" half. Nothing
 ;; measured the stock, so "how much is left" was answerable only by counting
 ;; files by extension — and that count is misleading in both directions:
@@ -38,7 +38,7 @@
 (ns jvm-exit-report
   (:require ["node:fs" :as fs]
             ["node:path" :as path]
-            [clojure.set :as set]
+            [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]))
 
 (def interop-pattern

@@ -1,10 +1,65 @@
 {:paths ["src" "resources"]
  :deps
  {
+        ;; kotoba.test (clojure.test-compatible surface), not clojure.test --
+        ;; scripts/migrate-clojure-test-to-kotoba-test.cljk. Explicit floor.
+        io.github.kotoba-lang/test {:git/url "https://github.com/kotoba-lang/test.git"
+                                    :git/sha "2ab4885f99fd25552d380d0f6b0b54c5a72eb7ae"}
+        ;; kotoba.image replaced java.awt.image.BufferedImage / javax.imageio here (2026-09-25).
+        ;; An explicit floor: tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/image {:git/sha "ed0b4dc89268073384c9493bdc80fa72dc17500b"}
+        ;; kotoba.netcap.tls-host replaced javax.net.ssl here (2026-09-25). An explicit
+        ;; floor: tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/netcap {:git/sha "5426a8ae26f71bd9d298e4d2425e7b7c948dfea2"}
+        ;; kotoba.lang.error replaced clojure.lang.ExceptionInfo here (2026-09-25).
+        ;; An explicit floor: tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/error {:git/sha "838dec56c9a5b74f9eec825a2fb28bda157f8cd3"}
+        ;; kotoba.http.form-urlencoded replaced java.net.URLEncoder/URLDecoder here
+        ;; (2026-09-24). An explicit floor: tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/http-parse-url {:git/sha "8ad2f9680111e50168b4078a64601dc9296158d7"}
+        ;; kotoba.bytes replaced java.util.Base64 here (2026-09-24). An explicit
+        ;; floor: tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/bytes {:git/sha "d5259f35ab7c4f5a66e63ca29ed4dcf7ba3f1ac5"}
+        ;; kotoba.io replaced clojure.java.io here (2026-09-24). An explicit floor:
+        ;; kotoba.io carries clojure.java.io's file/as-file/as-relative-path/
+        ;; make-parents/delete-file from 98045c7, and tools.deps takes the NEWEST
+        ;; sha it is shown.
+        io.github.kotoba-lang/io {:git/sha "72dde04b4c32854d70d17a670b277f8f7957a784"}
+        ;; kotoba.json replaced clojure.data.json here (2026-09-24). An explicit
+        ;; floor: kotoba.json/read-str and /write-str first exist at 9c11ad1, and
+        ;; tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/json {:git/sha "9c11ad189e64907700e8b4eb9b26f40336bffa01"}
+        ;; kotoba.pprint replaced clojure.pprint here (2026-09-24): the same
+        ;; bytes (cljs.pprint transcribed). An explicit floor; tools.deps takes the
+        ;; NEWEST sha it is shown.
+        io.github.kotoba-lang/pprint {:git/sha "5c9d4aea71d6caac529fffcf361aba0f87ee485e"}
+        ;; kotoba replaced JVM interop here (2026-09-24). An explicit
+        ;; floor: tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/coll {:git/sha "f74e248f0a07e8ae572885f50fab6bdb39dc24be"}
+        io.github.kotoba-lang/cloud-kotoba-dds
+  ;; the Bots workspace pattern (bots.cljk + styles/bots-css + the renderer)
+  ;; that #/bots is built on since 2026-09-16
+  {:git/url "https://github.com/kotoba-lang/cloud-kotoba-dds.git"
+   :git/sha "af6169d4aee90ed2e8654e547c20b8a767e8c270"}
+  ;; the browser contract the rail's rows dispatch through (data-action /
+  ;; shinkansen.on) and the runtime web.cljk inlines
+  io.github.kotoba-lang/shinkansen
+  {:git/url "https://github.com/kotoba-lang/shinkansen.git"
+   :git/sha "301e50d8f75ada14edf6ec4bba7c01e70e624c30"}
+
         ;; kotoba.lang.text, not clojure.string. Pinned as an explicit floor:
         ;; tools.deps takes the NEWEST sha it is shown, so without a floor here
         ;; this repo silently rides whatever a sibling happens to name.
         io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}
+        ;; The command surface -- cloud.itonami.app.commands / .repo-profile
+        ;; and the three tables (commands.edn, cli-aliases.edn, defaults.edn).
+        ;; Moved out on 2026-09-15 so the CLI, the mobile bundle and this app
+        ;; read ONE copy: dev/gen_commands.cljk writes the registry into that
+        ;; repository's checkout, commands-test compares the routes with the
+        ;; copy at THIS sha, so a new route fails the suite until the registry
+        ;; is regenerated there and this sha advances. cloud-itonami-cli pins
+        ;; the same sha in its nbb.edn.
+        io.github.cloud-itonami/cloud-itonami-commands {:git/sha "9bd4ec8d8c5bf75e6404e890aaf9e5a907c1df43"}
         ;; kotoba.lang.http.host.jvm -- the workspace's single java.net.http
         ;; site, which `cloud.itonami.app.http-client` delegates to. 36
         ;; namespaces require that shim, so without this coordinate the
@@ -170,7 +225,7 @@
    :git/sha "9e56e4bb037dbe48b2c1b4e40d4832b7474f6ea8"}
   io.github.kotoba-lang/process
   {:git/url "https://github.com/kotoba-lang/process.git"
-   :git/sha "f261f1e7853d26c2bf53b2236e3b7d454598ac28"}
+   :git/sha "db49ea936e53d0bc698be0db79bf96ad86b5f7d0"}
   io.github.kotoba-lang/shell
   {:git/url "https://github.com/kotoba-lang/shell.git"
    :git/sha "2fec11589465e3960ece9b8101c13ab79080dcea"}
@@ -231,9 +286,10 @@
   ;; :dev alias overrides this to a :local/root, so this gap only appears in a
   ;; plain `-M:test` run — which is how it appeared: filecoin.clj is already on
   ;; main (landed as untracked WIP) and cannot load there.
-;; A grant is a signed, expiring, offline-verifiable capability rather than
-  ;; a row only this server can interpret. CAIP-74 over Ed25519, with chain
-  ;; verification already in the library for when a grantee may re-grant.
+;; CAIP-74 (CACAO). No longer the Drive share format (superproject
+  ;; adr-2609241800: shares are Biscuits, cloud.itonami.app.share-grant); still
+  ;; required by cloud.itonami.app.kotobase-federation, and it is what brings
+  ;; ed25519.core (org-ietf-ed25519) onto this classpath.
   io.github.kotoba-lang/org-chainagnostic-cacao
   {:git/url "https://github.com/kotoba-lang/org-chainagnostic-cacao.git"
    :git/sha "3aaab02fb993a1d0b716c8fc1aefe37e4e3ab850"}
@@ -478,9 +534,13 @@
   {:git/url "https://github.com/kotoba-lang/authority.git"
    :git/sha "232eef9b7969aa5990f9b5e48b1184f078500781"}
 
+  ;; 12148e0 (2026-09-24) is a floor: it folds `holder` across blocks in
+  ;; biscuit.kotoba/->delegated. Drive shares (cloud.itonami.app.share-grant)
+  ;; address the grantee in the SECOND block, which 039378d did not read --
+  ;; every share answered :holder-absent there (share-grant-test, measured).
   io.github.kotoba-lang/org-biscuitsec
   {:git/url "https://github.com/kotoba-lang/org-biscuitsec.git"
-   :git/sha "039378d4b6fcebacc6fa54a1dfdbc8a12f2b3530"}
+   :git/sha "12148e029497614f916b8745ac1b2871e2668ef1"}
   ;; (`authentication` / `authorization` are declared once at the top of this
   ;; map, as `authentication-email` + `authorization` at these same SHAs. The
   ;; ADR-0014 replay re-added them here under the pre-rename key, which is a
@@ -581,9 +641,11 @@
   ;; else in this closure names this library, so a fix upstream never arrives
   ;; until this line moves. `manifest/west.yml` pins the same sha, so the
   ;; checkout and this coordinate agree; west pins are gated, this one is not.
+  ;; 2026-09-16: 4a315c5 for `jp-go-dds.behavior` (the dialogs' focus trap /
+  ;; focus return that the App overlay and the settings sheet stand on).
   io.github.kotoba-lang/jp-go-digital-design-system
   {:git/url "https://github.com/kotoba-lang/jp-go-digital-design-system.git"
-   :git/sha "581b68cb7699e4017d3532bc17e134a41be00fef"}
+   :git/sha "4a315c581569b8d8a60e1ceaa421d8413f35398e"}
 
   ;; Filecoin: PieceCID v2 addressing + the on-chain read surface + the
   ;; provider transfer surface. Deliberately NOT a storage backend — see
@@ -596,7 +658,7 @@
    :git/sha "67147752a8486715f2e049756446a92ffe0816f5"}
   io.github.kotoba-lang/io-filecoin-transport
   {:git/url "https://github.com/kotoba-lang/io-filecoin-transport.git"
-   :git/sha "b0f434c81f778c00321af9572da2346a5e0fc5c7"}}
+   :git/sha "a0e665dd8bcbff1e7de6bd485bd80d93c5e6893e"}}
 
  :aliases
  {:build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.8"}}

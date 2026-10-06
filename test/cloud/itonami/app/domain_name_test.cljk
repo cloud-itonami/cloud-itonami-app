@@ -3,7 +3,7 @@
   being `.cljc` at all. `bin/test-portable-cljs` is the second half; a
   `.cljc` file only one runtime ever executes is a `.clj` file with a longer
   extension."
-  (:require #?(:clj [clojure.test :refer [deftest is testing]]
+  (:require #?(:clj [kotoba.test :refer [deftest is testing]]
                :cljs [cljs.test :refer [deftest is testing]])
             [cloud.itonami.app.domain-name :as domain-name]))
 

@@ -7,7 +7,7 @@
   evidence about would be worse than the heuristics it replaced — those at least
   looked uncertain."
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.mail-authentication :as authentication]))
 
 (defn- message [from headers]

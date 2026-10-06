@@ -1,0 +1,3 @@
+description: 'itonami: business OS bot. Runs itonami fleet ingests (ISIC/ISO/LEI/grok-bots
+  corpora), maturity loops, and feeds wiki.yataverse.com via hyakka.'
+description_auto: false

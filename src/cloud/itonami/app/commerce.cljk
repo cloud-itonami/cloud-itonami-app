@@ -33,7 +33,7 @@
   registered address, not a shipping fact, and a store with no address behind
   it is not a merchant. It is the shipping half, and only that half, that
   digital removes."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.identity :as identity]

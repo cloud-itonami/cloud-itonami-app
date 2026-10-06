@@ -1,0 +1,26 @@
+{
+  "jobs": [
+    {
+      "base_url": null,
+      "context_from": null,
+      "deliver": "local",
+      "enabled": true,
+      "enabled_toolsets": null,
+      "id": "358105a07f9b",
+      "model": null,
+      "name": "mithril labor-liberation decision",
+      "no_agent": true,
+      "prompt": "",
+      "provider": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 360,
+        "display": "every 360m"
+      },
+      "script": "mithril_growth_tick.sh",
+      "skill": null,
+      "skills": [],
+      "workdir": "~/.hermes/runtime/mithril"
+    }
+  ]
+}

@@ -6,12 +6,12 @@
   the environment first and then from `secret-store` — which is where a value
   the person typed into a secret card was put. The Bot never held it, and the
   transcript never carried it (ADR-0093)."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.http.form-urlencoded :as form-urlencoded] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.secret-store :as secret-store]
             [yadori.cloudflare :as yadori])
-  (:import [java.net URLEncoder]
+  (:import
            [java.nio.charset StandardCharsets]))
 
 (def ^:dynamic *environment* #(System/getenv %))
@@ -42,7 +42,7 @@
   (boolean (and (account-id configuration) (api-token configuration))))
 
 (defn- encoded [x]
-  (URLEncoder/encode (str x) StandardCharsets/UTF_8))
+  (form-urlencoded/form-encode (str x)))
 
 (defn- query-string [query]
   (when (seq query)

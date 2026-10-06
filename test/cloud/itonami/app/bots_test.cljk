@@ -5,13 +5,15 @@
   Nothing here calls a model or reaches the network. The two places that would
   — `advance!` and `run-tool!` — are behind the connection gate, and every test
   that would cross it redefines the seam instead."
-  (:require [agent.run :as agent-run]
-            [clojure.data.json :as json]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [agent.run :as agent-run]
+            [kotoba.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bots :as bots]
+            [cloud.itonami.app.bot-profile :as profile]
+            [cloud.itonami.app.messenger :as messenger]
             [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.commerce :as commerce]
             [cloud.itonami.app.config :as config]
@@ -33,13 +35,12 @@
             [connector.ports :as cports]))
 
 (defn- with-store [f]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-bots-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-bots-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config/data-dir (fn [] temporary)
                     store/transact! (fn [f & args]
                                       (apply swap! store/state f args))]
         (f))
@@ -135,6 +136,18 @@
              (get-in (configure {:bots {:workforce {:max-input-tokens 4096}}}
                                 {:job/resident-workforce? true})
                      [:bots :goal :max-input-tokens]))))))
+
+(deftest qualified-goal-models-require-a-tool-choice
+  (let [request (private-fn 'agent-request)
+        model "qualified-model"
+        provider {:require-goal-tool-models #{model}}
+        run {:goal? true :messages [] :tools [{:name "goal_complete"}]}
+        b {:bot/id "bot-1"}]
+    (is (true? (:require-tool? (request {} provider b run model))))
+    (is (nil? (:require-tool? (request {} provider b run "other-model"))))
+    (is (nil? (:require-tool? (request {} {} b run model))))
+    (is (nil? (:require-tool? (request {} provider b (assoc run :goal? false) model))))
+    (is (nil? (:require-tool? (request {} provider b (assoc run :tools []) model))))))
 
 (deftest resident-input-is-bounded-without-changing-interactive-context
   (let [configure (private-fn 'goal-job-configuration)
@@ -417,7 +430,7 @@
                  (:context-refs legacy-public)))
           (is (some #(str/includes? (:content %) "Reference only")
                     legacy-transcript)))
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"見つかりません"
+        (is (thrown-with-msg? kerror/ExceptionInfo #"見つかりません"
                               (bots/update! nil alice bot-id
                                             {:context-project-id "missing"})))))))
 
@@ -757,7 +770,7 @@
           (testing "a named organization nobody in the catalog names is refused, not emptied"
             (let [error (try (bots/provision-workforce! {} alice-in-typo catalog)
                              nil
-                             (catch clojure.lang.ExceptionInfo e e))]
+                             (catch kerror/ExceptionInfo e e))]
               (is (= :workforce/no-business-for-tenant (:type (ex-data error))))
               (is (= "etzhayym" (:tenant (ex-data error))))
               (is (= ["etzhayyim"] (:catalog-organizations (ex-data error))))
@@ -838,7 +851,7 @@
                           "a job inferring in the other tenant holds the one slot")
                       (is (= :workforce-capacity (:reason (first (:skipped result))))))))))
             (testing "sessions of two people are refused"
-              (is (thrown-with-msg? clojure.lang.ExceptionInfo #"one person"
+              (is (thrown-with-msg? kerror/ExceptionInfo #"one person"
                                     (bots/fire-due-workforce! {} [alice bob] now))))))))))
 
 (deftest provisioning-never-takes-a-delegation-away-and-applies-the-standing-one
@@ -1312,12 +1325,11 @@
                (try (bots/send-mail! {} alice (:bot/id b)
                                      {:to "x@example.com" :subject "x" :text "x"})
                     nil
-                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                    (catch kerror/ExceptionInfo e (:type (ex-data e))))))))))
 
 (defn- git-workspace []
-  (let [root (.toFile (java.nio.file.Files/createTempDirectory
-                       "cloud-itonami-bot-workspace-"
-                       (make-array java.nio.file.attribute.FileAttribute 0)))
+  (let [root (kio/temp-dir
+                       "cloud-itonami-bot-workspace-")
         process (.start (doto (ProcessBuilder.
                                ^java.util.List
                                ["/usr/bin/git" "-C" (.getPath root) "init" "-q"
@@ -1337,11 +1349,11 @@
         (testing "a colleague in the same organization does not"
           (is (empty? (:bots (bots/overview nil bob)))))
         (testing "and cannot reach it by id"
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"このセッションのもの"
+          (is (thrown-with-msg? kerror/ExceptionInfo #"このセッションのもの"
                                 (bots/messages bob (:bot/id b)))))
         (testing "nor from another organization"
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"このセッションのもの"
+               kerror/ExceptionInfo #"このセッションのもの"
                (bots/messages (assoc alice :organization-id "org-2")
                               (:bot/id b)))))))))
 
@@ -1509,7 +1521,7 @@
                    (bots/send-stream! nil alice (:bot/id b) "確認して"
                                       "run-failed-1" (constantly nil))
                    nil
-                   (catch clojure.lang.ExceptionInfo error
+                   (catch kerror/ExceptionInfo error
                      (:type (ex-data error)))))))
         (let [turn (:last-turn (first (:bots (bots/overview nil alice))))]
           (is (= "failed" (:state turn)))
@@ -1626,7 +1638,7 @@
   ;; future edit that raises a worker-side bound above a test-side wait (or
   ;; vice versa without headroom) reintroduces the race. This test reads the
   ;; bounds out of the source so the relationship cannot silently regress.
-  (let [source (slurp (io/file "test" "cloud" "itonami" "app" "bots_test.clj"))
+  (let [source (slurp (io/file "test" "cloud" "itonami" "app" "bots_test.cljk"))
         ;; every test-side admission wait on the `entered` promise
         entered-waits (mapv #(Long/parseLong (second %))
                             (re-seq #"deref entered (\d+) false" source))
@@ -1653,6 +1665,8 @@
             entered (promise)
             release (promise)
             calls (atom 0)
+            verification-retry-response (atom nil)
+            missing-receipt-response (atom nil)
             run-id "goal-durable-parallel-1"]
         (with-redefs
           [policy/select-provider (fn [_ _] {:id :local})
@@ -1661,13 +1675,14 @@
              (throw (ex-info "detached Goal must not stream"
                              {:type :test/unexpected-stream})))
            provider/agent-turn
-           (fn [_ _]
+           (fn [_ request]
              (case (swap! calls inc)
                1 (do (deliver entered true)
                      (deref release 3000 nil)
                      {:content "" :tool-calls
                       [{:id "plan" :name "goal_plan"
-                        :input {:steps [{:id "inspect" :title "Inspect repository"}]}}]})
+                        :input {:steps [{:id "inspect" :title "Inspect repository"}
+                                        {:id "redundant" :title "Report the inspection"}]}}]})
                2 {:content "" :tool-calls
                   [{:id "status" :name "git_status" :input {}}
                    {:id "diff" :name "git_diff" :input {}}]}
@@ -1678,6 +1693,28 @@
                   [{:id "verify-step" :name "goal_step_complete"
                     :input {:step_id "inspect" :summary "repository inspected"
                             :evidence ["status and log receipts"]}}]}
+               5 {:content "" :tool-calls
+                  [{:id "verify-step-again" :name "goal_step_complete"
+                    :input {:step_id "inspect" :summary "must not replace earned evidence"
+                            :evidence ["untrusted replacement"]}}]}
+               6 (do
+                   (reset! verification-retry-response
+                           (:content (last (:messages request))))
+                   {:content "" :tool-calls
+                    [{:id "verify-without-receipt" :name "goal_step_complete"
+                      :input {:step_id "redundant" :summary "claiming another step's work"
+                              :evidence ["the inspection receipts"]}}]})
+               7 (do
+                   (reset! missing-receipt-response
+                           (:content (last (:messages request))))
+                   {:content "" :tool-calls
+                    [{:id "revise-plan" :name "goal_plan"
+                      :input {:steps [{:id "inspect" :title "Inspect repository"}]}}]})
+               8 (do
+                   {:content "" :tool-calls
+                    [{:id "finish" :name "goal_complete"
+                      :input {:summary "inspection completed"
+                              :evidence ["host verifier passed"]}}]})
                {:content "" :tool-calls
                 [{:id "finish" :name "goal_complete"
                   :input {:summary "inspection completed"
@@ -1720,6 +1757,11 @@
                                  (= "succeeded" (:state %)))
                           (:children job)))
               (is (some #{"verifier/step-passed"} kinds))
+              (is (= 1 (count (filter #{"verifier/step-passed"} kinds)))
+                  "verification retries preserve the original receipt and summary")
+              (is (str/includes? @verification-retry-response "already verified"))
+              (is (str/includes? @missing-receipt-response "Step redundant has no successful host execution receipt"))
+              (is (str/includes? @missing-receipt-response "goal_plan"))
               (is (some #{"verifier/goal-passed"} kinds)))))))))
 
 (deftest policy-violating-parallel-batch-returns-to-the-model-instead-of-failing-the-turn
@@ -2015,7 +2057,7 @@
                       (fn [_ _ _]
                         (throw (ex-info "model provider streaming request failed"
                                         {:type :provider/http-error :status 503})))]
-          (is (thrown? clojure.lang.ExceptionInfo
+          (is (thrown? kerror/ExceptionInfo
                        (bots/send-stream! nil alice (:bot/id b) "続けて"
                                           "provider-failure-visible-1"
                                           (constantly nil))))
@@ -2099,7 +2141,7 @@
                    (try
                      (bots/queue-followup! alice bot-id run-id "遅すぎる追加")
                      nil
-                     (catch clojure.lang.ExceptionInfo error
+                     (catch kerror/ExceptionInfo error
                        (:type (ex-data error))))))))))))
 
 (deftest a-bot-pins-its-model-provider-without-bypassing-policy
@@ -2212,7 +2254,7 @@
           (try
             (bots/send! nil alice (:bot/id b) "二つ調べて")
             (is false "a batch must not be reduced to its first call")
-            (catch clojure.lang.ExceptionInfo error
+            (catch kerror/ExceptionInfo error
               (is (= :agent/multiple-tool-calls (:type (ex-data error)))))))))))
 
 (deftest isolated-agent-turn-does-not-inherit-private-conversation
@@ -2318,7 +2360,7 @@
                         (first (:bots (bots/overview nil alice))))]
           (is (not-any? #{"gmail_search_messages"} admitted)
               "an unauthorized connector is still not admitted")
-          (is (= (set (map :name commerce/tool-definitions))
+          (is (= (into #{"skill_propose" "skill_use" "profile_read" "profile_update"} (map :name commerce/tool-definitions))
                  (set admitted))
               "the built-in tenant commerce tools remain available"))))))
 
@@ -2606,17 +2648,17 @@
         ;; before that check, so an agent session is told no rather than told
         ;; there is nothing to approve.
         (is (thrown-with-msg?
-             clojure.lang.ExceptionInfo #"このセッションでは行えません"
+             kerror/ExceptionInfo #"このセッションでは行えません"
              (bots/decide! nil (assoc alice :kind :agent) (:bot/id b)
                            "card-1" "approved")))
         (testing "and a person who does not own it is refused earlier still"
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"このセッションのもの"
+               kerror/ExceptionInfo #"このセッションのもの"
                (bots/decide! nil bob (:bot/id b) "card-1" "approved"))))
         (testing "the owner gets past the approval gate and fails on the
                   absence of a held call, which is the next question"
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"承認待ちの操作がありません"
+               kerror/ExceptionInfo #"承認待ちの操作がありません"
                (bots/decide! nil alice (:bot/id b) "card-1" "approved"))))))))
 
 ;; ── an approval belongs to the instruction it was asked under ───────────
@@ -2797,7 +2839,7 @@
                  {:pending-card "card-1"
                   :pending-call {:id "call-1" :name tool :input {}}})
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"承認待ちの操作がありません"
+               kerror/ExceptionInfo #"承認待ちの操作がありません"
                (bots/decide! nil (assoc alice :kind :agent)
                              (:bot/id b) "card-1" "approved"))
               (str tool " was refused by the session gate rather than reaching it")))))))
@@ -2815,7 +2857,7 @@
                  {:pending-card "card-1"
                   :pending-call {:id "call-1" :name tool :input {}}})
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"このセッションでは行えません"
+               kerror/ExceptionInfo #"このセッションでは行えません"
                (bots/decide! nil (assoc alice :kind :agent)
                              (:bot/id b) "card-1" "approved"))
               tool))))))
@@ -2855,7 +2897,7 @@
 
             (testing "answering it now says which refusal it is"
               (is (thrown-with-msg?
-                   clojure.lang.ExceptionInfo #"もう古い指示のもの"
+                   kerror/ExceptionInfo #"もう古い指示のもの"
                    (bots/decide! nil alice (:bot/id b) (:id card) "approved"))))))))))
 
 (deftest a-decision-already-given-is-not-unmade-by-a-later-instruction
@@ -2916,7 +2958,7 @@
           (is (= before (count (bots/messages alice (:bot/id b))))
               "archiving took the record along with the ability, and only the
                second was asked for")
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"停止しています"
+          (is (thrown-with-msg? kerror/ExceptionInfo #"停止しています"
                                 (bots/send! nil alice (:bot/id b) "まだ動く?"))))))))
 
 (deftest renaming-a-bot-changes-nothing-about-its-reach
@@ -3052,7 +3094,7 @@
       (bots/label-account! alice "conn-2" "work")
       (is (= #{"jun@example.com" "work"}
              (set (map :label (identity/accounts-for "did:key:alice")))))
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"同じ名前"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"同じ名前"
                             (bots/label-account! alice "conn-1" "work"))))))
 
 (deftest tokens-resolve-by-connection-rather-than-by-provider
@@ -3253,14 +3295,64 @@
         (agent-control/call-browser-tool! browser-on "bot-a" "computer_click"
                                           {:x 1 :y 1 :application "Safari"})
         (is false "computer_click must not be callable as a browser tool")
-        (catch clojure.lang.ExceptionInfo e
+        (catch kerror/ExceptionInfo e
           (is (= :agent/unknown-tool (:type (ex-data e))))))
       (try
         (agent-control/call-browser-tool! {} "bot-a" "browser_open"
                                           {:url "https://example.com"})
         (is false "a disabled browser must not execute")
-        (catch clojure.lang.ExceptionInfo e
+        (catch kerror/ExceptionInfo e
           (is (= :agent/browser-disabled (:type (ex-data e)))))))))
+
+(deftest call-browser-tool-checks-the-bots-own-host-row-before-navigation
+  ;; `:bot/allowed-hosts` existed, `bounds/admit-host` existed, and nothing
+  ;; called one from the other until now: the machine's `allowed-domains`
+  ;; list was the only gate on egress. The Bot's row must be narrower than the
+  ;; machine's and still hold (ADR-2609062600 stage 1 completion).
+  (with-store
+    (fn []
+      (let [seen (atom [])
+            bot {:bot/allowed-hosts #{"example.com"}}]
+        (with-redefs-fn {(execute-tool-var)
+                         (fn [_ name _] (swap! seen conj name) "ok")}
+          (fn []
+            ;; In the row: navigates.
+            (agent-control/call-browser-tool! browser-on "bot-a" "browser_open"
+                                              {:url "https://example.com/x"} bot)
+            ;; Not in the row: refused BEFORE any navigation, even though the
+            ;; machine settings would allow it.
+            (try
+              (agent-control/call-browser-tool! browser-on "bot-a" "browser_open"
+                                                {:url "https://evil.example/"} bot)
+              (is false "a host outside the Bot's row must be refused")
+              (catch kerror/ExceptionInfo e
+                (is (= :bot/host-denied (:type (ex-data e))))
+                (is (= "evil.example" (:host (ex-data e))))
+                (is (= :bounds/host-not-allowed (:reason (ex-data e))))))
+            ;; An EMPTY SET is a list someone wrote with nothing in it: deny.
+            (try
+              (agent-control/call-browser-tool! browser-on "bot-a" "browser_open"
+                                                {:url "https://example.com/"} {:bot/allowed-hosts #{}})
+              (is false "an empty host list denies every destination")
+              (catch kerror/ExceptionInfo e
+                (is (= :bot/host-denied (:type (ex-data e))))))
+            ;; No list: reported as :bounds/no-host-list and PASSES, so wiring
+            ;; the row in cannot stop a Bot that never declared one.
+            (agent-control/call-browser-tool! browser-on "bot-a" "browser_open"
+                                              {:url "https://example.com/"} {})))
+        (is (= 2 (count @seen))
+            "only the two in-row opens ran; refusals ran nothing")))))
+
+(deftest call-browser-tool-still-runs-with-the-old-arity
+  ;; call sites that do not carry the Bot's row keep today's behaviour.
+  (with-store
+    (fn []
+      (let [seen (atom [])]
+        (with-redefs-fn {(execute-tool-var)
+                         (fn [_ name _] (swap! seen conj name) "ok")}
+          (fn []
+            (agent-control/call-browser-tool! browser-on "bot-a" "browser_snapshot" {})))
+        (is (= ["browser_snapshot"] @seen))))))
 
 (deftest computer-tools-require-both-machine-and-bot-grants
   (with-store
@@ -3310,7 +3402,7 @@
       (try
         (agent-control/call-computer-tool! {} "computer_tree" {:application "Safari"})
         (is false "a disabled machine must not execute")
-        (catch clojure.lang.ExceptionInfo error
+        (catch kerror/ExceptionInfo error
           (is (= :agent/computer-disabled (:type (ex-data error)))))))))
 
 ;; ── peer notes (ADR-0061 / ADR-0062) ────────────────────────────────────
@@ -3367,7 +3459,7 @@
       (let [source (make-bot alice {:name "alpha" :peers? true})
             depth-var (ns-resolve 'cloud.itonami.app.bots
                                   '*message-agent-depth*)]
-        (is (thrown? clojure.lang.ExceptionInfo
+        (is (thrown? kerror/ExceptionInfo
                      (with-bindings {depth-var bots/max-message-agent-depth}
                        ((private-fn 'message-agent!)
                         {} source "beta" "continue the chain"))))))))
@@ -3401,22 +3493,22 @@
             closed (make-bot alice {:name "closed"})
             strangers (make-bot bob {:name "beta"})]
         (testing "a Bot cannot write to itself"
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"自分自身"
+          (is (thrown-with-msg? kerror/ExceptionInfo #"自分自身"
                                 ((send-peer!) a "alpha" "hi"))))
         (testing "a name nobody has"
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"ありません"
+          (is (thrown-with-msg? kerror/ExceptionInfo #"ありません"
                                 ((send-peer!) a "nobody" "hi"))))
         (testing "another person's Bot is not found, not forbidden"
           ;; `forbidden` would confirm it exists, which is the answer the
           ;; refusal is trying not to give.
           (is (= :peer/not-found
                  (:type (try ((send-peer!) a (:bot/id strangers) "hi")
-                             (catch clojure.lang.ExceptionInfo e (ex-data e)))))))
+                             (catch kerror/ExceptionInfo e (ex-data e)))))))
         (testing "a Bot that never opted in is not a mailbox"
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"ピアの受け取り"
+          (is (thrown-with-msg? kerror/ExceptionInfo #"ピアの受け取り"
                                 ((send-peer!) a "closed" "hi"))))
         (testing "an empty note"
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"空の"
+          (is (thrown-with-msg? kerror/ExceptionInfo #"空の"
                                 ((send-peer!) a "beta" "   "))))
         (testing "a handle naming another machine says so, rather than delivering here"
           ;; ADR-0062 landed the judgement, not the transport. Delivering
@@ -3424,7 +3516,7 @@
           ;; success.
           (is (= :peer/no-remote-transport
                  (:type (try ((send-peer!) a (str "bot:" (:bot/id b) "@studio") "hi")
-                             (catch clojure.lang.ExceptionInfo e (ex-data e)))))))
+                             (catch kerror/ExceptionInfo e (ex-data e)))))))
         (is (= 0 (count (filter #(= "hi" (:text %))
                                 (bots/messages alice (:bot/id b)))))
             "a refused note was delivered anyway")))))
@@ -3445,7 +3537,7 @@
            handle (fn [bot dev] (str "bot:" (:bot/id bot) "@" dev))
            refusal (fn [& args]
                      (try (apply (send-peer!) args) ::delivered
-                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+                          (catch kerror/ExceptionInfo e (:type (ex-data e)))))
            notes (fn [bot text]
                    (count (filter #(= text (:text %))
                                   (bots/messages alice (:bot/id bot)))))]
@@ -3466,7 +3558,7 @@
          (testing "another device is still refused, and says which"
            (device/reset-for-test! "studio")
            (let [data (try ((send-peer!) a (handle b "laptop") "yo")
-                           (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                           (catch kerror/ExceptionInfo e (ex-data e)))]
              (is (= :peer/no-remote-transport (:type data)))
              (is (= "laptop" (:device data)))
              (is (= "studio" (:local-device data))
@@ -3487,7 +3579,7 @@
       (let [a (make-bot alice {:name "alpha" :peers? true})
             one (make-bot alice {:name "twin" :peers? true})
             _two (make-bot alice {:name "twin" :peers? true})]
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"複数"
+        (is (thrown-with-msg? kerror/ExceptionInfo #"複数"
                               ((send-peer!) a "twin" "hi")))
         ;; The handle is what disambiguates, and it has to work.
         (is (str/includes? ((send-peer!) a (str "bot:" (:bot/id one)) "hi")
@@ -3605,13 +3697,13 @@
     (fn []
       (let [mine (make-bot alice {:name "mine"})
             theirs (make-bot bob {:name "theirs"})]
-        (is (thrown? clojure.lang.ExceptionInfo
+        (is (thrown? kerror/ExceptionInfo
                      (bots/create-group! alice {:name "x"
                                                 :members [(:bot/id mine)
                                                           (:bot/id theirs)]})))
         (is (empty? (bots/groups alice))
             "a refused group was stored anyway")
-        (is (thrown? clojure.lang.ExceptionInfo
+        (is (thrown? kerror/ExceptionInfo
                      (bots/group-messages bob
                                           (:group/id (bots/create-group!
                                                       alice {:name "y"
@@ -4266,7 +4358,7 @@
                       (fn [_ _]
                         (throw (ex-info "model provider request failed"
                                         {:type :provider/http-error :status 400})))]
-          (is (thrown? clojure.lang.ExceptionInfo
+          (is (thrown? kerror/ExceptionInfo
                        ((deref advance!) {} b {:id "goal-run-record-1" :goal? true
                                                :messages [] :tools [] :turn-count 0})))
           (let [run (get-in @store/state [:bots :runs bot-id])]
@@ -5186,7 +5278,7 @@
             stranger (make-bot bob {:name "bob's bot"})
             error (try (bots/rename! nil alice (:bot/id target) "borrowed authority"
                                      {:by :bot :by-bot-id (:bot/id stranger)})
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
         (is (= :bot/forbidden (:type (ex-data error))))
         (is (= "bot-a" (:bot/name (get-in @store/state
                                           [:bots :bots (:bot/id target)])))
@@ -5197,7 +5289,7 @@
     (fn []
       (let [bot-id (:bot/id (make-bot alice {:name "keep"}))
             blank (try (bots/rename! nil alice bot-id "   " nil)
-                       (catch clojure.lang.ExceptionInfo e e))
+                       (catch kerror/ExceptionInfo e e))
             ;; Exactly at the bound passes and one over fails -- the pair that
             ;; makes the comparison itself observable. Without the boundary
             ;; case, flipping `>` to `>=` here would keep every test green.
@@ -5208,7 +5300,7 @@
         (bots/rename! nil alice bot-id at-bound nil)
         (is (= at-bound (:bot/name (get-in @store/state [:bots :bots bot-id]))))
         (let [error (try (bots/rename! nil alice bot-id over nil)
-                         (catch clojure.lang.ExceptionInfo e e))]
+                         (catch kerror/ExceptionInfo e e))]
           (is (= :bot/invalid (:type (ex-data error))))
           (is (= at-bound (:bot/name (get-in @store/state [:bots :bots bot-id])))
               "the refused name did not partly land"))))))
@@ -5376,7 +5468,7 @@
       (let [bot-id (:bot/id (make-bot alice {:name "walker"}))
             _ (goal-run-with-events! alice bot-id "run-traj-3" [] [])
             error (try (bots/trajectory bob bot-id "run-traj-3")
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
         (is (= :bot/forbidden (:type (ex-data error))))))))
 
 (deftest invented-tool-can-be-corrected-without-execution
@@ -5504,7 +5596,7 @@
                {:job/bot bot-id :job/run {:agent.run/status :checkpointed}})
         (with-redefs [provider/agent-turn (fn [& _] (swap! calls inc) {:content "answer" :tool-calls []})]
           (let [e (try (bots/send! nil alice bot-id "new message") nil
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
             (is (= :bot/goal-in-progress (:type (ex-data e))))
             (is (= saved (get-in @store/state [:bots :runs bot-id])))
             (is (zero? @calls))))))))
@@ -5597,3 +5689,360 @@
             (is (str/includes? (:text message) "workspace_write_file"))
             (is (str/includes? (:text message) "repository access"))
             (is (empty? ((private-fn 'trace-of) (:bot/id b))))))))))
+
+(deftest abandoned-resident-workers-recover-without-replaying-open-actions
+  (doseq [[initial events expected reason]
+          [[:running [] :checkpointed :worker-lost]
+           [:leased [] :queued :worker-lost]
+           [:running [{:event/kind :action/started :event/data {:action/id "write"}}]
+            :held :orphaned-action-review]
+           [:leased [{:event/kind :action/started :event/data {:action/id "write"}}]
+            :held :orphaned-action-review]
+           [:running [{:event/kind :action/started :event/data {:action/id "read"}}
+                      {:event/kind :action/finished :event/data {:action/id "read"}}]
+            :checkpointed :worker-lost]]]
+    (with-store
+      (fn []
+        (let [bot-id (:bot/id (make-bot alice {}))
+              run-id "abandoned"
+              run (assoc (agent-run/agent-run {:id run-id :goal "preserve progress"} 0)
+                         :agent.run/status initial)
+              recover! (private-fn 'recover-orphaned-goals!)]
+          (swap! store/state assoc-in [:bots :goal-jobs run-id]
+                 {:job/id run-id :job/bot bot-id :job/session alice
+                  :job/resident-workforce? true :job/run run :job/events events
+                  :job/updated-at "2026-09-13T00:00:00Z"
+                  :job/plan [{:id "existing-step"}]})
+          (with-redefs-fn
+            {(ns-resolve 'cloud.itonami.app.bots 'goal-workers) (atom {})
+             (ns-resolve 'cloud.itonami.app.bots 'active-turns) (atom {})
+             #'store/now (constantly "2026-09-13T00:02:00Z")}
+            (fn []
+              (recover!)
+              (let [j (get-in @store/state [:bots :goal-jobs run-id])]
+                (is (= expected (get-in j [:job/run :agent.run/status])))
+                (is (= reason (get-in j [:job/run :agent.run/checkpoint-reason])))
+                (is (= [{:id "existing-step"}] (:job/plan j)))
+                (is (= reason (get-in (last (:job/events j)) [:event/data :reason])))
+                (is (= (= expected :held) (true? (:job/controller-migration-review? j))))
+                (recover!)
+                (is (= j (get-in @store/state [:bots :goal-jobs run-id]))
+                    "recovery is idempotent and preserves run identity")))))))))
+
+(deftest orphan-recovery-never-steals-live-or-new-work
+  (doseq [mode [:worker :turn :grace :review :interactive :finished-future]]
+    (with-store
+      (fn []
+        (let [bot-id (:bot/id (make-bot alice {}))
+              task (java.util.concurrent.FutureTask. ^java.util.concurrent.Callable (fn [] true))
+              workers (atom (if (contains? #{:worker :finished-future} mode) {"run" task} {}))
+              job {:job/id "run" :job/bot bot-id :job/session alice
+                   :job/resident-workforce? (not= mode :interactive)
+                   :job/controller-migration-review? (= mode :review)
+                   :job/run (assoc (agent-run/agent-run {:id "run" :goal "work"} 0)
+                                   :agent.run/status :running)
+                   :job/events []
+                   :job/updated-at (if (= mode :grace) "2026-09-13T00:00:01Z"
+                                      "2026-09-13T00:00:00Z")}]
+          (when (= mode :finished-future) (.run task))
+          (swap! store/state assoc-in [:bots :goal-jobs "run"] job)
+          (with-redefs-fn
+            {(ns-resolve 'cloud.itonami.app.bots 'goal-workers) workers
+             (ns-resolve 'cloud.itonami.app.bots 'active-turns)
+             (atom (if (= mode :turn) {bot-id true} {}))
+             #'store/now (constantly "2026-09-13T00:02:00Z")}
+            (fn []
+              ((private-fn 'recover-orphaned-goals!))
+              (if (= mode :finished-future)
+                (do (is (= :checkpointed (get-in @store/state [:bots :goal-jobs "run" :job/run :agent.run/status])))
+                    (is (empty? @workers)))
+                (is (= job (get-in @store/state [:bots :goal-jobs "run"])))))))))))
+
+(deftest admission-exceptions-release-the-worker-slot
+  (let [workers (atom {"failed-admission" :worker}) drained (atom 0)]
+    (with-redefs-fn
+      {(ns-resolve 'cloud.itonami.app.bots 'goal-workers) workers
+       (ns-resolve 'cloud.itonami.app.bots 'goal-job) (constantly {})
+       (ns-resolve 'cloud.itonami.app.bots 'goal-job-configuration)
+       (fn [& _] (throw (ex-info "admission failed" {:type :test/admission})))
+       (ns-resolve 'cloud.itonami.app.bots 'drain-goal-queue!) (fn [_] (swap! drained inc))}
+      (fn []
+        (let [error (try ((private-fn 'run-goal-job!) {} "failed-admission") nil
+                         (catch Exception e e))]
+          (is (= :test/admission (:type (ex-data error))))
+          (is (empty? @workers))
+          (is (= 1 @drained)))))))
+
+(deftest learned-procedures-require-source-evidence-and-an-explicit-later-trial
+  (with-store
+    (fn []
+      (let [b (make-bot alice {:name "learner"}) id (:bot/id b)
+            propose (deref #'bots/propose-skill!)
+            record (deref #'bots/record-turn!)
+            receipt {:sha256 "verified-output" :at "2026-01-01T00:00:00Z"}]
+        (is (thrown? kerror/ExceptionInfo
+                     (propose b {:name "Read" :procedure "List first" :source_turn "missing" :tool "workspace_list"})))
+        (swap! store/state assoc-in [:bots :skill-evidence id "source" "workspace_list"] receipt)
+        (record id "source" {:turn/state :completed})
+        (let [skill (propose b {:name "Read" :procedure "List first" :source_turn "source" :tool "workspace_list"})
+              sid (:id skill) later {:sha256 "later-output" :at "2099-01-01T00:00:00Z"}]
+          (is (= :candidate (:status skill)))
+          (is (thrown? kerror/ExceptionInfo (bots/learned-skills bob id)))
+          (swap! store/state assoc-in [:bots :skill-evidence id "unrelated" "workspace_list"] later)
+          (record id "unrelated" {:turn/state :completed})
+          (is (= :candidate (:status (first (bots/learned-skills alice id))))
+              "an unrelated successful use of the same tool must not validate the procedure")
+          (swap! store/state assoc-in [:bots :runs id] {:id "trial"})
+          ((deref #'bots/use-skill!) b sid)
+          (record id "trial" {:turn/state :completed})
+          (is (= :candidate (:status (first (bots/learned-skills alice id))))
+              "a completed answer without the required tool is not evidence")
+          (swap! store/state assoc-in [:bots :skill-evidence id "trial" "workspace_list"] later)
+          (record id "trial" {:turn/state :completed})
+          (is (= :validated (:status (first (bots/learned-skills alice id)))))
+          (swap! store/state assoc-in [:bots :runs id] {:id "regression"})
+          ((deref #'bots/use-skill!) b sid)
+          (record id "regression" {:turn/state :failed})
+          (is (= :suspended (:status (first (bots/learned-skills alice id)))))
+          (is (thrown? kerror/ExceptionInfo ((deref #'bots/use-skill!) b sid))))))))
+
+(deftest group-schedules-are-owned-and-bounded
+  (with-store
+    (fn []
+      (let [b (make-bot alice {:name "speaker"})
+            g (bots/create-group! alice {:name "Standup" :members [(:bot/id b)]}) id (:group/id g)]
+        (is (thrown? kerror/ExceptionInfo
+                     (bots/configure-group-schedule! bob id {:enabled false})))
+        (is (thrown? kerror/ExceptionInfo
+                     (bots/configure-group-schedule! alice id {:enabled true :interval-minutes 0 :prompt "status"})))
+        (is (true? (:enabled (bots/configure-group-schedule! alice id
+                              {:enabled true :interval-minutes 60 :prompt "status"}))))
+        (is (= 60 (get-in (first (bots/groups alice)) [:schedule :interval-minutes])))
+        (is (false? (:enabled (bots/configure-group-schedule! alice id {:enabled false}))))))))
+
+(deftest group-submission-is-idempotent-and-preserves-attribution
+  (with-store
+    (fn []
+      (in-room
+       (fn []
+         (let [b (make-bot alice {:name "speaker"})
+               g (bots/create-group! alice {:name "Standup" :members [(:bot/id b)]}) id (:group/id g)
+               entered (promise) release (promise)]
+           (with-redefs [provider/agent-turn (fn [_ _] (deliver entered true) @release {:content "Ready" :tool-calls []})]
+             (bots/start-group-turn! nil alice id "status" "request-12345" :schedule)
+             (is (true? (deref entered 5000 false)))
+             (is (= "request-12345" (:id (bots/start-group-turn! nil alice id "status" "request-12345" :schedule))))
+             (is (thrown? kerror/ExceptionInfo
+                          (bots/start-group-turn! nil alice id "again" "request-67890" :person)))
+             (deliver release true)
+             (loop [remaining 500]
+               (when (and (pos? remaining) (= :running (:state (bots/group-run alice id))))
+                 (Thread/sleep 10) (recur (dec remaining))))
+             (is (= :completed (:state (bots/group-run alice id))))
+             (is (= 2 (count (bots/group-messages alice id))))
+             (is (= :schedule (:source (first (bots/group-messages alice id)))))
+             (bots/start-group-turn! nil alice id "status" "request-12345" :schedule)
+             (is (= 2 (count (bots/group-messages alice id)))))))))))
+
+(deftest yielded-resident-work-does-not-jump-a-waiting-bot
+  (with-store
+    (fn []
+      (let [workers (deref #'bots/goal-workers) previous @workers submitted (atom [])
+            job (fn [id status created updated]
+                  {:job/id id :job/resident-workforce? true :job/created-at created
+                   :job/updated-at updated :job/run {:agent.run/status status}})]
+        (try
+          (reset! workers {})
+          (swap! store/state assoc-in [:bots :goal-jobs]
+                 {"yielded" (job "yielded" :checkpointed "2026-01-01T00:00:00Z" "2026-01-01T02:00:00Z")
+                  "waiting" (job "waiting" :queued "2026-01-01T01:00:00Z" "2026-01-01T01:00:00Z")})
+          (with-redefs [bots/enqueue-goal! (fn [_ id] (swap! submitted conj id))]
+            ((deref #'bots/drain-goal-queue!) {:bots {:workforce {:recovery-max-active 1}}})
+            (is (= ["waiting"] @submitted)))
+          (finally (reset! workers previous)))))))
+
+(deftest workforce-can-admit-waiting-work-without-expanding-inference-slots
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root identity]
+        (let [submitted (atom [])
+              new-role (-> (engineer-entry) (assoc :key "cloud-itonami/new-role")
+                           (assoc :role {:id :qa :name "New role" :job :qa}))]
+          (bots/provision-workforce! {} alice (workforce-catalog [(engineer-entry) new-role]))
+          (swap! store/state assoc-in [:bots :goal-jobs "waiting"]
+                 {:job/id "waiting" :job/resident-workforce? true
+                  :job/session alice :job/run {:agent.run/status :queued}})
+          (with-redefs [bots/submit-goal! (fn [_ _ id _ run-id _]
+                                          (swap! submitted conj id) {:id run-id})]
+            (bots/fire-due-workforce! {:bots {:workforce {:max-active 1 :queue-capacity 2
+                                                        :max-starts-per-tick 1}}}
+                                     alice "2099-01-01T00:00:00Z")
+            (is (= 1 (count @submitted)))
+            (reset! submitted [])
+            (bots/fire-due-workforce! {:bots {:workforce {:max-active 0 :queue-capacity 8}}}
+                                     alice "2099-01-01T00:00:00Z")
+            (is (empty? @submitted) "zero still disables admission")))))))
+
+(deftest peer-messages-appear-in-one-shared-conversation
+  (with-store
+    (fn []
+      (let [a (make-bot alice {:name "alpha" :peers? true})
+            b (make-bot alice {:name "beta" :peers? true})
+            mirror (deref #'bots/mirror-peer-conversation!)]
+        (mirror a b "question")
+        (mirror b a "answer")
+        (let [groups (bots/groups alice) messages (bots/group-messages alice (:id (first groups)))]
+          (is (= 1 (count groups)))
+          (is (= ["question" "answer"] (mapv :text messages)))
+          (is (= [(str "bot:" (:bot/id a)) (str "bot:" (:bot/id b))] (mapv :from messages)))
+          (is (empty? (bots/groups bob))))))))
+
+(deftest scheduled-discussions-start-once-per-due-interval
+  (with-store
+    (fn []
+      (let [b (make-bot alice {:name "speaker"})
+            g (bots/create-group! alice {:name "Standup" :members [(:bot/id b)]}) id (:group/id g)
+            calls (atom []) now "2099-01-01T00:00:00Z"]
+        (bots/configure-group-schedule! alice id {:enabled true :interval-minutes 60 :prompt "status"})
+        (with-redefs [bots/start-group-turn! (fn [_ _ id text request-id source]
+                                             (swap! calls conj [id text source]))]
+          ((deref #'bots/fire-due-groups!) {} alice now)
+          ((deref #'bots/fire-due-groups!) {} alice now)
+          (is (= [[id "status" :schedule]] @calls))
+          (is (= "2099-01-01T01:00:00Z" (get-in (first (bots/groups alice)) [:schedule :next-at])))
+          ((deref #'bots/fire-due-groups!) {} alice "2099-01-01T01:00:00Z")
+          (is (= 2 (count @calls))))))))
+
+(deftest a-resident-that-never-verifies-its-step-yields-terminally
+  (with-store
+    (fn []
+      (let [events (mapv (fn [i] {:event/kind :action/finished
+                                 :event/data {:action/id (str i) :step-id "read"}}) (range 8))]
+        (swap! store/state assoc-in [:bots :goal-jobs "stalled"]
+               {:job/resident-workforce? true :job/events events
+                :job/plan [{:step/id "read" :step/state :pending}]})
+        (is (true? ((deref #'bots/resident-stalled?) {} {:id "stalled"})))
+        (swap! store/state assoc-in [:bots :goal-jobs "stalled" :job/plan 0 :step/state] :verified)
+        (is (false? ((deref #'bots/resident-stalled?) {} {:id "stalled"})))
+        (swap! store/state assoc-in [:bots :goal-jobs "stalled" :job/resident-workforce?] false)
+        (is (false? ((deref #'bots/resident-stalled?) {} {:id "stalled"})))))))
+
+(deftest bot-history-and-messenger-share-one-admitted-conversation
+  (with-store
+    (fn []
+      (let [b (make-bot alice {:name "history"}) id (:bot/id b)
+            old {:message/id "legacy-a" :message/bot id :message/role :person
+                 :message/text "old question" :message/at "2026-01-01T00:00:00Z"}]
+        (swap! store/state assoc-in [:bots :conversations id] [old])
+        (let [cid (:id (bots/messenger-binding alice :direct id))]
+          (bots/messenger-binding alice :direct id)
+          (is (= ["old question"] (mapv :content (:items (messenger/messages "org-1" "alice" cid {})))))
+          (messenger/send-message! "org-1" "alice" cid {:content "new question" :idempotency-key "new-question"})
+          (is (= ["old question" "new question"] (mapv :text (bots/messages alice id))))
+          (is (thrown? kerror/ExceptionInfo (bots/messenger-binding bob :direct id)))
+          (is (thrown? kerror/ExceptionInfo (bots/messenger-binding (assoc alice :organization-id "org-2") :direct id)))
+          (is (= 2 (count (:items (messenger/messages "org-1" id cid {}))))))))))
+
+(deftest messenger-group-message-replies-in-place-and-retries-once
+  (with-store
+    (fn []
+      (in-room
+        (fn []
+          (let [b (make-bot alice {:name "protocol speaker"})
+                g (bots/create-group! alice {:name "protocol" :members [(:bot/id b)]})
+                cid (:id (bots/messenger-binding alice :group (:group/id g)))
+                calls (atom 0) request {:content "hello over Messenger" :idempotency-key "same-request"}]
+            (with-redefs [provider/agent-turn (fn [_ request] (swap! calls inc)
+                                               (is (some #(= "hello over Messenger" (:content %)) (:messages request)))
+                                               {:content "same conversation reply" :tool-calls []})]
+              (let [receipt (messenger/send-message! "org-1" "alice" cid request)
+                    mid (:message-id receipt)]
+                (bots/queue-messenger-reply! nil alice cid mid)
+                (loop [n 500]
+                  (when (and (pos? n) (#{:queued :running} (:state (bots/messenger-run alice cid))))
+                    (Thread/sleep 10) (recur (dec n))))
+                (is (= :completed (:state (bots/messenger-run alice cid))))
+                (is (= mid (:message-id (messenger/send-message! "org-1" "alice" cid request))))
+                (bots/queue-messenger-reply! nil alice cid mid)
+                (is (= 1 @calls))
+                (is (= ["hello over Messenger" "same conversation reply"]
+                       (mapv :content (:items (messenger/messages "org-1" "alice" cid {})))))
+                (is (= 2 (count (bots/group-messages alice (:group/id g)))))))))))))
+
+(deftest messenger-denial-and-sealed-content-do-not-become-bot-input
+  (with-store
+    (fn []
+      (let [b (make-bot alice {:name "private"}) id (:bot/id b)
+            g (bots/create-group! alice {:name "private group" :members [id]})
+            cid (:id (bots/messenger-binding alice :group (:group/id g)))
+            principals {"alice" {} id {}}]
+        (messenger/set-trust! "org-1" id principals "alice" false)
+        (let [r (messenger/send-message! "org-1" "alice" cid {:content "quarantined secret"})]
+          (is (nil? (bots/queue-messenger-reply! nil alice cid (:message-id r))))
+          (is (empty? ((private-fn 'group-conversation) (:group/id g) id)))
+          (bots/messenger-binding alice :group (:group/id g))
+          (is (false? (get-in @store/state [:messenger :organizations "org-1" :trust id "alice" :allowed?]))))
+        (messenger/set-trust! "org-1" id principals "alice" true)
+        (let [r (messenger/send-message! "org-1" "alice" cid {:sealed "opaque-envelope" :encryption-mode :signal-v1})]
+          (is (nil? (bots/queue-messenger-reply! nil alice cid (:message-id r))))
+          (is (= ["quarantined secret"] (mapv :message/text ((private-fn 'group-conversation) (:group/id g) id)))))))))
+
+
+(deftest bot-profile-documents-persist-and-are-owner-isolated
+  (with-store
+    (fn []
+      (let [a (make-bot alice {:name "Persona A"}) b (make-bot bob {:name "Persona B"})
+            p (profile/ensure! a "## SOUL.md\n\nImported personality.\n\n## USER.md\n\nPrefer short answers.\n")]
+        (is (str/includes? (get-in p [:files "SOUL.md"]) "Imported personality."))
+        (is (str/includes? (get-in p [:files "USER.md"]) "short answers"))
+        (is (= 3 (count (filter #(.isFile %) (filter #(str/ends-with? (.getName %) ".md")
+                                (file-seq (io/file (config/data-dir) "bot-profiles")))))))
+        (let [updated (profile/apply-update! a 1 {"MEMORY.md" "# Memory\nConfirmed preference: concise."} {:turn "t1"})]
+          (is (= 2 (:revision updated)))
+          (is (= 1 (count (:history updated))))
+          (is (str/includes? (profile/prompt (profile/read-profile a)) "Confirmed preference"))
+          (is (not (str/includes? (profile/prompt (profile/read-profile b)) "Confirmed preference"))))
+        (is (thrown? kerror/ExceptionInfo (profile/apply-update! a 1 {"SOUL.md" "stale"} {})))
+        (is (thrown? kerror/ExceptionInfo (profile/apply-update! a 2 {"../../escape" "bad"} {})))
+        (is (thrown? kerror/ExceptionInfo (profile/apply-update! a 2 {"MEMORY.md" (str "api" "_key=" (apply str (repeat 16 "x")))} {})))
+        (is (thrown? kerror/ExceptionInfo (bots/profile bob (:bot/id a))))))))
+
+(defn- wait-profile-review []
+  (loop [n 1000]
+    (when (and (pos? n) (seq @(deref (ns-resolve 'cloud.itonami.app.bots 'profile-review-workers))))
+      (Thread/sleep 10) (recur (dec n)))))
+
+(deftest completed-conversations-queue-a-deduplicated-background-profile-review
+  (with-store
+    (fn []
+      (in-room
+        (fn []
+          (let [b (make-bot alice {:name "Learning Bot"}) id (:bot/id b) calls (atom 0)]
+            ((private-fn 'append!) id (bot/message {:id "preference" :bot id :role :person :text "Please keep answers concise." :at (store/now)}))
+            ((private-fn 'record-turn!) id "review-me" {:turn/state :completed :turn/phase :completed})
+            ((private-fn 'record-turn!) id "review-me" {:turn/state :completed :turn/phase :completed})
+            (is (= 1 (count (get-in @store/state [:bots :profile-reviews]))))
+            (with-redefs [provider/agent-turn (fn [_ request]
+              (swap! calls inc) (is (empty? (:tools request)))
+              {:content (json/write-str {:updates {"USER.md" "# User\nPrefer concise answers."} :reason "Explicit preference"})})]
+              (bots/dispatch-profile-reviews! {} alice)
+              (wait-profile-review)
+              (is (= 1 @calls))
+              (is (= :completed (:state (first (vals (get-in @store/state [:bots :profile-reviews]))))))
+              (is (str/includes? (get-in (bots/profile alice id) [:files "USER.md"]) "concise answers"))
+              (is (= 1 (count (bots/messages alice id))))
+              (bots/dispatch-profile-reviews! {} alice)
+              (is (= 1 @calls)))))))))
+
+(deftest malformed-background-review-does-not-change-profile
+  (with-store
+    (fn []
+      (in-room
+        (fn []
+          (let [b (make-bot alice {:name "Review rejection"}) before (profile/ensure! b nil)]
+            (profile/enqueue-review! b {:turn/id "bad" :turn/state :failed}
+              [{:message/id "m" :message/role :person :message/text "Keep answers brief"}])
+            (with-redefs [provider/agent-turn (fn [& _] {:content "not json"})]
+              (bots/dispatch-profile-reviews! {} alice) (wait-profile-review))
+            (is (= (:files before) (:files (profile/read-profile b))))
+            (is (= :failed (:state (first (vals (get-in @store/state [:bots :profile-reviews]))))))))))))

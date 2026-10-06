@@ -292,6 +292,14 @@
                :requested_model (:requested-model turn)
                :route_source "cloud_itonami"}}))
 
+;; Contract for the SSE relay of `assistant.delta` events (see
+;; hermes-event below): the server relays provider chunk `:content`
+;; through unchanged (`assistant.delta` carries it in `:delta`). The
+;; shape is NOT a single guaranteed form -- depending on the upstream
+;; provider the `:delta` may be an accumulated full text so far or an
+;; incremental chunk. Consumers must tolerate both (bin/itonami
+;; prefix-discriminates: if the new payload extends the previous one
+;; it treats it as accumulated, otherwise as an increment).
 (defn- hermes-event [run-id event]
   (let [timestamp (now-seconds)]
     (case (:type event)

@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.presentation-request-test
-  (:require [clojure.test :refer [deftest is testing use-fixtures]]
+  (:require [kotoba.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.presentation-request :as pr]
             [cloud.itonami.app.store :as store])
   (:import [java.time Instant]))

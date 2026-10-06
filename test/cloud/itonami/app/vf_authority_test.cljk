@@ -7,7 +7,7 @@
   (a prefix must not cross a bot or org boundary); a read-only bot's
   authority does not reach append. All verdicts come from
   `authority.scope` — no comparison is written here."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [authority.scope :as scope]
             [authority.grant :as grant]
             [cloud.itonami.app.vf-authority :as vf]))

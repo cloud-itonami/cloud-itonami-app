@@ -26,12 +26,11 @@
   answered the query. A `:valid? true` from here means \"this response belongs to
   a request we made\", nothing more. Verifying the credentials inside is
   `credential-trust`'s job and the caller must do it."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [cloud.itonami.app.store :as store]
             [oid4vp.core :as oid4vp])
   (:import [java.security SecureRandom]
-           [java.time Instant]
-           [java.util Base64]))
+           [java.time Instant]))
 
 (def schema "cloud.itonami.app.presentation-request.v1")
 
@@ -43,7 +42,7 @@
 (defn- fresh-token []
   (let [b (byte-array entropy-bytes)]
     (.nextBytes (SecureRandom.) b)
-    (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) b)))
+    (kbytes/base64url-encode b {:pad? false})))
 
 (defn- requests [snapshot] (or (:presentation-requests snapshot) {}))
 

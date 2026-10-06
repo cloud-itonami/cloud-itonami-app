@@ -1,17 +1,16 @@
 (ns cloud.itonami.app.kotobase-federation-test
-  (:require [cacao.core :as cacao]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [cacao.core :as cacao]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.kotobase-federation :as federation]
             [cloud.itonami.app.store :as store]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]])
-  (:import [java.nio.file Files]
+            [kotoba.test :refer [deftest is testing]])
+  (:import
            [java.time Instant]))
 
 (deftest assertion-is-short-scoped-and-separates-principal-from-controller
-  (let [dir (.toFile (Files/createTempDirectory
-                      "itonami-kotobase"
-                      (make-array java.nio.file.attribute.FileAttribute 0)))
+  (let [dir (kio/temp-dir
+                      "itonami-kotobase")
         principal "urn:kotoba:principal:018f4d6c-29bf-7f80-9a21-111111111111"
         subject "did:key:zDnaeZpasskeySubject"]
     (with-redefs [config/data-dir (constantly dir)
@@ -37,9 +36,8 @@
                (set (get-in verified [:payload :resources]))))))))
 
 (deftest each-target-is-a-distinct-rp-for-the-same-principal
-  (let [dir (.toFile (Files/createTempDirectory
-                      "itonami-murakumo"
-                      (make-array java.nio.file.attribute.FileAttribute 0)))
+  (let [dir (kio/temp-dir
+                      "itonami-murakumo")
         principal "urn:kotoba:principal:018f4d6c-29bf-7f80-9a21-222222222222"
         controller "did:key:zMurakumoPasskeyController"
         session {:user-id "u2" :kind :federated
@@ -70,7 +68,7 @@
                               "https://auth.murakumo.cloud/sign-in"))))))
 
 (deftest unlisted-target-is-rejected
-  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"許可されていません"
+  (is (thrown-with-msg? kerror/ExceptionInfo #"許可されていません"
                         (federation/mint-assertion
                          {:user-id "u1" :kind :passkey}
                          :untrusted
@@ -79,11 +77,11 @@
 (deftest non-passkey-session-cannot-federate
   (testing "email and agent sessions are not upgraded into passkey assertions"
     (doseq [kind [:email :agent]]
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Passkey session"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"Passkey session"
                             (federation/mint-assertion
                              {:user-id "u1" :kind kind})))))
   (testing "ordinary federated SSO is not upgraded"
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Passkey session"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"Passkey session"
                           (federation/mint-assertion
                            {:user-id "u1" :kind :federated
                             :issued-via :itonami-cloud

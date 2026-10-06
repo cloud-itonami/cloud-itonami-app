@@ -1,0 +1,408 @@
+(ns cloud.itonami.app.hermes-gateway
+  "Hermes Agent Bot Mode gateway — the portable half, with no host in it.
+
+  `cloud.itonami.app.hermes-compat` is the same compatibility claim on the
+  JVM application server (`server.cljk`), and it is JVM-only twice over:
+  `java.util.concurrent` queues for the run events and `cloud.itonami.app.bots`
+  for the turn. Since 2026-09-15 the resident on 1338 is the kbb signin-server
+  (`signin_server.cljk`), which cannot load either, so a Hermes client got 404
+  from every route in `docs/hermes-bot-mode-compatibility.md` — measured
+  2026-09-16 with `/api/profiles` `/api/sessions` `/v1/runs/x` all 404 while
+  `/health` was 200.
+
+  This namespace holds everything about the gateway that is a function of
+  data: profile → Bot resolution, the session / message projections, the
+  input text contract, and the run lifecycle as `state + event -> next-state`.
+  Nothing here reads a clock, a file, a socket or an atom; the host
+  (`signin_server.cljk`) supplies the Bot rows, the messages, `now`, and the
+  provider call, and keeps the run table.
+
+  Identity mapping is the one the JVM adapter fixed and the doc promises:
+
+      Hermes profile == Hermes Bot Chat session == Cloud Itonami Bot id
+
+  Response envelopes mirror `hermes_compat.cljk` key for key so an `itonami
+  hermes …` CLI cannot tell which resident answered. Where the JVM-free turn
+  cannot honour a Hermes verb (a held write to approve — this turn runs no
+  tools, so it never holds), the refusal is returned as data with the same
+  `:type` literal the JVM adapter throws, never emulated.
+
+  Bot rows are keyword-keyed maps in the shape of `bots/overview` (`:id`
+  `:name` `:model` `:provider-id` `:enabled?` `:pinned?` `:hidden?` `:status`
+  `:updated-at` `:activity-at` `:last-turn`); messages are `{:id :role :text
+  :at :cards}`. Timestamps arrive as ISO-8601 strings and leave as epoch
+  seconds, which is what the Hermes wire uses."
+  (:require [kotoba.lang.text :as str]))
+
+(def bot-chat-title "Bot Chat")
+(def terminal-statuses #{"completed" "failed" "cancelled"})
+(def run-retention-seconds 3600)
+(def max-followups-per-run 3)
+
+;; ---------- time ----------
+
+(defn epoch-seconds
+  "ISO-8601 string → epoch seconds (double), nil when absent or unparsable."
+  [value]
+  (when value
+    #?(:cljs (let [ms (js/Date.parse (str value))]
+               (when-not (js/isNaN ms) (/ ms 1000.0)))
+       :clj (try (/ (.toEpochMilli (java.time.Instant/parse (str value))) 1000.0)
+                 (catch Exception _ nil)))))
+
+;; ---------- paths ----------
+
+(defn split-profile-path
+  "Return `[profile inner-path]`. `/p/<profile>` mirrors Hermes gateway
+  multiplexing; the profile segment is percent-decoded by the host."
+  [path]
+  (if-let [[_ encoded inner] (re-matches #"/p/([^/]+)(/.*)?" (str path))]
+    [encoded (or inner "/")]
+    [nil (str path)]))
+
+;; ---------- routing ----------
+
+(defn gateway-path?
+  "Whether an inner path (after `split-profile-path`) belongs to the gateway."
+  [p]
+  (boolean (or (= p "/api/profiles")
+               (= p "/api/sessions") (str/starts-with? (str p) "/api/sessions/")
+               (= p "/v1/runs") (str/starts-with? (str p) "/v1/runs/"))))
+
+;; ---------- profile → Bot ----------
+
+(defn- imported-profile-id [bot]
+  (get-in bot [:hermes-import :profile-id]))
+
+(defn- imported-session-ids [bot]
+  (set (get-in bot [:hermes-import :session-ids])))
+
+(defn pick-default-bot
+  "Same two-pass rule as the JVM adapter: an enabled Bot in the preference
+  tiers (imported `default` profile, configured default id, pinned) beats a
+  disabled one that merely sorts earlier; a fleet of disabled Bots still
+  resolves so the turn can refuse by name."
+  [available default-id profile-default-first?]
+  (let [preds (if profile-default-first?
+                [#(= "default" (imported-profile-id %))
+                 #(= default-id (:id %))
+                 #(boolean (:pinned? %))]
+                [#(= default-id (:id %))
+                 #(boolean (:pinned? %))])
+        pass (fn [enabled-only?]
+               (some (fn [pred]
+                       (some #(when (and (pred %)
+                                         (or (not enabled-only?)
+                                             (boolean (:enabled? %))))
+                                %)
+                             available))
+                     preds))]
+    (or (pass true) (pass false) (first available))))
+
+(defn resolve-bot
+  "Resolve a Hermes profile / session id against the visible Bots. `default`
+  and nil select by `pick-default-bot`. Returns the Bot row, or
+  `{:refuse :hermes/not-found :profile requested}` — the JVM adapter's
+  `ex-info` type, as data."
+  [bots default-id profile]
+  (let [requested (some-> profile str str/trim not-empty)
+        selected (cond
+                   (= "default" requested) (pick-default-bot bots default-id true)
+                   (nil? requested) (pick-default-bot bots default-id false)
+                   :else (some #(when (or (= requested (:id %))
+                                          (= requested (imported-profile-id %))
+                                          (contains? (imported-session-ids %) requested))
+                                  %)
+                               bots))]
+    (or selected
+        {:refuse :hermes/not-found
+         :message (str "Hermes profile/session not found: " requested)
+         :profile requested})))
+
+(defn refusal? [value] (and (map? value) (contains? value :refuse)))
+
+;; ---------- projections ----------
+
+(defn profile-list [bots]
+  {:object "list"
+   :data (mapv (fn [bot]
+                 {:id (or (imported-profile-id bot) (:id bot))
+                  :bot_id (:id bot)
+                  :name (:name bot)
+                  :model (:model bot)
+                  :provider (:provider-id bot)
+                  :enabled (boolean (:enabled? bot))
+                  :status (:status bot)
+                  :session_id (:id bot)
+                  :title bot-chat-title})
+               bots)})
+
+(defn session-row [bot messages]
+  (let [first-message (first messages)
+        last-message (last messages)
+        started (or (epoch-seconds (:at first-message))
+                    (epoch-seconds (:updated-at bot)))
+        active (or (epoch-seconds (:at last-message))
+                   (epoch-seconds (:activity-at bot))
+                   (epoch-seconds (:updated-at bot)))
+        text (str (:text last-message))
+        preview (when last-message (subs text 0 (min 160 (count text))))]
+    {:id (:id bot)
+     :source "cloud_itonami"
+     :model (:model bot)
+     :title bot-chat-title
+     :started_at started
+     :message_count (count messages)
+     :tool_call_count (or (get-in bot [:last-turn :tool-count]) 0)
+     :last_active active
+     :preview preview
+     :pinned (boolean (:pinned? bot))
+     :archived (not (boolean (:enabled? bot)))
+     :hidden (boolean (:hidden? bot))
+     :has_system_prompt false
+     :has_model_config (boolean (or (:own-model bot) (:own-provider-id bot)))}))
+
+(defn session [bot messages]
+  {:object "hermes.session"
+   :session (session-row bot messages)})
+
+(defn session-list
+  "`messages-of` is `bot -> messages` (the host reads the conversation)."
+  [bots messages-of {:keys [limit offset title include-hidden]}]
+  (let [rows (->> bots
+                  (remove #(and (not include-hidden) (:hidden? %)))
+                  (mapv #(session-row % (messages-of %)))
+                  (filterv #(or (str/blank? (str title)) (= title (:title %)))))
+        offset (max 0 (long (or offset 0)))
+        limit (-> (or limit 50) long (max 0) (min 200))
+        page (->> rows (drop offset) (take limit) vec)]
+    {:object "list"
+     :data page
+     :limit limit
+     :offset offset
+     :has_more (> (count rows) (+ offset (count page)))}))
+
+(defn hermes-role [role]
+  (case (str role)
+    "owner" "user"
+    "person" "user"
+    "bot" "assistant"
+    "assistant" "assistant"
+    "user" "user"
+    (str role)))
+
+(defn session-messages
+  [bot messages {:keys [limit offset order]}]
+  (let [all (mapv (fn [message]
+                    (cond-> {:id (:id message)
+                             :session_id (:id bot)
+                             :role (hermes-role (:role message))
+                             :content (:text message)
+                             :timestamp (epoch-seconds (:at message))}
+                      (seq (:cards message))
+                      (assoc :display_kind "cloud_itonami_cards")))
+                  messages)
+        default-page? (nil? limit)
+        limit (-> (or limit 500) long (max 0) (min 500))
+        offset (max 0 (long (or offset 0)))
+        latest? (or (= "latest" order) (and (nil? order) default-page?))
+        candidates (if latest? (vec (reverse all)) all)
+        page (->> candidates (drop offset) (take limit) vec)]
+    {:object "list"
+     :session_id (:id bot)
+     :data page
+     :pagination {:limit limit
+                  :offset offset
+                  :order (or order (if default-page? "latest" "oldest"))
+                  :returned (count page)}}))
+
+;; ---------- input ----------
+
+(defn- input-text [raw]
+  (cond
+    (string? raw) (str/trim raw)
+    (sequential? raw)
+    (let [last-item (last raw)
+          content (if (map? last-item) (:content last-item) last-item)]
+      (cond
+        (string? content) (str/trim content)
+        (sequential? content)
+        (->> content
+             (keep #(when (and (map? %) (= "text" (str (:type %)))) (:text %)))
+             (str/join "\n") str/trim)
+        :else ""))
+    :else ""))
+
+(defn chat-text
+  "The turn's input, or `{:refuse :hermes/invalid-input}`. Instructions
+  prefix the text exactly as the JVM adapter does."
+  [body]
+  (let [text (input-text (or (:input body) (:message body) (:text body)
+                             (:content body)))]
+    (if (str/blank? text)
+      {:refuse :hermes/invalid-input
+       :message "Missing non-empty input/message/text."}
+      (if-let [instructions (some-> (:instructions body) str str/trim not-empty)]
+        (str "Instructions for this turn:\n" instructions "\n\n" text)
+        text))))
+
+(defn openai-error [message code]
+  {:error {:message message :type "invalid_request_error"
+           :param nil :code code}})
+
+(def refusal-status
+  "HTTP status per refusal type — the JVM `hermes-compat-handler` mapping."
+  {:hermes/not-found 404
+   :hermes/run-not-found 404
+   :hermes/invalid-input 400
+   :hermes/invalid-pagination 400
+   :hermes/invalid-approval-choice 400
+   :hermes/approval-not-pending 409
+   :hermes/steer-budget-spent 409
+   :hermes/run-finished 409
+   :bot/disabled 409
+   :provider/unauthenticated 503})
+
+(defn refusal->response [refusal]
+  [(get refusal-status (:refuse refusal) 400)
+   (openai-error (:message refusal) (name (:refuse refusal)))])
+
+;; ---------- run lifecycle: state + event -> next-state ----------
+;;
+;; A run is a map. `:status` is the Hermes `hermes.run` envelope and is what
+;; GET /v1/runs/{id} returns; `:events` is the ordered list of wire frames
+;; already emitted (the host streams from its cursor); `:closed?` says the
+;; stream is over; `:followups` are steer texts queued for the next model
+;; boundary; `:output` accumulates assistant text.
+
+(defn new-run [run-id bot now]
+  {:run-id run-id
+   :bot-id (:id bot)
+   :status {:object "hermes.run" :run_id run-id :status "started"
+            :session_id (:id bot) :model (:model bot)
+            :created_at now :updated_at now
+            :last_event "run.started"}
+   :events [{:event "run.started" :run_id run-id :timestamp now}]
+   :output ""
+   :followups []
+   :followups-applied 0
+   :closed? false})
+
+(defn- emit [run frame]
+  (update run :events conj frame))
+
+(defn- set-status [run status now fields]
+  (update run :status merge {:status status :updated_at now} fields))
+
+(defn apply-event
+  "Fold one lifecycle event into the run. Events:
+     [:running]                    the provider call started
+     [:delta text]                 a streamed assistant fragment
+     [:steer text]                 a follow-up was queued (or refused)
+     [:followup-applied]           the queued follow-up became the next call
+     [:completed {:usage m}]       the turn ended with `:output`
+     [:failed message]             the provider call failed
+     [:cancelled]                  stop! landed
+  Every arm is total: an event after `:closed?` is ignored, not thrown."
+  [run [kind arg] now]
+  (if (:closed? run)
+    run
+    (let [run-id (:run-id run)]
+      (case kind
+        :running (set-status run "running" now {:last_event "run.started"})
+
+        :delta (-> run
+                   (update :output str arg)
+                   (emit {:event "assistant.delta" :run_id run-id
+                          :timestamp now :delta arg})
+                   (set-status "running" now {:last_event "assistant.delta"}))
+
+        :steer (if (< (count (:followups run))
+                      (- max-followups-per-run (:followups-applied run)))
+                 (-> run
+                     (update :followups conj arg)
+                     (set-status "running" now {:last_event "run.steered"}))
+                 run)
+
+        :followup-applied (-> run
+                              (update :followups #(vec (rest %)))
+                              (update :followups-applied inc)
+                              (emit {:event "run.steered" :run_id run-id
+                                     :timestamp now :accepted true})
+                              (set-status "running" now {:last_event "run.steered"}))
+
+        :completed (let [usage (or (:usage arg) {})]
+                     (-> run
+                         (emit {:event "run.completed" :run_id run-id :timestamp now
+                                :output (:output run) :usage usage})
+                         (set-status "completed" now
+                                     {:last_event "run.completed"
+                                      :output (:output run) :usage usage})
+                         (assoc :closed? true)))
+
+        :failed (-> run
+                    (emit {:event "run.failed" :run_id run-id :timestamp now
+                           :error (str arg)})
+                    (set-status "failed" now {:last_event "run.failed" :error (str arg)})
+                    (assoc :closed? true))
+
+        :cancelled (-> run
+                       (emit {:event "run.cancelled" :run_id run-id :timestamp now})
+                       (set-status "cancelled" now {:last_event "run.cancelled"})
+                       (assoc :closed? true))
+
+        run))))
+
+(defn steer-accepted?
+  "Whether `[:steer text]` would be queued rather than dropped — the host
+  answers 409 `:hermes/steer-budget-spent` when it would not."
+  [run]
+  (< (count (:followups run))
+     (- max-followups-per-run (:followups-applied run))))
+
+(defn purge-runs
+  "Drop terminal runs older than the retention window."
+  [runs now]
+  (let [cutoff (- now run-retention-seconds)]
+    (into {}
+          (remove (fn [[_ run]]
+                    (and (terminal-statuses (get-in run [:status :status]))
+                         (< (get-in run [:status :updated_at] 0) cutoff))))
+          runs)))
+
+;; ---------- provider ----------
+
+(defn chat-completion-request
+  "Body for an OpenAI-shaped `/chat/completions` call: the durable
+  conversation (person/bot only, as user/assistant) with the new input last.
+  `history-limit` bounds how many prior messages ride along."
+  [bot messages input {:keys [model history-limit stream]
+                       :or {history-limit 40 stream true}}]
+  (let [prior (->> messages
+                   (filter #(contains? #{"person" "bot" "user" "assistant" "owner"}
+                                       (str (:role %))))
+                   (map (fn [m] {:role (hermes-role (:role m)) :content (str (:text m))}))
+                   (take-last history-limit)
+                   vec)
+        system (some-> (:brief bot) str str/trim not-empty)]
+    {:model model
+     :stream stream
+     :messages (cond-> []
+                 system (conj {:role "system" :content system})
+                 true (into prior)
+                 true (conj {:role "user" :content input}))}))
+
+(defn sse-delta
+  "One `data: …` payload from an OpenAI stream → assistant text fragment or
+  nil (role-only / usage-only / `[DONE]` chunks)."
+  [chunk]
+  (when (map? chunk)
+    (some-> chunk :choices first :delta :content str not-empty)))
+
+(defn sse-usage [chunk]
+  (when (map? chunk) (:usage chunk)))
+
+(defn completion-text
+  "Non-streamed completion → assistant text ('' when the shape is wrong)."
+  [completion]
+  (or (some-> completion :choices first :message :content str) ""))

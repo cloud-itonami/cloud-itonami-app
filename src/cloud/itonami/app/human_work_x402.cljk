@@ -5,12 +5,12 @@
   holds USDC until Cloud Itonami sends an authenticated capture or void after
   the evidenced work transition. Signed payer payloads are forwarded once and
   never persisted; only requirements and settlement receipts are retained."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.human-work :as human-work]
             [cloud.itonami.app.store :as store])
-  (:import [java.nio.charset StandardCharsets]
+  (:import
            [java.time Instant]
            [java.util Base64]))
 
@@ -120,7 +120,7 @@
 
 (defn- encode-header [value]
   (.encodeToString (Base64/getEncoder)
-                   (.getBytes (json/write-str value) StandardCharsets/UTF_8)))
+                   (kbytes/utf8-bytes (json/write-str value))))
 
 (defn- decode-header [value]
   (when (or (str/blank? (str value)) (> (count (str value)) 65536))
@@ -130,7 +130,7 @@
     (let [bytes (try (.decode (Base64/getDecoder) ^String value)
                      (catch IllegalArgumentException _
                        (.decode (Base64/getUrlDecoder) ^String value)))]
-      (json/read-str (String. bytes StandardCharsets/UTF_8) :key-fn keyword))
+      (json/read-str (kbytes/utf8-string bytes) :key-fn keyword))
     (catch Exception _
       (fail! :human-work/payment-required
              "PAYMENT-SIGNATURE is not a valid x402 payload"))))

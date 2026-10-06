@@ -1,8 +1,8 @@
 (ns cloud.itonami.app.core-test
-  (:require [clojure.test :refer [deftest is testing]]
-            [clojure.edn :as edn]
-            [clojure.java.io :as io]
-            [clojure.set :as set]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [kotoba.test :refer [deftest is testing]]
+            [kotoba.lang.edn :as edn]
+            [kotoba.io :as io]
+            [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.appearance :as appearance]
@@ -84,7 +84,7 @@
     (is (= :organism-local (get-in assignment [:ao.worker/authority :memory])))
     (is (not (contains? public :credential)))
     (is (not (contains? public :private-memory)))
-    (is (thrown? clojure.lang.ExceptionInfo
+    (is (thrown? kerror/ExceptionInfo
                  (organism-worker/assignment
                   (assoc-in tamaki-worker-assignment
                             [:ao.worker/authority :memory]
@@ -118,14 +118,13 @@
              tamaki-worker-assignment intent 2000))))))
 
 (deftest chat-persists-kgraph-backed-memory
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-app-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-app-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
       (with-redefs [config-loader/data-dir
-                    (fn [] (.toFile temporary))
+                    (fn [] temporary)
                     provider/chat
                     (fn [_ request]
                       (is (= "hello" (get-in request [:messages 1 :content])))
@@ -140,14 +139,13 @@
         (reset! store/state previous)))))
 
 (deftest opted-in-chronicle-context-is-bounded-and-remembered
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-memory-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-memory-test")
         previous @store/state
         remembered (atom nil)]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     chronicle/context (fn [user-id query]
                                         (is (= "alice" user-id))
                                         (is (= "hello" query))
@@ -229,14 +227,13 @@
       (finally (reset! store/state previous)))))
 
 (deftest streaming-chat-emits-deltas-and-persists-complete-message
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-app-stream-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-app-stream-test")
         previous @store/state
         deltas (atom [])]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     provider/chat-stream!
                     (fn [_ _ on-delta]
                       (on-delta "こん")
@@ -261,7 +258,7 @@
     ;; The icon is the one thing here that can be declared and still not exist.
     ;; kotoba-shell fails the run in that case, so catch it at this distance
     ;; instead of at launch.
-    (is (.isFile icon) (str "app.kotoba.edn names a missing icon: " (:app/icon manifest)))
+    (is (io/file? icon) (str "app.kotoba.edn names a missing icon: " (:app/icon manifest)))
     (is (empty? (:macos/permissions manifest)))
     (is (= :kotoba/web (get-in manifest [:runtime :surface])))
     (is (= {:width 1100 :height 760 :min-width 430 :min-height 640}
@@ -335,9 +332,8 @@
       (is (re-find #"id=\"auth-methods-card\"" html))
       (is (re-find #"現在のOrganization" html))
       (is (re-find #"aria-label=\"Organization切替\"" html))
-      (doseq [section ["business-design" "operations" "trust-records"]]
-        (is (re-find (re-pattern (str "data-nav-section=\"" section "\""))
-                     html)))
+      (doseq [section ["apps" "marketplace"]]
+        (is (boolean (re-find (re-pattern (str "data-view-panel=\"" section "\"")) html))))
       (is (re-find #"id=\"mobile-overflow-panel\"" html))
       (is (re-find #"class=\"mobile-menu-toggle\"[^>]*aria-expanded=\"false\"" html))
       (is (re-find #"aria-label=\"メニューを閉じる\"" html))
@@ -347,7 +343,7 @@
                          ".workspace{display:block;min-height:100dvh;padding-bottom:var(--mobile-nav-height)}"))
       (is (str/includes? web/app-css "--mobile-nav-height"))
       (is (str/includes? web/interaction-js "setMobileMenuOpen"))
-      (is (str/includes? web/interaction-js "document.body.dataset.currentView = name"))
+      (is (str/includes? web/interaction-js "document.body.dataset.currentView = overlay ? 'bots' : name"))
       (is (re-find #"id=\"connector-list\"" html))
       (is (re-find #"id=\"member-form\"" html))
       ;; Both gate steps are on the card, not just the first. ADR-0043 split
@@ -365,8 +361,7 @@
       (is (re-find #"id=\"worker-prompt\"" html))
       (is (re-find #"id=\"worker-list\"" html))
       (is (re-find #"id=\"worker-detail\"" html))
-      (is (re-find #"id=\"worker-count\"" html))
-      (is (re-find #"color-scheme\" content=\"light\"" html))
+      (is (re-find #"color-scheme\" content=\"light dark\"" html) "the page offers both; the theme contract decides")
       (is (re-find #"id=\"request-status\"[^>]*role=\"status\"" html))
       (doseq [view ["Worker" "Inbox" "Projects" "Sites" "Drive" "Scheduler"]]
         (is (re-find (re-pattern (str ">" view "<")) html)))
@@ -475,46 +470,47 @@
   (is (str/includes? web/app-css
                      ".bots-view{max-width:none;padding:0;height:calc(100dvh - 5rem);overflow:hidden}"))
   (is (str/includes? web/app-css
-                     ".bots-shell{grid-template-columns:4rem minmax(0,1fr)}"))
+                     ".bots-shell{grid-template-columns:minmax(0,1fr)}"))
   (is (not (str/includes? web/app-css
                           ".bots-shell{display:flex;flex-direction:column}"))
       "shrinking the window must not lay the rail above the thread")
   (is (str/includes? web/app-css ".bots-main{min-width:0;min-height:0}"))
   (is (str/includes? web/app-css
-                     ".bots-rail__list{display:flex;flex-direction:column"))
+                     ".bots-rail__list{overflow-x:hidden;overflow-y:auto"))
   (is (not (str/includes? web/app-css
                           ".bots-rail__list{display:flex;gap:.375rem;overflow-x:auto"))
       "the phone picker must not become a sideways strip")
   (is (str/includes? (web/page-html {}) "id=\"bots-filter\""))
   (is (str/includes? (web/page-html {}) "id=\"bots-mobile-context\""))
-  (is (not (str/includes? web/app-css ".bots-rail{display:none}")))
+  (is (str/includes? web/app-css ".bots-shell.show-bot-list>.bots-rail{display:flex"))
+  (is (str/includes? (web/page-html {}) "id=\"bots-list-toggle\""))
   (is (str/includes? web/app-css
                      ".bots-thread__scroll{flex:1;min-height:0;overflow-y:auto"))
   (is (str/includes? web/app-css ".global-status{position:fixed")))
 
 (deftest bot-faces-have-eyes-life-and-a-still-accessible-state
-  (is (str/includes? web/app-css ".bot-avatar::before,.bot-avatar::after{content:''"))
-  (is (str/includes? web/app-css "@keyframes bot-breathe"))
-  (is (str/includes? web/app-css "@keyframes bot-blink"))
-  (is (str/includes? web/app-css "@keyframes bot-look"))
-  (is (str/includes? web/app-css "@keyframes bot-hurry"))
-  (is (str/includes? web/app-css "@keyframes bot-nap"))
-  (is (str/includes? web/app-css "@keyframes bot-joy"))
-  (is (str/includes? web/app-css "@keyframes bot-nervous"))
-  (doseq [mood ["hurry" "nap" "joy" "nervous" "upset"]]
-    (is (str/includes? web/app-css (str "data-mood='" mood "'"))))
-  (is (str/includes? web/app-css ".bot-avatar[data-status='working']"))
-  (is (str/includes? web/app-css
-                     ".bot-avatar,.bot-avatar::before,.bot-avatar::after{animation:none}")))
+  (doseq [hook ["@keyframes ck-bot-breathe" "@keyframes ck-bot-blink"
+                "@keyframes ck-bot-work" "data-motion='off'" "prefers-reduced-motion"]]
+    (is (str/includes? web/app-css hook)))
+  (is (str/includes? (web/page-html {}) "root.cloudKotobaBot="))
+  (is (not (str/includes? web/app-css "@keyframes bot-nap")))
+  (is (not (str/includes? web/app-css ".bot-avatar{border-radius:10px;background:"))))
 
 (deftest app-css-only-references-design-system-tokens-that-exist
   ;; An undefined custom property makes the whole declaration invalid at
   ;; computed-value time, so it does not fall back to the cascade — it silently
   ;; resolves to the initial value. That turned state chips transparent and
   ;; every :focus-visible outline into outline-style:none, with nothing failing.
+  ;; The snapshot block (`--dds-light-*`, written by appearance/dark-css and
+  ;; appended to every page after app-css) counts as defined: the Bots
+  ;; workspace pattern's dark surface lifts (cloud-kotoba-dds styles/bots-css,
+  ;; 2026-09-16) read those names inside light-dark(), and they are always on
+  ;; the page — the test below pins that the snapshot really writes them.
   (let [dds (slurp (io/resource "jp_go_dds/dds.css"))
-        defined (into (set (map second (re-seq #"(--[a-z0-9-]+)\s*:" dds)))
-                      (map second (re-seq #"(--[a-z0-9-]+)\s*:" web/app-css)))
+        snapshot (appearance/dark-css dds)
+        defined (-> (set (map second (re-seq #"(--[a-z0-9-]+)\s*:" dds)))
+                    (into (map second (re-seq #"(--[a-z0-9-]+)\s*:" web/app-css)))
+                    (into (map second (re-seq #"(--[a-z0-9-]+)\s*:" snapshot))))
         referenced (set (map second (re-seq #"var\((--[a-z0-9-]+)\)" web/app-css)))
         missing (set/difference referenced defined)]
     (is (seq referenced))
@@ -543,7 +539,7 @@
     (is (seq referenced))
     (is (empty? missing)
         (str "dark-css references tokens nothing defines: " (pr-str (sort missing))))
-    (is (str/includes? dark ":root:has(.workspace[data-appearance=\"dark\"])")
+    (is (str/includes? dark ":root:root[data-theme=\"dark\"]")
         "the dark block has to outrank the plain :root that a11y-css writes")))
 
 (deftest chat-session-ids-are-isolated-by-organization-user-and-project
@@ -602,8 +598,10 @@
           views (set (map second (re-seq #"data-view=\"([^\"]+)\"" html)))]
       (is (seq scripted))
       (is (empty? (set/difference scripted html-ids)))
-      (is (contains? views "worker"))
-      (is (= views panels)))))
+      (is (contains? panels "worker"))
+      (is (every? panels views))
+      (is (= (set (map :id cloud.itonami.app.app-directory/workspace-apps))
+             (set/difference panels #{"signin" "settings" "bots" "apps" "marketplace"}))))))
 
 (defn- js-object-keys
   "The keys of a `const <name> = {a:x, b:y}` literal in the interaction layer.
@@ -655,14 +653,13 @@
       (is (= "event" (get-in snapshot [:scheduler :items 0 :id]))))))
 
 (deftest workspace-adapters-return-safe-domain-backed-view-models
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "Cloud Itonami-workspace-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
-        root (.toFile temporary)
+  (let [temporary (kio/temp-dir
+                   "Cloud Itonami-workspace-test")
+        root temporary
         inbox (io/file root "m365-archive/mail/受信トレイ")
         drive (io/file root "m365-archive/onedrive/資料")]
-    (.mkdirs inbox)
-    (.mkdirs drive)
+    (io/mkdirs inbox)
+    (io/mkdirs drive)
     (spit (io/file inbox "20260728T010203Z_sample.eml")
           (str "From: Example Person <sender@example.com>\r\n"
                "Subject: 進捗の確認\r\nMessage-ID: <sample@example.com>\r\n\r\n"
@@ -682,7 +679,7 @@
         (is (= "plan.txt" (:name file)))
         (is (= "資料" (:folder file)))
         (is (not (contains? file :path)))
-        (is (not (.isAbsolute (io/file (:id file)))))))))
+        (is (not (io/absolute? (io/file (:id file)))))))))
 
 (deftest workspace-cache-is-isolated-by-feature
   (workspace/clear-cache!)
@@ -697,15 +694,14 @@
 (defn- with-worker-sandbox
   "Run `body` against isolated persisted state and an empty worker queue."
   [body]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-app-worker-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-app-worker-test")
         previous-state @store/state
         previous-runs @worker/runs]
     (try
       (reset! store/state (store/initial-state))
       (reset! worker/runs [])
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
+      (with-redefs [config-loader/data-dir (fn [] temporary)]
         (body))
       (finally
         (reset! store/state previous-state)
@@ -785,16 +781,16 @@
 (deftest worker-validates-prompts-and-clears-only-finished-runs
   (with-worker-sandbox
     (fn []
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"指示"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"指示"
                             (worker/enqueue! config {:prompt "   "})))
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"見つかりません"
+      (is (thrown-with-msg? kerror/ExceptionInfo #"見つかりません"
                             (worker/cancel! "wrk-missing")))
       (with-redefs [provider/chat-stream!
                     (fn [_ _ on-delta] (on-delta "ok") {:content "ok"})]
         (let [queued (worker/enqueue! config {:prompt "一件目"})]
           (is (true? (worker/await-idle! 10000)))
           (is (= 1 (count (:items (worker/snapshot config)))))
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"終了"
+          (is (thrown-with-msg? kerror/ExceptionInfo #"終了"
                                 (worker/cancel! (:id queued))))
           (worker/clear-finished!)
           (is (empty? (:items (worker/snapshot config)))))))))
@@ -813,9 +809,8 @@
                  (mapv :title (:items (worker/snapshot bounded))))))))))
 
 (deftest one-user-can-belong-to-and-switch-between-organizations
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-multi-org-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-multi-org-test")
         previous @store/state
         now (store/now)]
     (try
@@ -834,7 +829,7 @@
                        {:id "membership-personal"
                         :organization-id "org-personal"
                         :user-id "user-1" :role :owner :created-at now}}}))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
+      (with-redefs [config-loader/data-dir (fn [] temporary)]
         (let [{:keys [token]} (local-identity/issue-session!
                                "user-1" passkey-session-options)
               session (local-identity/session token)]
@@ -868,13 +863,12 @@
         (reset! store/state previous)))))
 
 (deftest a-personal-tenant-is-the-users-own-namespace-and-landing-is-deliberate
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-personal-tenant-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-personal-tenant-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/provider-config
                     (fn [provider]
                       {:provider provider :name (name provider)
@@ -906,13 +900,13 @@
             (is (= "personal" (get-in public [:organization :kind]))))
           ;; and that name is then unavailable to an organization
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"既に使用"
+               kerror/ExceptionInfo #"既に使用"
                (local-identity/create-organization!
                 (local-identity/session token)
                 {:organization-id "owner" :organization-name "Owner Inc"})))
           ;; nobody else works inside a person's name
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"個人テナント"
+               kerror/ExceptionInfo #"個人テナント"
                (local-identity/add-user!
                 (local-identity/session token)
                 {:display-name "Member" :email "member@example.jp"
@@ -938,13 +932,12 @@
         (reset! store/state previous)))))
 
 (deftest an-added-user-gets-their-own-tenant-and-lands-in-the-organization
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-added-user-tenant"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-added-user-tenant")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/provider-config
                     (fn [provider]
                       {:provider provider :name (name provider)
@@ -984,7 +977,7 @@
               "an invited person lands in the organization that invited them")
           ;; The other direction of the one owner namespace.
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"Organization ID として使用"
+               kerror/ExceptionInfo #"Organization ID として使用"
                (local-identity/add-user!
                 session {:display-name "Clash" :account-id "example"
                          :role "member"})))))
@@ -992,9 +985,8 @@
         (reset! store/state previous)))))
 
 (deftest did-web-answers-for-the-tenant-that-was-asked-about
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-did-web-per-tenant"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-did-web-per-tenant")
         previous @store/state
         previous-profile (local-identity/identity-profile)
         now (store/now)]
@@ -1027,7 +1019,7 @@
                        {:id "membership-etzhayyim"
                         :organization-id "org-etzhayyim"
                         :user-id "user-1" :role :owner :created-at now}}}))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
+      (with-redefs [config-loader/data-dir (fn [] temporary)]
         (testing "the document served depends on the name that was asked for"
           (is (= "etzhayyim.example.test"
                  (local-identity/did-web-domain-for-host
@@ -1054,9 +1046,8 @@
         (reset! store/state previous)))))
 
 (deftest existing-user-accepts-an-organization-bound-invitation
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-org-invitation-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-org-invitation-test")
         previous @store/state
         now (store/now)]
     (try
@@ -1086,7 +1077,7 @@
           "membership-personal"
           {:id "membership-personal" :organization-id "org-personal"
            :user-id "user-member" :role :owner :created-at now}}}))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
+      (with-redefs [config-loader/data-dir (fn [] temporary)]
         (let [owner-token (:token
                            (local-identity/issue-session!
                             "user-owner" passkey-session-options))
@@ -1110,7 +1101,7 @@
                  (count (:organization-invitations
                          (local-identity/public-state member-token)))))
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"別のUser"
+               kerror/ExceptionInfo #"別のUser"
                (local-identity/accept-organization-invitation!
                 (local-identity/session owner-token)
                 {:invitation-code code})))
@@ -1125,7 +1116,7 @@
                                     (:organizations accepted)))))
             (is (empty? (:organization-invitations accepted))))
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"無効"
+               kerror/ExceptionInfo #"無効"
                (local-identity/accept-organization-invitation!
                 (local-identity/session member-token)
                 {:invitation-code code})))))
@@ -1133,10 +1124,9 @@
         (reset! store/state previous)))))
 
 (deftest tamaki-activity-is-cursor-based-and-redacted
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-organism-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
-        root (.toFile temporary)
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-organism-test")
+        root temporary
         organisms (io/file root "organisms")
         state-dir (io/file root ".tamaki")
         events (io/file state-dir "events.edn")
@@ -1149,8 +1139,8 @@
                                          :runner "codex"
                                          :model "gpt"
                                          :goal "private prompt"}}})]
-    (.mkdirs organisms)
-    (.mkdirs state-dir)
+    (io/mkdirs organisms)
+    (io/mkdirs state-dir)
     (spit (io/file organisms "cloud-itonami-worker.edn")
           (pr-str tamaki-worker-assignment))
     (spit (io/file organisms "other-worker.edn")
@@ -1234,13 +1224,12 @@
                                   "must remain private"))))))))
 
 (deftest local-identity-registers-organization-owner-and-members-safely
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "Cloud Itonami-identity-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "Cloud Itonami-identity-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/provider-config
                     (fn [provider]
                       {:provider provider :name (name provider)
@@ -1270,13 +1259,12 @@
         (reset! store/state previous)))))
 
 (deftest passkey-first-registration-needs-no-profile-and-roots-a-user-did
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "Cloud Itonami-passkey-first-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "Cloud Itonami-passkey-first-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/provider-config
                     (fn [provider]
                       {:provider provider :name (name provider)
@@ -1302,7 +1290,7 @@
             (is (not= person-did even-did)
                 "the person's DID is not the Passkey's P-256 did:key")
             (is (thrown-with-msg?
-                 clojure.lang.ExceptionInfo #"Passkey"
+                 kerror/ExceptionInfo #"Passkey"
                  (local-identity/configure-organization!
                   session {:organization-id "example"})))
             (store/transact!
@@ -1363,13 +1351,12 @@
         (reset! store/state previous)))))
 
 (deftest oauth-start-is-session-bound-pkce-and-secret-free-in-public-state
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "Cloud Itonami-oauth-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "Cloud Itonami-oauth-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/provider-config
                     (fn [provider]
                       {:provider provider :name "GitHub" :configured? true
@@ -1410,13 +1397,12 @@
         (reset! store/state previous)))))
 
 (deftest managed-account-ids-are-canonical-and-enrollment-codes-are-secret
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "Cloud Itonami-account-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "Cloud Itonami-account-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
                     local-identity/provider-config
                     (fn [provider]
                       {:provider provider :name (name provider)
@@ -1441,7 +1427,7 @@
           (is (true? (:passkey-required? public)))
           (is (string? (:token resumed)))
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"Passkey"
+               kerror/ExceptionInfo #"Passkey"
                (local-identity/require-passkey! session)))
           (is (= "example.cloud-itonami.app"
                  (get-in public [:organization :domain])))
@@ -1449,29 +1435,28 @@
           (is (string? (:enrollment-code invitation)))
           (is (not (str/includes? persisted (:enrollment-code invitation))))
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"無効"
+               kerror/ExceptionInfo #"無効"
                (local-identity/start-enrollment!
                 "member" "wrong-code" "localhost"
                 "http://localhost:1338")))
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"既に"
+               kerror/ExceptionInfo #"既に"
                (local-identity/add-user!
                 session {:display-name "Duplicate"
                          :account-id "member" :role "member"})))
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"再開条件"
+               kerror/ExceptionInfo #"再開条件"
                (local-identity/resume-owner-onboarding!)))))
       (finally
         (reset! store/state previous)))))
 
 (deftest passkey-ceremonies-require-discoverable-user-verification-and-are-single-use
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "Cloud Itonami-passkey-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "Cloud Itonami-passkey-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
+      (with-redefs [config-loader/data-dir (fn [] temporary)]
         (let [{:keys [token]} (local-identity/register!
                                {:organization-name "Example Org"
                                 :organization-id "example"
@@ -1511,7 +1496,7 @@
                (get-in (store/snapshot)
                        [:identity :webauthn-transactions transaction-id :used?])))
           (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"使用済み"
+               kerror/ExceptionInfo #"使用済み"
                (local-identity/finish-passkey-registration!
                 session transaction-id {:id "invalid"})))))
       (finally
@@ -1522,7 +1507,7 @@
   ;; landed with `send_message` and without this checkbox, which made the tool
   ;; unreachable by the only person allowed to grant it.
   (let [html (web/page-html {})
-        js (slurp (clojure.java.io/file "resources/cloud/itonami/app/interaction.js"))]
+        js (slurp (kotoba.io/file "resources/cloud/itonami/app/interaction.js"))]
     (is (not (str/includes? html "id=\"bots-writes\""))
         "authority flags do not burden Bot creation")
     (doseq [label ["ファイル・Git・接続先への書き込みを許可"
@@ -1537,7 +1522,7 @@
 
 (deftest machine-agent-settings-explain-and-gate-browser-and-computer
   (let [html (web/page-html {})
-        js (slurp (clojure.java.io/file "resources/cloud/itonami/app/interaction.js"))]
+        js (slurp (kotoba.io/file "resources/cloud/itonami/app/interaction.js"))]
     (doseq [id ["agent-machine-settings" "agent-machine-browser"
                 "agent-machine-computer" "agent-machine-save"
                 "agent-machine-domains" "agent-machine-prepare-computer"
@@ -1556,7 +1541,7 @@
   ;; false about the switch they were being asked to turn on, which is worse
   ;; than saying nothing.
   (let [html (web/page-html {})
-        js (slurp (clojure.java.io/file "resources/cloud/itonami/app/interaction.js"))]
+        js (slurp (kotoba.io/file "resources/cloud/itonami/app/interaction.js"))]
     (is (not (str/includes? html "shell・メール送信・Git変更を待たずに実行"))
         "the screen still describes the allowlist that no longer exists")
     (is (str/includes? js "許可済みの操作を待たずに実行"))
@@ -1583,7 +1568,7 @@
 
 (deftest the-bots-view-loads-its-read-only-conversations
   (is (not (str/includes? web/interaction-js "currentView === 'rooms'")))
-  (is (str/includes? web/interaction-js "if (currentView === 'bots')"))
+  (is (str/includes? web/interaction-js "if (botsVisible())"))
   (is (str/includes? web/interaction-js "setBotConversationsOpen"))
   (is (str/includes? web/interaction-js "loadRooms()")))
 
@@ -1596,3 +1581,12 @@
     (is (re-find #"id=\"context-capture-settings\"" html))
     (is (str/includes? html "新しいUserでは既定でON"))
     (is (str/includes? web/interaction-js "chat:'bots', rooms:'bots', capture:'bots', memory:'settings'"))))
+
+(deftest the-workspace-has-only-phone-and-tablet-width-layouts
+  (let [html (web/page-html {})
+        queries (->> (re-seq #"@media\s*([^\{]+)" html)
+                     (map (comp str/trim second))
+                     (filter #(str/includes? % "width")) set)]
+    (is (= #{"(width < 48rem)" "(width >= 48rem)"} queries))
+    (is (not (str/includes? web/app-css "grid-template-columns:4rem")))
+    (is (str/includes? html "prefers-reduced-motion"))))

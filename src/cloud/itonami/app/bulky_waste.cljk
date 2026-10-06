@@ -12,7 +12,7 @@
   Exact pickup addresses are visible only to the requester and the booked
   worker.  An open-job candidate sees the service area, window and items, which
   is enough to decide whether to book without exposing a resident's address."
-  (:require [clojure.set :as set]
+  (:require [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.human-work :as human-work]
             #?(:clj [cloud.itonami.app.store :as store])))

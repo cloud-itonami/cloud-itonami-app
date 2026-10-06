@@ -6,7 +6,7 @@
   three make `local-id` return a device name or nil, so a test that only reads
   `local-id` would pass on a deployment whose configuration was silently
   discarded — the shape ADR-2608136000 names."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.device :as device]
             [cloud.itonami.app.peer :as peer]))
 

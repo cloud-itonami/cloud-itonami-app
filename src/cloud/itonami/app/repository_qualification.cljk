@@ -2,7 +2,7 @@
   "Executable admission decision for ADR-0013. Evidence is explicit: missing
   production measurements fail closed rather than being inferred from unit
   tests or the System Dynamics model."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io])
   (:import [java.time Duration Instant]))
 

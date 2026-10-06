@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.agent-control
   "Bounded local agent execution with explicit device capabilities and HIL."
   (:require [agent.run :as agent-run]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.cli-runner :as cli-runner]
             [cloud.itonami.app.chronicle :as chronicle]
@@ -10,6 +10,7 @@
             [cloud.itonami.app.model-routing :as routing]
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.provider :as provider]
+            [cloud.itonami.app.bot-bounds :as bounds]
             [cloud.itonami.app.store :as store]
             [hil.core :as hil])
   (:import [java.net URI]
@@ -203,11 +204,11 @@
         workspace (some-> (get-in request [:cli :workspace])
                           str str/trim not-empty)
         workspace (when workspace
-                    (let [directory (.getCanonicalFile (io/file workspace))]
-                      (when-not (.isDirectory directory)
+                    (let [directory (io/canonical-file (io/file workspace))]
+                      (when-not (io/directory? directory)
                         (throw (ex-info "Coding Agent workspace が存在しません。"
                                         {:type :cli-agent/invalid-workspace})))
-                      (.getPath directory)))
+                      (io/path directory)))
         access (keyword (or (get-in request [:cli :access]) "read-only"))
         _ (when-not (contains? #{:read-only :workspace-write} access)
             (throw (ex-info "Coding Agent access が不正です。"
@@ -245,8 +246,8 @@
 
 (defn- executable-path [name]
   (some #(let [candidate (io/file % name)]
-           (when (and (.isFile candidate) (.canExecute candidate))
-             (.getCanonicalPath candidate)))
+           (when (and (io/file? candidate) (io/can-execute? candidate))
+             (io/canonical-path candidate)))
         (distinct
          (concat (str/split (or (System/getenv "PATH") "") #":")
                  ;; A Finder/LaunchAgent process often has a deliberately
@@ -259,8 +260,8 @@
                          str str/trim not-empty)]
     (if override
       (let [candidate (io/file override)]
-        (when (and (.isFile candidate) (.canExecute candidate))
-          (.getCanonicalPath candidate)))
+        (when (and (io/file? candidate) (io/can-execute? candidate))
+          (io/canonical-path candidate)))
       (executable-path "agent-browser"))))
 
 (defn diagnostics [configuration]
@@ -450,7 +451,7 @@
       "cli_agent"
       (let [selected (policy/select-provider configuration (:provider input))
             expected (get-in s [:cli :workspace])
-            requested (.getCanonicalPath (io/file (:workspace input)))]
+            requested (io/canonical-path (io/file (:workspace input)))]
         (when-not (and selected (= :cli (:kind selected)))
           (throw (ex-info "CLI provider は許可されていません。"
                           {:type :provider/denied})))
@@ -596,17 +597,33 @@
 
   The profile is `session-for`, so two Bots do not share cookies. This is the
   seam ADR-0034 left unwired: the field existed, the profile name existed, and
-  nothing in a Bot turn called through."
-  [configuration principal-id tool-name input]
-  (let [name (str tool-name)]
+  nothing in a Bot turn called through.
+
+  When the caller passes the Bot's row, `:bot/allowed-hosts` is checked here
+  BEFORE any navigation: a machine-level `allowed-domains` list is what the
+  Settings screen owns, and the Bot's row is what the Bot itself carries —
+  a narrower list on the Bot must hold even when the machine allows the host
+  (ADR-2609062600 stage 1 completion, 2026-09-18). A Bot with no host list is
+  reported by `bounds/admit-host` as `:bounds/no-host-list` and passes, so
+  wiring the row in cannot stop a Bot that never declared one."
+  [configuration principal-id tool-name input & [bot]]
+  (let [name (str tool-name)
+        input (or input {})]
     (when-not (browser-tool? name)
       (throw (ex-info "browser tool ではありません。"
                       {:type :agent/unknown-tool :tool name})))
     (when-not (browser-enabled? configuration)
       (throw (ex-info "分離ブラウザーは有効ではありません。"
                       {:type :agent/browser-disabled :tool name})))
+    (when (and bot (:url input))
+      (let [d (bounds/admit-host bot (:url input))]
+        (when-not (:allowed? d)
+          (throw (ex-info (str "URL はこの Bot の allowed-hosts 外です: "
+                               (or (:message d) (:host d)))
+                          {:type :bot/host-denied :host (:host d)
+                           :reason (:reason d)})))))
     (binding [*browser-session* (session-for principal-id)]
-      (execute-tool! (or configuration {}) name (or input {})))))
+      (execute-tool! (or configuration {}) name input))))
 
 (defn call-computer-tool!
   "Run one focus-free computer tool after both machine and Bot admission.
@@ -863,7 +880,7 @@
     (when-not (and selected (= :cli (:kind selected)))
       (throw (ex-info "CLI provider は許可されていません。"
                       {:type :provider/denied})))
-    (when-not (and workspace (.isDirectory (io/file workspace)))
+    (when-not (and workspace (io/directory? (io/file workspace)))
       (throw (ex-info "Coding Agent workspace をSettingsで設定してください。"
                       {:type :cli-agent/workspace-required})))
     (let [call {:id (str "cli-" (UUID/randomUUID))

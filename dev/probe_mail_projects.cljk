@@ -3,7 +3,7 @@
 
   Read-only against Gmail — it fetches and files locally. Nothing is sent,
   nothing is labelled provider-side, nothing is deleted."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.lang.error :as kerror] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.mail-account :as account]
@@ -56,7 +56,7 @@
                                   {:project "nonexistent"
                                    :match {:from-domain "x.com"}})
          (println "   UNEXPECTED: accepted")
-         (catch clojure.lang.ExceptionInfo e
+         (catch kerror/ExceptionInfo e
            (println "   refused:" (ex-message e))))
 
     (println "\n== 5. apply ==")

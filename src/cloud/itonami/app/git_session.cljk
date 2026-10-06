@@ -4,7 +4,7 @@
   A run never checks out or commits on the operator's current worktree. Each
   conversation receives an `itonami/<session>` branch and a durable worktree
   below the application data directory."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config])
   (:import [java.util.concurrent TimeUnit]))
@@ -37,21 +37,21 @@
   result)
 
 (defn- local-root [directory]
-  (let [result (execute ["git" "-C" (.getCanonicalPath ^java.io.File directory)
+  (let [result (execute ["git" "-C" (io/canonical-path directory)
                          "rev-parse" "--show-toplevel"])]
     (require-success! result "Repository は Git checkout ではありません。")
     (str/trim (:output result))))
 
 (defn- repository-root [{:keys [id name location]}]
   (let [directory (io/file (str location))]
-    (if (and (.isDirectory directory)
+    (if (and (io/directory? directory)
              (not (str/starts-with? (str location) "file://")))
       (local-root directory)
       (let [cache (io/file (config/data-dir) "agent-repositories"
                            (str (slug (or id name)) ".git"))
-            cache-path (.getCanonicalPath cache)]
-        (.mkdirs (.getParentFile cache))
-        (if (.exists (io/file cache ".git"))
+            cache-path (io/canonical-path cache)]
+        (io/mkdirs (io/parent-file cache))
+        (if (io/exists? (io/file cache ".git"))
           (require-success! (execute ["git" "-C" cache-path "fetch" "--prune" "origin"])
                             "Remote repository を更新できません。")
           (require-success! (execute ["git" "clone" "--no-checkout"
@@ -72,9 +72,9 @@
         branch (branch-name session-scope)
         worktree (io/file (config/data-dir) "agent-worktrees"
                           (slug branch) (slug (or id name)))
-        worktree-path (.getCanonicalPath worktree)]
-    (.mkdirs (.getParentFile worktree))
-    (if (.exists (io/file worktree ".git"))
+        worktree-path (io/canonical-path worktree)]
+    (io/mkdirs (io/parent-file worktree))
+    (if (io/exists? (io/file worktree ".git"))
       (let [actual (-> (execute ["git" "-C" worktree-path
                                  "branch" "--show-current"])
                        (require-success! "Agent worktree を確認できません。")

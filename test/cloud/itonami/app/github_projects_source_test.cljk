@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.github-projects-source-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [cloud.itonami.app.github-projects-source :as source]))
 
 (def config

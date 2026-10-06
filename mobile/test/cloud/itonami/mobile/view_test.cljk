@@ -8,7 +8,7 @@
   design system reaches the document, and that an address that cannot be opened
   is not rendered as a link."
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.mobile.view :as view]))
 
 (def ^:private handlers

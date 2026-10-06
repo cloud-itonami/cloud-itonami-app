@@ -4,7 +4,7 @@
   One reconcile tick is deliberately finite.  The supervised scheduler calls
   it repeatedly; this namespace atomically leases WorkItems, dispatches bounded
   AgentRuns, validates receipts, and performs basis-checked source write-back."
-  (:require [clojure.set :as set]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.github-projects-source :as github-source]
@@ -14,7 +14,7 @@
             [cloud.itonami.app.work-partition-store :as work-partitions]
             [cloud.itonami.app.work-receipt-signature :as receipt-signature]
             [cloud.itonami.app.work-governance :as governance])
-  (:import [java.nio.charset StandardCharsets]
+  (:import
            [java.security MessageDigest]
            [java.util UUID]
            [java.util.concurrent Executors ScheduledExecutorService
@@ -632,7 +632,7 @@
 (defn payload-hash [value]
   (str "sha256:"
        (hex (.digest (MessageDigest/getInstance "SHA-256")
-                     (.getBytes (pr-str value) StandardCharsets/UTF_8)))))
+                     (kbytes/utf8-bytes (pr-str value))))))
 
 (defn receipt
   [item run lease now-ms]

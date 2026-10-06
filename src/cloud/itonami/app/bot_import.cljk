@@ -47,8 +47,8 @@
   (ADR-2608136000). No Hermes home, unparsable jobs file, no
   `MURAKUMO_SERVICE_TOKEN`, an HTTP error: each throws. `:available 0` is only
   ever printed after a read that succeeded."
-  (:require [clojure.data.json :as json]
-            [clojure.java.io :as io]
+  (:require [kotoba.json :as json]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.secret-store :as secret-store]))
@@ -84,17 +84,17 @@
   "Every cron job Hermes holds. Throws rather than returning none."
   [home]
   (let [file (io/file home "cron" "jobs.json")]
-    (when-not (.isFile file)
-      (throw (ex-info (str "Hermes の cron jobs が読めません: " (.getPath file))
+    (when-not (io/file? file)
+      (throw (ex-info (str "Hermes の cron jobs が読めません: " (io/path file))
                       {:type :bot-import/source-unreadable
-                       :source "hermes" :path (.getPath file)})))
+                       :source "hermes" :path (io/path file)})))
     (let [parsed (try (json/read-str (slurp file) :key-fn keyword)
                       (catch Exception e
                         (throw (ex-info (str "Hermes の jobs.json が壊れています: "
                                              (ex-message e))
                                         {:type :bot-import/source-unreadable
                                          :source "hermes"
-                                         :path (.getPath file)}))))]
+                                         :path (io/path file)}))))]
       (vec (:jobs parsed)))))
 
 (defn- hermes-cadence [{:keys [schedule]}]

@@ -20,7 +20,7 @@
   added there and not here, this test says so instead of quietly renumbering
   the table."
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.work-governance :as wg]
             [kotoba.compiler.core :as compiler]
             [kotoba.kir :as ir]))

@@ -14,6 +14,10 @@
   JVM suite was green through the whole period the ClojureScript surface could
   not execute a single decision core."
   (:require [cljs.test :as t]
+            ["node:fs" :as fs]
+            ["node:path" :as path]
+            [cloud.itonami.app.public-bot-catalog :as public-bot-catalog]
+            [cloud.itonami.app.public-bot-catalog-test]
             [cloud.itonami.app.appearance-test]
             [cloud.itonami.app.domain-name-test]
             [cloud.itonami.app.hokusai-test]
@@ -34,7 +38,16 @@
   (when-not (t/successful? m)
     (set! (.-exitCode js/process) 1)))
 
-(t/run-tests 'cloud.itonami.app.appearance-test
+;; The public-bot catalog is a shipped resource; the portable runner hands its
+;; text in because ClojureScript has no classpath. A missing resource keeps the
+;; test's own honest failure (catalog-missing) instead of a silent skip.
+(when-some [text (let [candidate (str (js/process.cwd) "/resources/itonami-public-bots.edn")]
+                   (when (.existsSync fs candidate)
+                     (str (fs.readFileSync candidate "utf8"))))]
+  (public-bot-catalog/set-portable-source! text))
+
+(t/run-tests 'cloud.itonami.app.public-bot-catalog-test
+             'cloud.itonami.app.appearance-test
              'cloud.itonami.app.domain-name-test
              'cloud.itonami.app.hokusai-test
              'cloud.itonami.app.config-policy-test

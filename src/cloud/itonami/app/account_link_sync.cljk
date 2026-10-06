@@ -1,11 +1,11 @@
 (ns cloud.itonami.app.account-link-sync
   "Global transport for signed Account Link records. The relay stores public
   proofs only; local identity code verifies every wallet signature again."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.http.form-urlencoded :as form-urlencoded] [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [cloud.itonami.app.identity :as identity])
-  (:import [java.net URLEncoder]
+  (:import
            [java.nio.charset StandardCharsets]
            [java.util.concurrent TimeUnit]))
 
@@ -68,7 +68,7 @@
    (request!
     configuration "GET"
     (str "/v1/account-links?subjectDid="
-         (URLEncoder/encode subject-did StandardCharsets/UTF_8))
+         (form-urlencoded/form-encode subject-did))
     nil)))
 
 (defn sync!

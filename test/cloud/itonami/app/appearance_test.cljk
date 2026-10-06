@@ -1,19 +1,19 @@
 (ns cloud.itonami.app.appearance-test
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.appearance :as appearance]))
 
 (deftest resolution-is-configured-or-light
   (testing "the shipped default"
     (is (= "light" (appearance/resolve-mode{}))))
-  (testing "every spelling an operator is likely to write"
-    (doseq [v [:8bit "8bit" "8-bit" "EIGHTBIT" " pixel " :retro]]
-      (is (= "8bit" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v)))
-    (doseq [v [:grok "grok" "GROK" " chat-dark "]]
-      (is (= "grok" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v))))
   (testing "the inverted-DADS appearance"
     (doseq [v [:dark "dark" "DARK" " night "]]
       (is (= "dark" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v))))
+  (testing "pruned authored appearances answer light (owner 2026-09-14)"
+    (doseq [v [:8bit "8bit" "8-bit" "EIGHTBIT" " pixel " :retro
+               ;; grok: removed as a theme 2026-09-16; its spelling still names nothing
+               :grok "grok" "GROK" " chat-dark "]]
+      (is (= "light" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v))))
   (testing "a value that names nothing is not an appearance, so light"
     (doseq [v [:neon 8 nil ""]]
       (is (= "light" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v)))))
@@ -30,16 +30,14 @@
   ;; Review finding 2026-09-02: a rule for a class combination that never
   ;; occurs styles nothing, and a generic `button` rule reaches the
   ;; full-viewport backdrop, which is a <button>.
-  (is (str/includes? appearance/css ".bots-msg[data-role='person'] .bots-msg__bubble"))
+  (is (str/includes? appearance/css ".ck-bots__bubble[data-role='person']"))
   (is (not (str/includes? appearance/css ".message-row--user")))
   (is (str/includes? appearance/css "button:not(.mobile-nav-backdrop)"))
   (is (str/includes? appearance/css ".tool-button:not([disabled]):hover")))
 
-(deftest the-toggle-cycles-through-every-mode-and-comes-back
+(deftest the-toggle-cycles-light-and-dark
   (is (= "dark" (appearance/next-mode "light")))
-  (is (= "8bit" (appearance/next-mode "dark")))
-  (is (= "grok" (appearance/next-mode "8bit")))
-  (is (= "light" (appearance/next-mode "grok")))
+  (is (= "light" (appearance/next-mode "dark")))
   (is (= "dark" (appearance/next-mode "nonsense"))
       "unknown input restarts the cycle from light")
   (is (= (set appearance/modes)
@@ -64,14 +62,10 @@
                          (remove #(re-find #"^\d+%$" %)))]
       (is (seq selectors))
       (is (every? #(or (str/includes? % "data-appearance=\"8bit\"")
-                       (str/includes? % "data-appearance=\"grok\"")
-                       (str/starts-with? % ".appearance-toggle")
                        ;; keyframe steps inside @keyframes blocks
                        (re-find #"^(0|100)%" %))
                   selectors)
           (pr-str (remove #(or (str/includes? % "data-appearance=\"8bit\"")
-                               (str/includes? % "data-appearance=\"grok\"")
-                               (str/starts-with? % ".appearance-toggle")
                                (re-find #"^(0|100)%" %))
                           selectors)))))
   (testing "8-bit is shape and colour, never a hidden element"
@@ -91,23 +85,18 @@
   (is (= "#8bd450" (:grass appearance/palette)))
   (is (= 16 (count appearance/palette)) "sixteen colours is the whole system"))
 
-(deftest the-toggle-says-what-it-will-do
-  (let [[tag attrs label] (appearance/toggle-button "light")]
-    (is (= :button tag))
-    (is (= "appearance-toggle" (:id attrs)))
-    (is (= "dark" (:data-next attrs)))
-    (is (= "false" (:aria-pressed attrs)))
-    (is (= "DARK" label)))
-  (let [[_ attrs label] (appearance/toggle-button "dark")]
-    (is (= "8bit" (:data-next attrs)))
-    (is (= "true" (:aria-pressed attrs))
-        "dark is not the default, so the control reads as pressed")
-    (is (= "8-BIT" label)))
-  (let [[_ attrs label] (appearance/toggle-button "8bit")]
-    (is (= "grok" (:data-next attrs)))
-    (is (= "true" (:aria-pressed attrs)))
-    (is (= "GROK" label)))
-  (let [[_ attrs label] (appearance/toggle-button "grok")]
-    (is (= "light" (:data-next attrs)))
-    (is (= "true" (:aria-pressed attrs)))
-    (is (= "DADS" label))))
+(deftest dark-is-the-shinkansen-theme-contract
+  ;; Since 2026-09-16 the theme is `<html data-theme>` (light / dark / absent
+  ;; = system) and the layer is jp-go-dds's own: no `:root:has(.workspace…)`
+  ;; scope, no grok. The sample is a ramp small enough to read; the JVM
+  ;; core_test proves the declarations against the real ramps.
+  (let [sample (str ":root {\n  --color-neutral-white: #ffffff;\n  --color-neutral-black: #000000;\n"
+                    "  --color-neutral-solid-gray-50: #f2f2f2;\n  --color-neutral-solid-gray-900: #1a1a1a;\n"
+                    "  --color-primitive-blue-50: #e8f1fe;\n  --color-primitive-blue-1200: #000060;\n}\n")
+        dark (appearance/dark-css sample)]
+    (is (str/includes? dark ":root:root[data-theme=\"dark\"]"))
+    (is (str/includes? dark ":root:root[data-theme=\"light\"]") "light is written back so an OS-dark device can choose light")
+    (is (str/includes? dark "prefers-color-scheme: dark") "system = the OS decides")
+    (is (not (str/includes? dark "data-appearance")) "the appearance attribute no longer scopes the theme")
+    (is (not (str/includes? dark "grok")))
+    (is (not (str/includes? appearance/css "grok")) "grok is removed as a theme colour (owner 2026-09-16)")))

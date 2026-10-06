@@ -1,6 +1,6 @@
 (ns cloud.itonami.app.bot-dispatcher-test
   (:require [clojure.java.io :as io]
-            [clojure.test :refer [deftest is]]
+            [kotoba.test :refer [deftest is]]
             [cloud.itonami.app.bot-dispatcher :as dispatcher])
   (:import [java.nio.channels FileChannel]
            [java.nio.file OpenOption StandardOpenOption]

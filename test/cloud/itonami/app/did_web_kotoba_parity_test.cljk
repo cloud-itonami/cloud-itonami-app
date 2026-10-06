@@ -5,7 +5,7 @@
   to be in parity with. What this file owns is the table itself, asserted
   over the host, and the four-target compiles that keep the core inside the
   native word-typed slice."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.did-web :as did-web]
             [kotoba.compiler.core :as compiler]))
 

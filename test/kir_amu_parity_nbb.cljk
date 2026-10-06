@@ -14,7 +14,7 @@
 ;;       (writes only under target/kir-amu/; `resources/` is never touched)
 
 (ns kir-amu-parity-nbb
-  (:require [clojure.test :refer [deftest is run-tests]]
+  (:require [kotoba.test :refer [deftest is run-tests]]
             [gen-kir-amu :as gen]))
 
 (def amu
@@ -38,8 +38,8 @@
 ;;
 ;; That matters more here than elsewhere: this is the gate that says the shipped
 ;; KIR is what a JVM-free amu builds. A gate that cannot fail is not a gate.
-(defmethod clojure.test/report [:cljs.test/default :end-run-tests] [m]
-  (js/process.exit (if (clojure.test/successful? m) 0 1)))
+(defmethod kotoba.test/report [:cljs.test/default :end-run-tests] [m]
+  (js/process.exit (if (kotoba.test/successful? m) 0 1)))
 
 (defn -main [& _]
   (run-tests 'kir-amu-parity-nbb))

@@ -7,7 +7,7 @@
   and no network, host credentials, Docker socket, or Linux capabilities.
   A host-wide semaphore and a per-workspace lock let several Bots share one PC
   without running two mutating shells in the same repository at once."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.workspace-tools :as workspace-tools]
             [cloud.itonami.app.host :as host])
@@ -51,7 +51,7 @@
 
 (defn- sha256 [value]
   (let [digest (.digest (MessageDigest/getInstance "SHA-256")
-                        (.getBytes (str value) "UTF-8"))]
+                        (kbytes/utf8-bytes (str value)))]
     (apply str (map #(format "%02x" %) digest))))
 
 (defn container-name [bot-id]
@@ -61,7 +61,7 @@
   (subs (sha256 workspace) 0 32))
 
 (defn docker-bin []
-  (or (some #(when (.canExecute (io/file %)) %) docker-candidates)
+  (or (some #(when (io/can-execute? (io/file %)) %) docker-candidates)
       (first docker-candidates)))
 
 (defn admit-workspace
@@ -70,7 +70,7 @@
   [value]
   (let [root (workspace-tools/admit-root value)
         git-dir (io/file root ".git")]
-    (when-not (.isDirectory git-dir)
+    (when-not (io/directory? git-dir)
       (throw (ex-info (str "Virtual shell requires a standalone Git clone; "
                            "linked worktree metadata is outside this root.")
                       {:type :virtual-shell/standalone-clone-required
@@ -150,7 +150,7 @@
   (zero? (:exit (run-capture [(docker-bin) "image" "inspect" default-image]))))
 
 (defn available? []
-  (and (.canExecute (io/file (docker-bin)))
+  (and (io/can-execute? (io/file (docker-bin)))
        (zero? (:exit (run-capture [(docker-bin) "info" "--format" "{{.ServerVersion}}"])))
        (image-ready?)))
 
@@ -248,7 +248,7 @@
 (defn- status [bot-id]
   (let [container (container-name bot-id)]
     (cond
-      (not (.canExecute (io/file (docker-bin)))) "Docker runtime is unavailable."
+      (not (io/can-execute? (io/file (docker-bin)))) "Docker runtime is unavailable."
       (not (image-ready?)) (str "Image " default-image " is not installed.")
       (not (exists? container)) (str "ready; container " container " is not created yet")
       :else (str "container " container " status: "

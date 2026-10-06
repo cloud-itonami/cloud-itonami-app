@@ -2,7 +2,7 @@
   "Behavioral checks for the screen gate bridge: the compiled kotoba-lang/screen
   artifact must answer through kotoba.kir exactly as the pure .kotoba modules
   specify. Values are the same golden literals host/verify.clj asserts."
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [cloud.itonami.app.screen-guest :as screen-guest]))
 
 (deftest gate-loads-from-artifact

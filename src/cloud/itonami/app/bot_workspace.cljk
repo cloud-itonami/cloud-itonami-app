@@ -6,7 +6,7 @@
   folder-sync and reconciled with `Drive/Bots/<bot-id>/Workspace`; an optional
   hosted Drive adapter makes that folder the network rendezvous for another
   device."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [clojure.java.io :as io]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.folder-sync :as folder-sync])
   (:import [java.nio.file Files StandardCopyOption]
@@ -20,7 +20,7 @@
 
 (defn- digest [value]
   (hex (.digest (MessageDigest/getInstance "SHA-256")
-                (.getBytes (str value) "UTF-8"))))
+                (kbytes/utf8-bytes (str value)))))
 
 (defn sync-id [bot-id]
   (str "bot-" (subs (digest bot-id) 0 32)))

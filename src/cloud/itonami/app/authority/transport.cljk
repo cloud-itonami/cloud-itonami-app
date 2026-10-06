@@ -52,7 +52,7 @@
   outward op and never `pending` -- being told \"no\" is different from
   :endpoint-not-configured, which is what it answered while it had no surface at
   all. See ADR-2607300300's remaining gaps."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]))
 

@@ -3,7 +3,7 @@
 
   A test runner that exits 0 on failure is the same defect the suite itself is
   about, one level up."
-  (:require [clojure.test :as t]
+  (:require [kotoba.test :as t]
             [cloud.itonami.mobile.terminal-test]
             [cloud.itonami.mobile.view-test]))
 

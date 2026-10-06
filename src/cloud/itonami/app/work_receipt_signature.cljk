@@ -1,8 +1,8 @@
 (ns cloud.itonami.app.work-receipt-signature
   "Deployment-attested execution receipts. The HMAC key is environment-only;
   EDN stores its name and signature, never the secret."
-  (:require [kotoba.lang.text :as str])
-  (:import [java.nio.charset StandardCharsets]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str])
+  (:import
            [java.security MessageDigest]
            [javax.crypto Mac]
            [javax.crypto.spec SecretKeySpec]))
@@ -12,12 +12,11 @@
 
 (defn- hmac [secret value]
   (let [mac (Mac/getInstance "HmacSHA256")]
-    (.init mac (SecretKeySpec. (.getBytes secret StandardCharsets/UTF_8)
+    (.init mac (SecretKeySpec. (kbytes/utf8-bytes secret)
                                "HmacSHA256"))
     (apply str (map #(format "%02x" (bit-and 0xff %))
                     (.doFinal mac
-                              (.getBytes (str domain (pr-str value))
-                                         StandardCharsets/UTF_8))))))
+                              (kbytes/utf8-bytes (str domain (pr-str value))))))))
 
 (defn sign [value]
   (when-let [secret (some-> (System/getenv key-env) str/trim not-empty)]
@@ -29,5 +28,5 @@
     (and secret (= :hmac-sha256 (:algorithm signature))
          (= key-env (:key-ref signature))
          (MessageDigest/isEqual
-          (.getBytes (str (:value signature)) StandardCharsets/UTF_8)
-          (.getBytes (hmac secret value) StandardCharsets/UTF_8)))))
+          (kbytes/utf8-bytes (str (:value signature)))
+          (kbytes/utf8-bytes (hmac secret value))))))

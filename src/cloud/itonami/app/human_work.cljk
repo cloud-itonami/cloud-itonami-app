@@ -9,7 +9,7 @@
   This namespace is the provider-neutral control plane. Evidence references
   are retained; online authorities and payment rails live in explicit adapters
   and never promote a claim merely because the worker supplied a file."
-  (:require [clojure.set :as set]
+  (:require [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
             #?(:clj [cloud.itonami.app.store :as store])))
 

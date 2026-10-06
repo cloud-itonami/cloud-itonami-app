@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.bot-cache-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.bot-cache :as bot-cache])
   (:import [java.time Instant]))
 

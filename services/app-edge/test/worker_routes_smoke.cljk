@@ -20,7 +20,7 @@
   wanted: the API and the generator agree about the same catalog.
 
   Usage: kbb --backend sci test/worker_routes_smoke.cljk <base-url>"
-  (:require [clojure.edn :as edn]))
+  (:require [kotoba.lang.edn :as edn]))
 
 (def ^:private base
   (or (first *command-line-args*)

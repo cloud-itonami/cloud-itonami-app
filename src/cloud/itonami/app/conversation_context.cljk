@@ -4,11 +4,11 @@
   Context is deliberately resolved to plain data and text here.  Nothing in
   this namespace returns a tool, account, workspace, token, or grant, so adding
   a source cannot widen what a Chat or Bot is allowed to do."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.project-repository :as project-repository]
             [cloud.itonami.app.store :as store])
-  (:import (java.nio.charset StandardCharsets)
+  (:import
            (java.security MessageDigest)))
 
 (def schema "cloud.itonami.app.conversation-context.v1")
@@ -30,7 +30,7 @@
 
 (defn- sha256 [value]
   (let [digest (.digest (MessageDigest/getInstance "SHA-256")
-                        (.getBytes (str value) StandardCharsets/UTF_8))]
+                        (kbytes/utf8-bytes (str value)))]
     (apply str (map #(format "%02x" (bit-and (int %) 0xff)) digest))))
 
 (defn normalize-refs

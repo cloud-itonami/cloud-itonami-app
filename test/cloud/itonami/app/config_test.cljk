@@ -19,10 +19,10 @@
   data-dir. A JVM cannot portably set its own environment, so the half of the precedence
   rule that reads CLOUD_ITONAMI_DATA_DIR is exercised only by the property winning when
   both could apply. Pretending otherwise would be worse than saying so."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as kio] [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config]))
 
 (def ^:private data-dir-property "cloud.itonami.data-dir")
@@ -102,9 +102,8 @@
         (System/setProperty "user.dir" previous-dir)))))
 
 (defn- scratch-home []
-  (let [home (.toFile (java.nio.file.Files/createTempDirectory
-                       "cloud-itonami-app-resident"
-                       (make-array java.nio.file.attribute.FileAttribute 0)))]
+  (let [home (kio/temp-dir
+                       "cloud-itonami-app-resident")]
     (.mkdirs (io/file home ".cloud-itonami" "app"))
     (.getCanonicalPath home)))
 
@@ -361,7 +360,7 @@
   (testing "an override naming a provider that is not in the catalog throws rather
             than being dropped — a typo would otherwise leave the operator reading a
             config that says the thing is on"
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+    (is (thrown-with-msg? kerror/ExceptionInfo
                           #"names no configured provider"
                           (config/overlay-providers [{:id "ollama"}]
                                                     [[{:id "olama" :enabled? true}]])))))

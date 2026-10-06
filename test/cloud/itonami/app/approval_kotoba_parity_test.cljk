@@ -31,7 +31,7 @@
   `approval-state` reports the decision as eligible or ignored, which is the
   observable the namespace actually exposes."
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.work-governance :as wg]
             [kotoba.compiler.core :as compiler]
             [kotoba.kir :as ir]))

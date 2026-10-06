@@ -33,8 +33,8 @@
   PKCS#10 by hand next to it would have been a second encoder to be wrong in,
   and the round-trip property (`der-round-trips?`) is exactly the check a
   hand-rolled one could not offer."
-  (:require [asn1.core :as asn1]
-            [clojure.data.json :as json]
+  (:require [kotoba.bytes :as kbytes] [asn1.core :as asn1]
+            [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http])
   (:import [java.math BigInteger]
@@ -42,8 +42,7 @@
            [java.security KeyFactory KeyPairGenerator MessageDigest Signature]
            [java.security.interfaces ECPublicKey]
            [java.security.spec ECGenParameterSpec PKCS8EncodedKeySpec
-            X509EncodedKeySpec]
-           [java.util Base64]))
+            X509EncodedKeySpec]))
 
 (def schema "cloud.itonami.app.acme.v1")
 
@@ -59,9 +58,9 @@
 ;; ── base64url ────────────────────────────────────────────────────────────────
 
 (defn b64u [^bytes bs]
-  (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) bs))
+  (kbytes/base64url-encode bs {:pad? false}))
 
-(defn- utf8 ^bytes [^String s] (.getBytes s "UTF-8"))
+(defn- utf8 ^bytes [^String s] (kbytes/utf8-bytes s))
 
 (defn- sha256 ^bytes [^bytes bs]
   (.digest (MessageDigest/getInstance "SHA-256") bs))
@@ -80,7 +79,7 @@
     {:private (b64u (.getEncoded (.getPrivate pair)))
      :public (b64u (.getEncoded (.getPublic pair)))}))
 
-(defn- decode64 ^bytes [s] (.decode (Base64/getUrlDecoder) (str s)))
+(defn- decode64 ^bytes [s] (kbytes/base64url-decode-bytes (str s)))
 
 (defn- private-key [key]
   (.generatePrivate (KeyFactory/getInstance "EC")

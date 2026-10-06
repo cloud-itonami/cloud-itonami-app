@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.provider-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.test :refer [deftest is testing]]
             [kotoba.lang.text :as str]
-            [clojure.data.json :as json]
+            [kotoba.json :as json]
             [cloud.itonami.app.provider :as provider])
   (:import [com.sun.net.httpserver HttpServer HttpHandler]
            [java.net InetSocketAddress]))
@@ -47,10 +47,9 @@
      server "/api/show"
      (reify HttpHandler
        (handle [_ exchange]
-         (let [bytes (.getBytes
+         (let [bytes (kbytes/utf8-bytes
                       (json/write-str
-                       {:model_info {:custom-family.context_length 65536}})
-                      "UTF-8")]
+                       {:model_info {:custom-family.context_length 65536}}))]
            (.sendResponseHeaders exchange 200 (alength bytes))
            (with-open [out (.getResponseBody exchange)]
              (.write out bytes))))))
@@ -156,7 +155,7 @@
     (try
       (assert-model! p "murakumo-main" {:model "some-other-checkpoint"})
       (is false "an unreviewed alias target must be rejected")
-      (catch clojure.lang.ExceptionInfo error
+      (catch kerror/ExceptionInfo error
         (is (= :provider/model-mismatch (:type (ex-data error))))))))
 
 (deftest a-failed-5090-request-falls-back-without-relabeling-the-result
@@ -176,7 +175,7 @@
                  [200 {:model "murakumo-main"
                        :choices [{:finish_reason "stop"
                                   :message {:content "fallback-ok"}}]}])
-               bytes (.getBytes (json/write-str payload) "UTF-8")]
+               bytes (kbytes/utf8-bytes (json/write-str payload))]
            (.sendResponseHeaders exchange status (alength bytes))
            (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
     (.start server)
@@ -217,7 +216,7 @@
                  [200 {:model "z-ai/glm-5.3-flash"
                        :choices [{:finish_reason "stop"
                                   :message {:content "glm-fallback-ok"}}]}])
-               bytes (.getBytes (json/write-str payload) "UTF-8")]
+               bytes (kbytes/utf8-bytes (json/write-str payload))]
            (.sendResponseHeaders exchange status (alength bytes))
            (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
     (.start server)
@@ -258,7 +257,7 @@
                  [200 {:model "murakumo-main"
                        :choices [{:finish_reason "stop"
                                   :message {:content "must-not-run"}}]}])
-               bytes (.getBytes (json/write-str payload) "UTF-8")]
+               bytes (kbytes/utf8-bytes (json/write-str payload))]
            (.sendResponseHeaders exchange status (alength bytes))
            (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
     (.start server)
@@ -276,7 +275,7 @@
                     (provider/agent-turn
                      provider {:model "murakumo-edge" :messages [] :tools []})
                     nil
-                    (catch clojure.lang.ExceptionInfo e e))]
+                    (catch kerror/ExceptionInfo e e))]
         (is (= :provider/http-error (:type (ex-data error))))
         (is (= 503 (:status (ex-data error))))
         (is (= ["murakumo-edge"] @requested)
@@ -293,12 +292,11 @@
        (handle [_ exchange]
          (reset! readiness-auth
                  (.getFirst (.getRequestHeaders exchange) "Authorization"))
-         (let [bytes (.getBytes
+         (let [bytes (kbytes/utf8-bytes
                       (json/write-str {:ok false
                                        :hosted-models
                                        {"qwen3.8-27b-throughput-5090"
-                                        {:idle 0 :running 1 :queued 2}}})
-                      "UTF-8")]
+                                        {:idle 0 :running 1 :queued 2}}}))]
            (.sendResponseHeaders exchange 503 (alength bytes))
            (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
     (.createContext
@@ -309,12 +307,11 @@
                                       :key-fn keyword)
                model (:model request)
                _ (swap! requested conj model)
-               bytes (.getBytes
+               bytes (kbytes/utf8-bytes
                       (json/write-str
                        {:model model
                         :choices [{:finish_reason "stop"
-                                   :message {:content "ready-fallback-ok"}}]})
-                      "UTF-8")]
+                                   :message {:content "ready-fallback-ok"}}]}))]
            (.sendResponseHeaders exchange 200 (alength bytes))
            (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
     (.start server)
@@ -350,15 +347,14 @@
      server "/ready"
      (reify HttpHandler
        (handle [_ exchange]
-         (let [bytes (.getBytes
+         (let [bytes (kbytes/utf8-bytes
                       (json/write-str
                        {:ok false
                         :inference {:ok false}
                         :hosted-models
                         {"qwen3.8-27b-throughput-5090"
                          {:ok true :idle 1 :running 1
-                          :generation-ok true}}})
-                      "UTF-8")]
+                          :generation-ok true}}}))]
            (.sendResponseHeaders exchange 503 (alength bytes))
            (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
     (.createContext
@@ -369,12 +365,11 @@
                                       :key-fn keyword)
                model (:model request)
                _ (swap! requested conj model)
-               bytes (.getBytes
+               bytes (kbytes/utf8-bytes
                       (json/write-str
                        {:model model
                         :choices [{:finish_reason "stop"
-                                   :message {:content "5090-primary-ok"}}]})
-                      "UTF-8")]
+                                   :message {:content "5090-primary-ok"}}]}))]
            (.sendResponseHeaders exchange 200 (alength bytes))
            (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
     (.start server)
@@ -410,7 +405,7 @@
                model (:model request)
                _ (swap! requested conj model)]
            (if (= "qwen3.8-27b-throughput-5090" model)
-             (let [bytes (.getBytes "{\"error\":\"cold origin unavailable\"}" "UTF-8")]
+             (let [bytes (kbytes/utf8-bytes "{\"error\":\"cold origin unavailable\"}")]
                (.sendResponseHeaders exchange 502 (alength bytes))
                (with-open [out (.getResponseBody exchange)] (.write out bytes)))
              (let [payload (str "data: "
@@ -419,7 +414,7 @@
                                   :choices [{:finish_reason "stop"
                                              :delta {:content "stream-ok"}}]})
                                 "\n\ndata: [DONE]\n\n")
-                   bytes (.getBytes payload "UTF-8")]
+                   bytes (kbytes/utf8-bytes payload)]
                (.getResponseHeaders exchange)
                (.add (.getResponseHeaders exchange) "Content-Type"
                      "text/event-stream")
@@ -456,7 +451,7 @@
                [status payload] (if (= 1 attempt)
                                   [502 {:error "temporary"}]
                                   [200 {:ok true}])
-               bytes (.getBytes (json/write-str payload) "UTF-8")]
+               bytes (kbytes/utf8-bytes (json/write-str payload))]
            (.sendResponseHeaders exchange status (alength bytes))
            (with-open [out (.getResponseBody exchange)]
              (.write out bytes))))))
@@ -476,7 +471,7 @@
      (reify HttpHandler
        (handle [_ exchange]
          (swap! attempts inc)
-         (let [bytes (.getBytes "{\"error\":\"bad request\"}" "UTF-8")]
+         (let [bytes (kbytes/utf8-bytes "{\"error\":\"bad request\"}")]
            (.sendResponseHeaders exchange 400 (alength bytes))
            (with-open [out (.getResponseBody exchange)]
              (.write out bytes))))))
@@ -487,7 +482,7 @@
         (try
           ((private-fn 'request-json) :post url {:x 1})
           (is false "HTTP 400 must fail")
-          (catch clojure.lang.ExceptionInfo error
+          (catch kerror/ExceptionInfo error
             (is (= 400 (:status (ex-data error))))
             (is (= 1 (:attempts (ex-data error))))))
         (is (= 1 @attempts)))
@@ -569,7 +564,7 @@
     (try
       (normalize {:content ""} "length")
       (is false "an empty non-tool turn must be rejected")
-      (catch clojure.lang.ExceptionInfo error
+      (catch kerror/ExceptionInfo error
         (is (= :provider/empty-response (:type (ex-data error))))
         (is (= "length" (:finish-reason (ex-data error))))))
     (testing "a tool call may correctly have no prose"
@@ -612,7 +607,7 @@
   (let [parse (private-fn 'parse-arguments)]
     (testing "the offending string survives into ex-data"
       (let [error (try (parse "workspace_write_file" "{\"path\":\"REA")
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
         (is (= :provider/invalid-tool-arguments (:type (ex-data error))))
         (is (= "{\"path\":\"REA" (:arguments-sample (ex-data error))))
         (is (= 12 (:arguments-length (ex-data error))))))
@@ -622,10 +617,10 @@
       ;; `:turn/tool` was nil for all 138 of them. The caller knew the name;
       ;; this function had not asked for it.
       (let [error (try (parse "workspace_write_file" "{\"path\":\"REA")
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
         (is (= "workspace_write_file" (:tool-name (ex-data error)))))
       (let [error (try (parse "goal_plan" "[\"Osaka\"]")
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
         (is (= "goal_plan" (:tool-name (ex-data error)))
             "on the wrong-shape path too, which is a different throw site")))
 
@@ -634,7 +629,7 @@
       ;; every (:key args) lookup answered nil and the tool ran with none.
       (doseq [value ["[\"Osaka\"]" "\"Osaka\"" "42"]]
         (let [error (try (parse "some_tool" value)
-                         (catch clojure.lang.ExceptionInfo e e))]
+                         (catch kerror/ExceptionInfo e e))]
           (is (= :provider/invalid-tool-arguments (:type (ex-data error)))
               (str value " must be refused"))
           (is (= value (:arguments-sample (ex-data error)))))))
@@ -665,7 +660,7 @@
   (let [parse (private-fn 'parse-arguments)
         ended-early? (fn [v] (:json-ended-early?
                               (ex-data (try (parse "decision_frame" v)
-                                            (catch clojure.lang.ExceptionInfo e e)))))]
+                                            (catch kerror/ExceptionInfo e e)))))]
     (testing "input that simply ran out"
       (is (true? (ended-early? "{\"scope\": \"club shinshi\", \"facts\": [{\"id")))
       (is (true? (ended-early? "{\"scope\": [1,2,"))))
@@ -686,7 +681,7 @@
       (let [error (try (normalize {:content "" :tool_calls [cut]}
                                   "tool_calls"
                                   {:completion_tokens 1024} 1024)
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
         (is (= :provider/output-budget-exhausted (:type (ex-data error))))
         (is (= 1024 (:max-output-tokens (ex-data error))))
         (is (= 1024 (:completion-tokens (ex-data error))))))
@@ -697,7 +692,7 @@
       ;; them, or this trades one blind error for another.
       (let [error (try (normalize {:content "" :tool_calls [cut]}
                                   "length" {:completion_tokens 1024} 1024)
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
         (is (= "decision_frame" (:tool-name (ex-data error))))
         (is (str/starts-with? (:arguments-sample (ex-data error)) "{\"scope\""))))
 
@@ -711,7 +706,7 @@
       (let [error (try (normalize {:content "" :tool_calls [cut]}
                                   "tool_calls"
                                   {:completion_tokens 2048} 8192)
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
         (is (= :provider/output-budget-exhausted (:type (ex-data error)))
             "2048 of a requested 8192 is a server ceiling, not a model defect")
         (is (= 2048 (:completion-tokens (ex-data error)))
@@ -724,7 +719,7 @@
             error (try (normalize {:content "" :tool_calls [malformed]}
                                   "tool_calls"
                                   {:completion_tokens 40} 2048)
-                       (catch clojure.lang.ExceptionInfo e e))]
+                       (catch kerror/ExceptionInfo e e))]
         (is (= :provider/invalid-tool-arguments (:type (ex-data error)))
             "40 of 2048 tokens with intact JSON framing is the model, not a cap")))
 
@@ -774,7 +769,7 @@
          ;; Answer far too late. The point is the class of the failure, not
          ;; the duration, so the limit is moved rather than the wait.
          (Thread/sleep 4000)
-         (let [bytes (.getBytes "{\"ok\":true}" "UTF-8")]
+         (let [bytes (kbytes/utf8-bytes "{\"ok\":true}")]
            (.sendResponseHeaders exchange 200 (alength bytes))
            (with-open [out (.getResponseBody exchange)]
              (.write out bytes))))))
@@ -785,7 +780,7 @@
           (try
             ((private-fn 'request-json) :post url {:x 1})
             (is false "a request past the limit must fail")
-            (catch clojure.lang.ExceptionInfo error
+            (catch kerror/ExceptionInfo error
               (testing "it is not an unclassified internal error"
                 (is (= :provider/timeout (:type (ex-data error)))))
               (testing "and it carries the limit it exceeded"
@@ -884,7 +879,7 @@
      server "/v1/chat/completions"
      (reify HttpHandler
        (handle [_ exchange]
-         (let [bytes (.getBytes body "UTF-8")]
+         (let [bytes (kbytes/utf8-bytes body)]
            (.sendResponseHeaders exchange status (alength bytes))
            (with-open [out (.getResponseBody exchange)]
              (.write out bytes))))))
@@ -909,7 +904,7 @@
         (try
           (let [thrown (try (streaming-response url {} nil nil 5)
                             nil
-                            (catch clojure.lang.ExceptionInfo e e))
+                            (catch kerror/ExceptionInfo e e))
                 data (ex-data thrown)]
             (is (= :provider/http-error (:type data)))
             (is (= 503 (:status data)))
@@ -923,7 +918,7 @@
         (try
           (let [data (ex-data (try (streaming-response url {} nil nil 5)
                                    nil
-                                   (catch clojure.lang.ExceptionInfo e e)))]
+                                   (catch kerror/ExceptionInfo e e)))]
             (is (= 502 (:status data)))
             (is (str/includes? (get-in data [:response :raw]) "Bad gateway")))
           (finally (.stop server 0)))))
@@ -934,7 +929,7 @@
         (try
           (let [data (ex-data (try (streaming-response url {} nil nil 5)
                                    nil
-                                   (catch clojure.lang.ExceptionInfo e e)))]
+                                   (catch kerror/ExceptionInfo e e)))]
             (is (= 429 (:status data)))
             (is (nil? (:response data))
                 "nil is distinguishable from a body; an empty map would not be"))
@@ -947,7 +942,7 @@
         (try
           (let [data (ex-data (try (streaming-response url {} nil nil 5)
                                    nil
-                                   (catch clojure.lang.ExceptionInfo e e)))
+                                   (catch kerror/ExceptionInfo e e)))
                 raw (get-in data [:response :raw])]
             (is (= 8192 (count raw))
                 "bounded: a refusal body is an error document, not a generation"))
@@ -992,7 +987,33 @@
     (doseq [reason ["length" "max_tokens"]]
       (let [error (try (result {:content "Report stops mid sentence"} reason
                                {:completion_tokens 128} 128)
-                       nil (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                       nil (catch kerror/ExceptionInfo e (ex-data e)))]
         (is (= :provider/output-budget-exhausted (:type error)))
         (is (= reason (:finish-reason error)))))
     (is (= "Complete report" (:content (result {:content "Complete report"} "stop"))))))
+
+(deftest exhausted-network-wait-uses-only-explicit-independent-capacity
+  (let [run (private-fn 'with-model-fallback)
+        p {:backoff-on-rate-limit? true
+           :capacity-fallbacks {"murakumo-main" "ling-3.0-tiny"}}
+        calls (atom [])
+        invoke (fn [model]
+                 (swap! calls conj model)
+                 (if (= model "murakumo-main")
+                   (throw (ex-info "busy" {:type :provider/http-error :status 429
+                                           :response {:error {:code "network_queue_timeout"}}}))
+                   {:content "ok"}))]
+    (is (= "ling-3.0-tiny" (:model (run p "murakumo-main" invoke))))
+    (is (= ["murakumo-main" "ling-3.0-tiny"] @calls))
+    (reset! calls [])
+    (is (thrown? kerror/ExceptionInfo
+                 (run (assoc p :no-fallback-models #{"murakumo-main"}) "murakumo-main" invoke)))
+    (is (= ["murakumo-main"] @calls))
+    (doseq [code ["network_queue_full" "quota_exceeded"]]
+      (let [seen (atom 0)]
+        (is (thrown? kerror/ExceptionInfo
+                     (run p "murakumo-main"
+                          (fn [_] (swap! seen inc)
+                            (throw (ex-info "limited" {:type :provider/http-error :status 429
+                                                       :response {:error {:code code}}}))))))
+        (is (= 1 @seen))))))

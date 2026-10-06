@@ -1,0 +1,23 @@
+{
+  "jobs": [
+    {
+      "base_url": "https://api.kotoba.cloud/v1",
+      "deliver": "local",
+      "enabled": false,
+      "id": "kir-parity-gate",
+      "model": "qwen3.8-flash-next-whitehacker",
+      "name": "compiler-kir-parity-gate",
+      "no_agent": true,
+      "prompt": "compiler profile: KIR parity gate for cloud-itonami-app。scripts/kir_parity_gate.sh の実行結果を報告し、parity が壊れていた場合は最小 repro と原因の最初の行、修正案を示す。resources/ は書き換えない。",
+      "provider": "kotoba",
+      "schedule": {
+        "kind": "cron",
+        "expr": "35 7 * * *",
+        "display": "35 7 * * *"
+      },
+      "script": "kir_parity_gate.sh",
+      "skill": null,
+      "skills": []
+    }
+  ]
+}

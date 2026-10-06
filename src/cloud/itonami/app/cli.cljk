@@ -77,10 +77,10 @@
   and no mention of either directory involved.
   `CLOUD_ITONAMI_API_URL=https://itonami.cloud` switches CLI and MCP adapters
   to the hosted control plane; non-loopback plain HTTP is refused."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [kotoba.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.walk :as walk]
+            [kotoba.lang.coll :as walk]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.app-client :as client]
             [cloud.itonami.app.bot-import :as bot-import]
@@ -160,7 +160,7 @@
                            "\nサーバーを一度起動すると作成されます"
                            "（CLOUD_ITONAMI_DATA_DIR が同じか確認してください）")
                       {:type :cli/no-enrollment-key})))
-    (str/trim (String. (Files/readAllBytes path) "UTF-8"))))
+    (str/trim (kbytes/utf8-string (Files/readAllBytes path)))))
 
 ;; ---------------------------------------------------------------------------
 ;; server lifecycle
@@ -333,7 +333,7 @@
                                 :user-id (:user-id flags)
                                 :organization-id (:organization flags)
                                 :ttl-days (some-> (:ttl-days flags) str parse-long)}}))
-                 (catch clojure.lang.ExceptionInfo error
+                 (catch kerror/ExceptionInfo error
                    (throw (enrollment-refused configuration error))))
         stored (keychain-put! (:token issued))]
     {:session-id (:session-id issued)
@@ -873,7 +873,7 @@
                                :escape-unicode false
                                :escape-slash false)))
     (System/exit 0)
-    (catch clojure.lang.ExceptionInfo e
+    (catch kerror/ExceptionInfo e
       (binding [*out* *err*] (println (ex-message e)))
       (System/exit 1))
     (catch Exception e

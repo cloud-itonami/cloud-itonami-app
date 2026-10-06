@@ -5,7 +5,7 @@
   resident app invokes its deterministic EDN projection at provisioning time;
   it never guesses roles from repo names and never treats a missing checkout
   as an empty workforce."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]))
 
 (def schema "network.awai.workforce-bots.v1")
@@ -121,7 +121,7 @@
   returned: provisioning half a company is worse than refusing visibly."
   []
   (let [root (registry-root)
-        command (io/file root "bin/awai.cljs")]
+        command (io/file root "bin/awai.cljk")]
     (when-not (.isFile command)
       (throw (ex-info "loop-yakuwari workforce registry is not checked out"
                       {:type :workforce/unavailable :path (.getPath command)})))
@@ -145,7 +145,7 @@
                                                  dependencies))))
           process (-> (ProcessBuilder. [(nbb-command) "--config" "/dev/null"
                                         "--classpath" classpath
-                                        "bin/awai.cljs" "workforce"])
+                                        "bin/awai.cljk" "workforce"])
                       (.directory root)
                       (.redirectErrorStream true)
                       (.start))

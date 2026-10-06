@@ -11,7 +11,7 @@
   - an empty turn was recorded as COMPLETED and appended an empty message. A run
     that did nothing and a run that finished were then the same row — in the
     audit trail, and in the one-line preview the Bot picker shows — and no later
-    reader could separate them. This is the shape CLAUDE.md names: an execution
+    reader could separate them. This is the shape AGENTS.md names: an execution
     that could not answer returning the value of one that answered.
   - a repeated call ran until the tool budget ended it, and the budget then
     reported `:continuation-budget-exhausted`, which sends a person to raise a
@@ -23,8 +23,8 @@
 
   The model seam is redefined rather than reached, the way `routines-test` does
   it. Nothing here calls a model or reaches the network."
-  (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.io :as kio] [kotoba.lang.text :as str]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.policy :as policy]
@@ -32,13 +32,12 @@
             [cloud.itonami.app.store :as store]))
 
 (defn- with-store [f]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-turn-guards-test"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-turn-guards-test")
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config/data-dir (fn [] (.toFile temporary))]
+      (with-redefs [config/data-dir (fn [] temporary)]
         (f))
       (finally (reset! store/state previous)))))
 

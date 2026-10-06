@@ -10,7 +10,7 @@
   (`cloud.itonami.app.kotoba-oracle`): whether a required value is present, and
   the precedence of intent rejection reasons. What stays here is everything
   that is not a judgement -- the throw, the map projection, the shapes."
-  (:require [clojure.set :as set]
+  (:require [kotoba.lang.coll :as set]
             [cloud.itonami.app.kotoba-oracle :as oracle]))
 
 (def ^:private intent-check-record

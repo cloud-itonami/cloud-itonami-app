@@ -12,9 +12,9 @@
   The live half runs only where the helper is built and Accessibility is
   granted, and it reports which of those it skipped for. A skip that looks like
   a pass is the failure this repository has spent a lot of ADRs on."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.desktop :as desktop]))
 
@@ -36,7 +36,7 @@
 ;; ── 1. the three absences that are the contract ─────────────────────────
 
 (deftest the-helper-cannot-take-the-cursor-focus-or-the-front-window
-  (is (.isFile helper-source)
+  (is (io/file? helper-source)
       "the helper source is missing, so nothing below checked anything")
   (let [code (code-lines)]
     (doseq [[call why]
@@ -141,12 +141,12 @@
                    (str/upper valid-digest)
                    (subs valid-digest 0 (dec (count valid-digest)))]
               :when (not= bad valid-digest)]
-        (is (thrown? clojure.lang.ExceptionInfo (digest! bad))
+        (is (thrown? kerror/ExceptionInfo (digest! bad))
             (str "accepted " (pr-str bad) " as a tree digest"))))
     (testing "element references are the shape computer_tree produces"
       (is (= "@a12" (element! "@a12")))
       (doseq [bad [nil "" "a12" "@e12" "@a" "@a12x" "12"]]
-        (is (thrown? clojure.lang.ExceptionInfo (element! bad))
+        (is (thrown? kerror/ExceptionInfo (element! bad))
             (str "accepted " (pr-str bad) " as an element reference"))))))
 
 ;; ── 3. the tool surface ─────────────────────────────────────────────────
@@ -303,7 +303,7 @@
           (is (contains? #{"window-id" "region" "cua-driver-window"} (:capture shot))
               (str "capture mode was " (pr-str (:capture shot))))
           (is (= 4 (count (:frame shot))))
-          (is (pos? (.length (io/file (:image-path shot)))))
+          (is (pos? (io/length (io/file (:image-path shot)))))
           (io/delete-file (io/file (:image-path shot)) true))))))
 
 (deftest window-enumeration-does-not-hide-a-window-that-is-not-composited

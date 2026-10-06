@@ -41,11 +41,10 @@
   happen in the issuer's own console, by a person. What is recorded is a COPY of
   what the issuer showed; where the copy and the issuer disagree, the issuer is
   right and the disagreement is the thing worth displaying."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [cloud.itonami.app.funding :as funding]
             [cloud.itonami.app.store :as store])
   (:import [java.math BigDecimal RoundingMode]
-           [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
            [java.util Base64 UUID]))
 
@@ -227,7 +226,7 @@
 
 (defn- sha256 [s]
   (-> (MessageDigest/getInstance "SHA-256")
-      (.digest (.getBytes ^String s StandardCharsets/UTF_8))
+      (.digest (kbytes/utf8-bytes ^String s))
       (->> (.encodeToString (.withoutPadding (Base64/getUrlEncoder))))))
 
 (defn natural-key

@@ -23,3 +23,6 @@
 # tools.deps caches, in any sub-project (root /.cpcache/ above is root-anchored)
 **/.cpcache/
 /mobile/target/
+
+# engine dependency cache for nbb.edn :deps (cold cache needs bb once)
+.nbb/

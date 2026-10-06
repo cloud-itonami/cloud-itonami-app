@@ -1,0 +1,48 @@
+{
+  "jobs": [
+    {
+      "base_url": null,
+      "context_from": null,
+      "deliver": "local",
+      "enabled": true,
+      "enabled_toolsets": null,
+      "id": "5ce455d1f879",
+      "model": null,
+      "name": "pbr-watch",
+      "no_agent": true,
+      "prompt": "",
+      "provider": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 60,
+        "display": "every 60m"
+      },
+      "script": "registrar_tick.py",
+      "skill": null,
+      "skills": [],
+      "workdir": null
+    },
+    {
+      "base_url": null,
+      "context_from": null,
+      "deliver": "local",
+      "enabled": true,
+      "enabled_toolsets": null,
+      "id": "08c4f34d927f",
+      "model": null,
+      "name": "pbr-agent",
+      "no_agent": false,
+      "prompt": "public-bots-registrar tick: read the last lines of ~/.hermes/profiles/public-bots-registrar/workspace/registrar_ledger.jsonl and ~/.hermes/profiles/public-bots-registrar/workspace/state.json. Report the live public-bots registry state (registryEntries, register_surface, catalog endpoint). If awai_arb_in_live_catalog is true, report DONE and stop reminders. If register is possible without a passkey ceremony, POST the register request for awai-arb (catalog entry: id awai-arb, author com-junkawasaki) and verify with a read-back. Never modify other tenants, never send email except a reminder to 04.feasts_minded@icloud.com per the 7-day rule in SOUL.md.",
+      "provider": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 1440,
+        "display": "every 1440m"
+      },
+      "script": null,
+      "skill": null,
+      "skills": [],
+      "workdir": null
+    }
+  ]
+}

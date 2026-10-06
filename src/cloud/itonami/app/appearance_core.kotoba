@@ -15,10 +15,12 @@
 ;;                   (trimmed, lower-cased) name denotes, or none. The cljc's
 ;;                   `(case s ...)` group IS this function.
 ;;
-;;   next-of       — the toggle cycle: light -> 8bit -> grok -> light, with
-;;                   unknown input answering 8bit (the cycle restarts from
-;;                   light — the cljc's `(or (normalize mode) default-mode)`
-;;                   with `i=0` IS this fallback).
+;;   next-of       — the toggle cycle: light <-> dark, with unknown input
+;;                   answering dark (the cycle restarts from light — the
+;;                   cljc's `(or (normalize mode) default-mode)` with the
+;;                   light successor IS this fallback). The authored
+;;                   appearances are pruned from the cycle (owner instruction
+;;                   2026-09-14); mode-of still recognises their spellings.
 ;;
 ;;   plane-cloud?  — the residency judgement: is this (trimmed, lower-cased)
 ;;                   plane name the cloud plane? The cljc's `(= "cloud" s)`
@@ -42,35 +44,36 @@
 ;; so the table needs no map. The host already trimmed and lower-cased.
 ;;
 ;; `dark` is the DADS palette inverted (`jp-go-dds.dark`), not a hand-drawn
-;; theme, so it belongs to the same appearance axis as `light` rather than to
-;; the two authored appearances. Note that `dark-chat` names `grok`, not
-;; `dark` — that spelling predates this mode and points at the authored
-;; chat-dark appearance, which is a different thing from the inverted palette.
+;; theme, so it belongs to the same appearance axis as `light`. The authored
+;; appearances (`8bit`, `grok` and their spellings, including `dark-chat` /
+;; `chat-dark`) answer none since 2026-09-14 (owner instruction): a document
+;; that names them still carries their CSS layers, but the configured mode
+;; falls back to light and the toggle cycles light<->dark only.
 (defn mode-of [name :string] [:option :string]
   (if (string=? name "dark")
     (option-some-of [:option :string] "dark")
     (if (string=? name "night")
       (option-some-of [:option :string] "dark")
   (if (string=? name "8bit")
-    (option-some-of [:option :string] "8bit")
+    (option-none-of [:option :string])
     (if (string=? name "8-bit")
-      (option-some-of [:option :string] "8bit")
+      (option-none-of [:option :string])
       (if (string=? name "eightbit")
-        (option-some-of [:option :string] "8bit")
+        (option-none-of [:option :string])
         (if (string=? name "eight-bit")
-          (option-some-of [:option :string] "8bit")
+          (option-none-of [:option :string])
           (if (string=? name "pixel")
-            (option-some-of [:option :string] "8bit")
+            (option-none-of [:option :string])
             (if (string=? name "retro")
-              (option-some-of [:option :string] "8bit")
+              (option-none-of [:option :string])
               (if (string=? name "grok")
-                (option-some-of [:option :string] "grok")
+                (option-none-of [:option :string])
                 (if (string=? name "grob")
-                  (option-some-of [:option :string] "grok")
+                  (option-none-of [:option :string])
                   (if (string=? name "dark-chat")
-                    (option-some-of [:option :string] "grok")
+                    (option-none-of [:option :string])
                     (if (string=? name "chat-dark")
-                      (option-some-of [:option :string] "grok")
+                      (option-none-of [:option :string])
                       (if (string=? name "light")
                         (option-some-of [:option :string] "light")
                         (if (string=? name "default")
@@ -90,13 +93,7 @@
 (defn next-of [mode :string] :string
   (if (string=? mode "light")
     "dark"
-    (if (string=? mode "dark")
-      "8bit"
-      (if (string=? mode "8bit")
-        "grok"
-        (if (string=? mode "grok")
-          "light"
-          "dark")))))
+    "light"))
 
 ;; The residency-plane judgement: a (trimmed, lower-cased) plane name is the
 ;; cloud plane exactly when it is "cloud". Anything else — absent, a typo,

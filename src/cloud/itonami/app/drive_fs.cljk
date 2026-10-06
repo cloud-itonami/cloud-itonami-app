@@ -37,7 +37,7 @@
   wants three times and clients show `mtime`. Reporting the creation instant
   for all three is honest — it is the only one that exists — and better than
   reporting `now`, which makes every file look modified on every listing."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.store :as store]
             [drive.object :as object]
@@ -61,7 +61,7 @@
   apart; deriving it from the id keeps it stable across restarts, which
   `hash` alone would not guarantee across JVM versions."
   [id]
-  (let [bytes (.getBytes ^String (str id) "UTF-8")]
+  (let [bytes (kbytes/utf8-bytes ^String (str id))]
     (loop [i 0 h 1125899906842597]
       (if (= i (alength bytes))
         (bit-and h 0x7fffffffffffffff)

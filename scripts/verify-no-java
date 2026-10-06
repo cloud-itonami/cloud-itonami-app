@@ -72,8 +72,14 @@
 (defn- sleep [ms]
   (js/Promise. (fn [resolve] (js/setTimeout resolve ms))))
 
-(defn- start-nbb [script extra-env]
-  (cp/spawn "nbb" (clj->js ["--classpath" "bin" script])
+(defn- start-host [script extra-env]
+  ;; The host that replaced the JVM runs through kbb's engine (kotoba-lang/
+  ;; org-babashka-nbb). Spawning `nbb` directly stopped working when the run
+  ;; path was cut over (bd620311): the shebangs are `#!/usr/bin/env kbb` and
+  ;; stock nbb cannot resolve `.cljk` — measured 2026-09-13, every spawn died
+  ;; with "Could not find namespace" and the proof timed out on /health. kbb
+  ;; is the one launcher this proof's own shebangs name.
+  (cp/spawn "kbb" (clj->js ["--backend" "sci" "--classpath" "bin" script])
             #js {:env (js/Object.assign #js {} js/process.env (clj->js extra-env))
                  :stdio #js ["pipe" "pipe" "pipe"]}))
 
@@ -92,7 +98,7 @@
 (defn -main [& _]
   (println "note: java/clojure binaries may exist on disk; PATH filter is the bar")
   (let [port (js/parseInt (or (aget js/process.env "CLOUD_ITONAMI_PORT") "17338") 10)
-        server (start-nbb "bin/cloud-itonami-server"
+        server (start-host "bin/cloud-itonami-server"
                           {:CLOUD_ITONAMI_PORT (str port)
                            :CLOUD_ITONAMI_HOST "127.0.0.1"})]
     (-> (wait-health port 0)
@@ -105,7 +111,7 @@
                                    health)))
                  (when-not (str/includes? (:body health) "\"guest-main\":1338")
                    (throw (ex-info "guest main was not called or stayed 0" health)))
-                 (let [mcp (start-nbb "bin/itonami-mcp" {})]
+                 (let [mcp (start-host "bin/itonami-mcp" {})]
                    (.write (.-stdin mcp)
                            (str (js/JSON.stringify
                                  #js {"jsonrpc" "2.0"

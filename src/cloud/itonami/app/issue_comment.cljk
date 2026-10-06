@@ -35,7 +35,7 @@
   application renders its own screens from `web.clj` hiccup and drives them
   from `interaction.js`, so a selector, the element's own text, and the view
   name are all searchable strings in the repository the Bot is admitted to."
-  (:require [kotoba.lang.text :as str]))
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]))
 
 (def max-comment-chars
   "One comment. Long enough for a paragraph of intent, short enough that the
@@ -228,7 +228,7 @@
   differ by three times, so a character-counted cap would admit a document
   three times the size it was written to allow."
   [text]
-  #?(:clj (alength (.getBytes ^String text "UTF-8"))
+  #?(:clj (alength (kbytes/utf8-bytes ^String text))
      :cljs (.-length (.encode (js/TextEncoder.) text))))
 
 (defn svg-payload

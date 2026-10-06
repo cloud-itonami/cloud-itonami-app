@@ -35,7 +35,7 @@
   handed in. This supplies the system clock, which is the right place for it:
   a signature is only reproducible if the instant is an argument, and only
   useful if something eventually passes the real time."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [cloud.itonami.app.http-client :as http]
             [drive.object :as object]
             [sigv4.crypto :as crypto]
@@ -83,7 +83,7 @@
             body (cond
                    (nil? body-bytes) nil
                    (string? body-bytes) body-bytes
-                   :else (.encodeToString (java.util.Base64/getEncoder)
+                   :else (kbytes/base64-encode
                                           ^bytes body-bytes))
             resp (http/request
                   {:url (:url req)
@@ -100,7 +100,7 @@
         {:status  (:status resp)
          :headers (:headers resp)
          :body    (if (and binary? resp-body)
-                    (.decode (java.util.Base64/getDecoder) ^String resp-body)
+                    (kbytes/base64-decode-bytes ^String resp-body)
                     resp-body)}))))
 
 (defn config

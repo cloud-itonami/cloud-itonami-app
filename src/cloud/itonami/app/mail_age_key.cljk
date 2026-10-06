@@ -36,7 +36,7 @@
 
   That asymmetry is the reason a lost identity is unrecoverable and a lost
   recipient is not. Both are stored; only one is ever fetched here."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str])
   (:import [java.util.concurrent TimeUnit]))

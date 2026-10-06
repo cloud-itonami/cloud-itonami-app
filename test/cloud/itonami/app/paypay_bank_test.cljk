@@ -8,7 +8,7 @@
   `収納企業:` with a half-width one, and shop names arrive in full-width Latin
   while amounts arrive in half-width digits. A fixture someone typed by hand
   would have been uniform, passed, and left the real mail unparsed."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cloud.itonami.app.funding :as funding]
             [cloud.itonami.app.paypay-bank :as bank]))
 

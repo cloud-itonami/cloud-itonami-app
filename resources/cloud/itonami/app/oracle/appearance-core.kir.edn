@@ -14,34 +14,34 @@
      (option-some-of [:option :string] "dark")
      (if
       (string=? name "8bit")
-      (option-some-of [:option :string] "8bit")
+      (option-none-of [:option :string])
       (if
        (string=? name "8-bit")
-       (option-some-of [:option :string] "8bit")
+       (option-none-of [:option :string])
        (if
         (string=? name "eightbit")
-        (option-some-of [:option :string] "8bit")
+        (option-none-of [:option :string])
         (if
          (string=? name "eight-bit")
-         (option-some-of [:option :string] "8bit")
+         (option-none-of [:option :string])
          (if
           (string=? name "pixel")
-          (option-some-of [:option :string] "8bit")
+          (option-none-of [:option :string])
           (if
            (string=? name "retro")
-           (option-some-of [:option :string] "8bit")
+           (option-none-of [:option :string])
            (if
             (string=? name "grok")
-            (option-some-of [:option :string] "grok")
+            (option-none-of [:option :string])
             (if
              (string=? name "grob")
-             (option-some-of [:option :string] "grok")
+             (option-none-of [:option :string])
              (if
               (string=? name "dark-chat")
-              (option-some-of [:option :string] "grok")
+              (option-none-of [:option :string])
               (if
                (string=? name "chat-dark")
-               (option-some-of [:option :string] "grok")
+               (option-none-of [:option :string])
                (if
                 (string=? name "light")
                 (option-some-of [:option :string] "light")
@@ -57,17 +57,7 @@
    :params [mode],
    :result :string,
    :effects #{},
-   :body
-   (if
-    (string=? mode "light")
-    "dark"
-    (if
-     (string=? mode "dark")
-     "8bit"
-     (if
-      (string=? mode "8bit")
-      "grok"
-      (if (string=? mode "grok") "light" "dark")))),
+   :body (if (string=? mode "light") "dark" "light"),
    :param-types [:string]}
   {:name plane-cloud?,
    :params [name],
