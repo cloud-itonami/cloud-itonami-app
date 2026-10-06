@@ -3,7 +3,7 @@
          '[cloud.itonami.app.config :as config]
          '[cloud.itonami.app.web :as web]
          '[clojure.edn :as edn])
-(assert (.startsWith (str (config/data-dir)) "/private/tmp/itonami-native-smoke-")
+(assert (.startsWith (str (config/data-dir)) "/private/tmp/itonami-native-smoke-"))
 (assert (= #{:a :b} (edn/read-string "#{:a :b}")))
 (assert (seq web/bot-component-css))
 (assert (seq web/bot-component-js))
