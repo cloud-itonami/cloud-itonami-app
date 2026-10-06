@@ -18,7 +18,7 @@
     (let [health (slurp "http://127.0.0.1:1352/health")
           page (slurp "http://127.0.0.1:1352/")]
       (assert (re-find #"cloud-itonami-app" health))
-      (assert (re-find #"<!doctype html>" page))
+      (assert (re-find #"(?i)<!doctype html>" page))
       (println "native resident: real HTTP health and page passed"))
     (finally (server/stop!))))
 (shutdown-agents)
