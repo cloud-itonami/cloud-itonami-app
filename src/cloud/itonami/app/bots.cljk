@@ -5002,10 +5002,11 @@
                           (retry/model-scoped (:max-output-tokens provider) model)
                           2048)
         context-window (provider/model-context-window provider model)
-        input-limit (when (:goal? run)
+        input-limit (if (:concise? run) 4096
+                      (when (:goal? run)
                       (some-> (get-in configuration
                                       [:bots :goal :max-input-tokens])
-                              long))
+                              long)))
         tools-tokens (estimated-tokens (:tools run))
         provider-prompt-budget (when context-window
                                  (max 1 (- (long context-window)
@@ -6592,7 +6593,7 @@
                                  (assoc :turn/tool-count (:tool-count event)))))
                       (on-event event)))
             messages (send! configuration session bot-id text
-                            (merge (select-keys advance-options [:text-only? :concise?])
+                            (merge (select-keys advance-options [:text-only? :concise? :isolated?])
                             {:on-event emit! :cancelled? #(deref cancelled)
                              :on-finish #(reset! outcome %)
                              :run-id run-id :goal? goal?}))]
