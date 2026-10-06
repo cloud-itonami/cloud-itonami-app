@@ -95,7 +95,7 @@
   "Resolve an explicit Hermes profile/session id, with `default` selecting the
   first visible Bot. Throws the same not-found class as the native Bot API."
   [configuration session profile]
-  (let [available (visible-bots configuration session)
+  (let [available (:bots (bots/runtime-bindings configuration session))
         requested (some-> profile str str/trim not-empty)
         default-id (some-> (get-in configuration [:bots :hermes :default-bot-id])
                            str str/trim not-empty)
