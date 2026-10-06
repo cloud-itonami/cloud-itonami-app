@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.web
   "DADS-backed WebKit workspace hosted by kotoba-lang/shell."
   (:require [kotoba.lang.text :as str]
+            #?(:clj [clojure.java.io :as io])
             [cloud.itonami.app.appearance :as appearance]
             [hanmen.svg :as hanmen-svg]
             [jp-go-dds.core :as dds]
@@ -1744,18 +1745,23 @@
    classpath the same files are read from the sibling checkouts beside this
    one. The first root that holds the path wins, and an empty result is an
    error, not an empty string."
-  (let [repo (js/process.cwd)
+  #?(:clj nil
+     :cljs (let [repo (js/process.cwd)
         orgs (str repo "/../../kotoba-lang")]
     #js [repo
          orgs
          (str orgs "/cloud-kotoba-dds/resources")
-         (str orgs "/jp-go-digital-design-system/resources")]))
+         (str orgs "/jp-go-digital-design-system/resources")])))
 
 (def ^:private fs-read-text
   "Resource text, read once at load. Replaces JVM (slurp (io/resource ...)):
    the same paths, resolved against the repository and its sibling library
    checkouts on any runtime."
-  (let [node-fs (js/require "fs")]
+  #?(:clj (fn [rel]
+            (let [name (if (.startsWith rel "resources/")
+                         (subs rel (count "resources/")) rel)]
+              (when-let [resource (io/resource name)] (slurp resource))))
+     :cljs (let [node-fs (js/require "fs")]
     (fn [rel]
       (let [roots (seq resource-roots)
             alt (if (.startsWith rel "resources/")
@@ -1767,7 +1773,7 @@
                               (.join (js/require "path") root alt)]]
               (if-let [hit (some (fn [p] (when (.existsSync node-fs p) p)) candidates)]
                 (.readFileSync node-fs hit "utf8")
-                (recur (next roots))))))))))
+                (recur (next roots)))))))))))
 (def bot-component-css (fs-read-text "resources/cloud_kotoba_dds/bot.css"))
 (def bot-component-js (fs-read-text "resources/cloud_kotoba_dds/bot.js"))
 
