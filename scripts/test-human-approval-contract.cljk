@@ -1,0 +1,62 @@
+;; Host contract fixture: evaluates the real decision/public-card forms.
+;; External services are stubs; this is not full host integration or selfhost evidence.
+;; Babashka is already installed by the JVM-free CI job; no JVM is started.
+(require '[clojure.test :as t])
+(def approval-source (slurp (first *command-line-args*)))
+(def fixture (create-ns 'approval.fixture))
+(binding [*ns* fixture]
+  (refer 'clojure.core)
+  (let [forms (mapv (fn [n] (read-string (subs approval-source (.indexOf approval-source (str "(defn" (if (= n "decide!") " " "- ") n)))))
+                    ["unqualify" "public-card" "decide!"])
+        symbols (filter symbol? (mapcat #(tree-seq coll? seq %) forms))]
+    (doseq [s symbols]
+      (if-let [a (namespace s)]
+        (when-not (#{"clojure.core"} a)
+          (let [n (symbol (str "approval.fixture." a))]
+            (create-ns n) (alias (symbol a) n)
+            (intern n (symbol (name s)) (fn [& _] (throw (ex-info "unexpected fixture call" {:symbol s}))))))
+        (when-not (or (resolve s) (special-symbol? s))
+          (intern fixture (with-meta s {:dynamic (.startsWith (name s) "*")})
+                  (fn [& _] (throw (ex-info "unexpected fixture call" {:symbol s})))))))
+    (doseq [f forms] (eval f))))
+(defn put [s v] (intern fixture s v))
+(defn put-alias [a s v] (intern (the-ns (symbol (str "approval.fixture." a))) s v))
+(t/deftest real-decision-and-public-card-contract
+  (doseq [actor [:passkey :agent] decision ["approved" "rejected"]]
+    (let [state (atom {:runs {"b" {:id "r" :pending-card "c" :pending-call {:id "call" :name "send" :input {}}}}
+                       :conversations {"b" [{:message/cards [{:card/id "c" :card/kind :approval}]}]}})
+          in-update (atom false) calls (atom 0)]
+      (put 'owned! (fn [& _] {:bot/owner "owner" :bot/omakase? true}))
+      (put 'snapshot (fn [] @state))
+      (put 'open-approval-cards (fn [& _] []))
+      (put 'transact! (fn [f & args] (reset! in-update true)
+                       (try (apply swap! state f args) (finally (reset! in-update false)))))
+      (put-alias "identity" 'session-did (fn [_] (t/is (not @in-update) "identity resolved outside store transformation") "did:key:owner"))
+      (put-alias "store" 'now (fn [] "now"))
+      (put-alias "bot" 'may-approve? (fn [_] true))
+      (put-alias "bot" 'request-standing (fn [_] :answered))
+      (put 'request-of (fn [& _] nil))
+      (put 'goal-job (fn [& _] nil))
+      (put 'now-ms (fn [] 0))
+      (put 'run-tool! (fn [& _] (swap! calls inc) {:text "done"}))
+      (put 'goal-event! (fn [& _]))
+      (put 'current-plan-step-id (fn [& _]))
+      (put 'receipt-sha256 (fn [& _] "digest"))
+      (put 'tool-messages (fn [& _] []))
+      (put 'trace! (fn [& _]))
+      (put 'save-run! (fn [id r] (swap! state assoc-in [:runs id] r)))
+      (put 'record-turn! (fn [& _]))
+      (put 'advance! (fn [& _]))
+      (put 'clear-run! (fn [id] (swap! state update :runs dissoc id)))
+      (put 'say (fn [& _]))
+      (put 'public-conversation
+           (fn [& _] ((ns-resolve fixture 'public-card)
+                      (get-in @state [:conversations "b" 0 :message/cards 0]) #{} "b")))
+      (let [card ((ns-resolve fixture 'decide!) nil {:kind actor :user-id "owner"} "b" "c" decision)]
+        (t/is (= decision (:decision card)))
+        (t/is (= "now" (:decided-at card)))
+        (t/is (= (if (= actor :agent) "agent-session" "did:key:owner") (:decided-by card)))
+        (t/is (= (when (= actor :agent) "omakase") (:decision-mode card)))
+        (t/is (= (if (= decision "approved") 1 0) @calls))
+        (t/is (nil? (:card/decided-by card)) "public response uses unqualified keys")))))
+(let [r (t/run-tests 'user)] (when (pos? (+ (:fail r) (:error r))) (System/exit 1)))

@@ -33,6 +33,8 @@ jobs:
           bb: latest
       - name: Install nbb host
         run: npm ci
+      - name: Human approval contract (host fixture)
+        run: bb scripts/test-human-approval-contract.cljk src/cloud/itonami/app/bots.cljk
       - name: JVM-free emit + guest load (no java/clojure)
         run: bash scripts/ci-jvm-free-emit
         # No actions/setup-java. PATH is reconstructed without java/clojure.
