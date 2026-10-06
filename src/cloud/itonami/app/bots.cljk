@@ -8186,7 +8186,11 @@
   an owner's decision carried out by a Bot rather than a Bot's own (ADR-0060)."
   [configuration session bot-id card-id decision]
   (let [b (owned! session bot-id)
-        decision (keyword decision)]
+        decision (keyword decision)
+        ;; Resolve the authenticated actor before the store transformation.
+        ;; Its callback may be retried and must not consult global state.
+        decided-by (when (not= :agent (:kind session))
+                     (identity/session-did session))]
     (when-not (#{:approved :rejected} decision)
       (throw (ex-info "承認判断が不正です。" {:type :bot/invalid-decision})))
     ;; One question, asked of the core, for both kinds of session. The agent
@@ -8228,7 +8232,7 @@
                                                 (assoc :card/decision-mode :omakase
                                                        :card/decided-by :agent-session)
                                                 (not= :agent (:kind session))
-                                                (assoc :card/decided-by (identity/session-did session)))
+                                                (assoc :card/decided-by decided-by))
                                               %)
                                            cards))))
                          messages)))

@@ -2955,12 +2955,26 @@
             (with-redefs [policy/select-provider (fn [_ _] {:id :local})
                           provider/agent-turn (proposes-write)]
               (bots/send! nil alice (:bot/id b) "メール送って")
-              (bots/decide! nil alice (:bot/id b) (:id (held-card b)) "approved"))))
+              (let [transact store/transact!
+                    session-did identity/session-did
+                    in-transform? (atom false)]
+                (with-redefs [store/transact!
+                              (fn [f & args]
+                                (transact (fn [state]
+                                            (reset! in-transform? true)
+                                            (try (apply f state args)
+                                                 (finally (reset! in-transform? false))))))
+                              identity/session-did
+                              (fn [session]
+                                (is (not @in-transform?)
+                                    "actor lookup never reads global state inside a store transform")
+                                (session-did session))]
+                  (bots/decide! nil alice (:bot/id b) (:id (held-card b)) "approved"))))))
         (is (= "approved" (:decision (held-card b))))
-        (is (= "did:key:alice" (:card/decided-by (held-card b)))
+        (is (= "did:key:alice" (:decided-by (held-card b)))
             "the human approval carries the deciding person's did:key")
-        (is (:card/decided-at (held-card b)))
-        (is (nil? (:card/decision-mode (held-card b)))
+        (is (:decided-at (held-card b)))
+        (is (nil? (:decision-mode (held-card b)))
             "a human decision is not omakase")))))
 
 (deftest an-archived-bot-keeps-its-conversation-and-stops-working
