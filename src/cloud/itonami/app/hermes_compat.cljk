@@ -377,7 +377,9 @@
                           (let [wire (hermes-event run-id event)]
                             (set-status! run-id "running"
                                          {:last_event (:event wire)})
-                            (put-event! run-id wire))))
+                            (put-event! run-id wire)))
+                        {:text-only? (= "text-only" (:response_mode body))
+                         :concise? (= "text-only" (:response_mode body))})
                        turn (bots/latest-turn session-auth (:id bot))
                        output (or (some->> messages reverse
                                            (some #(when (= "bot" (:role %))

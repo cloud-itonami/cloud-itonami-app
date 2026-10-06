@@ -4994,7 +4994,8 @@
         ;; the resolution did not know about. `(long {...})` throws
         ;; ClassCastException, so an operator following that docstring killed
         ;; every turn before a request was made.
-        output-tokens (or (when (:goal? run)
+        output-tokens (or (when (:concise? run) 768)
+                          (when (:goal? run)
                             (retry/model-scoped
                              (get-in configuration [:bots :goal :max-output-tokens])
                              model))
@@ -5064,6 +5065,9 @@
            :context-compacted? (boolean compacted?)}
     (:text-only? run)
     (assoc :text-only? true)
+
+    (:concise? run)
+    (assoc :max-output-tokens 768 :disable-thinking? true)
 
     ;; A handoff is capped by the provider default (2048) and had reasoning
     ;; left ON, which is the pairing this very comment forbids -- measured
@@ -6506,12 +6510,13 @@
                  "使えるツールがひとつもありません。Settings で有効にするか、この Bot の権限を見直してください。"
                  nil)
             (advance! configuration b
-                      (merge admission
+                      (merge (cond-> admission text-only? (assoc :tools []))
                              {:id (or (:run-id advance-options) (new-id "run"))
                               :context-id context-id
                               :goal? goal?
                               :objective (when goal? text)
                               :text-only? text-only?
+                              :concise? (boolean (:concise? advance-options))
                               :messages (transcript configuration b
                                                     (:context/messages context)
                                                     (when goal? text)
@@ -6548,6 +6553,8 @@
   ([configuration session bot-id text run-id on-event]
    (send-stream! configuration session bot-id text run-id false on-event))
   ([configuration session bot-id text run-id goal? on-event]
+   (send-stream! configuration session bot-id text run-id goal? on-event {}))
+  ([configuration session bot-id text run-id goal? on-event advance-options]
   (owned! session bot-id)
   (let [run-id (str/trim (str run-id))
         cancelled (atom false)
@@ -6585,9 +6592,10 @@
                                  (assoc :turn/tool-count (:tool-count event)))))
                       (on-event event)))
             messages (send! configuration session bot-id text
+                            (merge (select-keys advance-options [:text-only? :concise?])
                             {:on-event emit! :cancelled? #(deref cancelled)
                              :on-finish #(reset! outcome %)
-                             :run-id run-id :goal? goal?})]
+                             :run-id run-id :goal? goal?}))]
         (record-turn! bot-id run-id
                       (merge @progress
                              {:turn/state (if @cancelled :cancelled :completed)

@@ -111,7 +111,7 @@
     (with-redefs [bots/runtime-bindings (fn [c s] (bots/overview c s))
                 bots/overview (fn [_ _] {:bots [bot-row]})
                   bots/send-stream!
-                  (fn [_ _ bot-id text run-id goal? on-event]
+                  (fn [_ _ bot-id text run-id goal? on-event _options]
                     (deliver called {:bot-id bot-id :text text :run-id run-id
                                      :goal? goal?})
                     (on-event {:type "phase" :phase "model"})
@@ -166,7 +166,7 @@
     (with-redefs [bots/runtime-bindings (fn [c s] (bots/overview c s))
                 bots/overview (fn [_ _] {:bots [bot-row]})
                   bots/send-stream!
-                  (fn [_ _ _ _ run-id _ _]
+                  (fn [_ _ _ _ run-id _ _ _options]
                     (deliver entered run-id)
                     @release
                     transcript)
