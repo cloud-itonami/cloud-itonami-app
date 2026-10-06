@@ -21,17 +21,40 @@
     (doseq [f forms] (eval f))))
 (defn put [s v] (intern fixture s v))
 (defn put-alias [a s v] (intern (the-ns (symbol (str "approval.fixture." a))) s v))
+(put-alias "store" 'snapshot (fn [] (throw (ex-info "snapshot fixture not configured" {}))))
+;; Read the real identity accessors too. Their snapshot arity is the regression boundary.
+(let [identity-source (slurp "src/cloud/itonami/app/identity.cljk")
+      target (the-ns 'approval.fixture.identity)]
+  (binding [*ns* target]
+    (refer 'clojure.core)
+    (alias 'store 'approval.fixture.store)
+    (doseq [[prefix name] [["(defn- " "identity-state"] ["(defn " "user-did"] ["(defn " "session-did"]]]
+      (eval (read-string (subs identity-source (.indexOf identity-source (str prefix name))))))))
 (t/deftest real-decision-and-public-card-contract
-  (doseq [actor [:passkey :agent] decision ["approved" "rejected"]]
-    (let [state (atom {:runs {"b" {:id "r" :pending-card "c" :pending-call {:id "call" :name "send" :input {}}}}
-                       :conversations {"b" [{:message/cards [{:card/id "c" :card/kind :approval}]}]}})
+  (doseq [actor [:passkey :agent] decision ["approved" "rejected"]
+          stale-did [nil "did:key:stale"]]
+    (let [state (atom {:identity {:users {"owner" {:did stale-did}}}
+                       :bots {:runs {"b" {:id "r" :pending-card "c" :pending-call {:id "call" :name "send" :input {}}}}
+                       :conversations {"b" [{:message/cards [{:card/id "c" :card/kind :approval}]}]}}})
           in-update (atom false) calls (atom 0)]
       (put 'owned! (fn [& _] {:bot/owner "owner" :bot/omakase? true}))
-      (put 'snapshot (fn [] @state))
+      (put 'snapshot (fn [] (:bots @state)))
+      (put 'partition* (fn [s] (:bots s)))
       (put 'open-approval-cards (fn [& _] []))
-      (put 'transact! (fn [f & args] (reset! in-update true)
-                       (try (apply swap! state f args) (finally (reset! in-update false)))))
-      (put-alias "identity" 'session-did (fn [_] (t/is (not @in-update) "identity resolved outside store transformation") "did:key:owner"))
+      (put-alias "store" 'snapshot (fn []
+                                     (t/is (not @in-update) "no ambient snapshot reads in a transaction")
+                                     @state))
+      (put-alias "store" 'transact!
+                 (fn [f & args]
+                   (reset! in-update true)
+                   (try
+                     ;; The disk snapshot is newer than the still-stale global atom.
+                     (reset! state (apply f (assoc-in @state [:identity :users "owner" :did]
+                                                     "did:key:current") args))
+                     (finally (reset! in-update false)))))
+      (put 'transact! (fn [f & args]
+                       ((ns-resolve 'approval.fixture.store 'transact!)
+                        (fn [s] (assoc s :bots (apply f (:bots s) args))))))
       (put-alias "store" 'now (fn [] "now"))
       (put-alias "bot" 'may-approve? (fn [_] true))
       (put-alias "bot" 'request-standing (fn [_] :answered))
@@ -44,18 +67,18 @@
       (put 'receipt-sha256 (fn [& _] "digest"))
       (put 'tool-messages (fn [& _] []))
       (put 'trace! (fn [& _]))
-      (put 'save-run! (fn [id r] (swap! state assoc-in [:runs id] r)))
+      (put 'save-run! (fn [id r] (swap! state assoc-in [:bots :runs id] r)))
       (put 'record-turn! (fn [& _]))
       (put 'advance! (fn [& _]))
-      (put 'clear-run! (fn [id] (swap! state update :runs dissoc id)))
+      (put 'clear-run! (fn [id] (swap! state update-in [:bots :runs] dissoc id)))
       (put 'say (fn [& _]))
       (put 'public-conversation
            (fn [& _] ((ns-resolve fixture 'public-card)
-                      (get-in @state [:conversations "b" 0 :message/cards 0]) #{} "b")))
+                      (get-in @state [:bots :conversations "b" 0 :message/cards 0]) #{} "b")))
       (let [card ((ns-resolve fixture 'decide!) nil {:kind actor :user-id "owner"} "b" "c" decision)]
         (t/is (= decision (:decision card)))
         (t/is (= "now" (:decided-at card)))
-        (t/is (= (if (= actor :agent) "agent-session" "did:key:owner") (:decided-by card)))
+        (t/is (= (if (= actor :agent) "agent-session" "did:key:current") (:decided-by card)))
         (t/is (= (when (= actor :agent) "omakase") (:decision-mode card)))
         (t/is (= (if (= decision "approved") 1 0) @calls))
         (t/is (nil? (:card/decided-by card)) "public response uses unqualified keys")))))

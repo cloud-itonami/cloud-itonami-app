@@ -8186,11 +8186,7 @@
   an owner's decision carried out by a Bot rather than a Bot's own (ADR-0060)."
   [configuration session bot-id card-id decision]
   (let [b (owned! session bot-id)
-        decision (keyword decision)
-        ;; Resolve the authenticated actor before the store transformation.
-        ;; Its callback may be retried and must not consult global state.
-        decided-by (when (not= :agent (:kind session))
-                     (identity/session-did session))]
+        decision (keyword decision)]
     (when-not (#{:approved :rejected} decision)
       (throw (ex-info "承認判断が不正です。" {:type :bot/invalid-decision})))
     ;; One question, asked of the core, for both kinds of session. The agent
@@ -8220,8 +8216,13 @@
           call (:pending-call run)]
       (when-not (and call (= card-id (:pending-card run)))
         (throw (ex-info "承認待ちの操作がありません。" {:type :bot/not-held})))
-      (transact! update-in [:conversations bot-id]
-                 (fn [messages]
+      (store/transact!
+       (fn [state]
+         (let [decided-by (when (not= :agent (:kind session))
+                            (identity/session-did state session))]
+           (assoc state :bots
+                  (update-in (partition* state) [:conversations bot-id]
+                             (fn [messages]
                    (mapv (fn [m]
                            (update m :message/cards
                                    (fn [cards]
@@ -8235,7 +8236,7 @@
                                                 (assoc :card/decided-by decided-by))
                                               %)
                                            cards))))
-                         messages)))
+                         messages)))))))
       (if (= :approved decision)
         (let [goal? (boolean (goal-job (:id run)))
               _ (when goal?
