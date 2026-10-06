@@ -380,7 +380,8 @@
       (catch Exception error (record-capture-failure! user-id error)))))
 
 (defn start! [configuration]
-  (when-not @scheduler
+  (when (and (not @scheduler)
+             (not (false? (get-in configuration [:chronicle :enabled?]))))
     (let [interval (long (or (get-in configuration [:chronicle :interval-seconds]) 60))
           executor (Executors/newSingleThreadScheduledExecutor
                     (reify ThreadFactory
