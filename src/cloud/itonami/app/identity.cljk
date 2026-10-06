@@ -3349,10 +3349,12 @@
   private on purpose. Without this, a caller holding only a session has to
   reach into `store/snapshot` and know where identity lives — which is how a
   second, subtly different answer to 'whose connection is this' gets written.
-  `bots` is the first such caller."
-  [session]
-  (when session
-    (user-did (identity-state (store/snapshot)) (:user-id session))))
+  `bots` is the first such caller. The two-argument form reads the supplied
+  transaction snapshot, so a concurrent identity backfill is not lost."
+  ([session] (session-did (store/snapshot) session))
+  ([state session]
+   (when session
+     (user-did (identity-state state) (:user-id session)))))
 
 (defn session-principal-id
   "The stable logical Principal a session belongs to.

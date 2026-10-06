@@ -8216,8 +8216,13 @@
           call (:pending-call run)]
       (when-not (and call (= card-id (:pending-card run)))
         (throw (ex-info "承認待ちの操作がありません。" {:type :bot/not-held})))
-      (transact! update-in [:conversations bot-id]
-                 (fn [messages]
+      (store/transact!
+       (fn [state]
+         (let [decided-by (when (not= :agent (:kind session))
+                            (identity/session-did state session))]
+           (assoc state :bots
+                  (update-in (partition* state) [:conversations bot-id]
+                             (fn [messages]
                    (mapv (fn [m]
                            (update m :message/cards
                                    (fn [cards]
@@ -8226,10 +8231,12 @@
                                                                :card/decided-at (store/now))
                                                 (= :agent (:kind session))
                                                 (assoc :card/decision-mode :omakase
-                                                       :card/decided-by :agent-session))
+                                                       :card/decided-by :agent-session)
+                                                (not= :agent (:kind session))
+                                                (assoc :card/decided-by decided-by))
                                               %)
                                            cards))))
-                         messages)))
+                         messages)))))))
       (if (= :approved decision)
         (let [goal? (boolean (goal-job (:id run)))
               _ (when goal?
