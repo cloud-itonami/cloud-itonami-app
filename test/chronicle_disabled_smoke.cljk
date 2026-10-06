@@ -1,0 +1,6 @@
+(require '[cloud.itonami.app.chronicle :as chronicle])
+(chronicle/stop!)
+(chronicle/start! {:chronicle {:enabled? false}})
+(assert (nil? @(var-get (resolve 'cloud.itonami.app.chronicle/scheduler))))
+(println "disabled Chronicle schedules no capture or pruning")
+(shutdown-agents)
