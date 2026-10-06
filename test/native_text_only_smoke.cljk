@@ -14,11 +14,11 @@
       (assert (false? (:goal? seen)))
       (assert (= {:text-only? true :concise? true :isolated? true} (:options seen))))))
 (with-redefs [provider/model-context-window (fn [& _] 8192)]
-  (let [p {:kind :openai-compatible :max-output-tokens 4096}
+  (let [p {:kind :openai-compatible :max-output-tokens 8192}
         request (#'bots/agent-request {} p {:bot/id "bot-native"}
                                      {:text-only? true :concise? true :messages [] :tools []} "mishima")
         body (#'provider/agent-request-body p (assoc request :tools [{:name "unused"}]))]
-    (assert (= 4096 (:context-input-limit-tokens request)))
+    (assert (= 8192 (:context-input-limit-tokens request)))
     (assert (= 768 (:max_tokens body)))
     (assert (= false (get-in body [:chat_template_kwargs :enable_thinking])))
     (assert (not (contains? body :tools)))))

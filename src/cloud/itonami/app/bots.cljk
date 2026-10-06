@@ -5002,7 +5002,7 @@
                           (retry/model-scoped (:max-output-tokens provider) model)
                           2048)
         context-window (provider/model-context-window provider model)
-        input-limit (if (:concise? run) 4096
+        input-limit (if (:concise? run) 8192
                       (when (:goal? run)
                       (some-> (get-in configuration
                                       [:bots :goal :max-input-tokens])
