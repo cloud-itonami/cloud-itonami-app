@@ -44,3 +44,9 @@ a6b86ad192e4fbfaac43ebd89dd7545340f05b6f:test/cloud/itonami/app/credential_http_
 # These identify a derived public key; the zero seed is explicitly synthetic.
 0d904a5b7ac9badfb7055d0ca6277d5dbb50d95e:hermes/profiles/itonami/skills/java-kotoba-migration/references/kotoba-guest-porting.md:generic-api-key:121
 0d904a5b7ac9badfb7055d0ca6277d5dbb50d95e:hermes/profiles/itonami/skills/java-kotoba-migration/SKILL.md:generic-api-key:174
+
+# The same public zero-seed did:key vector, copied into the marketing profile
+# by 9a740007. Reviewed both source lines; these contain public identifiers,
+# not private keys. Keep exact commit/file/rule/line fingerprints.
+9a7400074ba2cc3047994a6f903405d1a0b04705:hermes/profiles/itonami-mktg/skills/java-kotoba-migration/references/kotoba-guest-porting.md:generic-api-key:121
+9a7400074ba2cc3047994a6f903405d1a0b04705:hermes/profiles/itonami-mktg/skills/java-kotoba-migration/SKILL.md:generic-api-key:174
