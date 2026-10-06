@@ -2584,6 +2584,33 @@
          (mapv public-org)
          (sort-by :name))))
 
+(defn runtime-bindings
+  "Owner-scoped identities for runtime selection, without screen/tool catalogs."
+  [configuration session]
+  (let [partition (snapshot)
+        index (routing-index)]
+    {:bots
+     (mapv (fn [b]
+             (let [routed (routing/resolve-main index b)]
+               {:id (:bot/id b) :name (:bot/name b)
+                :provider-id (or (:bot/provider-id b) (:provider-id routed)
+                                 (get-in configuration [:routing :default-provider]))
+                :model (or (:bot/model b) (:model routed)
+                           (:default-model (policy/select-provider configuration (:bot/provider-id b)))
+                           (get-in configuration [:routing :default-model]))
+                :enabled? (:bot/enabled? b) :pinned? (boolean (:bot/pinned? b))
+                :hidden? (boolean (:bot/hidden? b))
+                :created-at (:bot/created-at b) :updated-at (:bot/updated-at b)
+                :own-model (:bot/model b) :own-provider-id (:bot/provider-id b)
+                :last-turn (public-turn (last (get-in partition [:turn-history (:bot/id b)])))
+                :activity-at (:turn/updated-at (last (get-in partition [:turn-history (:bot/id b)])))
+                :hermes-import (select-keys (get-in partition [:hermes-import-bindings (:bot/id b)])
+                                             [:profile-id :session-ids])}))
+           (->> (vals (:bots partition))
+                (filter #(and (= (:user-id session) (:bot/owner %))
+                              (= (:organization-id session) (:bot/organization %))))
+                (sort-by :bot/created-at)))}))
+
 (defn overview
   "Everything the Bots screen needs on load: the Bots, and — when there are
   none — what it takes to make the first one."
