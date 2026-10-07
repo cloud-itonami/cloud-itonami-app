@@ -26,7 +26,9 @@
                (not (.isSymbolicLink (fs/lstatSync (path/join dir "cron")))))
       (let [rows (read-json jobs)
             job (last (sort-by :last_run_at
-                         (filter #(and (:enabled %) (#{"ok" "error"} (:last_status %))
+                         (filter #(and (:enabled %) (not (:fire_claim %))
+                                       (re-matches #"[A-Za-z0-9_-]+" (str (:id %)))
+                                       (#{"ok" "error"} (:last_status %))
                                        (seq (:last_run_at %))) (if (map? rows) (:jobs rows) rows))))]
         (when job
           (let [out (path/join dir "cron/output" (:id job))
@@ -48,6 +50,7 @@
                :source-id (digest (pr-str [id (:id job) (:last_run_at job) (:last_status job) (digest raw)]))
                :evidence {:job_id (:id job) :run_at (:last_run_at job)
                           :status (:last_status job) :output excerpt
+                          :output_sha256 (digest raw) :output_file output-file
                           :task_outcome_improvement "unmeasured"}})))))))
 
 (defn model! [instruction evidence max-tokens]
@@ -135,6 +138,7 @@ only JSON {\"updates\":{\"MEMORY.md\":\"markdown\"},\"reason\":\"short reason\"}
                   (release-lock! lock)
                   (throw (js/Error. "Admission changed while waiting; held without model request")))
               record {:profile (:profile candidate) :source-id (:source-id candidate)
+                      :source-evidence (:evidence candidate)
                       :baseline-sha256 (digest (:memory candidate))
                       :last-attempt (.toISOString (js/Date.)) :state :running}
               save! (fn [result]

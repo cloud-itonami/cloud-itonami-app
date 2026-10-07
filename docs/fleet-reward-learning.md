@@ -82,7 +82,9 @@ owner's profile. Public bots-status remains an aggregate signed projection.
 ## Adapter verification and limits
 
 The Hermes adapter reads current enabled job status and bounded output; potential
-credential material is refused before any model request. A terminal failure is
+credential material is refused before any model request. Claimed/in-flight jobs
+and unsafe job IDs are excluded. Receipts retain the bounded source evidence and
+output hash/path, not only grades. A terminal failure is
 valid learning evidence, not a successful task. Oversized/unavailable evidence is
 skipped. Frozen MEMORY source hashes guard concurrent edits and source IDs avoid
 uncertain POST retries. JSON records retain the comparison; private Markdown
