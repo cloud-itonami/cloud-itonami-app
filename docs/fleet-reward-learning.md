@@ -68,10 +68,12 @@ dispatch run asynchronously, with one pending dispatch per owner/org and at most
 discovery reads runtime identities/status without building the screen/tool catalog.
 No owner session is synthesized.
 One background worker, idle inference admission, queue cap64, retained review
-cap512, three calls per ordinary review, and a default two reviews per owner/org
+cap512, three calls per ordinary review, and a default four reviews per owner/org
 per UTC day bound work. `bots.self-improvement.daily-limit` may be configured
 between0 and24. Failed attempts count. No retry of uncertain model calls.
-Background review inference is not claimed free. Disabled self-improvement remains
+Native model calls have a bounded 240-second deadline, matching the Hermes adapter;
+this accommodates observed Murakumo prefill/generation times. Background review
+inference is not claimed free. Disabled self-improvement remains
 disabled. Old queued records without the new baseline revision fail closed.
 
 Owned human GET `/api/bots/<id>/skills` and existing authenticated Hermes GET

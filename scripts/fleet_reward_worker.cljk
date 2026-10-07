@@ -88,8 +88,9 @@ only JSON {\"updates\":{\"MEMORY.md\":\"markdown\"},\"reason\":\"short reason\"}
                          (or (empty? updates) (safe-text? candidate)))
             (throw (js/Error. "Invalid or protected learning update")))
           (if (or (empty? updates) (= candidate (:memory s)))
-            {:state :held :scope :profile-quality-on-fixed-evidence :reason :no-change}
-            (let [fixed {:outcome (:evidence s) :source_id (:source-id s)}]
+            (reward/no-change)
+            (let [fixed {:outcome (:evidence s) :source_id (:source-id s)
+                         :unchanged_persona (:soul s) :reward_contract reward/version}]
               (-> (transport reward/grader-instruction (assoc fixed :A (:memory s) :B candidate) 768)
                   (.then (fn [forward]
                     (-> (transport reward/grader-instruction (assoc fixed :A candidate :B (:memory s)) 768)
@@ -120,7 +121,7 @@ only JSON {\"updates\":{\"MEMORY.md\":\"markdown\"},\"reason\":\"short reason\"}
         day (subs (.toISOString (js/Date.)) 0 10)
         records (:records ledger)
         profiles (if requested [requested] (sort (js->clj (fs/readdirSync (path/join home "profiles")))))
-        eligible (keep #(source home %) profiles)
+        eligible (keep #(try (source home %) (catch :default _ nil)) profiles)
         seen (set (map :source-id records))
         candidate (first (sort-by #(or (:last-attempt (last (filter (fn [r] (= (:profile %) (:profile r))) records))) "")
                                     (remove #(seen (:source-id %)) eligible)))

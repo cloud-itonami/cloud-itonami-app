@@ -31,6 +31,10 @@
 (assert (= :held (:state (reward/decision (assoc-in forward ["B" "preservation"] 0.1) reverse-grade))))
 (def review {:base-revision (:revision original) :turn "host-recorded-turn"
              :outcome :completed :messages [{:message/role :person :message/text "Remember evidence."}]})
+(def unchanged (profile/evaluate-update! b review {} (fn [_] (throw (ex-info "No grading for unchanged profile" {})))))
+(assert (= :held (get-in unchanged [:evaluation :state])))
+(assert (= :unmeasured (get-in unchanged [:evaluation :task-outcome-improvement])))
+(assert (= false (get-in unchanged [:evaluation :model-weight-training])))
 (def calls (atom []))
 (def updates {"MEMORY.md" "# Memory\nAn untested procedure: compare actual receipts before changing a routine.\n"})
 (def held (profile/evaluate-update! b review updates (fn [e] (swap! calls conj e) forward)))
