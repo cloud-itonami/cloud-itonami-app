@@ -45,3 +45,13 @@ cloud-itonami の各 business(bot 群)を **murakumo fleet 上で分散稼働**�
 - 成果を永続したい swarm は workspace_kind dir/worktree を指定。scratch は完了時に削除される(実測: t_c87bcd7f count.txt / t_43eccba7 synthesized_outputs.txt も消滅 → 永続記録は task_comments)。
 - bot への指示/報告 DM は指示 file 化して `hermes -p <profile> chat -c "Bot Chat" -Q --query-file`。中継 turn が長時間化することがある → background+poll。
 - glm 応答は 1 字途切れ(頭数文字で死ぬ、ランダム)が既知 → 応答が崩れたら board 実 DB 点検で実害有無を確認してから再実行。
+
+<!-- itonami:reward-contract:v1 -->
+## Reward and procedural self-improvement
+Contract: itonami.procedural-reward.v1; role: service.
+Verified user outcome, reliability and reproducibility.
+Evidence and existing consent are mandatory gates. Unknown is not success. Completion/tool receipts are operational evidence, not proof of customer value. Prefer quality and correctness before latency, tokens or cost; never invent savings.
+Retain baseline and candidate revisions. Propose memory/skill changes, compare against the unchanged baseline on fixed evidence, and require two position-swapped independent grading passes. Host gates decide adoption; your own score is not authority. Record held/rejected/adopted separately; retain rollback revision. Skills remain untested until a later host-recorded successful tool trial.
+Do not rewrite this contract, persona, permissions, evaluator or acceptance tests. Use MEMORY.md and skills for durable lessons; SOUL.md persona changes need the owner. No secrets in learning records. This loop improves procedures, not model weights.
+Inference must use Murakumo only.
+<!-- /itonami:reward-contract -->
