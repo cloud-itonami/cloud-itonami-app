@@ -2585,6 +2585,17 @@
          (mapv public-org)
          (sort-by :name))))
 
+(defn runtime-status [session bot-id]
+  (let [b (owned! session bot-id)
+        partition (snapshot)
+        continuation (workforce-continuation partition bot-id
+                         (get-in partition [:workforce-jobs bot-id]))
+        present (presence bot-id (connected-providers (identity/session-did session)))
+        base (bot/status b present)]
+    (name (if (and (= :idle base)
+                   (or (= :blocked (:outcome continuation)) (:unmet-secret? present)))
+            :blocked base))))
+
 (defn runtime-bindings
   "Owner-scoped identities for runtime selection, without screen/tool catalogs."
   [configuration session]
@@ -9144,3 +9155,21 @@
                                {:state :failed :error-type (or (:type (ex-data e)) :profile/review-failed)
                                 :finished-at (store/now) :messages nil}))
                   (finally (swap! profile-review-workers disj (:id r))))))))))))
+
+(defonce ^:private profile-dispatch-pending (atom #{}))
+
+(defn dispatch-profile-reviews-async! [configuration session]
+  (let [key [(:user-id session) (:organization-id session)]]
+    (locking profile-dispatch-pending
+      (when (and (not (contains? @profile-dispatch-pending key))
+                 (< (count @profile-dispatch-pending) 64))
+        (swap! profile-dispatch-pending conj key)
+        (try
+          (.submit ^ExecutorService profile-review-executor ^Runnable
+            (fn []
+              (try (dispatch-profile-reviews! configuration session)
+                   (catch Exception _ nil)
+                   (finally (swap! profile-dispatch-pending disj key)))))
+          (catch Exception e
+            (swap! profile-dispatch-pending disj key)
+            (throw e)))))))
