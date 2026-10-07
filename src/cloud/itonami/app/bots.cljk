@@ -9073,6 +9073,14 @@
   (when (not= false (get-in configuration [:bots :self-improvement :enabled]))
     (locking profile-review-workers
       (let [mine? #(and (= (:user-id session) (:owner %)) (= (:organization-id session) (:organization %)))]
+        ;; Legacy reviews did not freeze a baseline. Retire them without a
+        ;; model admission so historical queues cannot exhaust today's budget.
+        (doseq [r (filter #(and (mine? %) (= :queued (:state %))
+                               (nil? (:base-revision %)))
+                         (vals (:profile-reviews (snapshot))))]
+          (transact! update-in [:profile-reviews (:id r)] merge
+                     {:state :failed :error-type :profile/legacy-review
+                      :finished-at (store/now) :messages nil}))
         (doseq [r (filter #(and (mine? %) (= :running (:state %))
                                (not (contains? @profile-review-workers (:id %))))
                          (vals (:profile-reviews (snapshot))))]
