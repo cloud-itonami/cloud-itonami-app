@@ -89,7 +89,8 @@ only JSON {\"updates\":{\"MEMORY.md\":\"markdown\"},\"reason\":\"short reason\"}
             (throw (js/Error. "Invalid or protected learning update")))
           (if (or (empty? updates) (= candidate (:memory s)))
             (reward/no-change)
-            (let [fixed {:outcome (:evidence s) :source_id (:source-id s)}]
+            (let [fixed {:outcome (:evidence s) :source_id (:source-id s)
+                         :unchanged_persona (:soul s) :reward_contract reward/version}]
               (-> (transport reward/grader-instruction (assoc fixed :A (:memory s) :B candidate) 768)
                   (.then (fn [forward]
                     (-> (transport reward/grader-instruction (assoc fixed :A candidate :B (:memory s)) 768)
