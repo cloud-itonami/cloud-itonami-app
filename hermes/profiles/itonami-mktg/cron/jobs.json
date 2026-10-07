@@ -20,7 +20,7 @@
       "script": "mithril_growth_tick.sh",
       "skill": null,
       "skills": [],
-      "workdir": "~/.hermes/runtime/mithril"
+      "workdir": null
     }
   ]
 }
