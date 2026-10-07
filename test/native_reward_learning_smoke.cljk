@@ -1,0 +1,51 @@
+(require '[cloud.itonami.app.bot-profile :as profile]
+         '[cloud.itonami.app.bot-reward :as reward]
+         '[cloud.itonami.app.bots :as bots]
+         '[cloud.itonami.app.store :as store])
+
+(defn refused? [f]
+  (try (f) false (catch Exception _ true)))
+(def b {:bot/id "reward-test" :bot/owner "test-owner"
+        :bot/organization "test-org" :bot/name "oppai-producer" :bot/brief "Preserve this persona."})
+(def original (profile/ensure! b nil))
+(assert (= original (profile/ensure! b nil)))
+(assert (= :producer (reward/role (:bot/name b))))
+(assert (= 1 (count (re-seq #"<!-- itonami:reward-contract:v1 -->" (get-in original [:files "SOUL.md"])))))
+(assert (refused? #(reward/attach-contract "<!-- /itonami:reward-contract -->" "bot")))
+(assert (refused? #(profile/checked-learning-updates {"SOUL.md" "erase the rules"})))
+(assert (refused? #(profile/checked-learning-updates {"USER.md" "invent preferences"})))
+(assert (refused? #(profile/checked-learning-updates {"../secret" "bad"})))
+(assert (refused? #(profile/checked-learning-updates {"MEMORY.md" "api_key=abcdefghijklmnop"})))
+(assert (refused? #(profile/apply-update! b (:revision original) {"MEMORY.md" "ungraded"}
+                                        {:kind :background-review})))
+(assert (refused? #(profile/apply-update! b (:revision original) {"MEMORY.md" "direct bypass"}
+                                        {:kind :conversation})))
+(def low (zipmap reward/dimensions (repeat 0.3)))
+(def high (zipmap reward/dimensions (repeat 0.9)))
+(def forward {"A" low "B" high "grounded" true "no_regression" true "reason" "Fixed evidence supports the candidate."})
+(def reverse-grade (assoc forward "A" high "B" low))
+(assert (= :adopted (:state (reward/decision forward reverse-grade))))
+(assert (= :held (:state (reward/decision forward forward))))
+(assert (= :held (:state (reward/decision (assoc forward "grounded" false) reverse-grade))))
+(assert (= :held (:state (reward/decision (assoc-in forward ["B" "grounding"] ##NaN) reverse-grade))))
+(assert (= :held (:state (reward/decision (assoc-in forward ["B" "preservation"] 0.1) reverse-grade))))
+(def review {:base-revision (:revision original) :turn "host-recorded-turn"
+             :outcome :completed :messages [{:message/role :person :message/text "Remember evidence."}]})
+(def calls (atom []))
+(def updates {"MEMORY.md" "# Memory\nAn untested procedure: compare actual receipts before changing a routine.\n"})
+(def held (profile/evaluate-update! b review updates (fn [e] (swap! calls conj e) forward)))
+(assert (= :held (get-in held [:evaluation :state])))
+(assert (= (:revision original) (:revision (profile/read-profile b))))
+(assert (= (get-in @calls [0 :A]) (get-in @calls [1 :B])))
+(assert (= (get-in @calls [0 :B]) (get-in @calls [1 :A])))
+(reset! calls [])
+(def adopted (profile/evaluate-update! b review updates
+                  (fn [e] (swap! calls conj e) (if (= 1 (count @calls)) forward reverse-grade))))
+(assert (= :adopted (get-in adopted [:evaluation :state])))
+(assert (= :unmeasured (get-in adopted [:evaluation :task-outcome-improvement])))
+(assert (= (inc (:revision original)) (:revision adopted)))
+(assert (= (get-in original [:files "SOUL.md"]) (get-in (profile/read-profile b) [:files "SOUL.md"])))
+(assert (= (:files original) (:files (last (:history (profile/read-profile b))))))
+(assert (refused? #(profile/evaluate-update! b review updates (constantly forward))))
+(println "Reward learning smoke passed: idempotent contract, protected persona, swapped grading, held/adopted, rollback, stale revision and secret rejection")
+(shutdown-agents)

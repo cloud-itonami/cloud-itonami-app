@@ -131,6 +131,11 @@
                   :title bot-chat-title})
                (visible-bots configuration session))})
 
+(defn profile-learning [configuration session profile]
+  (let [bot (resolve-bot configuration session profile)]
+    {:bot_id (:id bot)
+     :profile (bots/profile session (:id bot))}))
+
 (defn- source-session-row [bot row]
   (-> row
       (select-keys [:id :title :source :model :started_at :message_count
@@ -383,6 +388,8 @@
                           (and (= "text-only" (:response_mode body))
                                (= "isolated" (:context_mode body)))
                           (assoc :isolated? true)))
+                       _ (try (bots/dispatch-profile-reviews! configuration session-auth)
+                              (catch Throwable _ nil))
                        turn (bots/latest-turn session-auth (:id bot))
                        output (or (some->> messages reverse
                                            (some #(when (= "bot" (:role %))
