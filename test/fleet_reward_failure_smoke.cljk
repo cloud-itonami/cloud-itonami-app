@@ -1,0 +1,23 @@
+(require '[fleet-reward-worker :as worker]
+         '["fs" :as fs] '["path" :as path] '["os" :as os])
+(def root (fs/mkdtempSync (path/join (os/tmpdir) "reward-failure-test-")))
+(def dir (path/join root "profiles/service"))
+(fs/mkdirSync (path/join dir "cron/output/j1") #js {:recursive true})
+(fs/writeFileSync (path/join dir "SOUL.md") "Preserve owner persona")
+(fs/writeFileSync (path/join dir "MEMORY.md") "Keep original")
+(fs/writeFileSync (path/join dir "cron/jobs.json") (js/JSON.stringify #js {:jobs #js [#js {:id "j1" :enabled true :last_status "error" :last_run_at "2026-10-07T00:00:00Z"}]}))
+(fs/writeFileSync (path/join dir "cron/output/j1/run.md") "Real failure")
+(def attempts (atom 0))
+(def transport (fn [& _] (swap! attempts inc) (js/Promise.reject (js/Error. "Unavailable"))))
+(-> (worker/run! root (path/join root "state") "service" transport)
+    (.then (fn [_] (throw (js/Error. "Expected failure"))))
+    (.catch (fn [_]
+              (assert (= 1 @attempts))
+              (assert (= "Keep original" (fs/readFileSync (path/join dir "MEMORY.md") "utf8")))
+              (assert (not (fs/existsSync (path/join root "state/lock"))))
+              (worker/run! root (path/join root "state") "service" transport)))
+    (.then (fn [r]
+             (assert (= "no-new-terminal-evidence" (:state r)))
+             (assert (= 1 @attempts))
+             (println "Hermes failure smoke passed: original preserved, lock released, failed source not resent")))
+    (.catch (fn [e] (.error js/console (.-message e)) (set! (.-exitCode js/process) 1))))
