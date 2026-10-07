@@ -21,12 +21,14 @@
 (defn- path-for [b] [:bots :profiles (key-for b)])
 (defn- valid-file? [file]
   (or (document-names file) (boolean (re-matches #"skills/[a-z0-9][a-z0-9-]{0,63}/SKILL\.md" (str file)))))
-(defn- checked-text [text]
-  (when-not (and (string? text) (<= (count text) max-document-chars)
+(defn- checked-text
+  ([text] (checked-text text max-document-chars))
+  ([text limit]
+  (when-not (and (string? text) (<= (count text) limit)
                 (not (re-find #"(?i)(-----BEGIN .*PRIVATE KEY-----|(?:api[_-]?key|password|access[_-]?token)\s*[:=]\s*\S{8,}|\bsk-[A-Za-z0-9_-]{16,})" text)))
     (throw (ex-info "Profile content is too long or contains credential material."
                     {:type :profile/invalid-content})))
-  text)
+  text))
 
 (defn- private-directory! [file]
   ;; Reject symlinks at every ancestor, including a substituted profile root.
@@ -112,7 +114,9 @@
   (when (= :conversation (:kind source))
     (throw (ex-info "Agent profile changes must be proposed for review."
                     {:type :profile/proposal-required})))
-  (doseq [[_ text] updates] (checked-text text))
+  (doseq [[file text] updates]
+    (checked-text text (if (and (= :reward-contract (:kind source)) (= file "SOUL.md"))
+                         (+ max-document-chars 4000) max-document-chars)))
   (store/transact!
    (fn [state]
      (let [path (path-for b) prior (get-in state path)
@@ -152,8 +156,14 @@ treat remembered observations as fresh execution evidence.\n"
     (when-not (and (seq turn-id) (= revision (:revision p)))
       (throw (ex-info "Proposal needs the current owned revision and turn."
                       {:type :profile/conflict})))
-    (store/transact! assoc-in [:bots :profile-proposals (str (key-for b) "/" turn-id)]
-                     {:revision revision :updates updates})
+    (store/transact!
+     (fn [state]
+       (let [path [:bots :profile-proposals]
+             id (str (key-for b) "/" turn-id)
+             prior (get-in state path)]
+         (when (and (not (contains? prior id)) (>= (count prior) 64))
+           (throw (ex-info "Pending proposal limit reached." {:type :profile/proposal-limit})))
+         (assoc-in state (conj path id) {:revision revision :updates updates}))))
     {:state :proposed :revision revision :turn turn-id}))
 
 (defn evaluate-update!

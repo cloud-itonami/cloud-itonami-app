@@ -33,10 +33,11 @@
     {:contract reward/version :mode (if apply? "apply" "plan")
      :counts (frequencies (map :state result)) :profiles result}))
 
-(let [args (set *command-line-args*)
+(when (some #{"--apply" "--plan"} *command-line-args*)
+ (let [args (set *command-line-args*)
         root (path/join (os/homedir) ".hermes")
         backup (path/join root "state/reward-contract-backups/v1")
         result (rollout! root backup (contains? args "--apply"))]
     (when (contains? args "--apply")
       (fs/writeFileSync (path/join backup "rollout.json") (js/JSON.stringify (clj->js result)) #js {:mode 384}))
-    (println (js/JSON.stringify (clj->js (dissoc result :profiles)))))
+    (println (js/JSON.stringify (clj->js (dissoc result :profiles))))))

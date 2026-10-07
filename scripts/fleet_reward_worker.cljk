@@ -22,14 +22,17 @@
     (when (and (fs/existsSync soul) (fs/existsSync jobs)
                (not (.isSymbolicLink (fs/lstatSync dir)))
                (not (.isSymbolicLink (fs/lstatSync soul)))
-               (not (.isSymbolicLink (fs/lstatSync jobs))))
+               (not (.isSymbolicLink (fs/lstatSync jobs)))
+               (not (.isSymbolicLink (fs/lstatSync (path/join dir "cron")))))
       (let [rows (read-json jobs)
             job (last (sort-by :last_run_at
                          (filter #(and (:enabled %) (#{"ok" "error"} (:last_status %))
                                        (seq (:last_run_at %))) (if (map? rows) (:jobs rows) rows))))]
         (when job
           (let [out (path/join dir "cron/output" (:id job))
-                output (when (fs/existsSync out)
+                output (when (and (fs/existsSync out)
+                                  (not (.isSymbolicLink (fs/lstatSync out)))
+                                  (not (.isSymbolicLink (fs/lstatSync (path/join dir "cron/output")))) )
                          (last (sort (filter #(.endsWith % ".md") (js->clj (fs/readdirSync out))))))
                 output-file (when output (path/join out output))
                 raw (when (and output-file (not (.isSymbolicLink (fs/lstatSync output-file))))
@@ -43,7 +46,7 @@
                        (or (not (fs/existsSync memory-file)) (not (.isSymbolicLink (fs/lstatSync memory-file)))))
               {:profile id :file memory-file :memory memory :soul soul-text
                :source-id (digest (pr-str [id (:id job) (:last_run_at job) (:last_status job) (digest raw)]))
-               :evidence {:job_id (:id job) :finished_at (:last_run_at job)
+               :evidence {:job_id (:id job) :run_at (:last_run_at job)
                           :status (:last_status job) :output excerpt
                           :task_outcome_improvement "unmeasured"}})))))))
 
