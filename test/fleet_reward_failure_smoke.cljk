@@ -7,6 +7,9 @@
 (fs/writeFileSync (path/join dir "MEMORY.md") "Keep original")
 (fs/writeFileSync (path/join dir "cron/jobs.json") (js/JSON.stringify #js {:jobs #js [#js {:id "j1" :enabled true :last_status "error" :last_run_at "2026-10-07T00:00:00Z"}]}))
 (fs/writeFileSync (path/join dir "cron/output/j1/run.md") "Real failure")
+(def stale-lock (path/join root "state/lock"))
+(fs/mkdirSync stale-lock #js {:recursive true})
+(worker/write-json! (path/join stale-lock "owner.json") {:pid 2147483647})
 (def attempts (atom 0))
 (def transport (fn [& _] (swap! attempts inc) (js/Promise.reject (js/Error. "Unavailable"))))
 (-> (worker/run! root (path/join root "state") "service" transport)
@@ -19,5 +22,5 @@
     (.then (fn [r]
              (assert (= "no-new-terminal-evidence" (:state r)))
              (assert (= 1 @attempts))
-             (println "Hermes failure smoke passed: original preserved, lock released, failed source not resent")))
+             (println "Hermes failure smoke passed: original preserved, lock released, dead-process lock recovered, failed source not resent")))
     (.catch (fn [e] (.error js/console (.-message e)) (set! (.-exitCode js/process) 1))))

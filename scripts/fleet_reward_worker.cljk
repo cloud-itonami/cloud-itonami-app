@@ -93,6 +93,23 @@ only JSON {\"updates\":{\"MEMORY.md\":\"markdown\"},\"reason\":\"short reason\"}
                         (.then (fn [reverse-grade]
                           (assoc (reward/decision forward reverse-grade) :candidate candidate))))))))))))))
 
+(defn acquire-lock! [lock]
+  (when (fs/existsSync lock)
+    (let [owner-file (path/join lock "owner.json")
+          pid (when (fs/existsSync owner-file) (:pid (read-json owner-file)))
+          dead? (when (and (number? pid) (pos? pid))
+                  (try (.kill js/process pid 0) false
+                       (catch :default e (= "ESRCH" (.-code e)))))]
+      ;; Only a positively absent local process permits recovery. Unknown owners
+      ;; remain held; the admitted source remains in the ledger and is not resent.
+      (when dead? (fs/unlinkSync owner-file) (fs/rmdirSync lock))))
+  (fs/mkdirSync lock #js {:mode 448})
+  (write-json! (path/join lock "owner.json") {:pid (.-pid js/process)}))
+
+(defn release-lock! [lock]
+  (fs/unlinkSync (path/join lock "owner.json"))
+  (fs/rmdirSync lock))
+
 (defn run! [home state-dir requested transport]
   (fs/mkdirSync state-dir #js {:recursive true :mode 448})
   (let [lock (path/join state-dir "lock") ledger-file (path/join state-dir "ledger.json")
@@ -110,7 +127,7 @@ only JSON {\"updates\":{\"MEMORY.md\":\"markdown\"},\"reason\":\"short reason\"}
       (nil? candidate) (js/Promise.resolve {:state "no-new-terminal-evidence"})
       :else
       (do
-        (fs/mkdirSync lock #js {:mode 448})
+        (acquire-lock! lock)
         (let [record {:profile (:profile candidate) :source-id (:source-id candidate)
                       :baseline-sha256 (digest (:memory candidate))
                       :last-attempt (.toISOString (js/Date.)) :state :running}
@@ -133,7 +150,7 @@ only JSON {\"updates\":{\"MEMORY.md\":\"markdown\"},\"reason\":\"short reason\"}
                   {:profile (:profile candidate) :state (name (:state result)) :scope (:scope result)})))
               (.catch (fn [_] (save! {:state :failed})
                         (throw (js/Error. "Fleet learning failed closed; source retained and no automatic retry"))))
-              (.finally #(fs/rmdirSync lock))))))))
+              (.finally #(release-lock! lock))))))))
 
 (when (some #{"--run"} *command-line-args*)
   (let [args (vec *command-line-args*) index (.indexOf (clj->js args) "--profile")
