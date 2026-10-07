@@ -126,10 +126,10 @@
                   :model (:model bot)
                   :provider (:provider-id bot)
                   :enabled (boolean (:enabled? bot))
-                  :status (:status bot)
+                  :status (bots/runtime-status session (:id bot))
                   :session_id (:id bot)
                   :title bot-chat-title})
-               (visible-bots configuration session))})
+               (:bots (bots/runtime-bindings configuration session)))})
 
 (defn profile-learning [configuration session profile]
   (let [bot (resolve-bot configuration session profile)]
@@ -388,7 +388,7 @@
                           (and (= "text-only" (:response_mode body))
                                (= "isolated" (:context_mode body)))
                           (assoc :isolated? true)))
-                       _ (try (bots/dispatch-profile-reviews! configuration session-auth)
+                       _ (try (bots/dispatch-profile-reviews-async! configuration session-auth)
                               (catch Throwable _ nil))
                        turn (bots/latest-turn session-auth (:id bot))
                        output (or (some->> messages reverse

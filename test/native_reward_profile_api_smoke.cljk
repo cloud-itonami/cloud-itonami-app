@@ -3,11 +3,15 @@
 (def session {:user-id "owner" :organization-id "org"})
 (def calls (atom []))
 (with-redefs [bots/runtime-bindings (fn [_ s] (assert (= session s)) {:bots [{:id "owned" :name "Owned"}]})
+              bots/overview (fn [& _] (throw (ex-info "Screen catalog must not be loaded" {})))
+              bots/runtime-status (fn [s id] (assert (= session s)) "idle")
               bots/profile (fn [s id] (swap! calls conj [s id]) {:reward-contract "itonami.procedural-reward.v1"})]
   (assert (= "owned" (:bot_id (compat/profile-learning {} session "owned"))))
   (assert (= [[session "owned"]] @calls))
   (assert (= :hermes/not-found (try (compat/profile-learning {} session "other-owner") nil
                                     (catch Exception e (:type (ex-data e))))))
-  (assert (= 1 (count @calls))))
+  (assert (= 1 (count @calls)))
+  (assert (= "owned" (get-in (compat/profile-list {} session) [:data 0 :id])))
+  (assert (= "idle" (get-in (compat/profile-list {} session) [:data 0 :status]))))
 (println "Native profile API passed: actual session forwarded, invisible Bot refused before profile access")
 (shutdown-agents)

@@ -62,7 +62,11 @@ task-specific verifier and must not be inferred from these scores.
 ## Runtime and budgets
 
 The existing scheduler dispatches reviews, and native API completion dispatches
-under that same actual authenticated session. No owner session is synthesized.
+under that same actual authenticated session. Initial provisioning and review
+dispatch run asynchronously, with one pending dispatch per owner/org and at most
+64 pending owners; they cannot delay the original run completion response. Profile
+discovery reads runtime identities/status without building the screen/tool catalog.
+No owner session is synthesized.
 One background worker, idle inference admission, queue cap64, retained review
 cap512, three calls per ordinary review, and a default two reviews per owner/org
 per UTC day bound work. `bots.self-improvement.daily-limit` may be configured
