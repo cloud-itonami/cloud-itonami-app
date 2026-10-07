@@ -128,7 +128,13 @@ only JSON {\"updates\":{\"MEMORY.md\":\"markdown\"},\"reason\":\"short reason\"}
       :else
       (do
         (acquire-lock! lock)
-        (let [record {:profile (:profile candidate) :source-id (:source-id candidate)
+        (let [latest (if (fs/existsSync ledger-file) (read-json ledger-file) {:records []})
+              records (:records latest)
+              _ (when (or (some #(= (:source-id candidate) (:source-id %)) records)
+                          (>= (count (filter #(.startsWith (or (:last-attempt %) "") day) records)) 2))
+                  (release-lock! lock)
+                  (throw (js/Error. "Admission changed while waiting; held without model request")))
+              record {:profile (:profile candidate) :source-id (:source-id candidate)
                       :baseline-sha256 (digest (:memory candidate))
                       :last-attempt (.toISOString (js/Date.)) :state :running}
               save! (fn [result]
