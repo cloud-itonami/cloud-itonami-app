@@ -9073,6 +9073,14 @@
     (reify java.util.concurrent.ThreadFactory
       (newThread [_ runnable] (doto (Thread. runnable "itonami-profile-review") (.setDaemon true))))))
 
+(defn- profile-review-provider [provider]
+  ;; One admitted experiment must not inherit ordinary conversation retries
+  ;; or switch model pools after an uncertain response.
+  (when-not (= "murakumo" (str (:id provider)))
+    (throw (ex-info "Learning requires Murakumo." {:type :profile/provider-denied})))
+  (assoc provider :request-timeout-seconds 240 :model-request-timeout-seconds {}
+                  :max-transient-retries 0 :model-fallbacks {} :capacity-fallbacks {}))
+
 (defn dispatch-profile-reviews! [configuration session]
   ;; Provision profiles in small batches even before an existing Bot next speaks.
   (doseq [b (take 64 (filter #(and (= (:user-id session) (:bot/owner %))
@@ -9116,12 +9124,11 @@
                         _ (when-not (= (:base-revision r) (:revision p))
                             (throw (ex-info "Review baseline is stale." {:type :profile/conflict})))
                         {:keys [provider model]} (provider-choice! configuration b)
-                        _ (when-not (= "murakumo" (str (:id provider)))
-                            (throw (ex-info "Learning requires Murakumo." {:type :profile/provider-denied})))
+                        provider (profile-review-provider provider)
                         result (if (:proposed-updates r)
                                  {:content (json/write-str {:updates (:proposed-updates r) :reason "Owned turn proposal"})}
                                  (bot-dispatcher/dispatch!
-                                 #(provider/agent-turn (assoc provider :request-timeout-seconds 240 :model-request-timeout-seconds {} :max-output-tokens 4096)
+                                 #(provider/agent-turn provider
                                     {:model model :tools [] :text-only? true :disable-thinking? true
                                      :max-output-tokens 2048 :temperature 0.1
                                      :conversation-id (str "profile-review/" (:id r))
@@ -9136,7 +9143,7 @@
                           (fn [evidence]
                             (let [grade (bot-dispatcher/dispatch!
                               #(provider/agent-turn
-                                 (assoc provider :request-timeout-seconds 240 :model-request-timeout-seconds {})
+                                 provider
                                  {:model model :tools [] :text-only? true :disable-thinking? true
                                   :max-output-tokens 768 :temperature 0
                                   :conversation-id (str "profile-grade/" (:id r))
