@@ -7116,6 +7116,11 @@
       (and (= method "GET") (= path "/api/profiles"))
       (send! exchange 200 (hermes-compat/profile-list config session))
 
+      (and (= method "GET") (segment #"/api/profiles/([^/]+)/learning"))
+      (send! exchange 200
+             (hermes-compat/profile-learning config session
+               (segment #"/api/profiles/([^/]+)/learning")))
+
       (and (= method "GET") (= path "/api/sessions"))
       (send! exchange 200
              (hermes-compat/session-list

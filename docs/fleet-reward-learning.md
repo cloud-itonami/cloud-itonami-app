@@ -70,7 +70,8 @@ between0 and24. Failed attempts count. No retry of uncertain model calls.
 Background review inference is not claimed free. Disabled self-improvement remains
 disabled. Old queued records without the new baseline revision fail closed.
 
-Owned GET `/api/bots/<id>/skills` returns profile reviews including evaluation,
+Owned human GET `/api/bots/<id>/skills` and existing authenticated Hermes GET
+`/api/profiles/<id>/learning` return profile reviews including evaluation,
 revision, changed files and held/adopted/failed state. It does not expose another
 owner's profile. Public bots-status remains an aggregate signed projection.
 
