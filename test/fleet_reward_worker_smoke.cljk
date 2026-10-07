@@ -1,0 +1,36 @@
+(require '[fleet-reward-worker :as worker]
+         '[cloud.itonami.app.bot-reward :as reward]
+         '["fs" :as fs] '["os" :as os] '["path" :as path])
+(def root (fs/mkdtempSync (path/join (os/tmpdir) "fleet-reward-test-")))
+(def dir (path/join root "profiles/test-producer"))
+(fs/mkdirSync (path/join dir "cron/output/job1") #js {:recursive true})
+(fs/writeFileSync (path/join dir "SOUL.md") "Preserve persona.\n")
+(fs/writeFileSync (path/join dir "MEMORY.md") "# Memory\n")
+(fs/writeFileSync (path/join dir "cron/jobs.json")
+                 (js/JSON.stringify #js {:jobs #js [#js {:id "job1" :enabled true :last_status "error" :last_run_at "2026-10-07T00:00:00Z"}]}))
+(fs/writeFileSync (path/join dir "cron/output/job1/run.md") "Actual task failed. No publication occurred.\n")
+(def calls (atom []))
+(def candidate "# Memory\nUntested proposal: inspect the terminal receipt before changing the workflow.\n")
+(def low (zipmap reward/dimensions (repeat 0.2)))
+(def high (zipmap reward/dimensions (repeat 0.9)))
+(def transport (fn [_ evidence _]
+                 (swap! calls conj evidence)
+                 (js/Promise.resolve
+                   (case (count @calls)
+                     1 {"updates" {"MEMORY.md" candidate}}
+                     2 {"A" low "B" high "grounded" true "no_regression" true "reason" "Preserves unknown outcomes."}
+                     3 {"A" high "B" low "grounded" true "no_regression" true "reason" "Same ranking after swap."}))))
+(-> (worker/run! root (path/join root "state") "test-producer" transport)
+    (.then (fn [r]
+      (assert (= "adopted" (:state r)))
+      (assert (= candidate (fs/readFileSync (path/join dir "MEMORY.md") "utf8")))
+      (assert (= "Preserve persona.\n" (fs/readFileSync (path/join dir "SOUL.md") "utf8")))
+      (assert (= (get-in @calls [1 :A]) (get-in @calls [2 :B])))
+      (worker/run! root (path/join root "state") "test-producer" transport)))
+    (.then (fn [r]
+      (assert (= "no-new-terminal-evidence" (:state r)))
+      (assert (= 3 (count @calls)))
+      (assert (not (worker/safe-text? "api_key=abcdefghijklmnop")))
+      (assert (not (fs/existsSync (path/join root "state/lock"))))
+      (println "Hermes reward adapter passed: genuine failed outcome, swapped grading, immutable SOUL, adoption, source dedup and lock release")))
+    (.catch (fn [e] (.error js/console (.-message e)) (set! (.-exitCode js/process) 1))))

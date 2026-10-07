@@ -383,6 +383,7 @@
                           (and (= "text-only" (:response_mode body))
                                (= "isolated" (:context_mode body)))
                           (assoc :isolated? true)))
+                       _ (bots/dispatch-profile-reviews! configuration session-auth)
                        turn (bots/latest-turn session-auth (:id bot))
                        output (or (some->> messages reverse
                                            (some #(when (= "bot" (:role %))

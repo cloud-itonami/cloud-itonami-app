@@ -1,0 +1,42 @@
+(ns fleet-reward-contracts
+  "One bounded local rollout. --plan is read-only; --apply retains private backups."
+  (:require [cloud.itonami.app.bot-reward :as reward]
+            ["fs" :as fs] ["os" :as os] ["path" :as path] ["crypto" :as crypto]))
+
+(defn digest [text] (.digest (.update (crypto/createHash "sha256") text) "hex"))
+(defn rollout! [root backup apply?]
+  (let [profiles (path/join root "profiles")
+        names (sort (js->clj (fs/readdirSync profiles)))
+        targets (concat [["default" (path/join root "SOUL.md")]]
+                        (map #(vector % (path/join profiles % "SOUL.md")) names))
+        result
+        (mapv (fn [[id file]]
+          (if (or (not (fs/existsSync file)) (.isSymbolicLink (fs/lstatSync file))
+                  (.isSymbolicLink (fs/lstatSync (path/dirname file))))
+            {:profile id :state "skipped"}
+            (let [old (fs/readFileSync file "utf8") new (reward/attach-contract old id)]
+              (when (and apply? (not= old new))
+                (fs/mkdirSync backup #js {:recursive true :mode 448})
+                (let [copy (path/join backup (str id "-" (digest old) ".md"))]
+                  (when-not (fs/existsSync copy)
+                    (fs/writeFileSync copy old #js {:mode 384 :flag "wx"})))
+                ;; Refuse concurrent owner edits; same-directory rename is atomic.
+                (when-not (= old (fs/readFileSync file "utf8"))
+                  (throw (js/Error. "SOUL changed during rollout; held")))
+                (let [tmp (str file ".reward-" (.randomUUID crypto))]
+                  (try (fs/writeFileSync tmp new #js {:mode 384 :flag "wx"})
+                       (fs/renameSync tmp file)
+                       (finally (when (fs/existsSync tmp) (fs/unlinkSync tmp))))))
+              {:profile id :role (name (reward/role id))
+               :state (if (= old new) "current" (if apply? "applied" "planned"))
+               :before_sha256 (digest old) :after_sha256 (digest new)}))) targets)]
+    {:contract reward/version :mode (if apply? "apply" "plan")
+     :counts (frequencies (map :state result)) :profiles result}))
+
+(let [args (set *command-line-args*)
+        root (path/join (os/homedir) ".hermes")
+        backup (path/join root "state/reward-contract-backups/v1")
+        result (rollout! root backup (contains? args "--apply"))]
+    (when (contains? args "--apply")
+      (fs/writeFileSync (path/join backup "rollout.json") (js/JSON.stringify (clj->js result)) #js {:mode 384}))
+    (println (js/JSON.stringify (clj->js (dissoc result :profiles)))))

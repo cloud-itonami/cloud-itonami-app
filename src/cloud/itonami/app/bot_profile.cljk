@@ -5,6 +5,7 @@
   (:require [kotoba.bytes :as kbytes] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.bot-reward :as reward]
             [cloud.itonami.app.store :as store])
   (:import [java.nio.file Files LinkOption StandardCopyOption]
            [java.nio.file.attribute PosixFilePermissions]
@@ -72,6 +73,8 @@
             (subs content 0 (min max-document-chars (count content)))))
         (re-seq #"(?ms)^## ([^\n]+\.md|[^\n]*\.cursorrules)\n\n(.*?)(?=^## (?:[^\n]+\.md|[^\n]*\.cursorrules)\n\n|\z)" (or context ""))))
 
+(declare apply-update!)
+
 (defn ensure! [b imported-context]
   (when-not (every? #(seq (str (get b %))) [:bot/id :bot/owner :bot/organization])
     (throw (ex-info "Profile requires an owned Bot." {:type :profile/unbound})))
@@ -84,7 +87,14 @@
         (doseq [[_ text] files] (checked-text text))
         (store/transact! update-in path #(or % {:revision 1 :files files :reviews [] :history []
                                                :created-at (store/now)}))))
-    (materialize! b (get-in (store/snapshot) path))))
+    (let [p (get-in (store/snapshot) path)
+          soul (reward/attach-contract (get-in p [:files "SOUL.md"]) (:bot/name b))]
+      (if (= soul (get-in p [:files "SOUL.md"]))
+        (materialize! b p)
+        (apply-update! b (:revision p) {"SOUL.md" soul} {:kind :reward-contract})))))
+
+(defn contract-current? [b]
+  (= reward/version (:reward-contract (get-in (store/snapshot) (path-for b)))))
 
 (defn read-profile [b] (ensure! b nil))
 
@@ -94,6 +104,14 @@
   [b expected-revision updates source]
   (when-not (and (map? updates) (<= (count updates) 4) (every? valid-file? (keys updates)))
     (throw (ex-info "Only profile documents and named skills may be updated." {:type :profile/invalid-file})))
+  (when (and (= :background-review (:kind source))
+             (or (not= :adopted (get-in source [:evaluation :state]))
+                 (contains? updates "SOUL.md") (contains? updates "USER.md")))
+    (throw (ex-info "Learning requires independent evaluation and cannot edit persona/preferences."
+                    {:type :profile/learning-not-qualified})))
+  (when (= :conversation (:kind source))
+    (throw (ex-info "Agent profile changes must be proposed for review."
+                    {:type :profile/proposal-required})))
   (doseq [[_ text] updates] (checked-text text))
   (store/transact!
    (fn [state]
@@ -107,6 +125,7 @@
          (assoc-in state path
            (-> prior
                (assoc :revision (inc expected-revision) :files files :updated-at (store/now))
+               (cond-> (= :reward-contract (:kind source)) (assoc :reward-contract reward/version))
                (update :history #(vec (take-last 12 (conj (vec %) {:revision expected-revision
                                        :files (:files prior) :source source :at (store/now)}))))))))))
   (materialize! b (get-in (store/snapshot) (path-for b))))
@@ -118,16 +137,63 @@ treat remembered observations as fresh execution evidence.\n"
        (apply str (for [[file text] (sort-by key (:files profile))]
                     (str "\n## " file "\n" text "\n")))))
 
+(defn checked-learning-updates [updates]
+  (when-not (and (map? updates) (<= (count updates) 4)
+                 (every? #(and (valid-file? %) (not (document-names %)))
+                         (remove #{"MEMORY.md"} (keys updates))))
+    (throw (ex-info "Learning may only propose memory and named skills."
+                    {:type :profile/invalid-learning-file})))
+  (doseq [[_ text] updates] (checked-text text))
+  updates)
+
+(defn propose-update! [b revision updates turn-id]
+  (checked-learning-updates updates)
+  (let [p (read-profile b)]
+    (when-not (and (seq turn-id) (= revision (:revision p)))
+      (throw (ex-info "Proposal needs the current owned revision and turn."
+                      {:type :profile/conflict})))
+    (store/transact! assoc-in [:bots :profile-proposals (str (key-for b) "/" turn-id)]
+                     {:revision revision :updates updates})
+    {:state :proposed :revision revision :turn turn-id}))
+
+(defn evaluate-update!
+  "Two blind grading passes over identical frozen evidence. evaluator is host
+  supplied and has no tools. Only the host's decision can apply a revision."
+  [b review updates evaluator]
+  (checked-learning-updates updates)
+  (let [p (read-profile b)
+        _ (when-not (= (:base-revision review) (:revision p))
+            (throw (ex-info "Baseline changed; discard stale experiment."
+                            {:type :profile/conflict})))
+        baseline (:files p) candidate (merge baseline updates)
+        fixed {:conversation (:messages review) :host_outcome (:outcome review)
+               :source_turn (:turn review)}
+        evaluation (if (= baseline candidate)
+                     {:contract reward/version :state :held :reason :no-change}
+                     (reward/decision
+                      (evaluator (assoc fixed :A baseline :B candidate))
+                      (evaluator (assoc fixed :A candidate :B baseline))))
+        evaluation (assoc evaluation :baseline-revision (:revision p)
+                          :candidate-sha256 (sha (pr-str (into (sorted-map) updates))))
+        saved (if (= :adopted (:state evaluation))
+                (apply-update! b (:revision p) updates
+                               {:kind :background-review :turn (:turn review) :evaluation evaluation}) p)]
+    {:evaluation evaluation :revision (:revision saved)
+     :changed-files (if (= :adopted (:state evaluation)) (vec (keys updates)) [])}))
+
 (defn enqueue-review! [b turn messages]
   (when (and (contains? #{:completed :failed} (:turn/state turn))
              (seq messages) (some #(= :person (:message/role %)) messages))
     (let [id (str (key-for b) "/" (:turn/id turn))
           path [:bots :profile-reviews id]
+          p (read-profile b)
+          proposal (get-in (store/snapshot) [:bots :profile-proposals id])
+          base-revision (or (:revision proposal) (:revision p))
           context (mapv #(select-keys % [:message/id :message/role :message/text]) (take-last 8 (remove #(contains? #{:schedule :resident} (:message/source %)) messages)))]
       (store/transact! (fn [state]
         (if (or (get-in state path)
                 (>= (count (filter #(= :queued (:state %)) (vals (get-in state [:bots :profile-reviews])))) 64)) state
-          (assoc-in (update-in state [:bots :profile-reviews]
+          (assoc-in (update-in (update-in state [:bots :profile-proposals] dissoc id) [:bots :profile-reviews]
                      (fn [reviews]
                        (into {} (map (juxt :id identity)
                          (concat (filter #(contains? #{:queued :running} (:state %)) (vals reviews))
@@ -136,16 +202,16 @@ treat remembered observations as fresh execution evidence.\n"
                     path {:id id :bot (:bot/id b) :owner (:bot/owner b)
                                 :organization (:bot/organization b) :turn (:turn/id turn)
                                 :outcome (:turn/state turn) :state :queued
+                                :base-revision base-revision :proposed-updates (:updates proposal)
                                 :messages (mapv #(update % :message/text (fn [text] (subs (str text) 0 (min 2000 (count (str text)))))) context)
                                 :created-at (store/now)})))))))
 
 (def review-instruction
   "Review this completed conversation for durable learning. Return ONLY a JSON object
 {\"updates\": {\"MEMORY.md\": \"complete replacement markdown\"}, \"reason\": \"short explanation\"}.
-Use an empty updates object if nothing durable was learned. Allowed files: SOUL.md,
-USER.md, MEMORY.md, skills/<lowercase-slug>/SKILL.md. Preserve existing useful content.
-SOUL.md changes require an explicit persona correction from the human in this turn.
-USER.md contains only preferences the human explicitly expressed. MEMORY.md contains
+Use an empty updates object if nothing durable was learned. Allowed files:
+MEMORY.md, skills/<lowercase-slug>/SKILL.md. Preserve existing useful content.
+SOUL.md, USER.md and the reward contract are immutable in this review. MEMORY.md contains
 supported observations, corrections and lessons, not invented outcomes. Skills are
 reusable procedures; label untested proposals as untested. Never claim a procedure
 is validated merely because you wrote it. Never save secrets, tokens or passwords.

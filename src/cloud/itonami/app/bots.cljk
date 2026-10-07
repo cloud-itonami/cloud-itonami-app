@@ -65,6 +65,7 @@
             [cloud.itonami.app.bot-identity :as bot-identity]
             [cloud.itonami.app.bot-workspace :as bot-workspace]
             [cloud.itonami.app.bot-profile :as bot-profile]
+            [cloud.itonami.app.bot-reward :as bot-reward]
             [cloud.itonami.app.bot-bounds :as bounds]
             [cloud.itonami.app.bot-cache :as bot-cache]
             [cloud.itonami.app.kotoba-oracle :as oracle]
@@ -2743,12 +2744,12 @@
     (assoc (update p :history #(mapv (fn [r] (dissoc r :files)) %)) :reviews (->> (vals (:profile-reviews (snapshot)))
                           (filter #(and (= bot-id (:bot %)) (= (:user-id session) (:owner %))))
                           (sort-by :created-at) (take-last 10)
-                          (mapv #(select-keys % [:id :state :turn :created-at :finished-at :changed-files :reason :error-type]))))))
+                          (mapv #(select-keys % [:id :state :turn :created-at :finished-at :changed-files :reason :error-type :evaluation :revision]))))))
 
 (def ^:private profile-tools
   [{:name "profile_read" :description "Read your own persistent SOUL.md, USER.md, MEMORY.md and skills, with their current revision."
     :parameters {:type "object" :properties {}}}
-   {:name "profile_update" :description "Update one of your own profile documents or skills/<slug>/SKILL.md. Preserve useful content, never save credentials or claim new permissions. Use the revision from profile_read; persona changes require the user's instruction."
+   {:name "profile_update" :description "Propose MEMORY.md or skills/<slug>/SKILL.md for independent baseline comparison after this turn. This does not apply the change. Preserve useful content and label untested procedures. SOUL.md, USER.md and reward rules cannot be changed by this tool."
     :parameters {:type "object" :properties {:file {:type "string"} :content {:type "string"}
                                             :revision {:type "integer"} :reason {:type "string"}}
                  :required ["file" "content" "revision" "reason"]}}])
@@ -3414,9 +3415,8 @@
                      (cond
                        (= "profile_read" tool-name) (select-keys (ensure-profile! b) [:revision :files])
                        (= "profile_update" tool-name)
-                       (bot-profile/apply-update! b (:revision args) {(:file args) (:content args)}
-                         {:kind :conversation :turn (get-in (snapshot) [:runs (:bot/id b) :id])
-                          :reason (subs (str (:reason args)) 0 (min 300 (count (str (:reason args)))))})
+                       (bot-profile/propose-update! b (:revision args) {(:file args) (:content args)}
+                                                    (get-in (snapshot) [:runs (:bot/id b) :id]))
                        (= "skill_propose" tool-name) (propose-skill! b args)
                        (= "skill_use" tool-name) (use-skill! b (:id args))
                        (commerce/tool? tool-name)
@@ -9066,7 +9066,7 @@
   ;; Provision profiles in small batches even before an existing Bot next speaks.
   (doseq [b (take 64 (filter #(and (= (:user-id session) (:bot/owner %))
                                  (= (:organization-id session) (:bot/organization %))
-                                 (not (:bot/profile-ready? %))) (vals (:bots (snapshot)))))]
+                                 (or (not (:bot/profile-ready? %)) (not (bot-profile/contract-current? %)))) (vals (:bots (snapshot)))))]
     (try (ensure-profile! b)
          (transact! assoc-in [:bots (:bot/id b) :bot/profile-ready?] true)
          (catch Exception _ nil)))
@@ -9079,6 +9079,10 @@
           (transact! update-in [:profile-reviews (:id r)] merge
                      {:state :failed :error-type :profile/review-interrupted :finished-at (store/now)}))
         (when (and (empty? @profile-review-workers)
+                   (< (count (filter #(and (mine? %)
+                                          (>= (compare (or (:started-at %) "") (subs (store/now) 0 10)) 0))
+                                     (vals (:profile-reviews (snapshot)))))
+                      (max 0 (min 24 (long (or (get-in configuration [:bots :self-improvement :daily-limit]) 2)))))
                    (zero? (:waiting (bot-dispatcher/snapshot)))
                    (< (:active (bot-dispatcher/snapshot)) (:max-parallel (bot-dispatcher/snapshot))))
           (when-let [r (first (sort-by :created-at (filter #(and (mine? %) (= :queued (:state %)))
@@ -9090,22 +9094,41 @@
                 (try
                   (let [b (owned! session (:bot r))
                         p (ensure-profile! b)
+                        _ (when-not (= (:base-revision r) (:revision p))
+                            (throw (ex-info "Review baseline is stale." {:type :profile/conflict})))
                         {:keys [provider model]} (provider-choice! configuration b)
-                        result (bot-dispatcher/dispatch!
+                        _ (when-not (= "murakumo" (str (:id provider)))
+                            (throw (ex-info "Learning requires Murakumo." {:type :profile/provider-denied})))
+                        result (if (:proposed-updates r)
+                                 {:content (json/write-str {:updates (:proposed-updates r) :reason "Owned turn proposal"})}
+                                 (bot-dispatcher/dispatch!
                                  #(provider/agent-turn (assoc provider :request-timeout-seconds 120 :model-request-timeout-seconds {} :max-output-tokens 4096)
-                                    {:model model :tools [] :temperature 0.1
+                                    {:model model :tools [] :text-only? true :disable-thinking? true
+                                     :max-output-tokens 2048 :temperature 0.1
                                      :conversation-id (str "profile-review/" (:id r))
                                      :messages [{:role "system" :content bot-profile/review-instruction}
                                                 {:role "user" :content (json/write-str
-                                                  {:profile (:files p) :outcome (:outcome r) :conversation (:messages r)})}]}))
+                                                  {:profile (:files p) :outcome (:outcome r) :conversation (:messages r)})}]})))
                         proposal (json/read-str (-> (str (:content result)) str/trim
                                                     (str/replace #"^```(?:json)?\s*|\s*```$" "")))
                         updates (get proposal "updates")
                         _ (when-not (map? updates) (throw (ex-info "Review must return a document map." {:type :profile/invalid-review})))
-                        changed (vec (filter #(not= (get (:files p) %) (get updates %)) (keys updates)))
-                        saved (bot-profile/apply-update! b (:revision p) updates {:kind :background-review :turn (:turn r)})]
+                        evaluated (bot-profile/evaluate-update! b r updates
+                          (fn [evidence]
+                            (let [grade (bot-dispatcher/dispatch!
+                              #(provider/agent-turn
+                                 (assoc provider :request-timeout-seconds 120 :model-request-timeout-seconds {})
+                                 {:model model :tools [] :text-only? true :disable-thinking? true
+                                  :max-output-tokens 768 :temperature 0
+                                  :conversation-id (str "profile-grade/" (:id r))
+                                  :messages [{:role "system" :content bot-reward/grader-instruction}
+                                             {:role "user" :content (json/write-str evidence)}]}))]
+                              (json/read-str (-> (str (:content grade)) str/trim
+                                                (str/replace #"^```(?:json)?\s*|\s*```$" ""))))))]
                     (transact! update-in [:profile-reviews (:id r)] merge
-                               {:state :completed :changed-files changed :revision (:revision saved)
+                               {:state (get-in evaluated [:evaluation :state])
+                                :changed-files (:changed-files evaluated) :revision (:revision evaluated)
+                                :evaluation (:evaluation evaluated)
                                 :reason (subs (str (get proposal "reason")) 0 (min 300 (count (str (get proposal "reason")))))
                                 :finished-at (store/now) :messages nil}))
                   (catch Exception e
