@@ -58,6 +58,11 @@
                  (every? #(let [v (get-in g [side %])]
                             (and (number? v) (<= 0 v 1))) dimensions)) ["A" "B"])))
 
+(defn no-change []
+  {:contract version :scope :profile-quality-on-fixed-evidence
+   :state :held :reason :no-change :task-outcome-improvement :unmeasured
+   :model-weight-training false})
+
 (defn decision [forward reverse-grade]
   ;; Every dimension must be non-regressing in both independent passes.
   ;; Require a margin on mean quality, never reward token savings alone.

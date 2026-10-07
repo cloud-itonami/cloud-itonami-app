@@ -179,7 +179,7 @@ treat remembered observations as fresh execution evidence.\n"
         fixed {:conversation (:messages review) :host_outcome (:outcome review)
                :source_turn (:turn review)}
         evaluation (if (= baseline candidate)
-                     {:contract reward/version :state :held :reason :no-change}
+                     (reward/no-change)
                      (reward/decision
                       (evaluator (assoc fixed :A baseline :B candidate))
                       (evaluator (assoc fixed :A candidate :B baseline))))
