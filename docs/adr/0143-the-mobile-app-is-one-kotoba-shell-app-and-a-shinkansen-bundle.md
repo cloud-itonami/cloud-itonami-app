@@ -124,14 +124,26 @@ Measured 2026-10-11 from this repository's root, with kotoba-lang/shell
 | `app scaffold --target ios --target android` | `ok? true`, `ready-count 2`, `web-assets {:placeholder? false :source "mobile/dist"}` |
 | `app check --target ios --target android` | `code app-ready`, `ready-count 2 / 2`, no missing files |
 | `npm run build` | **not run**: `amu` is not installed on this workstation, so `mobile/dist` held only the committed `index.html` (no `js/main.js`, no `dds.css`). The scaffold above proves the manifest and layout, not a working bundle. |
-| `shinkansen.viewport/audit` over `mobile/dist/index.html` (ad hoc, not committed) | **`{:ok false :problems [{:id :no-xs-band}]}`**, with and without `dds.css` as `:stylesheets` |
+| `shinkansen.viewport/audit` over `mobile/dist/index.html` (ad hoc, not committed) | first run: **`{:ok false :problems [{:id :no-xs-band}]}`**, with and without `dds.css` as `:stylesheets`. After the phone band below, against shinkansen `426ecc6`: `{:ok true :bands [480 768]}` by default, with `:host :kotoba-shell`, and with `dds.css` |
 | safe-area insets in the same document | all four, including `top` |
 
-The audit result is a real finding: the document's only width query is
-`@media (max-width:48rem)` and `dds.css` has none, so the gate refuses it
-although the layout is fluid. Either the bundle gains an `:xs` band or the
-audit learns to accept a fluid document; that is decided with the gate, not
-by skipping it.
+The first audit result was a real finding: the document's only width query
+was `@media (max-width:48rem)` and `dds.css` has none, so the gate refused it
+although the layout is fluid. **Resolved (2026-10-11)** on the bundle side, by
+the band shinkansen added for this case rather than by loosening the gate:
+`mobile/scripts/gen_index.cljk` now emits `<style data-shinkansen="phone-band">`
+carrying `shinkansen.viewport/phone-band-css` at shinkansen `426ecc6` —
+16px form controls, 44px targets, no horizontal scroll — **copied as text**,
+since this build cannot require shinkansen yet. The band's body
+safe-area padding is the one rule left out: `jp-go-dds.page` already reads all
+four insets (body top/bottom, `.dds-ext-container` left/right with
+`max(1rem, inset)`), and the band's body left/right padding would have inset
+the content twice. Regenerating also took in a pending `jp-go-dds` change to
+`.dds-ext-grid` (`minmax(min(…, 100%), 1fr)`) that `--check` had been
+reporting as stale. `npm run index:check` itself does not run: the script
+names `scripts/gen_index.cljs` (the file is `.cljk`) and calls `kbb -Spath`,
+which kbb does not have; the generator was run and `--check`ed directly with
+kbb over an explicit classpath (jp-go-dds, html, css, text).
 
 Next, in order:
 
@@ -139,7 +151,8 @@ Next, in order:
    `301e50d8`, not on this project or any `nbb.edn`) and commit the viewport +
    top-inset check as part of `kbb -M:test`. Not done here because it is new
    dependency plumbing for a project whose classpath is deliberately narrow.
-2. Resolve `:no-xs-band` above.
+2. Replace the copied phone band with the require once (1) lands, keeping
+   the body-padding subtraction; fix `npm run index` / `index:check`.
 3. Run `adapter/adapt` in `npm run build` and write receipts into `dist`.
 4. Theme contract and `data-action` / `shinkansen.on` in the bundle.
 5. Locale variants and the runtime `negotiate`, when a second locale exists.

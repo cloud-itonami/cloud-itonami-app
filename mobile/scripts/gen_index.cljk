@@ -22,6 +22,29 @@
 
 (def output-path "dist/index.html")
 
+(def phone-band-css
+  "The framework :xs band (max-width 480px), from shinkansen.viewport/
+  phone-band-css at kotoba-lang/shinkansen 426ecc6 (SHELL-BINDING §2,
+  ADR-0143). COPIED, because this build cannot require shinkansen yet: it is
+  not on mobile/deps.edn, and 426ecc6 is newer than the sha ../deps.edn pins.
+  When the dependency lands, replace this text with the require.
+
+  One deliberate difference, which the require must keep: the band's body
+  `padding-*: env(safe-area-inset-*)` is left out. jp-go-dds.page already reads
+  all four insets — body pads top and bottom, `.dds-ext-container` pads left
+  and right with `max(1rem, inset)` — so adding the band's body left/right
+  padding would inset the content twice on a phone with a side inset. With the
+  require, that is `(str/replace vp/phone-band-css #\"padding-[a-z]+:env\\(safe-area-inset-[a-z]+,0px\\);?\" \"\")`
+  or a shinkansen option for it, not a second copy of the band."
+  (str "@media (max-width: 480px){"
+       "html{-webkit-text-size-adjust:100%;text-size-adjust:100%}"
+       "body{overflow-x:hidden}"
+       "img,video,canvas,svg{max-width:100%;height:auto}"
+       "pre,table{max-width:100%;overflow-x:auto}"
+       "input,select,textarea{font-size:16px}"
+       "button,[role=button],input[type=submit],input[type=button],select{min-height:44px}"
+       "}"))
+
 (defn document
   "The full HTML document, as a string.
 
@@ -45,7 +68,11 @@
            ;; A browser does, and its 404 lands in the console looking like a
            ;; missing asset of ours — which cost one pass of the browser check
            ;; before this line existed.
-           [:link {:rel "icon" :href "data:,"}]]}
+           [:link {:rel "icon" :href "data:,"}]
+           ;; Its own element, as shinkansen.viewport/phone-band-style emits
+           ;; it, after dds.css so the band wins at phone width. Not :app-css:
+           ;; it is the framework's band, not this app's look.
+           [:style {:data-shinkansen "phone-band"} phone-band-css]]}
    [:div {:id "app"}]
    ;; `defer`, not `async`: the module mounts into #app, so it must not run
    ;; before the element it mounts into has been parsed.
