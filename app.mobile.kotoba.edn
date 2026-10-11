@@ -19,6 +19,11 @@
 ;;     --manifest app.mobile.kotoba.edn --policy mobile/shell-policy.edn \
 ;;     --output-dir target/kotoba-shell/app
 ;;
+;; This is the SINGLE itonami mobile manifest (ADR-0143). The Tauri app
+;; (`jp.co.gftd.itonami.mobile`) and the `dev.kotoba.itonami` iOS declaration
+;; in network-awai/cloud-itonami are superseded by it. The bundle it carries
+;; follows kotoba-lang/shinkansen docs/SHELL-BINDING.md.
+;;
 ;; There is no `:window` here. `:width`/`:height` are a desktop concept; a
 ;; phone gives the app the screen it has.
 {:app/id "cloud.itonami.app"
@@ -44,6 +49,15 @@
  :web/dist-dir "mobile/dist"
 
  :runtime {:surface :kotoba/web}
+
+ ;; The shinkansen contract this bundle follows (ADR-0143). kotoba-shell
+ ;; validates only the keys each target requires (kotoba.shell.launcher/
+ ;; missing-manifest-keys) and does not interpret this one; it copies it into
+ ;; Resources/kotoba-shell.edn unread, as it does :local/contracts. It is here
+ ;; for people and for checks in this repository.
+ ;; :status :declared until the publish gate runs in `npm run build`.
+ :shinkansen/binding {:contract "kotoba-lang/shinkansen docs/SHELL-BINDING.md"
+                      :status :declared}
 
  :local/contracts
  {:language :kotoba

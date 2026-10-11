@@ -2,6 +2,7 @@
 
 **Status**: accepted / **Date**: 2026-08-31
 **Related**: ADR-2608072000, ADR-2608081500 (superproject), ADR-0035, ADR-2608311000
+**Amended by**: ADR-0143 (one itonami mobile app id; the bundle adopts shinkansen SHELL-BINDING)
 
 ## Context
 

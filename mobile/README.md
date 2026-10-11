@@ -76,6 +76,21 @@ write surface are still JVM-only, so they are not on the phone. They arrive
 here as the remaining slices land; nothing in this directory has to change for
 them to.
 
+## One app, and a shinkansen bundle (ADR-0143)
+
+This is **the** itonami iOS / Android app: `cloud.itonami.app` on both stores,
+kotoba-shell as the only host. The Tauri app and the `dev.kotoba.itonami` iOS
+declaration in network-awai/cloud-itonami are superseded by this manifest.
+
+The bundle follows `docs/SHELL-BINDING.md` in
+[`kotoba-lang/shinkansen`](https://github.com/kotoba-lang/shinkansen): the
+publish gate and receipts in `dist`, the viewport audit with the top safe-area
+inset named, the theme and interaction runtimes, locale variants, writes as
+`shinkansen.invoke` envelopes to the edge's `/v1/invoke` once one exists, and a
+bridge that stays deny-all. **Adopted by decision, not yet in the build** —
+ADR-0143 lists what runs today (nothing of the gate) and the order the rest
+lands in. Signing is deferred, so `app package` refusing is expected.
+
 ## Build
 
 ```bash
