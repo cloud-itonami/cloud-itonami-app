@@ -56,6 +56,11 @@ runtime is one of:
 
 The server never generates, receives or stores the private key.
 
+Before the built-in web wallet creates the key, the enrolment UI says that
+clearing site data deletes the non-extractable IndexedDB key and requires
+credential re-issuance under a new Passkey session. The warning is shown before
+confirmation, not only after recovery is needed.
+
 The issuance request carries:
 
 - the public JWK;

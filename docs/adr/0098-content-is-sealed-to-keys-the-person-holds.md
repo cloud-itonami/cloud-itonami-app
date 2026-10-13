@@ -41,9 +41,9 @@ Kagi already has the model this ADR needs (`kotoba-lang/kagi`, README §鍵階�
 - per-item grants to an agent's KEM key, where revoking re-keys rather than
   asking nicely.
 
-A browser PRF adapter exists (`CHANGELOG.md:127-136`), and only the public PRF
-salt is persisted. Nothing in this app calls it yet. `prf` does not appear in
-`src/`.
+A browser PRF adapter exists (`kotoba-lang/kagi/CHANGELOG.md:127-136`), and only
+the public PRF salt is persisted. Nothing in this app calls it yet. `prf` does
+not appear in `src/`.
 
 ## Decision
 
@@ -72,6 +72,15 @@ The hosted plane stores only ciphertext, wrapped keys, public keys and PRF salts
 The hosted plane means murakumo nodes, Cloudflare Workers, kotobase.net and B2.
 A hosted node with an `age` identity, a `drive-keys/` directory or an unwrapped
 VMK is a configuration error. Startup refuses it; it is not a warning.
+
+For that refusal, **unwrapped** is a structural allowlist rather than a guess.
+Before binding a listener, a hosted profile inspects configured key sources and
+every VMK-bearing record under `KAGI_HOME`. A permitted record is a recognized
+wrapped envelope containing only KDF parameters, public salt, nonce, ciphertext
+and wrap metadata. A raw VMK or private-key value in an environment variable,
+configuration field, legacy key file or VMK cache entry refuses startup. Merely
+having `KAGI_HOME` is not an error when all records satisfy the wrapped-envelope
+schema.
 
 ### 3. Mail is sealed on arrival, to the owner's key
 
@@ -159,7 +168,8 @@ enrolment screen states that before the switch, not after.
 
 - **No hosted keys.** On a hosted-profile start, the presence of
   `drive-keys/`, an `itonami-mail-age` identity, or `KAGI_HOME` with an unwrapped
-  VMK fails startup. A test asserts the refusal.
+  VMK fails startup. Tests cover every disallowed source above, an unknown or
+  legacy VMK record, and the allowed wrapped-envelope-only case.
 - **Recipients.** Every envelope written after step 3 has
   `:mail/body-recipients` equal to the owning tenant's keys, plus escrow only
   when the organization setting is on.
