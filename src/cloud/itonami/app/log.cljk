@@ -1,0 +1,207 @@
+(ns cloud.itonami.app.log
+  "The signed, hash-linked state log of ADR-0098 (draft), phase 1: entry shape,
+  signing, and `verify`.
+
+  An organization's governed history is a sequence of entries. Each names its
+  predecessor by content digest and is signed by an Ed25519 key that must have
+  been authorised to sign AT THAT POSITION. `verify` answers one question —
+  \"is this sequence exactly what an authorised author wrote, in order,
+  without gaps?\" — for a reader who trusts neither the file nor the process
+  that served it.
+
+  ## Wire shape
+
+  String keys and JSON-compatible values only, because `jcs.core/canonicalize`
+  (RFC 8785) is what makes the signed bytes reproducible by somebody who is not
+  this process, and it refuses sets, keywords-as-values-of-unknown-meaning and
+  integers beyond 2^53-1. A keyword key would canonicalize as whatever it prints
+  as, which is this ecosystem's convention rather than the wire's.
+
+    {\"schema\"    \"cloud.itonami.app.log-entry.v1\"
+     \"org\"       <organization id>
+     \"seq\"       <n, per org, gap-free, 0 at genesis>
+     \"prev\"      <entry id of seq-1, nil at genesis>
+     \"kind\"      <one of `kinds`>
+     \"body\"      <JSON-compatible value>
+     \"authority\" {\"grant\" … \"approval\" … \"actor\" …}
+     \"author\"    <did:key of the signer>
+     \"at\"        <ISO-8601 instant>
+     \"sig\"       <hex Ed25519 over the JCS bytes of every other field>}
+
+  The entry id is `sha256:<hex>` over the JCS bytes of the WHOLE entry,
+  signature included, so it commits to the signature as well as the content.
+
+  ## Deviation from the ADR, on purpose
+
+  ADR-0098 names a dag-cbor CID from `chain.core/commit!`. This slice uses a
+  sha256 digest id so the verifier stays dependency-light and testable; the id
+  is one function (`entry-id`), so swapping in the CID is a one-place change
+  once the ADR is accepted. Nothing outside this namespace may parse an id.
+
+  ## What this namespace does not do
+
+  It does not decide who MAY be an author or whether an authority reference is
+  genuine: those are the caller's `:author-authorised?` and
+  `:authority-resolves?`, passed in as functions so that the answer can come
+  from the organization root (`did:webvh`) and the grant/approval entries
+  without this namespace reaching for either. Both are required; a verifier
+  that defaults to \"yes\" is not a verifier. It does no I/O, reads no clock and
+  holds no key except in `make-entry`, which exists for the writer and tests."
+  (:require [ed25519.core :as ed]
+            [jcs.core :as jcs])
+  (:import [java.security MessageDigest]))
+
+(def schema "cloud.itonami.app.log-entry.v1")
+
+(def kinds
+  "The closed set of phase 1 (ADR-0098 §2). Adding one is an amendment, not a
+  runtime option: an unknown kind is rejected rather than folded."
+  #{"goal/created" "goal/closed"
+    "assignment/issued" "assignment/closed"
+    "grant/issued" "grant/revoked"
+    "approval/recorded"
+    "run/receipt"
+    "membership/changed"})
+
+;; ── bytes ────────────────────────────────────────────────────────────────────
+
+(defn- hex ^String [^bytes b]
+  (apply str (map #(format "%02x" (bit-and (long %) 0xff)) b)))
+
+(defn- unhex ^bytes [^String s]
+  (when-not (and (string? s) (even? (count s)) (re-matches #"[0-9a-f]*" s))
+    (throw (ex-info "not lowercase hex" {:value s})))
+  (byte-array (map #(unchecked-byte (Integer/parseInt (subs s % (+ % 2)) 16))
+                   (range 0 (count s) 2))))
+
+(defn- sha256-hex [^bytes b]
+  (hex (.digest (MessageDigest/getInstance "SHA-256") b)))
+
+(defn signing-bytes
+  "The exact bytes that are signed: JCS of the entry without its `sig`."
+  ^bytes [entry]
+  (jcs/canonicalize-bytes (dissoc entry "sig")))
+
+(defn entry-id
+  "`sha256:<hex>` of the whole entry, signature included."
+  [entry]
+  (str "sha256:" (sha256-hex (jcs/canonicalize-bytes entry))))
+
+;; ── writing (for the writer and for tests) ───────────────────────────────────
+
+(defn make-entry
+  "Build and sign one entry. `seed` is the 32-byte Ed25519 seed of the author;
+  the author DID is derived from it, never supplied, so an entry cannot claim a
+  key it was not signed with."
+  [{:keys [org seq prev kind body authority at seed]}]
+  (let [unsigned {"schema" schema
+                  "org" org
+                  "seq" seq
+                  "prev" prev
+                  "kind" kind
+                  "body" body
+                  "authority" (or authority {})
+                  "author" (ed/did-key-from-seed seed)
+                  "at" at}]
+    (assoc unsigned "sig" (hex (ed/sign seed (signing-bytes unsigned))))))
+
+;; ── verifying ────────────────────────────────────────────────────────────────
+
+(defn- fail [entry-seq why & {:as more}]
+  {:error (merge {:seq entry-seq :why why} more)})
+
+(defn- shape-problem
+  "A keyword naming what is wrong with the entry's SHAPE, or nil. Checked before
+  anything is canonicalized or verified so that a malformed value is reported as
+  malformed rather than surfacing as an exception from deeper in."
+  [entry]
+  (cond
+    (not (map? entry)) :not-a-map
+    (not= schema (get entry "schema")) :unknown-schema
+    (not (string? (get entry "org"))) :bad-org
+    (not (and (integer? (get entry "seq")) (>= (get entry "seq") 0))) :bad-seq
+    (not (or (nil? (get entry "prev")) (string? (get entry "prev")))) :bad-prev
+    (not (contains? kinds (get entry "kind"))) :unknown-kind
+    (not (map? (get entry "authority"))) :bad-authority
+    (not (string? (get entry "author"))) :bad-author
+    (not (string? (get entry "at"))) :bad-at
+    (not (string? (get entry "sig"))) :bad-sig
+    :else nil))
+
+(defn- signature-valid? [entry]
+  (try
+    (boolean (ed/verify-did (get entry "author")
+                            (signing-bytes entry)
+                            (unhex (get entry "sig"))))
+    (catch Exception _ false)))
+
+(defn- check-entry
+  "nil when `entry` is acceptable at `position`, else the failure map."
+  [entry position expected-org expected-prev
+   {:keys [author-authorised? authority-resolves?]}]
+  (let [n (if (map? entry) (get entry "seq") nil)]
+    (if-let [why (shape-problem entry)]
+      (fail position :malformed :detail why)
+      (cond
+        (not= expected-org (get entry "org"))
+        (fail n :org-mismatch :expected expected-org :got (get entry "org"))
+
+        (not= position n)
+        (fail n :seq-mismatch :expected position :got n)
+
+        (not= expected-prev (get entry "prev"))
+        (fail n :prev-mismatch :expected expected-prev :got (get entry "prev"))
+
+        ;; Canonicalization can refuse a body (a set, an oversized integer). That
+        ;; entry could never have been signed by `make-entry`, so it is reported
+        ;; as itself rather than as a bad signature.
+        (try (signing-bytes entry) false (catch Exception _ true))
+        (fail n :uncanonicalizable)
+
+        (not (signature-valid? entry))
+        (fail n :bad-signature :author (get entry "author"))
+
+        (not (author-authorised? (get entry "author") n))
+        (fail n :author-not-authorised :author (get entry "author"))
+
+        (not (authority-resolves? entry))
+        (fail n :authority-unresolved :authority (get entry "authority"))
+
+        :else nil))))
+
+(defn verify
+  "Verify `entries` (a sequence, oldest first) of ONE organization's log.
+
+  Returns `{:ok {:head <id of the last entry or nil> :count n :org org}}` or
+  `{:error {:seq n :why <keyword> …}}` for the FIRST problem. Reporting only the
+  first is deliberate: everything after a break is unverifiable, so a list of
+  later \"errors\" would be noise that looks like information.
+
+  opts (all required — omitting one throws, because a default of \"yes\" would
+  turn this into a function that approves anything):
+    :author-authorised?   (fn [author-did seq] bool)  authorised AT that seq,
+                          so a key rotated out cannot sign later entries
+    :authority-resolves?  (fn [entry] bool)           the grant/approval the
+                          entry cites exists and is valid at that point
+
+  opts (optional):
+    :org        the organization expected; defaults to the first entry's
+    :head       an entry id the caller already knows is the head. A log that is
+                valid but SHORTER than this has been truncated, which no
+                per-entry check can see"
+  [entries {:keys [author-authorised? authority-resolves? org head] :as opts}]
+  (when-not (and (fn? author-authorised?) (fn? authority-resolves?))
+    (throw (ex-info "verify needs :author-authorised? and :authority-resolves?"
+                    {:type :log/missing-resolver})))
+  (let [entries (vec entries)
+        org (or org (when (map? (first entries)) (get (first entries) "org")))]
+    (loop [i 0, prev nil]
+      (if (= i (count entries))
+        (cond
+          (and head (not= head prev))
+          (fail (dec i) :head-mismatch :expected head :got prev)
+          :else
+          {:ok {:head prev :count i :org org}})
+        (let [entry (nth entries i)]
+          (or (check-entry entry i org prev opts)
+              (recur (inc i) (entry-id entry))))))))

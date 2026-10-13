@@ -1,0 +1,231 @@
+(ns cloud.itonami.app.log-test
+  "ADR-0098 phase 1: the properties `log/verify` owes the ADR.
+
+  Every test builds its log from disposable seeds with `log/make-entry`, then
+  breaks it in one named way and asserts WHICH entry is reported and WHY. The
+  point is not that a broken log fails but that it fails at the right place for
+  the right reason: a verifier that says `:error` for everything is not
+  distinguishable from one that is broken."
+  (:require [clojure.test :refer [deftest is testing]]
+            [cloud.itonami.app.log :as log]
+            [ed25519.core :as ed]))
+
+;; Test vectors only. Never a live key.
+(def seed-a (byte-array (range 32)))
+(def seed-b (byte-array (range 1 33)))
+(def did-a (ed/did-key-from-seed seed-a))
+(def did-b (ed/did-key-from-seed seed-b))
+
+(def org "org:acme")
+
+(defn- at [n] (format "2026-10-13T00:00:%02dZ" n))
+
+(defn- build
+  "A valid log of `specs` ([kind body authority] each), all signed by `seed`."
+  ([specs] (build specs seed-a))
+  ([specs seed]
+   (loop [specs specs, i 0, prev nil, out []]
+     (if-let [[kind body authority] (first specs)]
+       (let [e (log/make-entry {:org org :seq i :prev prev :kind kind
+                                :body body :authority authority
+                                :at (at i) :seed seed})]
+         (recur (rest specs) (inc i) (log/entry-id e) (conj out e)))
+       out))))
+
+(def specs
+  [["goal/created"       {"goal" "g1" "title" "ship"}        {"actor" "did:key:zUser"}]
+   ["assignment/issued"  {"goal" "g1" "bot" "bot:a"}         {"grant" "grant-1"}]
+   ["grant/issued"       {"grant" "grant-1"}                 {"actor" "did:key:zUser"}]
+   ["approval/recorded"  {"op" "sha256:00" "assertion" "…"}  {"actor" "did:key:zUser"}]])
+
+(defn- opts
+  "Resolvers that accept `did-a` everywhere unless overridden."
+  [& {:as over}]
+  (merge {:author-authorised? (fn [author _seq] (= author did-a))
+          :authority-resolves? (fn [_entry] true)}
+         over))
+
+(defn- error-of [r] (:error r))
+
+;; ── the happy path ───────────────────────────────────────────────────────────
+
+(deftest a-well-formed-log-verifies-and-reports-its-head
+  (let [entries (build specs)
+        r (log/verify entries (opts))]
+    (is (= 4 (get-in r [:ok :count])))
+    (is (= org (get-in r [:ok :org])))
+    (is (= (log/entry-id (last entries)) (get-in r [:ok :head])))))
+
+(deftest an-empty-log-is-valid-and-has-no-head
+  (is (= {:ok {:head nil :count 0 :org nil}} (log/verify [] (opts)))))
+
+(deftest the-id-is-deterministic-and-independent-of-key-order
+  (let [e (first (build specs))
+        reordered (into (sorted-map-by #(compare (str %2) (str %1))) e)]
+    (is (= (log/entry-id e) (log/entry-id e)))
+    (is (= (log/entry-id e) (log/entry-id reordered))
+        "JCS sorts keys, so the id must not depend on map ordering")
+    (is (re-matches #"sha256:[0-9a-f]{64}" (log/entry-id e)))))
+
+(deftest the-author-is-derived-from-the-key-not-claimed
+  (is (= did-a (get (first (build specs seed-a)) "author")))
+  (is (= did-b (get (first (build specs seed-b)) "author"))))
+
+;; ── tampering: each reported at the right entry for the right reason ─────────
+
+(deftest editing-a-body-breaks-that-entrys-signature
+  (let [entries (assoc-in (build specs) [1 "body" "bot"] "bot:evil")
+        e (error-of (log/verify entries (opts)))]
+    (is (= 1 (:seq e)))
+    (is (= :bad-signature (:why e)))))
+
+(deftest editing-an-author-without-the-key-breaks-the-signature
+  (let [entries (assoc-in (build specs) [2 "author"] did-b)
+        e (error-of (log/verify entries (opts :author-authorised? (constantly true))))]
+    (is (= 2 (:seq e)))
+    (is (= :bad-signature (:why e)))))
+
+(deftest a-gap-is-reported-at-the-first-entry-after-it
+  (let [entries (build specs)
+        gapped (vec (concat (take 1 entries) (drop 2 entries)))
+        e (error-of (log/verify gapped (opts)))]
+    (is (= 2 (:seq e)) "the entry that arrived where seq 1 was due")
+    (is (= :seq-mismatch (:why e)))
+    (is (= 1 (:expected e)))))
+
+(deftest reordering-is-a-seq-mismatch
+  (let [[a b c d] (build specs)
+        e (error-of (log/verify [a c b d] (opts)))]
+    (is (= :seq-mismatch (:why e)))
+    (is (= 2 (:seq e)))))
+
+(deftest a-dropped-prefix-cannot-pass-as-a-whole-log
+  (let [e (error-of (log/verify (drop 1 (build specs)) (opts)))]
+    (is (= :seq-mismatch (:why e)))
+    (is (= 1 (:seq e)))
+    (is (= 0 (:expected e)))))
+
+(deftest rewriting-history-with-the-real-key-still-breaks-the-chain
+  (testing "an authorised author who re-signs entry 1 with different content
+            produces a valid signature on entry 1, but entry 2 still names the
+            OLD entry 1 — so the forgery is caught one entry later, and fixing
+            it means re-signing every later entry"
+    (let [entries (build specs)
+          forged (log/make-entry {:org org :seq 1 :prev (log/entry-id (nth entries 0))
+                                  :kind "assignment/issued"
+                                  :body {"goal" "g1" "bot" "bot:evil"}
+                                  :authority {"grant" "grant-1"}
+                                  :at (at 1) :seed seed-a})
+          swapped (assoc (vec entries) 1 forged)
+          e (error-of (log/verify swapped (opts)))]
+      (is (= 2 (:seq e)))
+      (is (= :prev-mismatch (:why e))))))
+
+(deftest truncation-is-invisible-per-entry-and-caught-by-a-known-head
+  (let [entries (build specs)
+        known-head (log/entry-id (last entries))
+        truncated (take 3 entries)]
+    (is (:ok (log/verify truncated (opts)))
+        "a prefix of a valid log is itself valid; nothing local can see the loss")
+    (let [e (error-of (log/verify truncated (opts :head known-head)))]
+      (is (= :head-mismatch (:why e)))
+      (is (= known-head (:expected e))))
+    (is (:ok (log/verify entries (opts :head known-head))))))
+
+;; ── authorisation ────────────────────────────────────────────────────────────
+
+(deftest an-unauthorised-author-is-rejected
+  (let [entries (build specs seed-b)
+        e (error-of (log/verify entries (opts)))]
+    (is (= 0 (:seq e)))
+    (is (= :author-not-authorised (:why e)))
+    (is (= did-b (:author e)))))
+
+(deftest a-rotated-out-key-cannot-sign-later-entries
+  (testing "authorisation is asked AT the entry's seq: did-a signs 0..1, then
+            rotates to did-b, who signs 2..3"
+    (let [first-two (build (take 2 specs) seed-a)
+          last-id (log/entry-id (last first-two))
+          [e2] (let [e (log/make-entry {:org org :seq 2 :prev last-id
+                                        :kind "grant/issued" :body {"grant" "g"}
+                                        :authority {} :at (at 2) :seed seed-b})]
+                 [e])
+          e3 (log/make-entry {:org org :seq 3 :prev (log/entry-id e2)
+                              :kind "goal/closed" :body {"goal" "g1"}
+                              :authority {} :at (at 3) :seed seed-b})
+          authorised? (fn [author n]
+                        (if (< n 2) (= author did-a) (= author did-b)))
+          good (vec (concat first-two [e2 e3]))]
+      (is (:ok (log/verify good (opts :author-authorised? authorised?))))
+      (let [late-a (log/make-entry {:org org :seq 2 :prev last-id
+                                    :kind "grant/issued" :body {"grant" "g"}
+                                    :authority {} :at (at 2) :seed seed-a})
+            e (error-of (log/verify (conj (vec first-two) late-a)
+                                    (opts :author-authorised? authorised?)))]
+        (is (= 2 (:seq e)))
+        (is (= :author-not-authorised (:why e))
+            "the old key's signature is genuine; it is the position that is refused")))))
+
+(deftest an-unresolved-authority-reference-is-rejected
+  (let [entries (build specs)
+        resolves? (fn [entry] (not= "grant-1" (get-in entry ["authority" "grant"])))
+        e (error-of (log/verify entries (opts :authority-resolves? resolves?)))]
+    (is (= 1 (:seq e)))
+    (is (= :authority-unresolved (:why e)))))
+
+(deftest resolvers-are-required-not-defaulted
+  (testing "a verifier that defaults to yes approves anything"
+    (is (thrown? clojure.lang.ExceptionInfo (log/verify (build specs) {})))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (log/verify (build specs) {:author-authorised? (constantly true)})))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (log/verify (build specs) {:authority-resolves? (constantly true)})))))
+
+;; ── shape ────────────────────────────────────────────────────────────────────
+
+(deftest an-unknown-kind-is-malformed-even-when-correctly-signed
+  (let [e0 (log/make-entry {:org org :seq 0 :prev nil :kind "bot/chatted"
+                            :body {} :authority {} :at (at 0) :seed seed-a})
+        e (error-of (log/verify [e0] (opts)))]
+    (is (= :malformed (:why e)))
+    (is (= :unknown-kind (:detail e)))))
+
+(deftest an-unknown-schema-is-malformed
+  (let [entries (assoc-in (build specs) [0 "schema"] "cloud.itonami.app.log-entry.v0")
+        e (error-of (log/verify entries (opts)))]
+    (is (= :malformed (:why e)))
+    (is (= :unknown-schema (:detail e)))))
+
+(deftest a-non-map-entry-is-malformed-not-an-exception
+  (let [e (error-of (log/verify [nil] (opts)))]
+    (is (= :malformed (:why e)))
+    (is (= :not-a-map (:detail e)))))
+
+(deftest a-mixed-organization-log-is-rejected
+  (let [e0 (first (build specs))
+        other (log/make-entry {:org "org:other" :seq 1 :prev (log/entry-id e0)
+                               :kind "goal/closed" :body {} :authority {}
+                               :at (at 1) :seed seed-a})
+        e (error-of (log/verify [e0 other] (opts)))]
+    (is (= 1 (:seq e)))
+    (is (= :org-mismatch (:why e)))))
+
+(deftest a-body-jcs-cannot-canonicalize-is-reported-as-that
+  (testing "a set is not JSON; the entry could never have been signed"
+    (let [entries (assoc-in (build specs) [0 "body"] {"tags" #{"a"}})
+          e (error-of (log/verify entries (opts)))]
+      (is (= 0 (:seq e)))
+      (is (= :uncanonicalizable (:why e))))))
+
+(deftest a-non-hex-signature-is-a-bad-signature-not-an-exception
+  (let [entries (assoc-in (build specs) [0 "sig"] "not-hex")
+        e (error-of (log/verify entries (opts)))]
+    (is (= 0 (:seq e)))
+    (is (= :bad-signature (:why e)))))
+
+(deftest only-the-first-problem-is-reported
+  (let [entries (-> (build specs)
+                    (assoc-in [1 "body" "bot"] "x")
+                    (assoc-in [3 "body" "op"] "y"))
+        e (error-of (log/verify entries (opts)))]
+    (is (= 1 (:seq e)))))

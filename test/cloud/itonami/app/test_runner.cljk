@@ -203,6 +203,7 @@
             [cloud.itonami.app.drive-store-migration-test]
             [cloud.itonami.app.drive-fs-test]
             [cloud.itonami.app.latest-test]
+            [cloud.itonami.app.log-test]
             [cloud.itonami.app.graph-test]
             [cloud.itonami.app.work-governance-test]
             [cloud.itonami.app.github-projects-writeback-test]
@@ -419,6 +420,7 @@
     cloud.itonami.app.drive-store-migration-test
     cloud.itonami.app.drive-fs-test
     cloud.itonami.app.latest-test
+    cloud.itonami.app.log-test
     cloud.itonami.app.graph-test
     cloud.itonami.app.work-governance-test
     cloud.itonami.app.github-projects-writeback-test
