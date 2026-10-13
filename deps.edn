@@ -698,6 +698,7 @@
   ;;
   ;;   kbb -M:test:gen
   :gen {:main-opts ["-m" "cloud.itonami.app.kotoba-oracle-gen"]}
+  :collection-test {:extra-paths ["test"] :main-opts ["-m" "collection-nbb"]}
   :test {:extra-paths ["test"]
          :extra-deps {datascript/datascript {:mvn/version "1.7.8"}
                       ;; JVM host for kexe artifacts. TEST-ONLY: the default

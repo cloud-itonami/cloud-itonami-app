@@ -1,0 +1,36 @@
+{
+  "schema": "itonami.agency.host.v1",
+  "enabled": false,
+  "bot": "itonami-ad-operator",
+  "role": "itonami-ad-operator",
+  "client": "REPLACE_WITH_CUSTOMER_ID",
+  "ownerPublicKey": "REPLACE_WITH_OWNER_ED25519_PUBLIC_PEM",
+  "allowedTools": [
+    "agency_status",
+    "agency_mail_list",
+    "agency_mail_read",
+    "agency_mail_context",
+    "agency_mail_submissions",
+    "agency_mail_draft",
+    "agency_mail_send",
+    "agency_aozora_metrics",
+    "agency_aozora_publish",
+    "agency_event_append",
+    "agency_events_read"
+  ],
+  "encryptionKeyEnv": "AGENCY_AD_EVENT_KEY",
+  "aozora": {
+    "did": "did:key:REPLACE_WITH_AD_BOT_DID",
+    "pds": "https://aozora.app",
+    "appview": "https://aozora.app",
+    "tokenEnv": "AGENCY_AD_AOZORA_TOKEN"
+  },
+  "mail": {
+    "apiUrl": "https://mail.example.invalid/jmap/",
+    "accountId": "REPLACE_WITH_ACCOUNT_ID",
+    "mailboxId": "REPLACE_WITH_DEDICATED_DRAFT_AND_INBOX_MAILBOX_ID",
+    "identityId": "REPLACE_WITH_IDENTITY_ID",
+    "from": "ad-operator@example.invalid",
+    "tokenEnv": "AGENCY_AD_MAIL_TOKEN"
+  }
+}

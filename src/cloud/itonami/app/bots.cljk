@@ -60,6 +60,7 @@
             [cloud.itonami.app.app-directory :as app-directory]
             [cloud.itonami.app.bot :as bot]
             [cloud.itonami.app.bot-authority :as bot-authority]
+            [cloud.itonami.app.collection-tools :as collection-tools]
             [cloud.itonami.app.bot-dispatcher :as bot-dispatcher]
             [cloud.itonami.app.messenger :as messenger]
             [cloud.itonami.app.bot-identity :as bot-identity]
@@ -3032,6 +3033,7 @@
 
     :else
     (vec (concat [learning-tool skill-use-tool] profile-tools commerce/tool-definitions
+                 (collection-tools/tool-definitions configuration b)
                  (browser-tools configuration b)
                  (computer-tools configuration b)
                  (peer-tools b)
@@ -3087,6 +3089,7 @@
       ;; A Hokusai submit spends the operator's vendor balance; it is held
       ;; for approval like every other write (ADR-0092).
       (media-tools/write-tool? tool-name)
+      (collection-tools/write-tool? tool-name)
       (let [registry (connectors/enabled configuration)]
         (boolean
          (some (fn [d] (when-let [t (cm/tool d tool-name)]
@@ -3422,8 +3425,11 @@
                            (disk-space/tool? tool-name)
                            (media-tools/tool? tool-name)
                            (git-hygiene/tool? tool-name)
-                           (domain-tools/tool? tool-name))
+                           (domain-tools/tool? tool-name)
+                           (collection-tools/tool? tool-name))
                      (cond
+                       (collection-tools/tool? tool-name)
+                       (collection-tools/call-tool! configuration b tool-name args)
                        (= "profile_read" tool-name) (select-keys (ensure-profile! b) [:revision :files])
                        (= "profile_update" tool-name)
                        (bot-profile/propose-update! b (:revision args) {(:file args) (:content args)}
