@@ -5,7 +5,12 @@
       "context_from": null,
       "deliver": "local",
       "enabled": true,
-      "enabled_toolsets": null,
+      "enabled_toolsets": [
+        "terminal",
+        "files",
+        "web",
+        "skills"
+      ],
       "id": "ac0d9eb87df6",
       "model": "mishima",
       "name": "itonami-ingest-scout",
@@ -27,7 +32,12 @@
       "context_from": null,
       "deliver": "local",
       "enabled": true,
-      "enabled_toolsets": null,
+      "enabled_toolsets": [
+        "terminal",
+        "files",
+        "web",
+        "skills"
+      ],
       "id": "38ec33ab7f17",
       "model": "mishima",
       "name": "itonami-coverage-scout",
@@ -49,7 +59,12 @@
       "context_from": null,
       "deliver": "local",
       "enabled": true,
-      "enabled_toolsets": null,
+      "enabled_toolsets": [
+        "terminal",
+        "files",
+        "web",
+        "skills"
+      ],
       "id": "4620943f7c8f",
       "model": "mishima",
       "name": "itonami-valueflow-scribe",
@@ -151,7 +166,12 @@
       ],
       "deliver": "local",
       "enabled": true,
-      "enabled_toolsets": null,
+      "enabled_toolsets": [
+        "terminal",
+        "files",
+        "web",
+        "skills"
+      ],
       "id": "92c9401789d8",
       "model": "mishima",
       "name": "os-stack-observe-weekly",
@@ -175,7 +195,12 @@
       ],
       "deliver": "local",
       "enabled": true,
-      "enabled_toolsets": null,
+      "enabled_toolsets": [
+        "terminal",
+        "files",
+        "web",
+        "skills"
+      ],
       "id": "d325bb9bd6c2",
       "model": "mishima",
       "name": "maturity-audit-weekly",
@@ -221,7 +246,12 @@
       "context_from": null,
       "deliver": "local",
       "enabled": true,
-      "enabled_toolsets": null,
+      "enabled_toolsets": [
+        "terminal",
+        "files",
+        "web",
+        "skills"
+      ],
       "id": "ea56316b1a69",
       "model": "mishima",
       "name": "transport-marketing",
@@ -303,6 +333,30 @@
       "skill": null,
       "skills": [],
       "workdir": null
+    },
+    {
+      "id": "e63477869293",
+      "name": "ISIC/ISCO registration check",
+      "prompt": "ISIC/ISCO registration check",
+      "skills": [],
+      "skill": null,
+      "model": "mishima",
+      "provider": "murakumo",
+      "base_url": "https://api.murakumo.cloud/v1",
+      "script": "iscic_register_evidence.hy",
+      "no_agent": false,
+      "monitor_script": null,
+      "monitor_url": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 4 * * *",
+        "display": "0 4 * * *"
+      },
+      "enabled": true,
+      "deliver": "local",
+      "enabled_toolsets": [],
+      "workdir": "/Users/junkawasaki/.itonami-fleet/worktrees/itonami-isic"
     }
   ]
 }
