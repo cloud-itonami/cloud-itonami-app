@@ -1,0 +1,21 @@
+{
+  "lexicon": 1,
+  "id": "cloud.itonami.agency.event",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "any",
+      "description": "Client-owned encrypted agency evidence. Ciphertext is public; plaintext is not. Scope and owner authorization are authenticated inside the envelope.",
+      "record": {
+        "type": "object",
+        "required": ["version", "iv", "ciphertext", "tag"],
+        "properties": {
+          "version": { "type": "integer", "const": 1 },
+          "iv": { "type": "string", "maxLength": 24 },
+          "ciphertext": { "type": "string", "maxLength": 24000 },
+          "tag": { "type": "string", "maxLength": 32 }
+        }
+      }
+    }
+  }
+}

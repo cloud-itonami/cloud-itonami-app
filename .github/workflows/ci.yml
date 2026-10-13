@@ -13,6 +13,16 @@ permissions:
 # Do not rename that leftover into this file and pretend it is gone.
 
 jobs:
+  agency-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Agency permissions, two-host effects and MCP stdio
+        run: node --test test/agency-tools.test.mjs
+
   amu-jvm-free-emit:
     runs-on: ubuntu-latest
     steps:

@@ -1,0 +1,49 @@
+# Host exports ITONAMI_AGENCY_APP_DIR and ITONAMI_AGENCY_CONFIG.
+# Credential and issuer-key values never belong in this source profile.
+model:
+  provider: murakumo
+  base_url: https://api.murakumo.cloud/v1
+  default: mishima
+  max_tokens: 8192
+  context_length: 131072
+providers:
+  murakumo:
+    base_url: https://api.murakumo.cloud/v1
+    api_mode: chat_completions
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+fallback_providers: []
+agent:
+  max_turns: 40
+  run_budget_seconds: 600
+platform_toolsets:
+  cli: [mcp-agency]
+  telegram: []
+  discord: []
+  whatsapp: []
+  slack: []
+  signal: []
+  homeassistant: []
+  qqbot: []
+  yuanbao: []
+  teams: []
+  google_chat: []
+mcp_servers:
+  agency:
+    env:
+      ITONAMI_AGENCY_ROLE: itonami-sales-agent
+    command: /bin/sh
+    args:
+      - -c
+      - 'exec node "${ITONAMI_AGENCY_APP_DIR:?}/bin/itonami-agency-mcp.mjs"'
+    connect_timeout: 30.0
+    tools:
+      include:
+        - agency_status
+        - agency_mail_list
+        - agency_mail_read
+        - agency_mail_context
+        - agency_mail_submissions
+        - agency_mail_draft
+        - agency_mail_send
+        - agency_event_append
+        - agency_events_read
