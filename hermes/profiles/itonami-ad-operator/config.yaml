@@ -1,5 +1,4 @@
-# Host exports ITONAMI_AGENCY_APP_DIR and ITONAMI_AGENCY_CONFIG.
-# Credential and issuer-key values never belong in this source profile.
+# Host-local blocks (command_allowlist, onboarding, secrets, skills, terminal) are kept on the host and omitted here.
 model:
   provider: murakumo
   base_url: https://api.murakumo.cloud/v1
