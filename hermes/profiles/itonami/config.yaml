@@ -15,8 +15,8 @@ fallback_providers: []
 agent:
   max_turns: 500
 compression:
-  threshold_tokens: 60000
-  proactive_prune_tokens: 40000
+  threshold_tokens: 20000
+  proactive_prune_tokens: 16000
   protect_last_n: 8
   tail_mode: lean
 auxiliary:

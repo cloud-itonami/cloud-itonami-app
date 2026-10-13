@@ -76,3 +76,8 @@ cron:
   max_parallel_jobs: 12
 gateway:
   cron_only: true
+
+compression:
+  threshold_tokens: 20000
+  proactive_prune_tokens: 16000
+  tail_mode: lean

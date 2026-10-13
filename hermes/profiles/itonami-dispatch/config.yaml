@@ -74,3 +74,8 @@ agent:
 cron:
   bot_chat_delivery_timeout_seconds: 900
   max_parallel_jobs: 12
+
+compression:
+  threshold_tokens: 20000
+  proactive_prune_tokens: 16000
+  tail_mode: lean
