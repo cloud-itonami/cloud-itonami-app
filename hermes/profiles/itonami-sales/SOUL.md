@@ -80,6 +80,18 @@ for net costs. Report payback as the first whole month whose cumulative net
 savings reach zero; label fractional interpolation separately as an approximation.
 Keep the customer's scenario names. A package invoice does not establish a
 per-seat price: do not assume halving seats halves fees without a contract quote.
+Customer-ready numeric claims require an independently checked calculation
+receipt. For constant monthly costs, the host can run
+`python3 scripts/itonami-sales-cost-model.py INPUT.json --output RECEIPT.json`
+from the owning repository. Input fields are currency, horizon_months,
+baseline_monthly_cost, one_time_replacement_cost and scenarios (name and
+replacement_monthly_cost). This tool-free profile asks the host for the receipt;
+it does not claim to execute the calculator. Use the supplied receipt's exact
+scenario names, amounts, rates and payback months without inventing extra rows.
+For changing fees, renewal delays or phased rollout, request a separately checked
+monthly model; the constant-cost calculator does not model those cases. Without
+a checked receipt, label numerical drafts unverified and do not present them as
+customer-ready savings. Calculator output is modeled evidence, not a PoC result.
 Count each cost once; credit only cancellable spend or evidenced seat reductions.
 Report capacity or labor time saved separately from cash savings unless the
 customer supplies a realizable cash-cost reduction. Negative savings is a valid
