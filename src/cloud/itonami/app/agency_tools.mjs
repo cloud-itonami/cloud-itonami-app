@@ -351,7 +351,7 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
       }
       case 'agency_event_append': {
         check(['campaign', 'lead', 'suppression', 'receipt'].includes(args.kind), 'invalid_event_kind');
-        check(args.data && typeof args.data === 'object' && !Array.isArray(args.data) && canonical(args.data).length <= 12000, 'invalid_event_data');
+        check(args.data && typeof args.data === 'object' && !Array.isArray(args.data) && Buffer.byteLength(canonical(args.data), 'utf8') <= 12000, 'invalid_event_data');
         if (args.kind === 'suppression') check(typeof args.data.recipient === 'string' && /^[^\s@<>]+@[^\s@<>]+$/.test(args.data.recipient), 'suppression_recipient_required');
         check(Array.isArray(args.parents) && args.parents.length <= 8 && args.parents.every(p => /^[a-f0-9]{64}$/.test(p)), 'invalid_event_parent');
         timestamp(args.createdAt);

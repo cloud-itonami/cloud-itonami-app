@@ -3,7 +3,7 @@
 // to the MCP process. Stdin: {tool, arguments}; stdout: exact signed envelope.
 import { readFileSync } from 'node:fs';
 import { randomBytes, sign, createPrivateKey, createPublicKey } from 'node:crypto';
-import { canonical, digest, createAgency } from '../runtime/agency-tools.mjs';
+import { canonical, digest, createAgency } from '../src/cloud/itonami/app/agency_tools.mjs';
 
 try {
   const config = JSON.parse(readFileSync(process.env.ITONAMI_AGENCY_CONFIG, 'utf8'));

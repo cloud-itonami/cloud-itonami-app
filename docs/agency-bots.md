@@ -3,6 +3,7 @@
 `itonami-ad-operator` と `itonami-sales-agent` はメールと aozora.app のみを業務
 チャネルとする専用プロフィール。`hermes/profiles/` が source owner であり、
 itonami-registry にプロフィールを複製しない。推論は Murakumo のみ。
+圧縮・補助推論の provider と fallback も Murakumo に限定した設定を持つ。
 
 実行ツールは `bin/itonami-agency-mcp.mjs` の独立した stdio MCP サーバー。
 Node 22 以降で動き、JVM、追加 npm パッケージ、ローカル Itonami server、
@@ -105,6 +106,7 @@ source profile の MCP 設定は固定 command とこの変数だけを使う。
 
 業務記録は owner 承認イベントを AES-256-GCM で暗号化し、Bot DID の repository に
 保存する。cloud.itonami.agency.event の公開面は ciphertext/IV/tag/version のみ。
+event data は UTF-8 で 12,000 bytes まで。長い原文はメール側に残して参照を記録する。
 lead の住所、宛先、商談情報は plaintext の公開 record にしない。
 [AT repository は公開データの保存面](https://atproto.com/specs/repository)なので、
 暗号化鍵を持たない第三者が読める前提で設計する。ciphertext の長さと投稿頻度は

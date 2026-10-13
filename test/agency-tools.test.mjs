@@ -4,7 +4,7 @@ import { generateKeyPairSync, sign, randomBytes } from 'node:crypto';
 import { readFileSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { createAgency, canonical, digest, tools, EVENT_COLLECTION } from '../runtime/agency-tools.mjs';
+import { createAgency, canonical, digest, tools, EVENT_COLLECTION } from '../src/cloud/itonami/app/agency_tools.mjs';
 
 function fixture(overrides = {}, { missingRecordStatus = 200 } = {}) {
   const { privateKey, publicKey } = generateKeyPairSync('ed25519');

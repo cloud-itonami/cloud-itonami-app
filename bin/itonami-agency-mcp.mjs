@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-import { createAgency } from '../runtime/agency-tools.mjs';
+import { createAgency } from '../src/cloud/itonami/app/agency_tools.mjs';
 
 // One process serves one Bot/client. No ambient app store, account discovery,
 // browser cookies, shell tool, credentials endpoint or key-generation tool.

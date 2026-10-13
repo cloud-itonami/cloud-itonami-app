@@ -11,6 +11,59 @@ providers:
     api_mode: chat_completions
     key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
 fallback_providers: []
+auxiliary:
+  free_only: true
+  vision:
+    provider: murakumo
+    base_url: https://api.murakumo.cloud/v1
+    model: qwen3-vl-2b-instruct
+    reasoning_effort: none
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  web_extract:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  compression:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    reasoning_effort: none
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  skills_hub:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  approval:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  mcp:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  title_generation:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    reasoning_effort: none
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  triage_specifier:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
 agent:
   max_turns: 40
   run_budget_seconds: 600
