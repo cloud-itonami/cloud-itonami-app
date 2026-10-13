@@ -103,6 +103,9 @@ test('advertising publish requires PR, is idempotent across fresh hosts, and ver
   assert.equal((await restarted.call('agency_aozora_publish', args)).uri, first.uri);
   assert.equal(f.writes(), 1);
   assert.equal(first.status, 'verified_record');
+  f.env.AGENCY_AD_AOZORA_TOKEN = 'human.session.jwt';
+  await assert.rejects(f.agency.call('agency_aozora_publish', f.approved('agency_aozora_publish', { text: '[PR] JWT prohibited', createdAt: '2027-01-15T08:00:00Z' })), /aozora_agent_biscuit_required/);
+  assert.equal(f.writes(), 1);
 });
 
 test('aozora named missing-record errors work under 200/400/404, but an unavailable API never permits a write', async () => {

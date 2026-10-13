@@ -148,6 +148,7 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
   }
   async function xrpc(method, arguments_, write = false, publicView = false) {
     const url = new URL(`/xrpc/${method}`, publicView ? appview : pds);
+    if (write) check(!envSecret(env, config.aozora.tokenEnv).includes('.'), 'aozora_agent_biscuit_required');
     if (!write) for (const [k, v] of Object.entries(arguments_)) {
       for (const item of Array.isArray(v) ? v : [v]) url.searchParams.append(k, item);
     }
