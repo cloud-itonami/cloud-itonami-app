@@ -99,10 +99,13 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
   };
   async function request(url, method, body, secretEnv) {
     // URLs and credentials are host-owned, not arguments from the model.
+    // Resolve before transport: missing credentials are a known refusal,
+    // never an ambiguous send/publication outcome.
+    const token = secretEnv ? envSecret(env, secretEnv) : undefined;
     let response;
     try {
       response = await fetch(url, { method, redirect: 'error', signal: AbortSignal.timeout(30000),
-        headers: { 'Content-Type': 'application/json', ...(secretEnv ? { Authorization: `Bearer ${envSecret(env, secretEnv)}` } : {}) },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     } catch { fail('transport_outcome_unknown_do_not_retry_writes'); }
     // Never echo provider errors/headers, which may contain secrets or body data.

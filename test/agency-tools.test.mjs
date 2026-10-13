@@ -203,6 +203,8 @@ test('transport failures do not retry or leak tokens', async () => {
   const a = createAgency(f.config, { env: f.env, now: () => f.now, fetch: () => { calls++; throw new Error('private-secret'); } });
   await assert.rejects(a.call('agency_mail_list'), /transport_outcome_unknown_do_not_retry_writes/);
   assert.equal(calls, 1);
+  const missingCredential = createAgency(f.config, { env: {}, fetch: () => assert.fail('No HTTP without configured credential') });
+  await assert.rejects(missingCredential.call('agency_mail_list'), /credential_not_configured/);
 });
 
 test('actual stdio launcher initializes, lists role tools, returns status and rejects writes without credentials', () => {
