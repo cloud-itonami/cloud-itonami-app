@@ -19,8 +19,8 @@
   "encryptionKeyEnv": "AGENCY_SALES_EVENT_KEY",
   "aozora": {
     "did": "did:key:REPLACE_WITH_SALES_BOT_DID",
-    "pds": "https://aozora.app",
-    "appview": "https://aozora.app",
+    "pds": "https://pds.aozora.app",
+    "appview": "https://appview.aozora.app",
     "tokenEnv": "AGENCY_SALES_AOZORA_TOKEN"
   },
   "mail": {

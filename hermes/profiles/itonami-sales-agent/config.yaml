@@ -83,6 +83,11 @@ mcp_servers:
   agency:
     env:
       ITONAMI_AGENCY_ROLE: itonami-sales-agent
+      ITONAMI_AGENCY_APP_DIR: ${ITONAMI_AGENCY_APP_DIR}
+      ITONAMI_AGENCY_CONFIG: ${ITONAMI_AGENCY_CONFIG}
+      AGENCY_SALES_MAIL_TOKEN: ${AGENCY_SALES_MAIL_TOKEN}
+      AGENCY_SALES_AOZORA_TOKEN: ${AGENCY_SALES_AOZORA_TOKEN}
+      AGENCY_SALES_EVENT_KEY: ${AGENCY_SALES_EVENT_KEY}
     command: /bin/sh
     args:
       - -c
@@ -97,5 +102,6 @@ mcp_servers:
         - agency_mail_submissions
         - agency_mail_draft
         - agency_mail_send
+        - agency_mail_submit
         - agency_event_append
         - agency_events_read

@@ -9,7 +9,9 @@ let agency;
 try {
   const role = process.env.ITONAMI_AGENCY_ROLE;
   const examples = { 'itonami-ad-operator': 'agency-ad-operator', 'itonami-sales-agent': 'agency-sales-agent' };
-  const path = process.env.ITONAMI_AGENCY_CONFIG ?? (examples[role] ? new URL(`../config/${examples[role]}.example.json`, import.meta.url) : null);
+  const configuredPath = process.env.ITONAMI_AGENCY_CONFIG;
+  // Hermes preserves an unresolved optional env reference as its literal.
+  const path = configuredPath && configuredPath !== '${ITONAMI_AGENCY_CONFIG}' ? configuredPath : (examples[role] ? new URL(`../config/${examples[role]}.example.json`, import.meta.url) : null);
   if (!path) throw new Error('configuration_required');
   const configuration = JSON.parse(readFileSync(path, 'utf8'));
   if (role && configuration.role !== role) throw new Error('profile_role_mismatch');
