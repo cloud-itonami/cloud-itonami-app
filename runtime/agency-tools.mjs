@@ -62,10 +62,10 @@ export const tools = [
   { name: 'agency_events_read', description: 'Read and decrypt this client’s signed events. Return pagination and missing parents/forks explicitly; never treat a partial read as complete.', inputSchema: objectSchema({ cursor: string, limit: { type: 'integer', minimum: 1, maximum: 100 } }) }
 ];
 
-export function authorize(config, name, args, now = Date.now()) {
-  check(config.enabled === true, 'agency_disabled');
+export function authorize(config, name, args, now = Date.now(), historical = false) {
+  if (!historical) check(config.enabled === true, 'agency_disabled');
   check(roles.has(config.role), 'invalid_role');
-  check(config.allowedTools?.includes(name), 'tool_not_granted');
+  if (!historical) check(config.allowedTools?.includes(name), 'tool_not_granted');
   exactKeys(args.authorization, ['claims', 'signature']);
   const { claims, signature } = args.authorization;
   exactKeys(claims, ['version', 'bot', 'client', 'role', 'tool', 'argsHash', 'notBefore', 'expiresAt', 'nonce']);
@@ -213,7 +213,7 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
     check(value.scope?.bot === config.bot && value.scope.client === config.client && value.scope.role === config.role, 'event_client_mismatch');
     // Historical signatures are verified at their issuance time, not current
     // expiry. Expiry limits new effects; it does not erase signed history.
-    authorize(config, 'agency_event_append', { ...value.input, authorization: value.authorization }, value.authorization.claims.notBefore);
+    authorize(config, 'agency_event_append', { ...value.input, authorization: value.authorization }, value.authorization.claims.notBefore, true);
     check(seal(value.input, value.authorization).rkey === rkey, 'event_integrity_mismatch');
     return { id: rkey, cid: row.cid, ...value.input };
   }

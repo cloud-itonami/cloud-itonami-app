@@ -114,6 +114,9 @@ test('private records encrypt lead data, recover on another host, detect tamperi
   const read = await a.call('agency_events_read');
   assert.equal(read.events[0].id, first.eventId); assert.deepEqual(read.events[0].data, action.data);
   assert.equal(read.historyComplete, true);
+  const readOnly = createAgency({ ...f.config, allowedTools: ['agency_events_read'] }, { env: f.env, fetch: f.fetch, now: () => f.now });
+  assert.equal((await readOnly.call('agency_events_read')).events.length, 1);
+  await assert.rejects(readOnly.call('agency_event_append', args), /tool_not_granted/);
   const other = createAgency({ ...f.config, client: 'customer-b' }, { env: f.env, fetch: f.fetch });
   await assert.rejects(other.call('agency_events_read'), /event_client_mismatch/);
   const row = [...f.records.values()][0]; row.value.tag = Buffer.alloc(16).toString('base64');
