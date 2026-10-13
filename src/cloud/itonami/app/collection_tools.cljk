@@ -1,0 +1,27 @@
+(ns cloud.itonami.app.collection-tools
+  "Resident collection tool adapter. Hosting grants are rechecked per call."
+  (:require [cloud.itonami.app.collection-profile :as collection]
+            [cloud.itonami.app.bot-profile :as profile]
+            [cloud.itonami.app.store :as store]))
+
+(def tool? collection/tool?)
+(def write-tool? collection/write-tool?)
+(def tool-definitions collection/tool-definitions)
+
+(defn call-tool! [configuration b name args]
+  (let [g (or (collection/grant configuration b)
+              (throw (ex-info "Collection is not owner-admitted for this Bot."
+                              {:type :collection/no-grant})))
+        p (profile/read-profile b)
+        portable (collection/snapshot b g p)]
+    (case name
+      "collection_profile" (do
+                             (when (seq args) (throw (ex-info "No arguments accepted." {:type :collection/arguments})))
+                             {:state :prepared :profile portable})
+      "collection_propose"
+      (let [record (collection/proposal b g args)]
+        ;; One proposal per binding. Retries replace the same bounded proposal;
+        ;; immutable campaign admission and job IDs belong to Murakumo.
+        (store/transact! assoc-in [:bots :collection-proposals (collection/binding-key b)] record)
+        record)
+      (throw (ex-info "Unknown collection tool." {:type :collection/unknown-tool})))))

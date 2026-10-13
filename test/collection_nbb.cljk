@@ -1,0 +1,8 @@
+(ns collection-nbb
+  (:require [cljs.test :as test]
+            [cloud.itonami.app.collection-tools-test]))
+
+(defmethod test/report [::test/default :end-run-tests] [m]
+  (when-not (test/successful? m) (set! (.-exitCode js/process) 1)))
+
+(defn -main [& _] (test/run-tests 'cloud.itonami.app.collection-tools-test))

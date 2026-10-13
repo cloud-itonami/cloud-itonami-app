@@ -1,0 +1,50 @@
+(ns cloud.itonami.app.collection-profile
+  "Opt-in collection profiles and bounded plan proposals. The resident binds
+  owner/org/bot and revision; neither a model nor profile text grants hosting,
+  egress, funding or settlement authority.")
+
+(def tools
+  [{:name "collection_profile"
+    :description "Read the owner-approved portable collector profile for hosting on Murakumo. It shares SOUL only, never private memory or credentials."
+    :parameters {:type "object" :properties {} :additionalProperties false}}
+   {:name "collection_propose"
+    :description "Propose one bounded collection plan within the owner's admitted seed URLs and budget ceilings. A proposal is not execution or payment. (write)"
+    :parameters {:type "object" :required ["seeds" "max_pages" "max_depth"]
+                 :properties {:seeds {:type "array" :items {:type "string"}}
+                              :max_pages {:type "integer"} :max_depth {:type "integer"}}
+                 :additionalProperties false}}])
+(def names (set (map :name tools)))
+(defn tool? [name] (contains? names name))
+(defn write-tool? [name] (= "collection_propose" name))
+(defn binding-key [b] [(:bot/organization b) (:bot/owner b) (:bot/id b)])
+
+(defn grant [configuration b]
+  (let [g (get-in configuration [:bots :collection :grants (binding-key b)])]
+    (when (and (true? (:enabled? g)) (string? (:owner-did g))
+               (re-matches #"did:key:[A-Za-z0-9]+" (:owner-did g))
+               (integer? (:profile-revision g)) (pos? (:profile-revision g))
+               (set? (:seeds g)) (seq (:seeds g))
+               (integer? (:max-pages g)) (<= 1 (:max-pages g) 20)
+               (integer? (:max-depth g)) (<= 0 (:max-depth g) 3)) g)))
+
+(defn tool-definitions [configuration b] (if (grant configuration b) tools []))
+
+(defn snapshot [b g p]
+  (when-not (= (:profile-revision g) (:revision p))
+    (throw (ex-info "Profile changed; owner must review the new hosting snapshot."
+                    {:type :collection/profile-revision})))
+  {:schema :web/collector-profile-v1 :owner-did (:owner-did g) :bot-id (:bot/id b)
+   :soul (get-in p [:files "SOUL.md"]) :tools [:web/crawl :web/index]})
+
+(defn proposal [b g args]
+  (when-not (and (= #{:seeds :max_pages :max_depth} (set (keys args)))
+                 (vector? (:seeds args)) (<= 1 (count (:seeds args)) 5)
+                 (every? (:seeds g) (:seeds args))
+                 (integer? (:max_pages args)) (<= 1 (:max_pages args) (:max-pages g))
+                 (integer? (:max_depth args)) (<= 0 (:max_depth args) (:max-depth g)))
+    (throw (ex-info "Plan exceeds admitted collection targets or ceilings."
+                    {:type :collection/plan-not-admitted})))
+  {:binding (binding-key b) :owner-did (:owner-did g) :profile-revision (:profile-revision g)
+   :state :proposed :plan {:seeds (vec (sort (distinct (:seeds args))))
+                          :max-pages (:max_pages args) :max-depth (:max_depth args)
+                          :delay-ms 1000 :scope :same-host}})

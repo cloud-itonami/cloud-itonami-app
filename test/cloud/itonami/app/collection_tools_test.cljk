@@ -1,0 +1,30 @@
+(ns cloud.itonami.app.collection-tools-test
+  (:require [kotoba.test :refer [deftest is]]
+            [cloud.itonami.app.collection-profile :as collection]))
+
+(def bot {:bot/id "collector-1" :bot/owner "account-1" :bot/organization "org-1"})
+(def grant {:enabled? true :owner-did "did:key:zOwner" :profile-revision 2
+            :seeds #{"https://example.com/"} :max-pages 5 :max-depth 1})
+(def configuration {:bots {:collection {:grants {(collection/binding-key bot) grant}}}})
+
+(deftest hosting-is-explicit-and-owner-bound
+  (is (= 2 (count (collection/tool-definitions configuration bot))))
+  (is (empty? (collection/tool-definitions configuration (assoc bot :bot/owner "other"))))
+  (is (empty? (collection/tool-definitions configuration (assoc bot :bot/organization "other"))))
+  (is (empty? (collection/tool-definitions {} bot)))
+  (is (collection/write-tool? "collection_propose")))
+
+(deftest portable-snapshot-excludes-private-memory
+  (let [p {:revision 2 :files {"SOUL.md" "Collect assigned evidence."
+                             "USER.md" "Private preferences" "MEMORY.md" "Private observations"}}
+        exported (collection/snapshot bot grant p)]
+    (is (= :web/collector-profile-v1 (:schema exported)))
+    (is (= #{:schema :owner-did :bot-id :soul :tools} (set (keys exported))))
+    (is (thrown? #?(:clj Exception :cljs js/Error) (collection/snapshot bot grant (assoc p :revision 3))))))
+
+(deftest proposals-cannot-expand-an-owner-grant
+  (let [args {:seeds ["https://example.com/"] :max_pages 2 :max_depth 1}]
+    (is (= :proposed (:state (collection/proposal bot grant args))))
+    (is (thrown? #?(:clj Exception :cljs js/Error) (collection/proposal bot grant (assoc args :seeds ["https://other.example/"])) ))
+    (is (thrown? #?(:clj Exception :cljs js/Error) (collection/proposal bot grant (assoc args :max_pages 6))))
+    (is (thrown? #?(:clj Exception :cljs js/Error) (collection/proposal bot grant (assoc args :rates {:tokens 999}))))))
