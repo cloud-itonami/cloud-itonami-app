@@ -5,32 +5,10 @@
 ;; session even when an older resident configuration still contains settings
 ;; for them.
 ;; ---------------------------------------------------------------------------
-;; Bots run on murakumo's OpenRouter-backed flash models (owner instruction
-;; 2026-08-30: stabilize like Grok Bots / Hermes Agent; pay x402 USDC; consume
-;; credits). They talk only to api.murakumo.cloud. They do not hold an
-;; OpenRouter key.
-;;
-;; Grok Bots survive by dereferencing the `murakumo-main` alias. Hermes
-;; measured 2026-08-30 that `z-ai/glm-5.3-flash` is the primary that actually
-;; completes (56 ok / 7 fail) and that the OpenRouter free router is worse.
-;; Standing on `openrouter/free` from this profile (ADR-2608272200) was the
-;; 77% failure mode: pinned free ids die in ~24h.
-;;
-;; Routing (owner decision 2026-09-02, ADR-0092 / root ADR-2609021200):
-;;   awai-network/basho → z-ai/glm-5.3-flash → qwen/qwen3.8-flash → murakumo-main
-;; `awai-network/basho` is awai.network's chat model on murakumo.cloud, whose
-;; API base today is GLM-5.3 on a vendor serverless Model API (Baseten first,
-;; Together second) behind a 200,000 JPY/month budget the gateway enforces.
-;; When that budget is spent, or the vendor backend is not yet attested, the
-;; gateway answers 503 (`self_model_monthly_budget_exhausted` /
-;; `self_model_backend_unavailable`) and this profile's fallback carries the
-;; turn on GLM-5.3-Flash — still through api.murakumo.cloud, still labelled as
-;; the model that actually served.
-;; Video generation uses `awai-network/hokusai` through the same provider
-;; record's `:media` block (Bot tools video_generate / video_status).
-;; Identity is MURAKUMO_API_KEY (shared token). That is the operator rail —
-;; credits debit identified customers, not this token (double-charge vs
-;; OpenRouter, and a zero wallet would 402 Domain Steward).
+;; Owner policy 2026-10-13: all inference uses the owned local cluster at
+;; api.murakumo.cloud. mishima is local; OpenRouter-backed aliases and
+;; external fallback are prohibited. Capacity failures remain local failures.
+;; Video generation remains on the local hokusai route.
 ;;
 ;; This profile is the CLOUD-AGENT profile: the resident it configures is the
 ;; one placed on murakumo.cloud (`:residency :cloud`), not a person's laptop.
@@ -46,15 +24,19 @@
  :cloud-relay {:base-url "https://hooks.itonami.cloud"
                :access-token-env "CLOUD_ITONAMI_RELAY_ACCESS_TOKEN"}
  :bots {:mail-domain "mail.itonami.cloud"
-        :workforce {:model "awai-network/basho"}}
+        :workforce {:model "mishima"}}
  :providers [{:id "murakumo"
               :enabled? true
               :reviewed? true
-              :default-model "awai-network/basho"
+              :default-model "mishima"
+              :base-url "https://api.murakumo.cloud/v1"
+              :model-fallbacks nil
+              :capacity-fallbacks nil
+              :no-fallback-models ["mishima"]
               :max-transient-retries 2}
              {:id "openrouter" :enabled? false}]
  :routing {:default-provider "murakumo"
-           :default-model "awai-network/basho"
+           :default-model "mishima"
            :cloud-enabled? true}
  :residency {:plane :cloud
              :substrate "murakumo.cloud"
