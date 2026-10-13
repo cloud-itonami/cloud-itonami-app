@@ -1,0 +1,22 @@
+{
+  "schema": "itonami.agency.host.v1",
+  "enabled": false,
+  "bot": "itonami-sales-agent",
+  "role": "itonami-sales-agent",
+  "client": "REPLACE_WITH_CUSTOMER_ID",
+  "ownerPublicKey": "REPLACE_WITH_OWNER_ED25519_PUBLIC_PEM",
+  "allowedTools": [
+    "agency_status",
+    "agency_mail_list",
+    "agency_mail_read",
+    "agency_mail_context",
+    "agency_mail_submissions"
+  ],
+  "aozora": null,
+  "mail": {
+    "transport": "resend",
+    "apiUrl": "https://api.resend.com/",
+    "from": "itonami-sales-agent@mail.itonami.cloud",
+    "tokenEnv": "AGENCY_SALES_MAIL_TOKEN"
+  }
+}

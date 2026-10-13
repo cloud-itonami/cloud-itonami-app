@@ -83,6 +83,11 @@ mcp_servers:
   agency:
     env:
       ITONAMI_AGENCY_ROLE: itonami-ad-operator
+      ITONAMI_AGENCY_APP_DIR: ${ITONAMI_AGENCY_APP_DIR}
+      ITONAMI_AGENCY_CONFIG: ${ITONAMI_AGENCY_CONFIG}
+      AGENCY_AD_MAIL_TOKEN: ${AGENCY_AD_MAIL_TOKEN}
+      AGENCY_AD_AOZORA_TOKEN: ${AGENCY_AD_AOZORA_TOKEN}
+      AGENCY_AD_EVENT_KEY: ${AGENCY_AD_EVENT_KEY}
     command: /bin/sh
     args:
       - -c
@@ -97,6 +102,7 @@ mcp_servers:
         - agency_mail_submissions
         - agency_mail_draft
         - agency_mail_send
+        - agency_mail_submit
         - agency_aozora_metrics
         - agency_aozora_publish
         - agency_event_append

@@ -6,6 +6,52 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createAgency, canonical, digest, tools, EVENT_COLLECTION } from '../src/cloud/itonami/app/agency_tools.mjs';
 
+test('Resend mail-only configuration exposes owned envelope reads and refuses foreign or forged-header mail', async () => {
+  const f = fixture();
+  const id = '11111111-1111-1111-1111-111111111111';
+  const config = { ...f.config, aozora: null, encryptionKeyEnv: undefined,
+    allowedTools: ['agency_status', 'agency_mail_context', 'agency_mail_list', 'agency_mail_read'],
+    mail: { transport: 'resend', apiUrl: 'https://api.resend.com/', from: f.config.mail.from, tokenEnv: f.config.mail.tokenEnv } };
+  let envelope = [config.mail.from];
+  const a = createAgency(config, { env: f.env, fetch: async () => new Response(JSON.stringify({ id, to: [config.mail.from], received_for: envelope, data: [{ id, to: [config.mail.from], received_for: envelope }] })) });
+  assert.deepEqual((await a.call('agency_mail_list')).ids, [id]);
+  assert.equal((await a.call('agency_mail_read', { id })).email.id, id);
+  envelope = ['foreign@example.invalid'];
+  assert.deepEqual((await a.call('agency_mail_list')).ids, []);
+  await assert.rejects(a.call('agency_mail_read', { id }), /message_not_owned/);
+  envelope = undefined;
+  assert.equal((await a.call('agency_mail_list')).scopeVerifiable, false);
+  await assert.rejects(a.call('agency_mail_read', { id }), /message_not_owned/);
+  assert.throws(() => createAgency({ ...config, allowedTools: ['agency_mail_submit'] }), /aozora_configuration_required/);
+  assert.throws(() => createAgency({ ...config, mail: { ...config.mail, apiUrl: 'https://foreign.invalid/' } }), /resend_endpoint_required/);
+});
+
+test('Resend exact sends retain stable provider idempotency across workers and verify sent content', async () => {
+  const f = fixture();
+  const config = { ...f.config, allowedTools: ['agency_mail_submit', 'agency_events_read', 'agency_mail_submissions'],
+    mail: { transport: 'resend', apiUrl: 'https://api.resend.com/', from: f.config.mail.from, tokenEnv: f.config.mail.tokenEnv } };
+  const id = '11111111-1111-1111-1111-111111111111', keys = [];
+  let email;
+  const fetch = async (url, options) => {
+    if (new URL(url).hostname !== 'api.resend.com') return f.fetch(url, options);
+    if (options.method === 'POST') {
+      keys.push(options.headers['Idempotency-Key']);
+      email = { id, ...JSON.parse(options.body), last_event: 'sent' };
+      return new Response(JSON.stringify({ id }));
+    }
+    return new Response(JSON.stringify(email));
+  };
+  const input = { to: 'lead@example.invalid', subject: 'Proposal', text: 'Approved body', operationId: 'a'.repeat(32), createdAt: new Date(f.now).toISOString() };
+  const args = f.approved('agency_mail_submit', input);
+  const workers = [1, 2].map(() => createAgency(config, { env: f.env, fetch, now: () => f.now }));
+  const results = await Promise.all(workers.map(a => a.call('agency_mail_submit', args)));
+  assert.equal(keys[0], keys[1]);
+  assert.ok(results.every(r => r.status === 'submission_verified' && r.deliveryVerified === false));
+  await assert.rejects(workers[0].call('agency_mail_submit', { ...args, text: 'Changed' }), /authorization_scope_mismatch/);
+  email.from = 'foreign@example.invalid';
+  await assert.rejects(workers[0].call('agency_mail_submissions', { emailId: id }), /message_not_owned/);
+});
+
 function fixture(overrides = {}, { missingRecordStatus = 200 } = {}) {
   const { privateKey, publicKey } = generateKeyPairSync('ed25519');
   const config = { ...JSON.parse(readFileSync(new URL('../config/agency-ad-operator.example.json', import.meta.url))),
@@ -45,7 +91,7 @@ function fixture(overrides = {}, { missingRecordStatus = 200 } = {}) {
       }
       return response({ methodResponses: [[method, out, tag]] });
     }
-    assert.equal(url.hostname, 'aozora.app');
+    assert.ok(['pds.aozora.app', 'appview.aozora.app'].includes(url.hostname));
     if (options.method === 'GET') assert.equal(options.headers.Authorization, undefined, 'public aozora reads must not carry a write Biscuit');
     else assert.equal(options.headers.Authorization, `Bearer ${env.AGENCY_AD_AOZORA_TOKEN}`);
     if (url.pathname.endsWith('getRecord')) {

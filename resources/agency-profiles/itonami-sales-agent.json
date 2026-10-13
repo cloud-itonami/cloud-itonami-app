@@ -15,10 +15,12 @@
     "agency_mail_draft",
     "agency_mail_send",
     "agency_event_append",
-    "agency_events_read"
+    "agency_events_read",
+    "agency_mail_submit"
   ],
   "authority": "host-pinned owner-signed exact-action capability",
   "state": "encrypted owner-approved events in the bound aozora DID repository",
   "liveVerified": false,
-  "distributedExecutionQualified": false
+  "distributedExecutionQualified": false,
+  "resendReadOnlyExample": "config/agency-sales-agent.resend.example.json"
 }

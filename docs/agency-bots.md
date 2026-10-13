@@ -7,7 +7,7 @@ itonami-registry にプロフィールを複製しない。推論は Murakumo �
 
 実行ツールは `bin/itonami-agency-mcp.mjs` の独立した stdio MCP サーバー。
 Node 22 以降で動き、JVM、追加 npm パッケージ、ローカル Itonami server、
-Gmail/Resend/Google Ads/Meta Ads/SaaS CRM、共有 filesystem に依存しない。
+Gmail/Google Ads/Meta Ads/SaaS CRM、共有 filesystem に依存しない。
 Hermes 以外の MCP 対応実行ホストでも同じサーバーを使える。
 既存の native `bin/itonami-mcp` の fleet_search 面を拡大せず、専用 MCP として
 接続する。ネイティブ Bot への単なる SOUL インポートは MCP の実行接続を付けない。
@@ -32,7 +32,27 @@ IMAP/SMTP の credential を JMAP API に渡しても動かない。既存の Re
 `kotoba-lang/mail-a2a` にあり、本変更はその実装や暗号メールを複製しない。
 Bot 間の暗号化 MailA2A や汎用 SMTP/IMAP adapter は本変更の検証範囲外。
 
+Resend を利用する host は `mail.transport=resend`、API URL を
+`https://api.resend.com/` に固定する。`config/agency-*.resend.example.json` は
+aozora が未接続でもメールの読み取りのみを有効化できる例。JMAP draft/send は
+Resend 設定に混ぜない。受信は SMTP envelope の `received_for` に専用アドレスが
+含まれる場合だけ読める。To header は所有の証拠にしない。一覧は account-wide page
+を host 内で絞り、他の宛先の metadata を bot に返さない。ページの完了や全履歴は
+主張しない。受信 API の credential 自体は account scope のため host connector に
+残し、bot に管理 API、汎用 HTTP、shell を渡さない。host OS 自体の隔離は別途必要。
+
+Resend の送信は `agency_mail_submit` に具体的な宛先・件名・plain text・operationId・
+createdAt の owner 署名を渡す。aozora の停止履歴を全件読めることが前提で、メール
+読み取りだけの設定では許可しない。operationId は実行の間で固定し、provider の
+Idempotency-Key を同じ Bot/client から導く。provider の保証期間は 24 時間であり、
+恒久的な一回送信や cross-service transaction とは言わない。結果不明では自動再送
+しない。返った email ID は送信元・宛先・本文まで読戻し、last_event の delivered と
+受信 API の本文一致を別々の証拠にする。Resend は中央サービスであり、この選択を
+「メール基盤を含めた完全分散」と呼ばない。
+
 aozora は既存 XRPC の getRecord/createRecord/listRecords と getPosts を使う。
+PDS は `https://pds.aozora.app`、AppView は `https://appview.aozora.app`。
+SPA の `https://aozora.app` を XRPC API として設定しない。
 公共投稿の collection は app.bsky.feed.post、業務イベントはこの repo が所有する
 cloud.itonami.agency.event。未知 collection の汎用記録に対応しない PDS は拒否結果
 として扱う。PDS/AppView の実デプロイがこの面を提供しているかは導入時に確認する。
@@ -98,7 +118,10 @@ node "$ITONAMI_AGENCY_APP_DIR/bin/itonami-agency-mcp.mjs"
 ```
 
 他ノードでは ITONAMI_AGENCY_APP_DIR をそのノードの canonical checkout にする。
-source profile の MCP 設定は固定 command とこの変数だけを使う。host credential は
+source profile の MCP 設定は固定 command と明示的な環境参照を使う。Hermes は
+stdio 子プロセスから一般の `.env` 値を除くため、APP_DIR、CONFIG、各 role の
+MAIL_TOKEN / AOZORA_TOKEN / EVENT_KEY を MCP の env に参照として宣言する。
+未解決の `${VAR}` を credential の実値と扱わない。host credential は
 環境または既存の secret manager が設定例の名前に解決する。値は profile や Git、
 会話に含めない。新しい ~/.hermes や ~/.cloud-itonami を project/scratch として作らない。
 
@@ -149,8 +172,9 @@ profile source、MCP tools、暗号化記録、exact-action grants と host fixt
 送信、一度の受付、停止、未知 metrics、stdio MCP の実起動を fixture で検証する。
 fixture は実メール、実 DID、federation、Murakumo の model-to-tool 呼出しの証拠ではない。
 
-本番の有効化には、owner が管理する JMAP URL/identity/mailbox、専用 aozora DID、
-delegated credentials と issuer public key の設定が必要。それからテスト用の本人宛
+本番の有効化には、owner が管理する JMAP URL/identity/mailbox または Resend の
+専用 From と host-held credential、専用 aozora DID、delegated credentials と
+issuer public key の設定が必要。それからテスト用の本人宛
 メールで受付と配送を別々に確認し、専用 DID の広告テスト投稿と AppView の読戻しを
 確認する。二つの独立した host からの競合、再起動後の記録復元、停止と federation
 障害時の挙動も確認してから distributedExecutionQualified を更新する。

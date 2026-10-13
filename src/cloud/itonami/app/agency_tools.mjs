@@ -7,7 +7,7 @@ const CORE = 'urn:ietf:params:jmap:core';
 const MAIL = 'urn:ietf:params:jmap:mail';
 const SUBMISSION = 'urn:ietf:params:jmap:submission';
 const roles = new Set(['itonami-ad-operator', 'itonami-sales-agent']);
-const writeNames = new Set(['agency_event_append', 'agency_mail_draft', 'agency_mail_send', 'agency_aozora_publish']);
+const writeNames = new Set(['agency_event_append', 'agency_mail_draft', 'agency_mail_send', 'agency_mail_submit', 'agency_aozora_publish']);
 const advertisingOnly = new Set(['agency_aozora_metrics', 'agency_aozora_publish']);
 export function canonical(value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -34,7 +34,7 @@ function endpoint(value) {
 }
 function envSecret(env, name) {
   check(typeof name === 'string' && /^[A-Z][A-Z0-9_]+$/.test(name), 'secret_reference_required');
-  check(typeof env[name] === 'string' && env[name].length > 0, 'credential_not_configured');
+  check(typeof env[name] === 'string' && env[name].length > 0 && !/^\$\{[A-Z][A-Z0-9_]*\}$/.test(env[name]), 'credential_not_configured');
   return env[name];
 }
 function exactKeys(value, keys) {
@@ -56,6 +56,7 @@ export const tools = [
   { name: 'agency_mail_submissions', description: 'Inspect submissions and delivery evidence for one message in the owned mailbox. Empty history is not proof of non-delivery.', inputSchema: objectSchema({ emailId: string }, ['emailId']) },
   { name: 'agency_mail_draft', description: 'Save one plain-text draft with owner-signed content and Email state, optionally replying to an owned message. Does not send.', inputSchema: objectSchema(withGrant({ to: string, subject: string, text: string, emailState: string, replyToEmailId: string }), ['to', 'subject', 'text', 'emailState', 'authorization']) },
   { name: 'agency_mail_send', description: 'Submit one approved draft, verifying content hash, sender, recipient and EmailSubmission state. No automatic retry; accepted is not delivered.', inputSchema: objectSchema(withGrant({ emailId: string, emailHash: string, submissionState: string }), ['emailId', 'emailHash', 'submissionState', 'authorization']) },
+  { name: 'agency_mail_submit', description: 'Resend only: submit exact owner-approved plain text to one recipient. Requires complete aozora suppression history. Provider idempotency lasts 24 hours; no automatic retries or permanent exactly-once claim.', inputSchema: objectSchema(withGrant({ to: string, subject: string, text: string, operationId: string, createdAt: string }), ['to', 'subject', 'text', 'operationId', 'createdAt', 'authorization']) },
   { name: 'agency_aozora_metrics', description: 'Read this DID’s specified posts. Return observed reactions; impressions, clicks, conversions and revenue stay unmeasured.', inputSchema: objectSchema({ uris: { type: 'array', items: string, minItems: 1, maxItems: 25 } }, ['uris']) },
   { name: 'agency_aozora_publish', description: 'Publish an exact approved PR-labelled post on the configured DID. Stable record key and readback; no paid media or money movement.', inputSchema: objectSchema(withGrant({ text: string, createdAt: string }), ['text', 'createdAt', 'authorization']) },
   { name: 'agency_event_append', description: 'Append one encrypted owner-approved campaign/lead/suppression/receipt event to this DID; no plaintext customer data in public records.', inputSchema: objectSchema(withGrant({ kind: { type: 'string', enum: ['campaign', 'lead', 'suppression', 'receipt'] }, data: { type: 'object' }, parents: { type: 'array', items: string, maxItems: 8 }, createdAt: string }), ['kind', 'data', 'parents', 'createdAt', 'authorization']) },
@@ -86,10 +87,17 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
   check(Array.isArray(config.allowedTools) && config.allowedTools.every(n => tools.some(t => t.name === n)), 'unknown_configured_tool');
   check(config.role !== 'itonami-sales-agent' || !config.allowedTools.some(n => advertisingOnly.has(n)), 'tool_outside_role');
   if (config.enabled === true) check(createPublicKey(config.ownerPublicKey).asymmetricKeyType === 'ed25519', 'ed25519_owner_key_required');
-  check(typeof config.aozora?.did === 'string' && /^did:[a-z0-9]+:[A-Za-z0-9._:%-]+$/.test(config.aozora.did), 'owned_aozora_did_required');
-  const pds = endpoint(config.aozora.pds);
-  const appview = endpoint(config.aozora.appview);
+  const resend = config.mail.transport === 'resend';
+  check(!config.mail.transport || ['jmap', 'resend'].includes(config.mail.transport), 'unsupported_mail_transport');
+  check(!resend || !config.allowedTools.some(n => ['agency_mail_draft', 'agency_mail_send'].includes(n)), 'jmap_tool_on_resend');
+  check(resend || !config.allowedTools.includes('agency_mail_submit'), 'resend_tool_on_jmap');
+  const aozoraTools = n => n.startsWith('agency_aozora_') || n.startsWith('agency_event');
+  if (!config.aozora) check(resend && !config.allowedTools.some(n => aozoraTools(n) || n === 'agency_mail_submit'), 'aozora_configuration_required');
+  if (config.aozora) check(typeof config.aozora.did === 'string' && /^did:[a-z0-9]+:[A-Za-z0-9._:%-]+$/.test(config.aozora.did), 'owned_aozora_did_required');
+  const pds = config.aozora ? endpoint(config.aozora.pds) : null;
+  const appview = config.aozora ? endpoint(config.aozora.appview) : null;
   const mailURL = endpoint(config.mail.apiUrl);
+  if (resend) check(mailURL.href === 'https://api.resend.com/', 'resend_endpoint_required');
   check(config.mail.from && /^[^\s@<>]+@[^\s@<>]+$/.test(config.mail.from), 'owned_sender_required');
   const target = (collection, rkey) => `at://${config.aozora.did}/${collection}/${rkey}`;
   const key = () => {
@@ -97,7 +105,7 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
     check(/^[a-f0-9]{64}$/i.test(raw), 'encryption_key_must_be_32_bytes');
     return Buffer.from(raw, 'hex');
   };
-  async function request(url, method, body, secretEnv) {
+  async function request(url, method, body, secretEnv, extraHeaders = {}) {
     // URLs and credentials are host-owned, not arguments from the model.
     // Resolve before transport: missing credentials are a known refusal,
     // never an ambiguous send/publication outcome.
@@ -105,7 +113,7 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
     let response;
     try {
       response = await fetch(url, { method, redirect: 'error', signal: AbortSignal.timeout(30000),
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: { 'Content-Type': 'application/json', 'User-Agent': 'itonami-agency/1.1', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extraHeaders },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     } catch { fail('transport_outcome_unknown_do_not_retry_writes'); }
     // Never echo provider errors/headers, which may contain secrets or body data.
@@ -147,6 +155,7 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
     return tuple[1];
   }
   async function xrpc(method, arguments_, write = false, publicView = false) {
+    check(config.aozora, 'aozora_configuration_required');
     const url = new URL(`/xrpc/${method}`, publicView ? appview : pds);
     if (write) check(!envSecret(env, config.aozora.tokenEnv).includes('.'), 'aozora_agent_biscuit_required');
     if (!write) for (const [k, v] of Object.entries(arguments_)) {
@@ -209,6 +218,32 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
     return { submissions: result.list, submissionState: result.state, historyComplete: Number.isInteger(query.total) && query.total <= query.ids.length && !result.notFound?.length,
       note: 'Servers may discard old submissions. An empty result does not establish non-delivery.' };
   }
+  async function resendRequest(path, method = 'GET', body, headers) {
+    return request(new URL(path, mailURL), method, body, config.mail.tokenEnv, headers);
+  }
+  function receivedOwned(message) {
+    // SMTP envelope receipt, never the forgeable To header, establishes scope.
+    return Array.isArray(message.received_for) && message.received_for.some(a => a.toLowerCase() === config.mail.from.toLowerCase());
+  }
+  async function sentOwned(id) {
+    check(typeof id === 'string' && /^[a-f0-9-]{36}$/i.test(id), 'invalid_mail_id');
+    const email = await resendRequest(`/emails/${id}`);
+    check(email.id === id && email.from?.toLowerCase() === config.mail.from.toLowerCase(), 'message_not_owned');
+    return email;
+  }
+  async function suppressionPreflight(recipient) {
+    let cursor, pages = 0;
+    const seen = new Set();
+    do {
+      const history = await call('agency_events_read', cursor ? { cursor, limit: 100 } : { limit: 100 });
+      check(history.cursor || history.pageComplete, 'suppression_history_incomplete');
+      check(!history.events.some(e => e.kind === 'suppression' && e.data.recipient?.toLowerCase() === recipient.toLowerCase()), 'recipient_suppressed');
+      cursor = history.cursor;
+      check(!cursor || !seen.has(cursor), 'suppression_history_incomplete');
+      seen.add(cursor);
+      check(++pages <= 100, 'suppression_history_incomplete');
+    } while (cursor);
+  }
   function seal(input, authorization) {
     const encryptionKey = key();
     const scope = { bot: config.bot, client: config.client, role: config.role };
@@ -246,13 +281,63 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
     for (const field of descriptor.inputSchema.required) check(arguments_[field] !== undefined, 'required_argument_missing');
     if (name === 'agency_status') return {
       bot: config.bot, client: config.client, role: config.role, enabled: config.enabled === true,
-      grantedTools: config.allowedTools, channels: ['mail', 'aozora'],
-      credentialsPresent: [config.mail.tokenEnv, config.aozora.tokenEnv, config.encryptionKeyEnv].map(n => ({ reference: n, present: Boolean(env[n]) })),
+      grantedTools: config.allowedTools, channels: config.aozora ? ['mail', 'aozora'] : ['mail'], mailTransport: resend ? 'resend' : 'jmap',
+      credentialsPresent: [config.mail.tokenEnv, config.aozora?.tokenEnv, config.encryptionKeyEnv].filter(Boolean).map(n => ({ reference: n, present: Boolean(env[n]) && !/^\$\{[A-Z][A-Z0-9_]*\}$/.test(env[n]) })),
       liveVerified: false, distributedExecutionQualified: false,
       note: 'Configuration is not account authority, federation or delivery evidence.'
     };
     check(config.enabled === true && config.allowedTools.includes(name), 'tool_not_granted');
     const args = writeNames.has(name) ? authorize(config, name, arguments_, now()) : arguments_;
+    if (resend) {
+      if (name === 'agency_mail_context') return { transport: 'resend', from: config.mail.from, emailState: null, submissionState: null, note: 'Resend has no JMAP states. Account credential is host-held; receiving is scoped by SMTP received_for.' };
+      if (name === 'agency_mail_list') {
+        const limit = args.limit ?? 20;
+        check(Number.isInteger(limit) && limit >= 1 && limit <= 50, 'invalid_limit');
+        const result = await resendRequest(`/emails/receiving?limit=${limit}`);
+        check(Array.isArray(result.data) && result.data.length <= limit, 'mail_query_invalid');
+        const ids = [];
+        let scopeVerifiable = true;
+        for (const row of result.data) {
+          if (Array.isArray(row.received_for)) { if (receivedOwned(row)) ids.push(row.id); continue; }
+          // List responses may omit the envelope. Header recipients select
+          // candidates only; a separate receipt establishes ownership before
+          // returning even their IDs. Hidden/BCC recipients can be missed.
+          const candidate = ['to', 'cc', 'bcc'].some(k => Array.isArray(row[k]) && row[k].some(a => a.toLowerCase() === config.mail.from.toLowerCase()));
+          if (!candidate) continue;
+          check(typeof row.id === 'string' && /^[a-f0-9-]{36}$/i.test(row.id), 'invalid_mail_id');
+          await new Promise(resolve => setTimeout(resolve, 550));
+          const receipt = await resendRequest(`/emails/receiving/${row.id}`);
+          check(receipt.id === row.id, 'mail_receipt_mismatch');
+          if (!Array.isArray(receipt.received_for)) scopeVerifiable = false;
+          if (receivedOwned(receipt)) ids.push(row.id);
+        }
+        return { ids, complete: false, scopeVerifiable, note: 'Account-wide page with candidate receipts checked against SMTP envelope; hidden recipients and older pages may be missed.' };
+      }
+      if (name === 'agency_mail_read') {
+        check(typeof args.id === 'string' && /^[a-f0-9-]{36}$/i.test(args.id), 'invalid_mail_id');
+        const email = await resendRequest(`/emails/receiving/${args.id}`);
+        check(email.id === args.id && receivedOwned(email), 'message_not_owned');
+        return { email, emailHash: digest(email) };
+      }
+      if (name === 'agency_mail_submissions') {
+        const email = await sentOwned(args.emailId);
+        return { status: email.last_event ?? null, emailId: email.id, deliveryVerified: email.last_event === 'delivered', provider: 'resend', note: 'Provider delivery event is not inbox receipt, reply or customer success.' };
+      }
+      if (name === 'agency_mail_submit') {
+        check(typeof args.to === 'string' && /^[^\s@<>]+@[^\s@<>]+$/.test(args.to), 'invalid_recipient');
+        text(args.subject, 998); text(args.text); timestamp(args.createdAt);
+        check(/^[a-f0-9]{32}$/.test(args.operationId), 'invalid_operation_id');
+        check(Date.parse(args.createdAt) <= now() && now() - Date.parse(args.createdAt) < 3600000, 'mail_action_too_old');
+        await suppressionPreflight(args.to);
+        authorize(config, name, arguments_, now());
+        const body = { from: config.mail.from, to: [args.to], subject: args.subject, text: args.text };
+        const result = await resendRequest('/emails', 'POST', body, { 'Idempotency-Key': digest({ bot: config.bot, client: config.client, operationId: args.operationId }) });
+        check(typeof result.id === 'string', 'mail_submission_outcome_unknown');
+        const email = await sentOwned(result.id);
+        check(canonical(email.to) === canonical(body.to) && email.subject === body.subject && email.text === body.text, 'mail_submission_readback_failed');
+        return { status: 'submission_verified', emailId: email.id, deliveryVerified: email.last_event === 'delivered', provider: 'resend', idempotencyWindowHours: 24 };
+      }
+    }
     switch (name) {
       case 'agency_mail_list': {
         const limit = args.limit ?? 20;
