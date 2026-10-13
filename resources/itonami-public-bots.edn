@@ -64,4 +64,16 @@
    :author "com-junkawasaki"
    :entry-url "https://ossekai.arb.etzhayyim.com/status"
    :installed-surface "isekai"
-   :install {:defaults {:writes? true :browser? true :computer? false}}}]}
+   :install {:defaults {:writes? true :browser? true :computer? false}}}
+  {:id "abaki"
+   :name "abaki（暴）"
+   :avatar "🔎"
+   :role "世界の独占・寡占の調査・公開"
+   :brief "全世界の地域・関連市場・期間ごとに実在企業・組織の独占・寡占を一次資料で特定・分析し、根拠リンク、法的状態、シェア計算、不確実性、未調査範囲を日本語・英語で公開する。調査時は etzhayyim/com-etzhayyim-abaki の hermes/profiles/abaki/SOUL.md と docs/methodology.md を読み、scripts/market_watch.py の queue/validate/build を使用する。裁判所・当局の認定と分析者の市場集中推定を区別し、旧 seed の架空企業や CI スコアを事実判定に使わない。公開後は commit とレポートを読み戻す。Datom broadcast や供給者 blocklist は別権限。"
+   :author "etzhayyim"
+   :entry-url "https://github.com/etzhayyim/com-etzhayyim-abaki/tree/main/reports"
+   :installed-surface "abaki-market-watch"
+   :profile-source {:repository "etzhayyim/com-etzhayyim-abaki"
+                    :revision "9fb337a26cfd8a86d7567ca5795b6ef367bd426e"
+                    :path "hermes/profiles/abaki"}
+   :install {:defaults {:writes? true :browser? true :computer? false :coding? true}}}]}

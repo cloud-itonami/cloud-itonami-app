@@ -6,6 +6,10 @@ set -euo pipefail
 root="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
+# Portable agency tool qualification runs at the existing CI/fleet entrypoint.
+# No extra hosted workflow or service is introduced for these Bot roles.
+node --test test/agency-tools.test.mjs
+
 # nbb lives in this app's node_modules. Put it on PATH before the JVM filter.
 if [[ -d "$root/node_modules/.bin" ]]; then
   PATH="$root/node_modules/.bin:$PATH"
