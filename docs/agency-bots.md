@@ -53,6 +53,22 @@ disabled な例を使って MCP が起動し、tools/list と agency_status を�
 - Bot/client ごとの 32-byte AES key の host secret reference。
 - 実際の HTTPS PDS/AppView/mail API URL。model から URL、From、account、DID を受け取らない。
 
+aozora agent の実権限は既存の Authn-issued Biscuit。両役割とも encrypted event を
+書くため `repo-write` が必要で、resource は `aozora://repo/<Bot DID>`、audience は
+`did:web:pds.aozora.app`、holder はその同じ DID、principal_type は agent に限定する。
+`repo-post` だけでは cloud.itonami.agency.event を書けない。account-bind は事前の
+agent 登録だけの権限で、通常運用の token に含めない。既存の agent-biscuit / grant
+verifier を PDS が使い、本 MCP は Biscuit の発行・人間セッションの作成をしない。
+十五分 token の供給・更新は owner の既存 Authn/secret host が行う。期限切れでは
+停止し、古い token を再利用したり JWT/CACAO へ fallback しない。
+公開の getRecord/listRecords/getPosts には write Biscuit を送らない。aozora は
+query への write Biscuit を拒否するためであり、private event 本文は暗号化で保護する。
+
+メールの service grant は、選択した JMAP account の Email 読み書きと
+EmailSubmission/Identity 読み・送信に必要な権限だけを設定する。実サーバーで
+独立 account と専用 mailbox/identity を用意し、host の追加検査とサーバーの ACL
+を両方使う。allowlist や owner の追加署名だけで service 権限を発行したとは言わない。
+
 これらは service delegation の設定で、人間のログイン・回復・step-up の仕組み
 ではない。既存の Passkey-only 人間認証を置き換えず、セッションを発行しない。
 設定・issuer key は既存の owner-authorized host provisioning で配布する。

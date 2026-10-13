@@ -148,8 +148,11 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
     if (!write) for (const [k, v] of Object.entries(arguments_)) {
       for (const item of Array.isArray(v) ? v : [v]) url.searchParams.append(k, item);
     }
+    // Public repository reads must carry no agent Biscuit: aozora deliberately
+    // accepts repo-write only at write procedures, and rejects it on queries.
+    // Event confidentiality is the authenticated encryption, not a read JWT.
     const result = await request(url, write ? 'POST' : 'GET', write ? arguments_ : undefined,
-      publicView ? undefined : config.aozora.tokenEnv);
+      write ? config.aozora.tokenEnv : undefined);
     // The aozora owner currently returns some named errors under HTTP 200.
     // Handle that explicit contract without turning other failures into []
     // or success. Preserve known non-secret provider error names only.

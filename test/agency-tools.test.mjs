@@ -46,6 +46,8 @@ function fixture(overrides = {}, { missingRecordStatus = 200 } = {}) {
       return response({ methodResponses: [[method, out, tag]] });
     }
     assert.equal(url.hostname, 'aozora.app');
+    if (options.method === 'GET') assert.equal(options.headers.Authorization, undefined, 'public aozora reads must not carry a write Biscuit');
+    else assert.equal(options.headers.Authorization, `Bearer ${env.AGENCY_AD_AOZORA_TOKEN}`);
     if (url.pathname.endsWith('getRecord')) {
       const row = records.get(`${url.searchParams.get('collection')}/${url.searchParams.get('rkey')}`);
       return row ? response(row) : response({ error: 'RecordNotFound' }, missingRecordStatus);
