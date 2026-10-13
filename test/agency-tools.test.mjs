@@ -161,7 +161,7 @@ test('draft/read/send uses the owned mailbox and sender, survives two-host conte
   const results = await Promise.allSettled([f.agency.call('agency_mail_send', args), otherNode.call('agency_mail_send', args)]);
   assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
   const result = results.find(r => r.status === 'fulfilled').value;
-  assert.equal(result.status, 'submission_verified'); assert.equal(result.delivered, false);
+  assert.equal(result.status, 'submission_verified'); assert.equal(result.deliveryVerified, false);
   assert.equal(f.writes(), 2); // one draft, one submission
   const receipts = await f.agency.call('agency_mail_submissions', { emailId: draft.email.id });
   assert.equal(receipts.submissions.length, 1);

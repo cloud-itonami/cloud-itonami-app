@@ -331,7 +331,7 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
         const receipt = await jmap('EmailSubmission/get', { ids: [result.created.send.id] });
         const submission = receipt.list?.find(s => s.id === result.created.send.id);
         check(submission?.emailId === args.emailId && submission.identityId === config.mail.identityId, 'mail_submission_readback_failed');
-        return { status: 'submission_verified', delivered: false, submission, submissionState: result.newState };
+        return { status: 'submission_verified', deliveryVerified: false, submission, submissionState: result.newState };
       }
       case 'agency_aozora_metrics': {
         check(Array.isArray(args.uris) && args.uris.length > 0 && args.uris.length <= 25 && args.uris.every(u => typeof u === 'string' && u.startsWith(target('app.bsky.feed.post', ''))), 'post_not_owned');
