@@ -27,3 +27,4 @@ sessions, memories, logs, caches, run state.
 | `itonami-winfix` |  |
 | `itonami-winfix-qa` | itonami qa |
 | `refactor` | refactor — clj, cljc を kotoba に refactor するよ. jvm 依存を外して, amu, kotoba |
+| `reuse-operations` | 不用品回収・遺品整理・リユース／リサイクル事業の運営支援（source profile、接続・定期実行は別途設定） |

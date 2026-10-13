@@ -1,0 +1,3 @@
+# Provider/account bindings, tool grants and schedules are configured by the owner.
+# No provider/model is pinned by this business profile.
+fallback_providers: []
