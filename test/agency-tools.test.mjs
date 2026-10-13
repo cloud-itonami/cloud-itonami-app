@@ -85,6 +85,12 @@ test('exact signed authorization refuses alteration, wrong customer, role, bot, 
   const bad = f.approved('agency_aozora_publish', action); bad.authorization.signature = Buffer.alloc(64).toString('base64');
   await assert.rejects(f.agency.call('agency_aozora_publish', bad), /invalid_owner_signature/);
   assert.equal(f.calls.length, 0);
+  let currentTime = f.now;
+  const slowRead = createAgency(f.config, { env: f.env, now: () => currentTime, fetch: async (url, options) => {
+    const result = await f.fetch(url, options); currentTime += 20000; return result;
+  } });
+  await assert.rejects(slowRead.call('agency_aozora_publish', f.approved('agency_aozora_publish', action)), /authorization_expired_or_invalid/);
+  assert.equal(f.writes(), 0, 'expired authority after preflight must never reach the write');
 });
 
 test('sales role cannot be widened into publishing; no shell, wallet, credential or account-management tools', () => {

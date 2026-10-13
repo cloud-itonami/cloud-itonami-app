@@ -173,12 +173,13 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
     check(r.uri === target(collection, rkey) && typeof r.cid === 'string' && r.value, 'record_readback_invalid');
     return r;
   }
-  async function createRecord(collection, rkey, record) {
+  async function createRecord(collection, rkey, record, reauthorize) {
     const prior = await getRecord(collection, rkey);
     if (prior) {
       check(canonical(prior.value) === canonical(record), 'immutable_record_conflict');
       return { status: 'verified_existing', uri: prior.uri, cid: prior.cid };
     }
+    reauthorize();
     const result = await xrpc('com.atproto.repo.createRecord', { repo: config.aozora.did, collection, rkey, record }, true);
     check(result.uri === target(collection, rkey) && typeof result.cid === 'string', 'record_write_outcome_unknown');
     const observed = await getRecord(collection, rkey);
@@ -279,6 +280,7 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
             /^[^\s<>]+@[^\s<>]+$/.test(original.messageId[0]), 'reply_message_id_required');
           inReplyTo = original.messageId;
         }
+        authorize(config, name, arguments_, now());
         const result = await jmap('Email/set', { ifInState: args.emailState, create: { draft: {
           mailboxIds: { [config.mail.mailboxId]: true }, keywords: { '$draft': true },
           from: [{ email: config.mail.from }], to: [{ email: args.to }], subject: args.subject,
@@ -324,6 +326,7 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
         check(previous.historyComplete, 'submission_history_incomplete');
         check(previous.submissionState === args.submissionState, 'mail_state_mismatch');
         check(previous.submissions.length === 0, 'message_already_submitted');
+        authorize(config, name, arguments_, now());
         const result = await jmap('EmailSubmission/set', { ifInState: args.submissionState, create: { send: {
           emailId: args.emailId, identityId: config.mail.identityId,
           envelope: { mailFrom: { email: config.mail.from }, rcptTo: [{ email: draft.to[0].email }] }
@@ -347,7 +350,7 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
         check([...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(args.text)].length <= 300, 'post_too_long');
         check(/^\[PR\]\s/.test(args.text), 'sponsorship_disclosure_required');
         const rkey = digest({ scope: [config.bot, config.client], input: args });
-        return createRecord('app.bsky.feed.post', rkey, { $type: 'app.bsky.feed.post', text: args.text, createdAt: args.createdAt });
+        return createRecord('app.bsky.feed.post', rkey, { $type: 'app.bsky.feed.post', text: args.text, createdAt: args.createdAt }, () => authorize(config, name, arguments_, now()));
       }
       case 'agency_event_append': {
         check(['campaign', 'lead', 'suppression', 'receipt'].includes(args.kind), 'invalid_event_kind');
@@ -356,7 +359,7 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
         check(Array.isArray(args.parents) && args.parents.length <= 8 && args.parents.every(p => /^[a-f0-9]{64}$/.test(p)), 'invalid_event_parent');
         timestamp(args.createdAt);
         const sealed = seal(args, arguments_.authorization);
-        return { eventId: sealed.rkey, ...await createRecord(EVENT_COLLECTION, sealed.rkey, sealed.record) };
+        return { eventId: sealed.rkey, ...await createRecord(EVENT_COLLECTION, sealed.rkey, sealed.record, () => authorize(config, name, arguments_, now())) };
       }
       case 'agency_events_read': {
         const limit = args.limit ?? 50;
