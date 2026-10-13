@@ -106,6 +106,20 @@ jobs:
         with:
           name: amu-guest
           path: target/amu
+      - name: Warm launch dependencies with bounded retries
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if kbb --backend sci --classpath bin -e '(println :ci-deps-ready)'; then
+              exit 0
+            fi
+            if [[ "$attempt" == 3 ]]; then
+              echo "::error::Windows launch dependencies failed after 3 attempts"
+              exit 1
+            fi
+            sleep 5
+          done
       - name: Launch and wait for /health
         shell: bash
         run: |
@@ -115,11 +129,18 @@ jobs:
           export CLOUD_ITONAMI_DATA_DIR="$data_dir"
           export CLOUD_ITONAMI_PORT=1338
           kbb --backend sci --classpath bin bin/cloud-itonami-server &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
           ok=0
-          for attempt in $(seq 1 120); do
-            if curl -fsS http://127.0.0.1:1338/health >/dev/null 2>&1; then
+          health_deadline=$((SECONDS + 120))
+          while (( SECONDS < health_deadline )); do
+            if curl --connect-timeout 2 --max-time 5 -fsS http://127.0.0.1:1338/health >/dev/null 2>&1; then
               ok=1
               break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo "::error::Windows launch process exited before readiness"
+              exit 1
             fi
             sleep 1
           done
@@ -127,6 +148,6 @@ jobs:
             echo "::error::Windows launch smoke test failed: /health never returned 200"
             exit 1
           fi
-          curl -fsS http://127.0.0.1:1338/health
+          curl --connect-timeout 2 --max-time 5 -fsS http://127.0.0.1:1338/health
           echo ""
           echo "Windows launch smoke test: /health returned 200 (kbb guest-wasm run path)"
