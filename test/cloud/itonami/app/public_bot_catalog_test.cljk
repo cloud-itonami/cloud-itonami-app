@@ -39,3 +39,14 @@
     (is (contains? ids "animeka"))
     (is (contains? ids "dougaka"))
     (is (contains? ids "gameka"))))
+
+(deftest abaki-offers-the-owner-profile-without-computer-or-signer-grants
+  (let [entry (catalog/find-bot "abaki")]
+    (is (= "etzhayyim" (:author entry)))
+    (is (= "etzhayyim/com-etzhayyim-abaki" (get-in entry [:profile-source :repository])))
+    (is (re-matches #"[0-9a-f]{40}" (get-in entry [:profile-source :revision])))
+    (is (= "hermes/profiles/abaki" (get-in entry [:profile-source :path])))
+    (is (= false (get-in entry [:install :defaults :computer?])))
+    (is (= true (get-in entry [:install :defaults :coding?])))
+    (is (nil? (get-in entry [:install :defaults :signer])))
+    (is (clojure.string/includes? (:brief entry) "scripts/market_watch.py"))))
