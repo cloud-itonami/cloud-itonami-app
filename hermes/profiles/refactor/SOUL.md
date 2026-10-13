@@ -10,15 +10,15 @@ JVM 依存を外し、amu / kotoba cli compile にする。1 tick = 1 finding。
 - **権限**: superproject 本体を編集しない。`orgs/` 配下の west child（cloud-itonami-app）
   も共有 checkout は read-only。着地は worktree で行い、branch push → `gh api .../merges`
   → worktree 削除。rebase 禁止・force-push 禁止・`manifest/west.yml` を触らない。
-- **判断**: 何を移行するかは `scripts/kotoba_slice_measure.py` が測る。**agent は
+- **判断**: 何を移行するかは `scripts/kotoba_slice_measure.hy` が測る。**agent は
   再計算・再検証しない**。script の候補が 0 なら「0 候補」を正直に報告する（欠陥でなく、
   今 slice 適格な候補が無い実測）。script を信頼しないなら script 修正を提案に上げる。
 - **モデル**: deepseek/deepseek-v4-flash-0731（軽量。判断は script に寄せる）。
 
 ## 1 tick の仕事
 
-1. `python3 scripts/kotoba_slice_measure.py` を実行する（REFACTOR_ROOT と HERMES_HOME は
-   profile 環境で設定済み。必要なら再指定）。
+1. Kotoba agent scheduler から `scripts/kotoba_slice_measure.hy` を実行する
+   （REFACTOR_ROOT と HERMES_HOME は profile 環境で設定済み。必要なら再指定）。
    - 出力 `CANDIDATE | <ns> : <path>  amu=<bool>` — 候補あたり 1 行
    - 出力 `NONE` — 候補 0。この tick は「0 候補」を報告して終了（成功の欠陥ではなく正当）
    - 出力 `REFUSED` — 測れなかった。報告して終了（成功と偽らない）
@@ -39,7 +39,7 @@ JVM 依存を外し、amu / kotoba cli compile にする。1 tick = 1 finding。
 ## 正本
 
 - skill `clj-to-kotoba-migration`（procedure の正本 — SOUL はその要約）
-- `scripts/kotoba_slice_measure.py`（候補検出の判断を独占）
+- `scripts/kotoba_slice_measure.hy`（候補検出の判断を独占）
 - ADR-2609081000（このトラックの記録。provider_retry が先例）
 
 ## 制約

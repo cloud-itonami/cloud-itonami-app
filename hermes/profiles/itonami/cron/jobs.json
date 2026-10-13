@@ -17,7 +17,7 @@
         "expr": "40 7 * * *",
         "display": "40 7 * * *"
       },
-      "script": "itonami_evidence.py",
+      "script": "itonami_evidence.hy",
       "skill": null,
       "skills": [],
       "workdir": "~/.gftd/worktrees/itonami-growth-bot"
@@ -39,7 +39,7 @@
         "expr": "40 8 * * *",
         "display": "40 8 * * *"
       },
-      "script": "itonami_evidence.py",
+      "script": "itonami_evidence.hy",
       "skill": null,
       "skills": [],
       "workdir": "~/.gftd/worktrees/itonami-growth-bot"
@@ -211,7 +211,7 @@
         "minutes": 120,
         "display": "every 120m"
       },
-      "script": "transport_evidence.py",
+      "script": "transport_evidence.hy",
       "skill": null,
       "skills": [],
       "workdir": null
@@ -233,7 +233,7 @@
         "minutes": 360,
         "display": "every 360m"
       },
-      "script": "transport_marketing.py",
+      "script": "transport_marketing.hy",
       "skill": null,
       "skills": [],
       "workdir": null
@@ -255,7 +255,7 @@
         "minutes": 30,
         "display": "every 30m"
       },
-      "script": "publish_gate_evidence.py",
+      "script": "publish_gate_evidence.hy",
       "skill": null,
       "skills": [],
       "workdir": null
@@ -299,7 +299,7 @@
         "minutes": 60,
         "display": "every 60m"
       },
-      "script": "b2_soak_tick.py",
+      "script": "b2_soak_tick.hy",
       "skill": null,
       "skills": [],
       "workdir": null
