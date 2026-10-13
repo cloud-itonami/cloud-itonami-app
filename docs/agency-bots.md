@@ -122,7 +122,7 @@ cross-channel fence が必要なら既存の Kotoba grant/execution owner での
 ## 導入と検証状態
 
 profile source、MCP tools、暗号化記録、exact-action grants と host fixture は実装済み。
-テスト: `node --test test/agency-tools.test.mjs`。CI に同じ独立ジョブを追加した。
+テスト: `node --test test/agency-tools.test.mjs`。既存の ci-jvm-free-emit 検証入口でも同じテストを実行する。新しい GitHub Actions ジョブは追加しない。
 署名改変、顧客・メール箱の分離、暗号化と別 host の復元、投稿の読戻し、並行
 送信、一度の受付、停止、未知 metrics、stdio MCP の実起動を fixture で検証する。
 fixture は実メール、実 DID、federation、Murakumo の model-to-tool 呼出しの証拠ではない。
