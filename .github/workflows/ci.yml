@@ -35,6 +35,8 @@ jobs:
         run: npm ci
       - name: Human approval contract (host fixture)
         run: bb scripts/test-human-approval-contract.cljk src/cloud/itonami/app/bots.cljk
+      - name: Enterprise sales cost model
+        run: python3 -m unittest discover -s test -p itonami_sales_cost_model_test.py
       - name: JVM-free emit + guest load (no java/clojure)
         run: bash scripts/ci-jvm-free-emit
         # No actions/setup-java. PATH is reconstructed without java/clojure.
