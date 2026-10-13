@@ -30,7 +30,7 @@ def calculate(data):
     if isinstance(months, bool) or not isinstance(months, int) or not 1 <= months <= 120:
         raise ValueError('horizon_months must be an integer in 1..120')
     currency = data['currency']
-    if not isinstance(currency, str) or len(currency) != 3 or not currency.isupper() or not currency.isalpha():
+    if not isinstance(currency, str) or len(currency) != 3 or any(c < 'A' or c > 'Z' for c in currency):
         raise ValueError('currency must be a three-letter currency code')
     baseline = amount(data['baseline_monthly_cost'])
     initial = amount(data['one_time_replacement_cost'])
