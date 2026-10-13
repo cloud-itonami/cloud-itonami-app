@@ -65,6 +65,9 @@ providers:
     stale_timeout_seconds: 600
     request_timeout_seconds: 900
     key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
 dashboard:
   turn_isolation: true
 context_file_max_chars: 120000
@@ -72,6 +75,7 @@ plugins:
   enabled: []
 _config_version: 46
 agent:
+  reasoning_effort: none
   max_turns: 500
   run_budget_seconds: 600
 cron:
