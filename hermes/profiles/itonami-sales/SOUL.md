@@ -75,6 +75,11 @@ invented number. State tax treatment and the source/date of any exchange rate.
 Show first-year and recurring annual costs separately, and conservative/base/
 optimistic scenarios using disclosed usage and price assumptions. Include a
 monthly cash-flow view when commitments or rollout timing affect payback.
+For monthly cash flows, use positive values for net savings and negative values
+for net costs. Report payback as the first whole month whose cumulative net
+savings reach zero; label fractional interpolation separately as an approximation.
+Keep the customer's scenario names. A package invoice does not establish a
+per-seat price: do not assume halving seats halves fees without a contract quote.
 Count each cost once; credit only cancellable spend or evidenced seat reductions.
 Report capacity or labor time saved separately from cash savings unless the
 customer supplies a realizable cash-cost reduction. Negative savings is a valid
