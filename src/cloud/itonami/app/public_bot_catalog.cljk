@@ -21,6 +21,7 @@
 
 (def ^:private resource-name "itonami-public-bots.edn")
 (def schema "cloud.itonami.app.public-bot-catalog.v1")
+(declare install-attributes)
 
 (defn- require-field [entry field]
   (when (str/blank? (str (get entry field)))
@@ -52,7 +53,8 @@
       (when-not (re-matches #"^[a-z0-9][a-z0-9-]{0,63}$" (str (:id entry)))
         (throw (ex-info "public bot id must be a lowercase slug"
                         {:type :public-bot-catalog/invalid-entry
-                         :id (:id entry) :field :id}))))
+                         :id (:id entry) :field :id})))
+      (install-attributes entry))
     (when-not (= (count entries) (count (set (map :id entries))))
       (throw (ex-info "public bot catalog has duplicate ids"
                       {:type :public-bot-catalog/duplicate-ids}))))
@@ -94,11 +96,37 @@
 (defn find-bot [id]
   (some #(when (= id (:id %)) %) (bots)))
 
+(defn install-attributes
+  "Carry the offered role and immutable owner instructions into a fresh Bot.
+  Profile metadata adds instructions, never credentials or capabilities."
+  [entry]
+  (let [source (:profile-source entry)
+        {:keys [repository revision path]} source]
+    (when source
+      (when-not (and (string? repository)
+                     (re-matches #"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" repository)
+                     (string? revision) (re-matches #"[0-9a-f]{40}" revision)
+                     (string? path) (re-matches #"[A-Za-z0-9_/-]+" path)
+                     (not (str/starts-with? path "/")))
+        (throw (ex-info "public bot profile source must be a pinned repository path"
+                        {:type :public-bot-catalog/invalid-entry :id (:id entry)
+                         :field :profile-source}))))
+    (merge {:name (:name entry)
+            :avatar (:avatar entry)
+            :brief (str (:brief entry)
+                        (when source
+                          (str "\nCanonical role instructions (pinned source): https://github.com/"
+                               repository "/blob/" revision "/" path "/SOUL.md"
+                               "\nRead this role before research; preserve its evidence and publication contract.")))}
+           (select-keys (get-in entry [:install :defaults])
+                        [:writes? :browser? :computer? :peers? :omakase? :coding?]))))
+
 #?(:clj
    (defn install!
      "Create a fresh Bot in the caller's organization from a catalog entry.
 
-  The bot's name, avatar and brief come verbatim from the entry; capability
+  The bot's name, avatar and role come from the entry; a pinned owner profile
+  is appended to its brief when offered. Capability
   defaults come from the entry but every one of them is a DEFAULT the
   existing creation path already applies to a hand-made bot — nothing here
   widens what `bots/create!` can grant. Connectors, accounts and wallet
@@ -108,10 +136,6 @@
                      (throw (ex-info "public bot is not in the catalog"
                                      {:type :public-bot-catalog/unknown-bot
                                       :id bot-id})))
-           defaults (:defaults (:install entry))]
+           attributes (install-attributes entry)]
        (bots/create! configuration session
-                     (merge {:name (:name entry)
-                             :avatar (:avatar entry)
-                             :brief (:brief entry)}
-                            (select-keys defaults [:writes? :browser? :computer?
-                                                   :peers? :omakase? :coding?]))))))
+                     attributes))))

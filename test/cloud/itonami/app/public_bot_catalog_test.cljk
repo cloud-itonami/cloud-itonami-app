@@ -39,3 +39,32 @@
     (is (contains? ids "animeka"))
     (is (contains? ids "dougaka"))
     (is (contains? ids "gameka"))))
+
+(deftest abaki-offers-the-owner-profile-without-computer-or-signer-grants
+  (let [entry (catalog/find-bot "abaki")]
+    (is (= "etzhayyim" (:author entry)))
+    (is (= "etzhayyim/com-etzhayyim-abaki" (get-in entry [:profile-source :repository])))
+    (is (re-matches #"[0-9a-f]{40}" (get-in entry [:profile-source :revision])))
+    (is (= "hermes/profiles/abaki" (get-in entry [:profile-source :path])))
+    (is (= false (get-in entry [:install :defaults :computer?])))
+    (is (= true (get-in entry [:install :defaults :coding?])))
+    (is (nil? (get-in entry [:install :defaults :signer])))
+    (is (clojure.string/includes? (:brief entry) "scripts/market_watch.py"))))
+
+(deftest installing-abaki-carries-pinned-instructions-and-only-existing-capabilities
+  (let [entry (catalog/find-bot "abaki")
+        attrs (catalog/install-attributes
+               (assoc-in entry [:install :defaults :signer] "must-not-copy"))]
+    (is (clojure.string/includes? (:brief attrs)
+          (str "/blob/" (get-in entry [:profile-source :revision]) "/hermes/profiles/abaki/SOUL.md")))
+    (is (= false (:computer? attrs)))
+    (is (nil? (:signer attrs)))
+    (is (nil? (:accounts attrs)))
+    (is (nil? (:organization-id attrs)))))
+
+(deftest profile-source-cannot-use-mutable-or-escaping-paths
+  (let [entry (catalog/find-bot "abaki")]
+    (doseq [[key value] [[:revision "main"] [:repository "https://example.com"]
+                       [:path "../private"] [:path "/absolute"]]]
+      (is (thrown? #?(:clj Exception :cljs js/Error)
+                   (catalog/install-attributes (assoc-in entry [:profile-source key] value)))))))
