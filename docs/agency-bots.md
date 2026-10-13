@@ -118,6 +118,10 @@ Bot の範囲への別の承認済み event として渡す。key rotation で�
 
 parent refs は event に含める。並列イベントは消さず branch/missingParents を返す。
 ページ途中で「完全な履歴」とは言わない。timestamp の sort だけを合意順序にしない。
+現在の aozora owner の bounded list 経路は cursor を提供しないため、limit ちょうどの
+ページを完全な履歴と扱わない。suppression の全件読取りが確かめられない場合は
+送信を拒否する。多数のイベントで継続運用する前に PDS owner の pagination と
+snapshot/収束条件を確認する。履歴を黙って切り捨てて送信を続けない。
 同じ record の読戻しに成功しても、全 PDS replica の収束や耐障害性の証拠ではない。
 PDS 側の record key が append-only を強制しない場合でも、ツールは一致した内容だけを
 再使用する。server が第三者に更新・削除を許す問題を client だけで解消したとは言わない。

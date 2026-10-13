@@ -312,6 +312,7 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
         const seen = new Set();
         do {
           const history = await call('agency_events_read', cursor ? { cursor, limit: 100 } : { limit: 100 });
+          check(history.cursor || history.pageComplete, 'suppression_history_incomplete');
           const recipient = draft.to[0].email.toLowerCase();
           check(!history.events.some(e => e.kind === 'suppression' && e.data.recipient?.toLowerCase() === recipient), 'recipient_suppressed');
           cursor = history.cursor;
@@ -363,12 +364,16 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
         if (args.cursor !== undefined) text(args.cursor, 512);
         const result = await xrpc('com.atproto.repo.listRecords', { repo: config.aozora.did, collection: EVENT_COLLECTION, limit, ...(args.cursor ? { cursor: args.cursor } : {}) });
         check(Array.isArray(result.records), 'event_list_invalid');
+        check(result.records.length <= limit, 'event_page_limit_invalid');
         const events = result.records.map(open);
         const ids = new Set(events.map(e => e.id));
         const children = new Map();
         for (const event of events) for (const parent of event.parents) children.set(parent, [...(children.get(parent) ?? []), event.id]);
-        return { events, cursor: result.cursor ?? null, pageComplete: !result.cursor,
-          historyComplete: !args.cursor && !result.cursor,
+        // The current aozora owner has a bounded list path without cursor
+        // support. A full page cannot prove the collection ended there.
+        const pageComplete = !result.cursor && result.records.length < limit;
+        return { events, cursor: result.cursor ?? null, pageComplete,
+          historyComplete: !args.cursor && pageComplete,
           missingParents: [...new Set(events.flatMap(e => e.parents).filter(p => !ids.has(p)))],
           branches: [...children].filter(([, c]) => c.length > 1).map(([parent, children]) => ({ parent, children })),
           note: 'Append-only evidence; concurrent events require explicit reconciliation. Do not infer a total order or a customer outcome.' };

@@ -57,7 +57,7 @@ function fixture(overrides = {}, { missingRecordStatus = 200 } = {}) {
       records.set(`${body.collection}/${body.rkey}`, row); writes++;
       return response({ uri: row.uri, cid: row.cid });
     }
-    if (url.pathname.endsWith('listRecords')) return response({ records: [...records.values()].filter(r => r.value.$type === EVENT_COLLECTION) });
+    if (url.pathname.endsWith('listRecords')) return response({ records: [...records.values()].filter(r => r.value.$type === EVENT_COLLECTION).slice(0, Number(url.searchParams.get('limit'))) });
     if (url.pathname.endsWith('getPosts')) return response({ posts: url.searchParams.getAll('uris').map(uri => ({ uri, likeCount: 3 })) });
     assert.fail(`Unexpected URL ${url}`);
   }
@@ -151,6 +151,9 @@ test('forks and pagination cannot masquerade as a single complete history', asyn
   const history = await f.agency.call('agency_events_read');
   assert.deepEqual(history.missingParents, [parent]); assert.equal(history.branches.length, 1);
   assert.equal((await f.agency.call('agency_events_read', { cursor: 'page-2' })).historyComplete, false);
+  const fullPage = await f.agency.call('agency_events_read', { limit: 2 });
+  assert.equal(fullPage.pageComplete, false);
+  assert.equal(fullPage.historyComplete, false, 'a full no-cursor page is not proof of a complete collection');
 });
 
 test('draft/read/send uses the owned mailbox and sender, survives two-host contention with one submission', async () => {
