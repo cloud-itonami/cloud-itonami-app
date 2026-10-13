@@ -204,7 +204,7 @@
       "model": "mishima",
       "name": "transport-tick",
       "no_agent": false,
-      "prompt": "transport_evidence.py の今回の結果を読み、transport 効率の観測を1つ提案してください。出典 URL とデータの日付を明記し、今回得られた数値に基づいて日本語で簡潔に報告してください。必要な箇所だけを読み、履歴 JSON 全体をツール引数へ転記しないでください。データ不足の場合は不足内容を明記してください。",
+      "prompt": "直前に添付された transport_evidence.py の出力だけを使い、transport 効率の観測を1つ、日本語で3〜5文で提案してください。MEASURE の公式出典 URL と OBS のデータ年を必ず記し、出力にある数値だけを根拠にしてください。追加のファイル探索・履歴 JSON 読み込み・HTTP 取得は不要です。worldbank_lpi が UNMEASURED なら、データ不足として報告し、数値を補わないでください。",
       "provider": "murakumo",
       "schedule": {
         "kind": "interval",
