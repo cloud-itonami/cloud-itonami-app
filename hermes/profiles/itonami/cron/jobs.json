@@ -202,7 +202,7 @@
       "model": "mishima",
       "name": "transport-tick",
       "no_agent": false,
-      "prompt": "transport_evidence.py の結果を読んで 1 つの transport 効率の観測を提案。出典と日付を必ず記す。",
+      "prompt": "transport_evidence.py の今回の結果を読み、transport 効率の観測を1つ提案してください。出典 URL とデータの日付を明記し、今回得られた数値に基づいて日本語で簡潔に報告してください。必要な箇所だけを読み、履歴 JSON 全体をツール引数へ転記しないでください。データ不足の場合は不足内容を明記してください。",
       "provider": "murakumo",
       "schedule": {
         "kind": "interval",
