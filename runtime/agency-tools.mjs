@@ -105,10 +105,6 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
         headers: { 'Content-Type': 'application/json', ...(secretEnv ? { Authorization: `Bearer ${envSecret(env, secretEnv)}` } : {}) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     } catch { fail('transport_outcome_unknown_do_not_retry_writes'); }
-    if (!response.ok) {
-      if (response.status === 404) return { notFound: true };
-      fail(`channel_http_${response.status}`);
-    }
     // Never echo provider errors/headers, which may contain secrets or body data.
     const reader = response.body.getReader(), chunks = [];
     let size = 0;
@@ -126,7 +122,16 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
       fail('transport_outcome_unknown_do_not_retry_writes');
     }
     const raw = Buffer.concat(chunks).toString('utf8');
-    try { return JSON.parse(raw); } catch { fail('invalid_channel_response'); }
+    let data;
+    try { data = JSON.parse(raw); } catch { fail(response.ok ? 'invalid_channel_response' : `channel_http_${response.status}`); }
+    if (!response.ok) {
+      // A missing method, auth refusal or upstream timeout is NOT a missing
+      // record. Standard PDSes may return RecordNotFound under 400/404.
+      if (method === 'GET' && new URL(url).pathname === '/xrpc/com.atproto.repo.getRecord' &&
+          [400, 404].includes(response.status) && data.error === 'RecordNotFound') return { notFound: true };
+      fail(`channel_http_${response.status}`);
+    }
+    return data;
   }
   async function jmap(method, arguments_) {
     const data = await request(mailURL, 'POST', {
@@ -143,8 +148,17 @@ export function createAgency(config, { env = process.env, fetch = globalThis.fet
     if (!write) for (const [k, v] of Object.entries(arguments_)) {
       for (const item of Array.isArray(v) ? v : [v]) url.searchParams.append(k, item);
     }
-    return request(url, write ? 'POST' : 'GET', write ? arguments_ : undefined,
+    const result = await request(url, write ? 'POST' : 'GET', write ? arguments_ : undefined,
       publicView ? undefined : config.aozora.tokenEnv);
+    // The aozora owner currently returns some named errors under HTTP 200.
+    // Handle that explicit contract without turning other failures into []
+    // or success. Preserve known non-secret provider error names only.
+    if (result.error) {
+      if (!write && method === 'com.atproto.repo.getRecord' && result.error === 'RecordNotFound') return { notFound: true };
+      const known = ['AuthMissing', 'AuthRequired', 'InvalidRequest', 'RepoNotFound', 'MethodNotImplemented', 'UpstreamTimeout', 'UpstreamError', 'UpstreamFailure', 'ReadOnlyPilot', 'InvalidSwap'];
+      fail(known.includes(result.error) ? `aozora_${result.error.replace(/[A-Z]/g, (c, i) => `${i ? '_' : ''}${c.toLowerCase()}`)}` : 'aozora_method_failed');
+    }
+    return result;
   }
   async function getRecord(collection, rkey) {
     const r = await xrpc('com.atproto.repo.getRecord', { repo: config.aozora.did, collection, rkey });

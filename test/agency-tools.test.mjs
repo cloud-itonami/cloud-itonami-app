@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createAgency, canonical, digest, tools, EVENT_COLLECTION } from '../runtime/agency-tools.mjs';
 
-function fixture(overrides = {}) {
+function fixture(overrides = {}, { missingRecordStatus = 200 } = {}) {
   const { privateKey, publicKey } = generateKeyPairSync('ed25519');
   const config = { ...JSON.parse(readFileSync(new URL('../config/agency-ad-operator.example.json', import.meta.url))),
     enabled: true, client: 'customer-a', ownerPublicKey: publicKey.export({ type: 'spki', format: 'pem' }), ...overrides };
@@ -48,7 +48,7 @@ function fixture(overrides = {}) {
     assert.equal(url.hostname, 'aozora.app');
     if (url.pathname.endsWith('getRecord')) {
       const row = records.get(`${url.searchParams.get('collection')}/${url.searchParams.get('rkey')}`);
-      return row ? response(row) : response({ error: 'RecordNotFound' }, 404);
+      return row ? response(row) : response({ error: 'RecordNotFound' }, missingRecordStatus);
     }
     if (url.pathname.endsWith('createRecord')) {
       const row = { uri: `at://${body.repo}/${body.collection}/${body.rkey}`, cid: `cid-${digest(body.record)}`, value: body.record };
@@ -101,6 +101,23 @@ test('advertising publish requires PR, is idempotent across fresh hosts, and ver
   assert.equal((await restarted.call('agency_aozora_publish', args)).uri, first.uri);
   assert.equal(f.writes(), 1);
   assert.equal(first.status, 'verified_record');
+});
+
+test('aozora named missing-record errors work under 200/400/404, but an unavailable API never permits a write', async () => {
+  for (const missingRecordStatus of [200, 400, 404]) {
+    const f = fixture({}, { missingRecordStatus });
+    const args = f.approved('agency_aozora_publish', { text: '[PR] Compatibility', createdAt: '2027-01-15T08:00:00Z' });
+    assert.equal((await f.agency.call('agency_aozora_publish', args)).status, 'verified_record');
+  }
+  for (const status of [200, 404]) {
+    const f = fixture(); let writes = 0;
+    const a = createAgency(f.config, { env: f.env, now: () => f.now, fetch: (_, options) => {
+      if (options.method === 'POST') writes++;
+      return new Response(JSON.stringify({ error: 'MethodNotImplemented' }), { status });
+    } });
+    await assert.rejects(a.call('agency_aozora_publish', f.approved('agency_aozora_publish', { text: '[PR] Missing API', createdAt: '2027-01-15T08:00:00Z' })), status === 200 ? /aozora_method_not_implemented/ : /channel_http_404/);
+    assert.equal(writes, 0);
+  }
 });
 
 test('private records encrypt lead data, recover on another host, detect tampering and never accept another customer', async () => {
