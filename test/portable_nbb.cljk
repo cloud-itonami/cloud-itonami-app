@@ -46,6 +46,10 @@
                    (when (.existsSync fs candidate)
                      (str (fs.readFileSync candidate "utf8"))))]
   (public-bot-catalog/set-portable-source! text))
+(when-some [text (let [candidate (str (js/process.cwd) "/resources/itonami-registry-bots.edn")]
+                   (when (.existsSync fs candidate)
+                     (str (fs.readFileSync candidate "utf8"))))]
+  (public-bot-catalog/set-portable-registry-source! text))
 
 (t/run-tests 'cloud.itonami.app.public-bot-catalog-test
              'cloud.itonami.app.collection-tools-test

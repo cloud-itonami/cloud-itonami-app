@@ -10,7 +10,15 @@
   The catalog is a hand-written resource (see the header of
   `resources/itonami-public-bots.edn`), so it can drift. The schema check
   below fails loudly on drift rather than rendering half-cards: an entry
-  missing what the installer needs is an exception, not a missing card."
+  missing what the installer needs is an exception, not a missing card.
+
+  A second, generated resource adds the agent templates of
+  cloud-itonami/itonami-registry (`resources/itonami-registry-bots.edn`,
+  written by `scripts/sync-itonami-registry.cljk` from one pinned registry
+  commit with every folder checksum verified). The registry grants nothing,
+  so a registry offer whose install defaults turn any capability on is
+  refused here, and its brief points at the template's SOUL.md at that
+  commit. Without the generated resource the catalog is the hand-written one."
   (:require [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str])
   ;; `bots` is the JVM-side creation path. The portable half (parse, validate,
@@ -21,6 +29,8 @@
 
 (def ^:private resource-name "itonami-public-bots.edn")
 (def schema "cloud.itonami.app.public-bot-catalog.v1")
+(def ^:private registry-resource-name "itonami-registry-bots.edn")
+(def registry-schema "cloud.itonami.app.itonami-registry-bots.v1")
 (declare install-attributes)
 
 (defn- require-field [entry field]
@@ -60,15 +70,49 @@
                       {:type :public-bot-catalog/duplicate-ids}))))
   catalog)
 
+(defn- validate-registry
+  "The generated registry resource: pinned to one commit, every offer inert."
+  [reg]
+  (when-not (= registry-schema (:schema reg))
+    (throw (ex-info "itonami registry offers schema mismatch"
+                    {:type :public-bot-catalog/schema-mismatch
+                     :expected registry-schema :actual (:schema reg)})))
+  (when-not (re-matches #"[0-9a-f]{40}" (str (get-in reg [:registry :commit])))
+    (throw (ex-info "itonami registry offers must name one registry commit"
+                    {:type :public-bot-catalog/registry-unpinned})))
+  (validate-catalog {:schema schema :bots (:bots reg)})
+  (doseq [entry (:bots reg)]
+    (when (some true? (vals (get-in entry [:install :defaults])))
+      (throw (ex-info "a registry offer may not turn a capability on"
+                      {:type :public-bot-catalog/registry-grants :id (:id entry)})))
+    (when-not (= (get-in reg [:registry :commit]) (get-in entry [:profile-source :revision]))
+      (throw (ex-info "a registry offer must pin its profile to the registry commit"
+                      {:type :public-bot-catalog/registry-unpinned :id (:id entry)}))))
+  reg)
+
+(defn merge-catalogs
+  "Hand-written offers first, then the registry's. An id offered by both is an
+  error, not a silent override."
+  [catalog reg]
+  (if-not reg
+    catalog
+    (let [merged (into (vec (:bots catalog)) (:bots reg))]
+      (when-not (= (count merged) (count (set (map :id merged))))
+        (throw (ex-info "public bot catalog and itonami registry offer the same id"
+                        {:type :public-bot-catalog/duplicate-ids})))
+      (assoc catalog :bots merged :registry (:registry reg)))))
+
 (defonce ^:private portable-source (atom nil))
+(defonce ^:private portable-registry-source (atom nil))
 
 ;; JVM hosts read the resource from the classpath; the resource ships with the
 ;; release, so this namespace does not depend on a west checkout beside it.
 #?(:clj
    (defn- read-catalog []
-     (let [loader (.. Thread currentThread getContextClassLoader)]
+     (let [loader (.. Thread currentThread getContextClassLoader)
+           reg (some-> (.getResource loader registry-resource-name) slurp edn/read-string validate-registry)]
        (if-some [url (.getResource loader resource-name)]
-         (validate-catalog (edn/read-string (slurp url)))
+         (merge-catalogs (validate-catalog (edn/read-string (slurp url))) reg)
          (throw (ex-info (str "public bot catalog resource missing: " resource-name)
                          {:type :public-bot-catalog/catalog-missing})))))
    :cljs
@@ -76,7 +120,8 @@
      ;; The portable build hands the text in through `set-portable-source!`;
      ;; reading it here would reach past the host boundary.
      (if-some [text @portable-source]
-       (validate-catalog (edn/read-string text))
+       (merge-catalogs (validate-catalog (edn/read-string text))
+                       (some-> @portable-registry-source edn/read-string validate-registry))
        (throw (ex-info (str "public bot catalog resource missing: " resource-name)
                        {:type :public-bot-catalog/catalog-missing})))))
 
@@ -84,6 +129,12 @@
   "Hosts without a classpath hand the catalog text in. Passing nil clears."
   [text]
   (reset! portable-source text)
+  nil)
+
+(defn set-portable-registry-source!
+  "Hosts without a classpath hand the generated registry offers in (optional)."
+  [text]
+  (reset! portable-registry-source text)
   nil)
 
 (def catalog

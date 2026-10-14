@@ -1,0 +1,157 @@
+(ns sync-itonami-registry
+  "Generate `resources/itonami-registry-bots.edn` — the Marketplace offers that
+  come from cloud-itonami/itonami-registry — from one immutable registry commit.
+
+      kbb --backend sci scripts/sync-itonami-registry.cljk \\
+          [--registry ~/github/cloud-itonami/itonami-registry] [--commit <sha|ref>] \\
+          [--out resources/itonami-registry-bots.edn] [--check]
+
+  What the registry's README asks of a consumer, done here rather than at
+  request time: resolve the registry to ONE commit, and verify the complete
+  folder checksum of every selected entry before use. Files are read from git
+  objects at that commit (`git show <commit>:<path>`), never from the working
+  tree, so an uncommitted edit in the checkout cannot reach a release.
+
+  Only `agent` entries become Marketplace offers (a Bot is a colleague with a
+  role). Skills, MCP definitions and workflows are not Bots and are left for a
+  consumer that understands them. An agent whose `itonami.json` claims any
+  authority (`:authority :grants` true) is refused: a registry entry grants
+  nothing, so every generated offer installs with every capability off and
+  points its brief at the pinned `templates/hermes/SOUL.md`.
+
+  `--check` regenerates in memory and fails when the checked-in resource
+  differs, so CI can tell a stale resource from a fresh one."
+  (:require [clojure.string :as str]
+            ["node:child_process" :as cp]
+            ["node:crypto" :as crypto]
+            ["node:fs" :as fs]
+            ["node:os" :as os]))
+
+(def registry-repository "cloud-itonami/itonami-registry")
+(def schema "cloud.itonami.app.itonami-registry-bots.v1")
+
+(defn- arg [args flag default]
+  (or (second (drop-while #(not= flag %) args)) default))
+
+(defn- expand-home [p] (str/replace p #"^~" (.homedir os)))
+
+(defn- git-bytes
+  "stdout of git as a Buffer (binary-safe)."
+  [dir & argv]
+  (cp/execFileSync "git" (clj->js (into ["-C" dir] argv)) #js {:maxBuffer (* 64 1024 1024)}))
+
+(defn- git-text [dir & argv] (str/trim (.toString (apply git-bytes dir argv) "utf8")))
+
+(defn- parts-key [rel] (str/split rel #"/"))
+
+(defn compare-parts
+  "Python's pathlib orders paths by their parts, element by element (`a/b`
+  before `a-c`, `examples/x` before `itonami.json`), and the registry's
+  checksum was built in that order. Clojure's vector compare puts the shorter
+  vector first, which is not that order."
+  [a b]
+  (loop [[x & xs :as as] a [y & ys :as bs] b]
+    (cond (and (empty? as) (empty? bs)) 0
+          (empty? as) -1
+          (empty? bs) 1
+          :else (let [c (compare x y)] (if (zero? c) (recur xs ys) c)))))
+
+(defn folder-checksum
+  "sha256 over (relative-path NUL bytes NUL)* in path-parts order — the
+  registry's own `scripts/build_index.py checksum`."
+  [files]
+  (let [h (crypto/createHash "sha256")]
+    (doseq [[rel bs] (sort-by (comp parts-key first) compare-parts files)]
+      (.update h rel "utf8") (.update h (js/Buffer.from #js [0]))
+      (.update h bs) (.update h (js/Buffer.from #js [0])))
+    (str "sha256:" (.digest h "hex"))))
+
+(defn- folder-files [dir commit path]
+  (let [listing (.toString (git-bytes dir "ls-tree" "-r" "-z" "--name-only" commit "--" path) "utf8")]
+    (for [f (remove str/blank? (str/split listing #"\u0000"))]
+      [(subs f (inc (count path))) (git-bytes dir "show" (str commit ":" f))])))
+
+(defn- json-at [dir commit file]
+  (js->clj (js/JSON.parse (git-text dir "show" (str commit ":" file))) :keywordize-keys true))
+
+(defn- role-of [manifest]
+  (let [[_ subtitle] (str/split (:name manifest) #"\s+—\s+" 2)]
+    (or (not-empty subtitle) (:name manifest))))
+
+(defn offer
+  "One registry agent → one catalog offer (the shape `public-bot-catalog`
+  validates), with its registry provenance."
+  [commit entry manifest itonami]
+  {:id (:id entry)
+   :name (:name manifest)
+   :avatar "🧩"
+   :role (role-of manifest)
+   :brief (str (:description manifest)
+               (when-let [w (not-empty (:useWhen itonami))] (str "\n使う場面: " w))
+               (when-let [a (not-empty (:avoidWhen itonami))] (str "\n使わない場面: " a)))
+   :author (:author manifest)
+   :entry-url (str "https://github.com/" registry-repository "/tree/" commit "/" (:path entry))
+   :installed-surface "itonami-registry"
+   ;; Registry authority is `grants false, default blocked`: nothing starts on.
+   :install {:defaults {:writes? false :browser? false :computer? false
+                        :peers? false :omakase? false :coding? false}}
+   :profile-source {:repository registry-repository :revision commit
+                    :path (str (:path entry) "/templates/hermes")}
+   :registry {:id (:id entry) :type (:type entry) :version (:version manifest)
+              :path (:path entry) :checksum (:checksum entry)
+              :source (:source manifest) :effects (vec (:effects itonami))}})
+
+(defn curated-ids
+  "Ids the hand-written catalog already offers. Its entry is curated (an owner
+  profile, a written brief), so the registry's template for the same id is
+  skipped here rather than colliding at load."
+  [catalog-path]
+  (if (fs/existsSync catalog-path)
+    (set (map second (re-seq #":id \"([a-z0-9-]+)\"" (str (fs/readFileSync catalog-path "utf8")))))
+    #{}))
+
+(defn generate [dir commit-ref curated]
+  (let [commit (git-text dir "rev-parse" (str commit-ref "^{commit}"))
+        index (json-at dir commit "index.json")
+        all-agents (filter #(= "agent" (:type %)) (:entries index))
+        agents (remove #(curated (:id %)) all-agents)]
+    {:schema schema
+     :registry {:repository registry-repository :commit commit
+                :generated (:generated index) :agents (count all-agents)
+                :curated-elsewhere (vec (sort (keep #(when (curated (:id %)) (:id %)) all-agents)))}
+     :bots
+     (vec
+      (for [entry (sort-by :id agents)]
+        (let [files (folder-files dir commit (:path entry))
+              actual (folder-checksum files)
+              have (set (map first files))]
+          (when (not= actual (:checksum entry))
+            (throw (ex-info (str "checksum mismatch for " (:path entry))
+                            {:expected (:checksum entry) :actual actual :commit commit})))
+          (when-not (have "templates/hermes/SOUL.md")
+            (throw (ex-info (str (:path entry) " has no templates/hermes/SOUL.md") {:commit commit})))
+          (let [itonami (json-at dir commit (str (:path entry) "/itonami.json"))]
+            (when (true? (get-in itonami [:authority :grants]))
+              (throw (ex-info (str (:path entry) " claims authority; a registry entry grants nothing")
+                              {:commit commit})))
+            (offer commit entry (json-at dir commit (str (:path entry) "/manifest.json")) itonami)))))}))
+
+(defn render [catalog]
+  (str ";; GENERATED by scripts/sync-itonami-registry.cljk from "
+       registry-repository " @ " (get-in catalog [:registry :commit]) ".\n"
+       ";; Do not edit by hand: change the registry, then regenerate. Every folder\n"
+       ";; checksum below was verified against git objects at that commit.\n"
+       (binding [*print-namespace-maps* false] (pr-str catalog)) "\n"))
+
+(let [args (vec *command-line-args*)
+      dir (expand-home (arg args "--registry" "~/github/cloud-itonami/itonami-registry"))
+      out (arg args "--out" "resources/itonami-registry-bots.edn")
+      curated (curated-ids (arg args "--catalog" "resources/itonami-public-bots.edn"))
+      text (render (generate dir (arg args "--commit" "origin/main") curated))]
+  (if (some #{"--check"} args)
+    (let [current (when (fs/existsSync out) (str (fs/readFileSync out "utf8")))]
+      (if (= current text)
+        (println "itonami-registry-bots.edn is current")
+        (do (println "itonami-registry-bots.edn is stale; regenerate") (set! (.-exitCode js/process) 1))))
+    (do (fs/writeFileSync out text)
+        (println "wrote" out))))

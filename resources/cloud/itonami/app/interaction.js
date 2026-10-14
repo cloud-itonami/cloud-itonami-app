@@ -13660,7 +13660,10 @@
           const card = make('article', 'market-card'); const copy = make('div', 'market-copy');
           copy.append(make('h3', null, entry.avatar ? `${entry.avatar} ${entry.name}` : entry.name),
             make('p', null, entry.brief || entry.role || '公開 Bot'),
-            make('p', null, `${entry.author} · ${entry['entry-url'] || ''}`));
+            make('p', null, entry.registry
+              // From cloud-itonami/itonami-registry, pinned to one commit: say so.
+              ? `itonami-registry @ ${String(entry['profile-source']?.revision || '').slice(0, 7)} · ${entry.author}`
+              : `${entry.author} · ${entry['entry-url'] || ''}`));
           const add = make('button', 'tool-button', '追加'); add.type = 'button';
           add.setAttribute('aria-label', fmt('{name}を追加', {name: entry.name}));
           add.addEventListener('click', async () => {

@@ -919,6 +919,26 @@ Turns are synchronous and bounded — 8 model turns and 12 tool calls per
 message. A Bot also answers on a schedule when a routine has been made from an
 executed trace; the tick uses a live session and never mints one.
 
+### Itonami Registry offers
+
+The Marketplace Bot tab also offers the agent templates of
+[cloud-itonami/itonami-registry](https://github.com/cloud-itonami/itonami-registry).
+`resources/itonami-registry-bots.edn` is generated from one registry commit:
+
+```bash
+kbb --backend sci scripts/sync-itonami-registry.cljk --commit <sha|origin/main>
+kbb --backend sci scripts/sync-itonami-registry.cljk --check   # fails when stale
+```
+
+Files are read from git objects at that commit and every folder checksum in the
+registry's `index.json` is verified before an offer is written. A registry
+template grants nothing: its offer installs with every capability off, and the
+new Bot's brief points at the template's `templates/hermes/SOUL.md` at that
+commit. The catalog refuses a registry offer that turns a capability on, is not
+pinned to the commit, or reuses an id the hand-written catalog already offers
+(the generator skips those and lists them as `:curated-elsewhere`). Skills, MCP
+definitions and workflows are not Bots and are not offered here yet.
+
 ### Startup workforces
 
 `会社Bot` reconciles the governed `network-awai/loop-yakuwari` registry into
