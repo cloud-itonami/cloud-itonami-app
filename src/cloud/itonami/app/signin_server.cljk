@@ -45,6 +45,7 @@
             [webauthn.adapters.edge :as edge]
             [cloud.itonami.app.passkey-options :as options]
             [cloud.itonami.app.hermes-gateway :as hg]
+            [cloud.itonami.app.hermes-surface :as hs]
             [shinkansen.locale :as locale]
             [cloud.itonami.app.kotoba-oracle :as oracle]))
             ;; NOTE: [cloud.itonami.app.web :as web] was required here but
@@ -1251,9 +1252,110 @@
       :else
       (json res 404 (hg/openai-error (str "Hermes endpoint not found: " p) "not_found")))))
 
+(defn- await-run!
+  "Call `f` with the run once it is closed (now, or when it closes)."
+  [run-id f]
+  (let [watch-key (keyword (str "await-" run-id "-" (random-token 6)))
+        done (atom false)
+        fire! (fn [run] (when (and (:closed? run) (compare-and-set! done false true))
+                          (remove-watch hermes-runs watch-key) (f run)))]
+    (add-watch hermes-runs watch-key (fn [_ _ _ new] (some-> (get new run-id) fire!)))
+    (some-> (get @hermes-runs run-id) fire!)))
+
+(defn- stream-completion!
+  "OpenAI `chat.completion.chunk` SSE for a run, then `data: [DONE]`."
+  [res run-id model]
+  (let [cursor (atom 0)
+        base {:id run-id :model model :created (now-seconds)}
+        watch-key (keyword (str "cc-" run-id "-" (random-token 6)))
+        write! (fn [obj] (.write res (str "data: " (js/JSON.stringify (clj->js obj)) "\n\n")))
+        flush! (fn [run]
+                 (let [events (:events run)]
+                   (doseq [frame (subvec events (min @cursor (count events)))
+                           c (hs/run-event->chunks frame base)]
+                     (write! c))
+                   (reset! cursor (count events))
+                   (when (:closed? run)
+                     (remove-watch hermes-runs watch-key)
+                     (.write res "data: [DONE]\n\n")
+                     (.end res))))]
+    (.writeHead res 200 #js {"content-type" "text/event-stream" "cache-control" "no-cache"
+                             "x-accel-buffering" "no"})
+    (.on res "close" (fn [] (remove-watch hermes-runs watch-key)))
+    (add-watch hermes-runs watch-key (fn [_ _ _ new] (some-> (get new run-id) flush!)))
+    (some-> (get @hermes-runs run-id) flush!)))
+
+(defn- route-surface
+  "The rest of the Hermes API (ADR-0143): `hs/surface-path?` lands here."
+  [req res method raw-path session]
+  (let [[path-profile p] (hg/split-profile-path raw-path)
+        path-profile (some-> path-profile js/decodeURIComponent)
+        header-profile (some-> (aget (.-headers req) "x-hermes-profile") str str/trim not-empty)
+        profile (or path-profile header-profile)
+        bots (delay (hermes-visible-bots session))]
+    (cond
+      (and (= method "GET") (= p "/v1/health"))
+      (json res 200 (hs/health "signin-server" "jvm-free"))
+
+      (and (= method "GET") (= p "/v1/capabilities"))
+      (json res 200 (hs/capabilities {:resident "jvm-free" :tool-execution "none"
+                                      :auth-required? true}))
+
+      (not session)
+      (json res 401 (hg/openai-error "サインインが必要です。" "no_session"))
+
+      (and (= method "GET") (= p "/v1/models"))
+      (let [rows (:data (hg/profile-list @bots))
+            rows (if profile (filter #(= profile (:id %)) rows) rows)]
+        (json res 200 (hs/models rows (now-seconds))))
+
+      (and (= method "GET") (= p "/v1/skills"))
+      (let [b (hg/resolve-bot @bots (hermes-default-bot-id) profile)]
+        (if (hg/refusal? b) (hermes-refuse! res b) (json res 200 (hs/skills b))))
+
+      (and (= method "GET") (re-matches #"/api/profiles/[^/]+/export" p))
+      (let [id (js/decodeURIComponent (second (re-matches #"/api/profiles/([^/]+)/export" p)))
+            b (hg/resolve-bot @bots (hermes-default-bot-id) id)]
+        (if (hg/refusal? b) (hermes-refuse! res b) (json res 200 (hs/profile-export b))))
+
+      (and (= method "POST") (= p "/v1/chat/completions"))
+      (if-not (mutation-allowed? req)
+        (json res 403 (hg/openai-error "cross-origin cookie mutation refused" "origin"))
+        (.then (read-body! req)
+               (fn [body]
+                 (let [chat (hs/chat-request body profile)
+                       started (when-not (hg/refusal? chat)
+                                 (start-run! session (:profile chat) (hs/run-body chat)))]
+                   (cond
+                     (hg/refusal? chat) (hermes-refuse! res chat)
+                     (hg/refusal? started) (hermes-refuse! res started)
+                     :else
+                     (let [run-id (:run_id started)
+                           model (or (:model body) (:profile chat) "itonami-bot")]
+                       (if (:stream? chat)
+                         (stream-completion! res run-id model)
+                         (await-run! run-id
+                                     (fn [run]
+                                       (let [st (:status run)]
+                                         (if (= "completed" (:status st))
+                                           (json res 200 (hs/completion {:id run-id :model model
+                                                                         :created (now-seconds)
+                                                                         :output (:output run)
+                                                                         :usage (:usage st)}))
+                                           (json res 502 (hg/openai-error
+                                                          (str "run " (:status st) ": " (or (:error st) ""))
+                                                          (str "run_" (:status st)))))))))))))))
+
+      :else
+      (json res 404 (hg/openai-error (str "Hermes endpoint not found: " p) "not_found")))))
+
 ;; ---------- router ----------
 (defn- route [req res method p session url]
   (cond
+    (let [inner (second (hg/split-profile-path p))]
+      (and (hs/surface-path? inner) (not= inner "/health")))
+    (route-surface req res method p session)
+
     (hg/gateway-path? (second (hg/split-profile-path p)))
     (route-hermes req res method p session url)
 
@@ -1284,6 +1386,8 @@
     (do (.writeHead res 200 #js {"content-type" "application/json"})
         (.end res (js/JSON.stringify
                    (clj->js {:ok true :service "signin-server"
+                             ;; Hermes clients read these (ADR-0143); additive.
+                             :status "ok" :platform hs/platform :runtime hs/runtime
                              :store (subs (digest @state-ref) 0 16)
                              :users (count (:users (identity-state)))
                              :passkeys (count (:passkeys (identity-state)))}))))

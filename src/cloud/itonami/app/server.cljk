@@ -10,6 +10,7 @@
             [cloud.itonami.app.app-client :as app-client]
             [cloud.itonami.app.app-directory :as app-directory]
             [cloud.itonami.app.public-bot-catalog :as public-bot-catalog]
+            [cloud.itonami.app.hermes-surface :as hermes-surface]
             [cloud.itonami.app.authority.api :as authority-api]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.bulky-waste :as bulky-waste]
@@ -7257,13 +7258,100 @@
                            (str "Hermes endpoint not found: " path)
                            "not_found")))))
 
+(defn- send-completion-stream!
+  "OpenAI `chat.completion.chunk` SSE over the native Bot stream, then
+  `data: [DONE]` (ADR-0143)."
+  [^HttpExchange exchange session run-id model]
+  (doto (.getResponseHeaders exchange)
+    (.set "Content-Type" "text/event-stream")
+    (.set "Cache-Control" "no-cache")
+    (.set "X-Accel-Buffering" "no"))
+  (.sendResponseHeaders exchange 200 0)
+  (let [base {:id run-id :model model :created (quot (System/currentTimeMillis) 1000)}]
+    (with-open [writer (OutputStreamWriter. (.getResponseBody exchange) StandardCharsets/UTF_8)]
+      (let [write! (fn [obj] (.write writer (str "data: " (json/write-str obj) "\n\n")) (.flush writer))]
+        (write! (hermes-surface/completion-chunk (assoc base :role? true)))
+        (loop [seen ""]
+          (let [event (hermes-compat/take-event! session run-id 30)]
+            (cond
+              (hermes-compat/closed-event? event)
+              (do (write! (hermes-surface/completion-chunk (assoc base :finish "stop")))
+                  (.write writer "data: [DONE]\n\n") (.flush writer))
+              (nil? event) (do (.write writer ": keepalive\n\n") (.flush writer) (recur seen))
+              (= "assistant.delta" (:event event))
+              (let [[piece acc] (hermes-surface/delta-increment seen (:delta event))]
+                (when (seq piece) (write! (hermes-surface/completion-chunk (assoc base :delta piece))))
+                (recur acc))
+              :else (recur seen))))))))
+
+(defn- handle-hermes-surface!
+  "Health, capabilities, models, skills, profile export and OpenAI chat
+  completions over Bots (ADR-0143)."
+  [config exchange method raw-path]
+  (let [[path-profile path] (hermes-compat/split-profile-path raw-path)
+        header-profile (some-> (.getFirst (.getRequestHeaders exchange) "X-Hermes-Profile")
+                               str/trim not-empty)
+        profile (or path-profile header-profile)]
+    (cond
+      (and (= method "GET") (= path "/v1/health"))
+      (send! exchange 200 (hermes-surface/health "jvm-server" "jvm"))
+
+      (and (= method "GET") (= path "/v1/capabilities"))
+      (send! exchange 200 (hermes-surface/capabilities {:resident "jvm" :tool-execution "server"
+                                                         :auth-required? true}))
+
+      :else
+      (let [session (require-app-session! exchange)]
+        (cond
+          (and (= method "GET") (= path "/v1/models"))
+          (let [rows (:data (hermes-compat/profile-list config session))
+                rows (if profile (filter #(= profile (:id %)) rows) rows)]
+            (send! exchange 200 (hermes-surface/models rows (quot (System/currentTimeMillis) 1000))))
+
+          (and (= method "GET") (= path "/v1/skills"))
+          (let [b (hermes-compat/resolve-bot config session profile)]
+            (send! exchange 200 (hermes-surface/skills b (:files (bots/profile session (:id b))))))
+
+          (and (= method "GET") (re-matches #"/api/profiles/[^/]+/export" path))
+          (let [b (hermes-compat/resolve-bot
+                   config session
+                   (form-urlencoded/form-decode
+                    (second (re-matches #"/api/profiles/([^/]+)/export" path))))]
+            (send! exchange 200 (hermes-surface/profile-export b (:files (bots/profile session (:id b))))))
+
+          (and (= method "POST") (= path "/v1/chat/completions"))
+          (let [body (read-json exchange)
+                chat (hermes-surface/chat-request body profile)]
+            (require-origin! exchange config)
+            (require-csrf! exchange session)
+            (when (:refuse chat)
+              (throw (ex-info (:message chat) {:type (:refuse chat)})))
+            (let [model (or (:model body) (:profile chat) "itonami-bot")]
+              (if (:stream? chat)
+                (let [started (hermes-compat/start-run! config session (:profile chat)
+                                                        (hermes-surface/run-body chat))]
+                  (send-completion-stream! exchange session (:run_id started) model))
+                (let [answer (hermes-compat/session-chat! config session (:profile chat)
+                                                          (hermes-surface/run-body chat))]
+                  (send! exchange 200 (hermes-surface/completion
+                                       {:id (str (java.util.UUID/randomUUID)) :model model
+                                        :created (quot (System/currentTimeMillis) 1000)
+                                        :output (get-in answer [:message :content])
+                                        :usage (:usage answer)}))))))
+
+          :else
+          (send! exchange 404 (hermes-openai-error (str "Hermes endpoint not found: " path)
+                                                   "not_found")))))))
+
 (defn- hermes-compat-handler [config]
   (reify HttpHandler
     (handle [_ exchange]
       (let [method (.getRequestMethod exchange)
             path (.getPath (.getRequestURI exchange))]
         (try
-          (handle-hermes-compat! config exchange method path)
+          (if (hermes-surface/surface-path? (second (hermes-compat/split-profile-path path)))
+            (handle-hermes-surface! config exchange method path)
+            (handle-hermes-compat! config exchange method path))
           (catch kerror/ExceptionInfo error
             (send! exchange
                    (case (:type (ex-data error))
@@ -7282,6 +7370,7 @@
                      :bot/run-not-found 404
                      :bot/not-held 409
                      :hermes/approval-not-pending 409
+                     :hermes/invalid-input 400
                      400)
                    (hermes-openai-error
                     (.getMessage error)
@@ -7519,6 +7608,11 @@
                      (hermes-compat-handler configuration))
      (.createContext instance "/p/"
                      (hermes-compat-handler configuration))
+     ;; The rest of the Hermes API surface (ADR-0143). `/health` stays the
+     ;; root handler's; `/v1/health` is the Hermes-shaped one.
+     (doseq [prefix ["/v1/health" "/v1/capabilities" "/v1/models"
+                     "/v1/chat/completions" "/v1/skills"]]
+       (.createContext instance prefix (hermes-compat-handler configuration)))
      (.createContext instance "/api/update"
                      (update-handler configuration))
      (.createContext instance "/api/folder-sync"

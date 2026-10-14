@@ -1,0 +1,89 @@
+(ns cloud.itonami.app.hermes-surface-test
+  "ADR-0143: the Hermes API surface over Bots speaks upstream's wire shapes —
+  health, capabilities that name only implemented endpoints, Bots as OpenAI
+  models, chat completions that take the last user message as the turn, skills,
+  and a credential-free Bot → Hermes profile export."
+  (:require #?(:clj [kotoba.test :refer [deftest is testing]]
+               :cljs [cljs.test :refer [deftest is testing]])
+            [cloud.itonami.app.hermes-surface :as hs]))
+
+(def bot {:id "bot_1" :name "設定サポート" :role "設定の案内" :model "mishima"
+          :brief "設定の現状を確認し、変更案を案内する。"
+          :hermes-import {:profile-id "settings-help" :skills ["git-operations"]}
+          :tools [{:name "gmail.search"}]})
+
+(deftest health-and-capabilities
+  (is (= {:status "ok" :platform "hermes-agent" :runtime "cloud-itonami"
+          :resident "jvm" :version "v"}
+         (hs/health "v" "jvm")))
+  (let [c (hs/capabilities {:resident "jvm-free" :tool-execution "none" :auth-required? true})]
+    (is (= "hermes.api_server.capabilities" (:object c)))
+    (is (true? (get-in c [:features :chat_completions])))
+    (is (false? (get-in c [:features :responses_api])) "not implemented, so not advertised")
+    (is (= {:method "POST" :path "/v1/chat/completions"} (get-in c [:endpoints "chat_completions"])))
+    (is (nil? (get-in c [:endpoints "responses"])) "no endpoint is named that would 404")))
+
+(deftest paths
+  (is (hs/surface-path? "/v1/models"))
+  (is (hs/surface-path? "/api/profiles/settings-help/export"))
+  (is (not (hs/surface-path? "/v1/runs")) "runs stay the gateway's")
+  (is (hs/public-path? "/v1/capabilities"))
+  (is (not (hs/public-path? "/v1/models"))))
+
+(deftest bots-are-models
+  (let [m (hs/models [{:id "settings-help" :bot_id "bot_1" :name "設定サポート" :model "mishima" :enabled true}] 1700000000)]
+    (is (= "list" (:object m)))
+    (is (= {:id "settings-help" :object "model" :root "mishima" :owned_by "cloud-itonami"}
+           (select-keys (first (:data m)) [:id :object :root :owned_by])))))
+
+(deftest chat-requests
+  (testing "the last user message is the turn; system messages are this turn's instructions"
+    (is (= {:profile "settings-help" :input "二つ目" :instructions "丁寧に" :stream? true}
+           (hs/chat-request {:model "settings-help" :stream true
+                             :messages [{:role "system" :content "丁寧に"}
+                                        {:role "user" :content "一つ目"}
+                                        {:role "assistant" :content "はい"}
+                                        {:role "user" :content [{:type "text" :text "二つ目"}]}]}
+                            nil))))
+  (is (nil? (:profile (hs/chat-request {:model "hermes-agent" :messages [{:role "user" :content "x"}]} nil)))
+      "upstream's own model id selects the default Bot")
+  (is (= "from-path" (:profile (hs/chat-request {:model "m" :messages [{:role "user" :content "x"}]} "from-path"))))
+  (is (= :hermes/invalid-input (:refuse (hs/chat-request {:messages [{:role "system" :content "x"}]} nil)))))
+
+(deftest completions-and-chunks
+  (is (= "chat.completion" (:object (hs/completion {:id "r" :model "m" :created 1 :output "答え" :usage {}}))))
+  (is (= "答え" (get-in (hs/completion {:id "r" :model "m" :created 1 :output "答え"}) [:choices 0 :message :content])))
+  (let [base {:id "r" :model "m" :created 1}]
+    (is (= [{:role "assistant"}] (map #(get-in % [:choices 0 :delta]) (hs/run-event->chunks {:event "run.started"} base))))
+    (is (= "こん" (get-in (first (hs/run-event->chunks {:event "assistant.delta" :delta "こん"} base)) [:choices 0 :delta :content])))
+    (is (= "stop" (get-in (first (hs/run-event->chunks {:event "run.completed"} base)) [:choices 0 :finish_reason])))
+    (is (empty? (hs/run-event->chunks {:event "run.phase"} base))))
+  (testing "accumulated and incremental deltas both become increments"
+    (is (= ["こんにちは" "こんにちは"] (hs/delta-increment "" "こんにちは")))
+    (is (= ["世界" "こんにちは世界"] (hs/delta-increment "こんにちは" "こんにちは世界")))
+    (is (= ["！" "こんにちは！"] (hs/delta-increment "こんにちは" "！")))))
+
+(deftest skills-and-export
+  (is (= [{:name "git-operations" :description "" :category "hermes-import"}
+          {:name "gmail.search" :description "" :category "itonami-tool"}]
+         (:data (hs/skills bot))))
+  (let [e (hs/profile-export bot)]
+    (is (= "settings-help" (:profile e)) "an imported Bot exports under its Hermes profile id")
+    (is (= #{"SOUL.md" "profile.yaml" "config.yaml"} (set (keys (:files e)))))
+    (is (re-find #"provider: murakumo" (get-in e [:files "config.yaml"])))
+    (is (re-find #"default: \"mishima\"" (get-in e [:files "config.yaml"])))
+    (is (re-find #"設定の現状" (get-in e [:files "SOUL.md"])))
+    (is (some #{"accounts"} (:rebind_required e)) "credentials never travel")
+    (is (re-find #"description: \"設定の案内\"" (get-in e [:files "profile.yaml"])))))
+
+(deftest export-uses-the-persistent-profile
+  (let [files {"SOUL.md" "# 本物の SOUL\n" "USER.md" "owner facts" "MEMORY.md" "notes"
+               "skills/mail-triage/SKILL.md" "# mail triage\n"}
+        e (hs/profile-export bot files)]
+    (is (= "# 本物の SOUL\n" (get-in e [:files "SOUL.md"])))
+    (is (= "# mail triage\n" (get-in e [:files "skills/mail-triage/SKILL.md"])))
+    (is (not (contains? (:files e) "USER.md")) "the owner's facts stay home")
+    (is (not (contains? (:files e) "MEMORY.md")))
+    (is (= ["USER.md" "MEMORY.md"] (:not_exported e)))
+    (is (= "mail-triage" (:name (first (:data (hs/skills bot files)))))
+        "profile skills lead the /v1/skills list")))

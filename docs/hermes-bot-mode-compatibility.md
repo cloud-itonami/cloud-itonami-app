@@ -1,5 +1,8 @@
 # Hermes Agent Bot Mode compatibility
 
+Itonami agent is the Hermes agent and the Itonami desktop is the bots-first
+Hermes desktop: see ADR-0143 for the names and the full compatibility contract.
+
 ## Full profile migration
 
 `itonami bots import hermes` now uses the resident API's
@@ -55,6 +58,13 @@ the first pinned visible Bot, then the oldest visible Bot.
 | POST | `/v1/runs/{id}/approval` | implemented through Itonami approval authority |
 | POST | `/v1/runs/{id}/steer` | implemented through bounded follow-ups |
 | POST | `/v1/runs/{id}/stop` | implemented through native cancellation |
+| GET | `/health` | the resident's health plus `status`/`platform`/`runtime` (ADR-0143) |
+| GET | `/v1/health` | Hermes health shape, no session (ADR-0143) |
+| GET | `/v1/capabilities` | only implemented endpoints and features, no session (ADR-0143) |
+| GET | `/v1/models` | every visible Bot as a model id = its profile id (ADR-0143) |
+| POST | `/v1/chat/completions` | OpenAI completion; last user message is the turn, `model` picks the Bot; `stream: true` sends chunks then `[DONE]` (ADR-0143) |
+| GET | `/v1/skills` | profile skills, imported skills, enabled tools (ADR-0143) |
+| GET | `/api/profiles/{profile}/export` | credential-free Hermes profile files; USER.md/MEMORY.md not exported (ADR-0143) |
 
 The `itonami hermes ...` CLI covers profile/session discovery and run start,
 status, steer, stop and approval.
