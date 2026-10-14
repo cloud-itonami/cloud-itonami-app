@@ -90,6 +90,12 @@
   ;; describe results with the second one.
   (r/atom (let [{:keys [base token]} (read-pairing)]
             {:phase :loading :query "" :applied-query nil
+             ;; the role facet: what the menu offers (from the edge) and what
+             ;; is chosen. `:applied-role` is to `:role` what `:applied-query`
+             ;; is to `:query`.
+             :roles nil :role nil :applied-role nil
+             ;; the actor whose detail is open, or nil for the list
+             :selected nil
              :actors nil :matched nil :total nil :shown nil :error nil
              ;; the command surface
              :pane :fleet
@@ -117,12 +123,31 @@
 ;; comment.)
 (defonce ^:private issued (atom 0))
 
-(defn- search-url [query]
+(defn- search-url [query role]
   (let [u (js/URL. "/api/fleet/search" api-base)]
     (.set (.-searchParams u) "limit" (str page-limit))
     (when-not (str/blank? query)
       (.set (.-searchParams u) "text" (str/trim query)))
+    (when-not (str/blank? role)
+      (.set (.-searchParams u) "role" role))
     (.-href u)))
+
+(defn- load-roles!
+  "Ask the edge which roles the catalog holds, for the role menu.
+
+  Best effort and silent on failure: the menu is a narrowing aid, and the list
+  below it already says, in its own words, when the edge cannot be reached. A
+  second failure banner for the same unreachable host would say nothing new."
+  []
+  (let [u (js/URL. "/api/fleet/facets" api-base)]
+    (.set (.-searchParams u) "field" "role")
+    (-> (js/fetch (.-href u))
+        (.then (fn [^js res] (when (.-ok res) (.json res))))
+        (.then (fn [body]
+                 (let [values (:values (js->clj body :keywordize-keys true))]
+                   (when (and (vector? values) (every? #(string? (:value %)) values))
+                     (swap! state assoc :roles values)))))
+        (.catch (fn [_] nil)))))
 
 (defn- failure
   "A message that says which failure this is.
@@ -145,14 +170,14 @@
   `:total` is only written on an unfiltered read. A filtered read knows how
   many matched and nothing about how many exist, and writing `matched` into
   `total` would make the screen state a number it did not measure."
-  [query]
-  (let [unfiltered? (str/blank? query)
+  [query role]
+  (let [unfiltered? (and (str/blank? query) (str/blank? role))
         token (swap! issued inc)
         current? #(= token @issued)]
     ;; `:query` is not written here: the field owns it, and a read in flight
     ;; must not be able to change what someone is typing.
     (swap! state assoc :phase :loading :error nil)
-    (-> (js/fetch (search-url query))
+    (-> (js/fetch (search-url query role))
         (.then (fn [^js res]
                  (if (.-ok res)
                    (.json res)
@@ -172,6 +197,7 @@
                                              :actors actors
                                              :matched matched
                                              :applied-query query
+                                             :applied-role role
                                              :shown (count actors)
                                              :error nil)
                                 unfiltered? (assoc :total matched))))
@@ -251,7 +277,7 @@
 (defn- root []
   (view/screen
    @state
-   {:on-pane (fn [p] (swap! state assoc :pane p))
+   {:on-pane (fn [p] (swap! state assoc :pane p :selected nil))
     :on-line (fn [^js e] (swap! state assoc :line (.. e -target -value)))
     :on-submit (fn [^js e]
                  (when (or (nil? (.-key e)) (= "Enter" (.-key e)))
@@ -271,9 +297,23 @@
                  ;; Enter. A key event that is not Enter is not a search.
                  (when (or (nil? (.-key e)) (= "Enter" (.-key e)))
                    (.preventDefault e)
-                   (load! (:query @state))))
-    :on-retry (fn [_] (load! (:query @state)))}))
+                   (load! (:query @state) (:role @state))))
+    ;; Choosing a role is a search: a menu whose choice waits for a second tap
+    ;; reads as a menu that did nothing.
+    :on-role (fn [^js e]
+               (let [v (.. e -target -value)
+                     role (when-not (or (str/blank? v) (= "all" v)) v)]
+                 (swap! state assoc :role role)
+                 (load! (:query @state) role)))
+    :on-open (fn [actor]
+               (swap! state assoc :selected actor)
+               (js/window.scrollTo 0 0))
+    :on-close (fn []
+                (swap! state assoc :selected nil)
+                (js/window.scrollTo 0 0))
+    :on-retry (fn [_] (load! (:query @state) (:role @state)))}))
 
 (defn init []
   (rdom/render [root] (.getElementById js/document "app"))
-  (load! ""))
+  (load! "" nil)
+  (load-roles!))

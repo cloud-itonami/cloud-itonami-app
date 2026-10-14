@@ -1,0 +1,18 @@
+(ns audit-viewport
+  "SHELL-BINDING §2 over the shipped bundle: `shinkansen.viewport/audit` with
+  `:host :kotoba-shell`, the stylesheet the document links, and the top
+  safe-area inset asserted by name (the side this app's own iOS run found
+  missing). Run through scripts/audit-viewport.mjs, which puts shinkansen on
+  the classpath."
+  (:require ["node:fs" :as fs]
+            ["node:process" :as process]
+            [shinkansen.viewport :as vp]))
+
+(let [html (str (fs/readFileSync "dist/index.html" "utf8"))
+      css (str (fs/readFileSync "dist/dds.css" "utf8"))
+      result (vp/audit {:html html :file "index.html" :host :kotoba-shell
+                        :stylesheets [css]})
+      top? (boolean (re-find #"env\(safe-area-inset-top" (str html css)))]
+  (prn (assoc result :safe-area-top top?))
+  (when-not (and (:ok result) top?)
+    (set! (.-exitCode process) 1)))

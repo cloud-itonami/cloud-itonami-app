@@ -8,10 +8,12 @@
   "scripts": {
     "index": "kbb --backend sci --classpath \"$(kbb -A:cljs -Spath)\" scripts/gen_index.cljs",
     "index:check": "kbb --backend sci --classpath \"$(kbb -A:cljs -Spath)\" scripts/gen_index.cljs --check",
-    "assets": "mkdir -p dist && cp ../../../kotoba-lang/jp-go-digital-design-system/resources/jp_go_dds/dds.css dist/",
-    "build": "npm run index:check && npm run assets && node ../../../../scripts/resource-guard.mjs run build -- amu compile --target wasm32-browser app",
-    "watch": "npm run assets && amu compile --target wasm32-browser app",
-    "serve": "npx http-server dist -p 8099 -c-1"
+    "assets": "mkdir -p dist && cp \"${JP_GO_DDS:-../../../kotoba-lang/jp-go-digital-design-system}/resources/jp_go_dds/dds.css\" dist/",
+    "build": "npm run assets && node scripts/build-bundle.mjs && node scripts/audit-viewport.mjs",
+    "watch": "npm run assets && node scripts/build-bundle.mjs watch app",
+    "serve": "npx http-server dist -p 8099 -c-1",
+    "bundle": "node scripts/build-bundle.mjs",
+    "audit": "node scripts/audit-viewport.mjs"
   },
   "devDependencies": {
     "playwright-core": "^1.62.1",

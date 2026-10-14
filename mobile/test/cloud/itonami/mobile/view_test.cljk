@@ -14,7 +14,8 @@
 (def ^:private handlers
   {:on-query identity :on-search identity :on-retry identity
    :on-pane identity :on-line identity :on-submit identity
-   :on-base identity :on-token identity :on-pairing (constantly nil)})
+   :on-base identity :on-token identity :on-pairing (constantly nil)
+   :on-role identity :on-open identity :on-close (constantly nil)})
 
 (defn- screen
   "The FLEET pane, which is what this file is about.
@@ -194,3 +195,58 @@
     (is (not (str/includes? unpaired "組み立てられませんでした"))
         "the heading contradicts the body")
     (is (str/includes? no-flag "組み立てられませんでした"))))
+
+;; ---------------------------------------------------------------------------
+;; detail, facet and about
+;; ---------------------------------------------------------------------------
+
+(deftest every-card-opens-a-detail
+  (let [tree (screen {:phase :ready :query "" :actors sample-actors
+                      :matched 2 :total 2 :shown 2}
+                     handlers)]
+    (is (= 2 (count (re-seq #"詳しく見る" (text tree)))))))
+
+(deftest the-detail-states-what-the-catalog-states-and-nothing-else
+  (let [actor {:repo "cloud-itonami-isic-0111" :name "Cereal-Growing Operations Coordination"
+               :role "sector-agent" :domain "cereal-growing" :isic-rev5 "0111"
+               :social-impact ["food-security" "rural-employment"]
+               :robotics true}
+        t (text (screen {:phase :ready :selected actor} handlers))]
+    (is (str/includes? t "Cereal-Growing Operations Coordination"))
+    (is (str/includes? t "産業（ISIC）"))
+    (is (str/includes? t "food-security、rural-employment"))
+    (is (str/includes? t "一覧に戻る"))
+    (is (not (str/includes? t "エンドポイント"))
+        "a field the actor does not carry is left out, not shown empty")))
+
+(deftest the-summary-names-the-role-it-was-narrowed-by
+  (let [t (text (screen {:phase :ready :query "" :applied-query "" :applied-role "sector-agent"
+                         :actors sample-actors :matched 461 :total 1294 :shown 2}
+                        handlers))]
+    (is (str/includes? t "461 件が一致しました（全 1294 件中）。条件: 役割: 産業（ISIC）"))))
+
+(deftest the-role-menu-appears-only-with-the-edge-s-answer
+  (let [with (screen {:phase :loading :roles [{:value "sector-agent" :count 461}]} handlers)
+        without (screen {:phase :loading} handlers)]
+    (is (some #(= :select (first %)) (nodes with)))
+    (is (not (some #(= :select (first %)) (nodes without))))))
+
+(deftest the-about-pane-names-support-and-privacy-without-links
+  (let [tree (view/screen {:pane :about} handlers)
+        t (text tree)]
+    (is (str/includes? t "support@itonami.cloud"))
+    (is (str/includes? t "https://itonami.cloud/legal/privacy/"))
+    (is (empty? (filter #(= :a (first %)) (nodes tree))))))
+
+(deftest new-screens-stay-inside-the-design-system
+  (let [trees [(view/screen {:pane :about} handlers)
+               (screen {:phase :ready :selected (first sample-actors)} handlers)
+               (screen {:phase :loading :roles [{:value "sector-agent" :count 1}]} handlers)]
+        all (mapcat nodes trees)
+        classes (mapcat #(str/split (str (:class (attrs-of %))) #"\s+") all)
+        foreign (remove #(or (str/blank? %)
+                             (str/starts-with? % "dads-")
+                             (str/starts-with? % "dds-ext-"))
+                        classes)]
+    (is (empty? (filter #(contains? (attrs-of %) :style) all)))
+    (is (empty? foreign) (pr-str (distinct foreign)))))
