@@ -341,8 +341,9 @@
      :bot/email email
      ;; What `bot-identity` derives this Bot's did and signing seed from when
      ;; it is not `:bot/id`. Set only by a Hermes import, to the source profile
-     ;; id, so the Bot keeps the did its profile already had; nil -- every
-     ;; other Bot -- keeps the did derived from the id. Like the mailbox it is
+     ;; id, when that profile was minted by this fleet and no other owner
+     ;; holds it, so the Bot keeps the did its profile already had; nil --
+     ;; every other Bot -- keeps the did derived from the id. Like the mailbox it is
      ;; fixed at creation: no update path writes it, because changing it would
      ;; rename the Bot everywhere its did is trusted.
      :bot/identity-key (optional-name (:bot/identity-key value)

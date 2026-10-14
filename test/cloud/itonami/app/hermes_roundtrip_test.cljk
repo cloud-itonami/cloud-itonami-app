@@ -26,6 +26,7 @@
            [java.security MessageDigest]))
 
 (def ^:private alice {:user-id "alice" :organization-id "org-1" :kind :passkey})
+(def ^:private bob {:user-id "bob" :organization-id "org-2" :kind :passkey})
 
 (def ^:private test-seed (byte-array (range 32)))
 
@@ -128,7 +129,8 @@
   "Real preview -> stage -> provision. The profile archive is a plain tar of
   the profile directory, which the real runtime-context projection then
   reads; sessions are empty."
-  [home data-dir migration-id]
+  ([home data-dir migration-id] (import! home data-dir migration-id alice))
+  ([home data-dir migration-id session]
   (let [preview (migration/preview {:home home :migration-id migration-id})]
     (binding [migration/*export-profile!*
               (fn [_ root profile-id output]
@@ -141,9 +143,9 @@
                                       :manifest preview})]
         {:preview preview
          :provisioned (migration/provision! {:configuration configuration
-                                             :session alice
+                                             :session session
                                              :data-dir data-dir
-                                             :manifest staged})}))))
+                                             :manifest staged})})))))
 
 (defn- profile [manifest id]
   (some #(when (= id (:id %)) %) (:profiles manifest)))
@@ -171,8 +173,10 @@
           (is (= carried (:itonami-profile (profile preview "murakumo-eng"))))
           (is (= carried (:itonami-profile (profile provisioned "murakumo-eng"))))
           (is (nil? (:warnings (profile preview "murakumo-eng")))))
-        (testing "the binding carries it too"
-          (is (= carried (:itonami-profile (bots/hermes-import-binding alice bot-id)))))
+        (testing "the binding carries it too, and nothing was withheld"
+          (let [import-binding (bots/hermes-import-binding alice bot-id)]
+            (is (= carried (:itonami-profile import-binding)))
+            (is (nil? (:identity-key-withheld import-binding)))))
         (testing "the imported Bot answers to the profile's did"
           (is (= profile-did (:did (bots/wallet-principal alice bot-id))))
           (is (= profile-did
@@ -217,6 +221,9 @@
             (is (= (independent-did (:bot/id plain))
                    (:did (bots/wallet-principal alice (:bot/id plain)))))))))))
 
+(defn- withheld [session bot-id]
+  (:identity-key-withheld (bots/hermes-import-binding session bot-id)))
+
 (deftest a-profile-without-an-itonami-record-still-imports-and-exports
   (with-store
     (fn [data-dir]
@@ -232,17 +239,74 @@
           (is (= ["itonami-profile-unreadable"]
                  (mapv :kind (:warnings (profile preview "broken-agent"))))))
         (doseq [id ["plain-agent" "broken-agent"]]
-          (testing (str id " imports and exports under its profile's did")
+          (testing (str id " imports and exports under the did of its own Bot id")
             (let [bot-id (:bot-id (profile provisioned id))
                   {:keys [files did]} (bots/export-hermes-profile alice bot-id)]
               (is (some? bot-id) "the import did not fail")
-              (is (= (independent-did id) did))
+              (is (= :no-profile-did (withheld alice bot-id))
+                  "no stated did, no claim on the profile's name")
+              (is (= (independent-did bot-id) did))
               (is (= soul (get files "SOUL.md")))
               (is (= #{"model:" "  provider: murakumo" "  default: mishima"}
                      (config-lines (get files "config.yaml"))))
               (is (= {:itonami/schema "cloud.itonami.profile.v2"
                       :profile/id id
                       :profile/hermes-compatible true
-                      :ids {:did (independent-did id)}}
+                      :ids {:did (independent-did bot-id)}}
                      (edn/read-string (get files "itonami.edn")))
-                  "the minimal record states the did the Bot now has"))))))))
+                  "the minimal record states the did the Bot has"))))))))
+
+(deftest the-profile-did-is-claimed-only-when-this-fleet-minted-it-and-nobody-else-holds-it
+  (with-store
+    (fn [data-dir]
+      (let [record (fn [id ids]
+                     (str (pr-str (assoc (murakumo-itonami) :profile/id id :ids ids))
+                          "\n"))
+            home (hermes-home!
+                  {"murakumo-eng"
+                   {"SOUL.md" soul "config.yaml" murakumo-config
+                    "itonami.edn" (record "murakumo-eng"
+                                          {:repo "network-awai/cloud-murakumo-api"
+                                           :did (independent-did "murakumo-eng")})}
+                   "no-did-agent"
+                   {"SOUL.md" soul "config.yaml" murakumo-config
+                    "itonami.edn" (record "no-did-agent" {:repo "network-awai/no-did"})}
+                   "copied-agent"
+                   ;; A copied record: it states the did this fleet derives
+                   ;; for a different profile id.
+                   {"SOUL.md" soul "config.yaml" murakumo-config
+                    "itonami.edn" (record "copied-agent"
+                                          {:repo "network-awai/copied"
+                                           :did (independent-did "murakumo-eng")})}})
+            first-import (:provisioned (import! home data-dir "hermes-gate-alice"))
+            alice-bot (:bot-id (profile first-import "murakumo-eng"))
+            alice-did (:did (bots/wallet-principal alice alice-bot))]
+        (testing "a matching did is claimed"
+          (is (= (independent-did "murakumo-eng") alice-did))
+          (is (nil? (withheld alice alice-bot))))
+        (testing "a record without a did does not claim the name"
+          (let [bot-id (:bot-id (profile first-import "no-did-agent"))]
+            (is (= :no-profile-did (withheld alice bot-id)))
+            (is (= (independent-did bot-id)
+                   (:did (bots/wallet-principal alice bot-id))))))
+        (testing "a record whose did this fleet did not derive for that id does not"
+          (let [bot-id (:bot-id (profile first-import "copied-agent"))]
+            (is (= :did-mismatch (withheld alice bot-id)))
+            (is (= (independent-did bot-id)
+                   (:did (bots/wallet-principal alice bot-id))))
+            (is (not= (independent-did "copied-agent")
+                      (:did (bots/wallet-principal alice bot-id))))))
+        (testing "another owner importing the same profile does not share its did"
+          (let [second-import (:provisioned (import! home data-dir "hermes-gate-bob" bob))
+                bob-bot (:bot-id (profile second-import "murakumo-eng"))
+                bob-did (:did (bots/wallet-principal bob bob-bot))]
+            (is (some? bob-bot) "the import itself still succeeds")
+            (is (= :claimed-by-other-owner (withheld bob bob-bot)))
+            (is (not= alice-did bob-did))
+            (is (= (independent-did bob-bot) bob-did))))
+        (testing "the first owner re-importing keeps the claim"
+          (let [again (:provisioned (import! home data-dir "hermes-gate-alice-again"))
+                again-bot (:bot-id (profile again "murakumo-eng"))]
+            (is (not= alice-bot again-bot))
+            (is (nil? (withheld alice again-bot)))
+            (is (= alice-did (:did (bots/wallet-principal alice again-bot))))))))))

@@ -1479,8 +1479,11 @@ relevance queries. Writes replace the state file atomically.
   capability.
 - Bot identity: a Bot's did and signing seed derive from the one fleet seed.
   An imported Hermes Bot derives them from its source profile id
-  (`:bot/identity-key`, ADR-0088 amendment 2026-10-14), set only by the import
-  path, so every import of that profile on one host answers to the same did.
+  (`:bot/identity-key`, ADR-0088 amendment 2026-10-14) only when the profile's
+  record states the did this fleet derives for that id and no other
+  (owner, organization) already holds the key; otherwise it keeps the did of
+  its own Bot id and the import binding records why. A profile's name alone
+  never claims a fleet identity, and no two owners share one.
 - Prompt retention: chats are stored locally by design. Deleting a session
   removes the ordered transcript; compaction/retraction of its historical
   datoms is not yet implemented and the UI does not claim secure erasure.

@@ -1129,6 +1129,44 @@
                                   (app-config/data-dir) (:migration-id import-binding)
                                   {:artifacts [(:runtime-context import-binding)]})})})))
 
+(defn- hermes-identity-claim
+  "May this import answer to its source profile's did?
+
+  `{:identity-key profile-id}` only when both hold: the carried itonami record
+  states a did and it is the did THIS fleet derives for that profile id (the
+  profile was minted here, not merely named like one), and no Bot of another
+  owner or organization already holds that key. Otherwise
+  `{:withheld reason}` -- `:no-profile-did`, `:did-mismatch` or
+  `:claimed-by-other-owner` -- and the Bot keeps the did of its own id.
+
+  A profile id is a name anybody can give a directory. Without the first
+  check, any Hermes home handed to the import (a fixture, a copy, another
+  person's) whose profile happens to share a fleet agent's name would sign as
+  that agent; without the second, a second owner on this resident would share
+  the first owner's Bot's did, signing seed and Wallet principal. The same
+  owner re-importing under a new migration id is the case the key exists for,
+  and it passes."
+  [session profile-id itonami-profile]
+  (let [source-id (some-> profile-id str not-empty)
+        stated (some-> (get-in itonami-profile [:ids :did]) str not-empty)]
+    (cond
+      (not (and source-id stated))
+      {:withheld :no-profile-did}
+
+      (not= stated (bot-identity/bot-did source-id))
+      {:withheld :did-mismatch}
+
+      (some (fn [b]
+              (and (= source-id (:bot/identity-key b))
+                   (not (and (= (:user-id session) (:bot/owner b))
+                             (= (:organization-id session)
+                                (:bot/organization b))))))
+            (vals (:bots (snapshot))))
+      {:withheld :claimed-by-other-owner}
+
+      :else
+      {:identity-key source-id})))
+
 (defn create-hermes-import!
   "Idempotently provision one Bot from a reviewed Hermes bundle.
 
@@ -1143,12 +1181,15 @@
   unmapped remainder are recorded on the binding so an operator can audit
   what crossed.
 
-  The Bot is named by its source profile, not by this migration: its
-  `:bot/identity-key` is the profile id, so its did is the did the profile
-  already had (root ADR-2610141512) and a re-import under a new migration id
-  answers to the same name. `:itonami-profile`, the non-secret subset of the
-  profile's `itonami.edn`, rides on the Bot and the binding as provenance for
-  `export-hermes-profile`; it grants nothing."
+  When `hermes-identity-claim` admits it, the Bot is named by its source
+  profile, not by this migration: its `:bot/identity-key` is the profile id,
+  so its did is the did the profile already had (root ADR-2610141512) and a
+  re-import under a new migration id answers to the same name. When it does
+  not, the Bot keeps the did of its own id and the binding records why
+  (`:identity-key-withheld`); the import itself still succeeds.
+  `:itonami-profile`, the non-secret subset of the profile's `itonami.edn`,
+  rides on the Bot and the binding as provenance for `export-hermes-profile`;
+  it grants nothing."
   [configuration session {:keys [migration-id profile-id name brief provider-id
                                   model runtime-context session-export
                                   session-ids seed carry-over-grants
@@ -1183,11 +1224,12 @@
                       :peers? false :coding? false :virtual-shell? false
                       :goal? false :priority? false :pinned? false
                       :omakase? false})
+            claim (hermes-identity-claim session profile-id itonami-profile)
             created
             (binding [*create-bot-id* bot-id
                       *create-bot-provenance*
                       (when-let [source-id (some-> profile-id str not-empty)]
-                        {:bot/identity-key source-id
+                        {:bot/identity-key (:identity-key claim)
                          :bot/hermes-profile (cond-> {:id source-id}
                                                (seq itonami-profile)
                                                (assoc :itonami itonami-profile))})]
@@ -1218,7 +1260,8 @@
                            :source-permission-evidence (:source-permission-evidence carry)
                            :unmapped-authority (:unmapped-authority carry))
             binding (cond-> binding
-                      (seq itonami-profile) (assoc :itonami-profile itonami-profile))]
+                      (seq itonami-profile) (assoc :itonami-profile itonami-profile)
+                      (:withheld claim) (assoc :identity-key-withheld (:withheld claim)))]
         (transact! assoc-in [:hermes-import-bindings bot-id] binding)
         (when (seq messages)
           (transact! assoc-in [:conversations bot-id] messages))

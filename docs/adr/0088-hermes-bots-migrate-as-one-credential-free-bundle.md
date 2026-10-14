@@ -138,12 +138,21 @@ re-import.
   on the source host. `:authority` is a reference to the governing yakuwari,
   never a destination grant. An unreadable file is a `:warnings` row; it never
   fails the import. `itonami.edn` joins the default profile's lock roots.
-- **The Bot keeps the profile's did.** The import sets `:bot/identity-key` to
-  the profile id, and every did / signing-seed derivation goes through
-  `bot-identity/identity-key` (`or identity-key bot-id`). The key is bound
-  only by `create-hermes-import!`; `create!`'s request body cannot name it,
-  and no update path writes it. Bots without it -- workforce Bots and Bots
-  imported before this amendment -- keep exactly the did they had.
+- **The Bot keeps the profile's did -- when it may claim it.** Every did /
+  signing-seed derivation goes through `bot-identity/identity-key`
+  (`or identity-key bot-id`). `create-hermes-import!` sets
+  `:bot/identity-key` to the profile id only when `hermes-identity-claim`
+  admits it: the carried record states `:ids :did` and it equals the did this
+  host's fleet seed derives for that profile id (the profile was minted by
+  this fleet, not merely named like one), and no Bot of a different
+  (owner, organization) already holds that key. The same owner re-importing
+  under a new migration id passes. Otherwise no key is bound, the Bot keeps
+  the did of its own id, and the binding records
+  `:identity-key-withheld` -- `:no-profile-did`, `:did-mismatch` or
+  `:claimed-by-other-owner`; the import still succeeds. The key is bound only
+  there; `create!`'s request body cannot name it, and no update path writes
+  it. Bots without it -- workforce Bots and Bots imported before this
+  amendment -- keep exactly the did they had.
 - **The way back.** `bots/export-hermes-profile` returns an imported Bot as
   profile files: `SOUL.md` (the staged, digest-verified runtime-context
   persona, verbatim), `config.yaml` (`model.provider` / `model.default` from
@@ -153,11 +162,16 @@ re-import.
   keys and grants are not exported. There is no HTTP route yet: a route here
   must first be registered in `cloud-itonami-commands` (see `commands-test`).
 
-Consequence stated plainly: identity follows the profile id, so two imports of
-the same profile on one host -- a re-import, or another owner's import --
-answer to the same did and signing seed. That is the profile's identity under
-the one fleet seed, which the resident already held for every Bot; it is not
-a new custody boundary, and it grants no tool.
+Consequence stated plainly: a profile id is a name anybody can give a
+directory, so the name alone never claims the identity. A Hermes home that
+merely names a profile like a fleet agent (a fixture, a copy, another
+person's home) cannot sign as that agent, and a second owner on the same
+resident importing the same profile gets a Bot of its own did, never the
+first owner's did, signing seed or Wallet principal. What the gate admits is
+the profile's identity under the one fleet seed, which the resident already
+held for every Bot; it is not a new custody boundary, and it grants no tool.
+The check-then-create is not a transaction, which holds on the single-writer
+local resident this import is confined to.
 
 ## Safety and lifecycle
 

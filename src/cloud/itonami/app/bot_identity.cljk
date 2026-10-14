@@ -32,8 +32,10 @@
   a name before it arrived, and its `:bot/id` cannot be that name -- it is
   minted per migration, so keying on it gave the import a second did that
   changed on every re-import. Such a Bot carries `:bot/identity-key` (the
-  profile id) and `identity-key` derives from that instead. Every other Bot
-  has no identity key and keeps exactly the did it always had.
+  profile id) and `identity-key` derives from that instead -- only when the
+  profile's own record states the did this fleet derives for that id and no
+  other owner already holds it (`bots/hermes-identity-claim`). Every other
+  Bot has no identity key and keeps exactly the did it always had.
 
   ## What this deliberately does not do
 
@@ -151,8 +153,9 @@
   "The key-id this Bot's did and signing seed derive from: `:bot/identity-key`
   when the Bot carries one, otherwise `:bot/id`.
 
-  Only a Hermes import sets the identity key (to the source profile id), so the
-  imported Bot answers to the did its profile already had. Every call site
+  Only a Hermes import sets the identity key (to the source profile id, when
+  the import may claim it), so the imported Bot answers to the did its
+  profile already had. Every call site
   that names a Bot's did or reaches its signing seed goes through here; one
   that passed `:bot/id` directly would give an imported Bot two names."
   [b]

@@ -14,7 +14,8 @@ Credentials, provider/account bindings and source tool authority are listed as
 grant. See ADR-0088.
 
 A profile's `itonami.edn` (ids, org placement) crosses as provenance, the
-imported Bot's did is the profile's did (derived from the profile id), and
+imported Bot's did is the profile's did when this fleet minted that profile
+and no other owner holds it (otherwise the Bot keeps its own did), and
 `bots/export-hermes-profile` turns an imported Bot back into `SOUL.md`,
 `config.yaml`, `profile.yaml` and `itonami.edn` (ADR-0088 amendment
 2026-10-14).
