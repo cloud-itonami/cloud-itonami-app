@@ -10,7 +10,15 @@
   The catalog is a hand-written resource (see the header of
   `resources/itonami-public-bots.edn`), so it can drift. The schema check
   below fails loudly on drift rather than rendering half-cards: an entry
-  missing what the installer needs is an exception, not a missing card."
+  missing what the installer needs is an exception, not a missing card.
+
+  A second, generated resource adds the agent templates of
+  cloud-itonami/itonami-registry (`resources/itonami-registry-bots.edn`,
+  written by `scripts/sync-itonami-registry.cljk` from one pinned registry
+  commit with every folder checksum verified). The registry grants nothing,
+  so a registry offer whose install defaults turn any capability on is
+  refused here, and its brief points at the template's SOUL.md at that
+  commit. Without the generated resource the catalog is the hand-written one."
   (:require [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str])
   ;; `bots` is the JVM-side creation path. The portable half (parse, validate,
@@ -21,6 +29,12 @@
 
 (def ^:private resource-name "itonami-public-bots.edn")
 (def schema "cloud.itonami.app.public-bot-catalog.v1")
+(def ^:private registry-resource-names
+  "Generated registry offers, merged in this order: cloud-itonami/itonami-registry,
+  then upstream fathah/hermes-registry (ADR-0143: Itonami bots read the Hermes
+  registry too)."
+  ["itonami-registry-bots.edn" "hermes-registry-bots.edn"])
+(def registry-schema "cloud.itonami.app.itonami-registry-bots.v1")
 (declare install-attributes)
 
 (defn- require-field [entry field]
@@ -60,15 +74,52 @@
                       {:type :public-bot-catalog/duplicate-ids}))))
   catalog)
 
+(defn- validate-registry
+  "The generated registry resource: pinned to one commit, every offer inert."
+  [reg]
+  (when-not (= registry-schema (:schema reg))
+    (throw (ex-info "itonami registry offers schema mismatch"
+                    {:type :public-bot-catalog/schema-mismatch
+                     :expected registry-schema :actual (:schema reg)})))
+  (when-not (re-matches #"[0-9a-f]{40}" (str (get-in reg [:registry :commit])))
+    (throw (ex-info "itonami registry offers must name one registry commit"
+                    {:type :public-bot-catalog/registry-unpinned})))
+  (validate-catalog {:schema schema :bots (:bots reg)})
+  (doseq [entry (:bots reg)]
+    (when (some true? (vals (get-in entry [:install :defaults])))
+      (throw (ex-info "a registry offer may not turn a capability on"
+                      {:type :public-bot-catalog/registry-grants :id (:id entry)})))
+    (when-not (= (get-in reg [:registry :commit]) (get-in entry [:profile-source :revision]))
+      (throw (ex-info "a registry offer must pin its profile to the registry commit"
+                      {:type :public-bot-catalog/registry-unpinned :id (:id entry)}))))
+  reg)
+
+(defn merge-catalogs
+  "Hand-written offers first, then the registry's. An id offered by both is an
+  error, not a silent override."
+  [catalog reg]
+  (if-not reg
+    catalog
+    (let [merged (into (vec (:bots catalog)) (:bots reg))]
+      (when-not (= (count merged) (count (set (map :id merged))))
+        (throw (ex-info "public bot catalog and a registry offer the same id"
+                        {:type :public-bot-catalog/duplicate-ids})))
+      (-> catalog
+          (assoc :bots merged)
+          (update :registries (fnil conj []) (:registry reg))))))
+
 (defonce ^:private portable-source (atom nil))
+(defonce ^:private portable-registry-sources (atom {}))
 
 ;; JVM hosts read the resource from the classpath; the resource ships with the
 ;; release, so this namespace does not depend on a west checkout beside it.
 #?(:clj
    (defn- read-catalog []
-     (let [loader (.. Thread currentThread getContextClassLoader)]
+     (let [loader (.. Thread currentThread getContextClassLoader)
+           regs (keep #(some-> (.getResource loader %) slurp edn/read-string validate-registry)
+                      registry-resource-names)]
        (if-some [url (.getResource loader resource-name)]
-         (validate-catalog (edn/read-string (slurp url)))
+         (reduce merge-catalogs (validate-catalog (edn/read-string (slurp url))) regs)
          (throw (ex-info (str "public bot catalog resource missing: " resource-name)
                          {:type :public-bot-catalog/catalog-missing})))))
    :cljs
@@ -76,7 +127,9 @@
      ;; The portable build hands the text in through `set-portable-source!`;
      ;; reading it here would reach past the host boundary.
      (if-some [text @portable-source]
-       (validate-catalog (edn/read-string text))
+       (reduce merge-catalogs (validate-catalog (edn/read-string text))
+               (keep #(some-> (get @portable-registry-sources %) edn/read-string validate-registry)
+                     registry-resource-names))
        (throw (ex-info (str "public bot catalog resource missing: " resource-name)
                        {:type :public-bot-catalog/catalog-missing})))))
 
@@ -84,6 +137,13 @@
   "Hosts without a classpath hand the catalog text in. Passing nil clears."
   [text]
   (reset! portable-source text)
+  nil)
+
+(defn set-portable-registry-source!
+  "Hosts without a classpath hand a generated registry resource in by name
+  (optional; one of `registry-resource-names`)."
+  [resource text]
+  (swap! portable-registry-sources assoc resource text)
   nil)
 
 (def catalog
@@ -101,13 +161,15 @@
   Profile metadata adds instructions, never credentials or capabilities."
   [entry]
   (let [source (:profile-source entry)
-        {:keys [repository revision path]} source]
+        {:keys [repository revision path file]} source
+        file (or file "SOUL.md")]
     (when source
       (when-not (and (string? repository)
                      (re-matches #"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" repository)
                      (string? revision) (re-matches #"[0-9a-f]{40}" revision)
                      (string? path) (re-matches #"[A-Za-z0-9_/-]+" path)
-                     (not (str/starts-with? path "/")))
+                     (not (str/starts-with? path "/"))
+                     (re-matches #"[A-Za-z0-9_.-]+\.md" file))
         (throw (ex-info "public bot profile source must be a pinned repository path"
                         {:type :public-bot-catalog/invalid-entry :id (:id entry)
                          :field :profile-source}))))
@@ -116,7 +178,7 @@
             :brief (str (:brief entry)
                         (when source
                           (str "\nCanonical role instructions (pinned source): https://github.com/"
-                               repository "/blob/" revision "/" path "/SOUL.md"
+                               repository "/blob/" revision "/" path "/" file
                                "\nRead this role before research; preserve its evidence and publication contract.")))}
            (select-keys (get-in entry [:install :defaults])
                         [:writes? :browser? :computer? :peers? :omakase? :coding?]))))

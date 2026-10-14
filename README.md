@@ -919,6 +919,30 @@ Turns are synchronous and bounded — 8 model turns and 12 tool calls per
 message. A Bot also answers on a schedule when a routine has been made from an
 executed trace; the tick uses a live session and never mints one.
 
+### Registry offers (Itonami Registry and the Hermes registry)
+
+The Marketplace Bot tab also offers the agents of two registries that share the
+Hermes registry layout: [cloud-itonami/itonami-registry](https://github.com/cloud-itonami/itonami-registry)
+and upstream Hermes' [fathah/hermes-registry](https://github.com/fathah/hermes-registry)
+(ADR-0143: an Itonami Bot reads the Hermes registry). Each becomes a generated
+resource pinned to one registry commit:
+
+```bash
+kbb --backend sci scripts/sync-itonami-registry.cljk --source itonami   # resources/itonami-registry-bots.edn
+kbb --backend sci scripts/sync-itonami-registry.cljk --source hermes    # resources/hermes-registry-bots.edn
+kbb --backend sci scripts/sync-itonami-registry.cljk --source hermes --check   # fails when stale
+```
+
+Files are read from git objects at that commit and every folder checksum in the
+registry's `index.json` is verified before an offer is written. A registry entry
+grants nothing: its offer installs with every capability off, and the new Bot's
+brief points at the entry's profile file at that commit (`templates/hermes/SOUL.md`
+in the Itonami registry, `AGENT.md` in the Hermes registry). Hermes registry ids
+are qualified `hermes-<id>`. The catalog refuses an offer that turns a capability
+on, is not pinned to its commit, or reuses an id (the generator skips ids the
+hand-written catalog curates and lists them as `:curated-elsewhere`). Skills, MCP
+definitions and workflows are not Bots and are not offered here yet.
+
 ### Startup workforces
 
 `会社Bot` reconciles the governed `network-awai/loop-yakuwari` registry into
