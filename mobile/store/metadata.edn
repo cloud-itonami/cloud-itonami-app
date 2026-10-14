@@ -183,7 +183,7 @@ Support: support@itonami.cloud"
  {:ios-6.9 ["screenshots/ios/01-fleet.png" "screenshots/ios/02-role-filter.png"
             "screenshots/ios/03-actor-detail.png" "screenshots/ios/04-about.png"]  ; 1320x2868
   :android-phone ["screenshots/android/01-fleet.png" "screenshots/android/02-role-filter.png"
-                  "screenshots/android/03-actor-detail.png" "screenshots/android/04-about.png"] ; 1080x2400
+                  "screenshots/android/03-actor-detail.png" "screenshots/android/04-about.png"] ; 1080x2160 (2:1, Play max), Pixel 7 API 35 with `wm size 1080x2160`
   ;; iPhone only (UIDeviceFamily [1], :ios/device-family [:iphone]), so no
   ;; iPad screenshots are required. Retaken 2026-10-14 on an iPhone 17 Pro Max
   ;; simulator (iOS 26.5) and a Pixel 7 API 35 emulator against the live edge,
