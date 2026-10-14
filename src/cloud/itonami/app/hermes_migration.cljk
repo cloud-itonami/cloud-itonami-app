@@ -331,9 +331,22 @@
                            [(:id profile) (get-in profile [:source :revision])])
                          profiles))))
 
+(defn- selected-profile-roots [home profile-id]
+  (when-not (or (nil? profile-id)
+                (and (string? profile-id)
+                     (re-matches #"[A-Za-z0-9][A-Za-z0-9_-]{0,99}" profile-id)))
+    (throw (ex-info "Hermes profile selector is invalid."
+                    {:type :bot-import/invalid-profile-selector})))
+  (let [roots (profile-roots home)
+        selected (if profile-id (filter #(= profile-id (:id %)) roots) roots)]
+    (when (and profile-id (empty? selected))
+      (throw (ex-info "Hermes profile was not found."
+                      {:type :bot-import/profile-not-found})))
+    (vec selected)))
+
 (defn preview
   "Return the common API/CLI migration manifest without writing a bundle."
-  [{:keys [home business migration-id captured-at]
+  [{:keys [home business migration-id captured-at profile-id]
     :or {business "cloud-itonami"}}]
   (let [migration-id (or migration-id (str "hermes-" (UUID/randomUUID)))]
     (when-not (re-matches #"hermes-[A-Za-z0-9_-]{1,100}" migration-id)
@@ -341,15 +354,16 @@
                       {:type :bot-import/invalid-migration-id})))
     (let [home (or home (hermes-home))
           home (.getCanonicalFile (io/file home))
-          profiles (mapv profile-inventory (profile-roots home))
+          profiles (mapv profile-inventory (selected-profile-roots home profile-id))
           bytes (reduce + 0 (map #(get-in % [:source :bytes]) profiles))]
       {:schema schema
        :migration-id migration-id
        :status "preview"
        :captured-at (or captured-at (str (Instant/now)))
-       :source {:kind "hermes-agent"
-                :home-fingerprint (subs (sha256-string (.getPath home)) 0 16)
-                :revision (source-revision profiles)}
+       :source (cond-> {:kind "hermes-agent"
+                         :home-fingerprint (subs (sha256-string (.getPath home)) 0 16)
+                         :revision (source-revision profiles)}
+                 profile-id (assoc :profile-id profile-id))
        :destination {:kind "cloud-itonami-bots"
                      :business business
                      :activation "review-and-provision-required"}
@@ -534,10 +548,11 @@
     (doseq [^Path path (reverse (walked-paths root))]
       (Files/deleteIfExists path))))
 
-(defn- stage-roots [home]
+(defn- stage-roots [home profile-id]
+  ;; Resolve roots without inventorying unrelated profiles a second time.
   (into {} (map (fn [{:keys [id root]}]
                   [id (io/file (or root home))]))
-        (:profiles (preview {:home home}))))
+        (selected-profile-roots home profile-id)))
 
 (defn stage!
   "Stage every profile and session export, returning the same v2 manifest.
@@ -545,12 +560,13 @@
   The supplied preview is an optimistic lock.  A caller cannot remove a
   profile or change a source revision in the POST body and have that altered
   subset staged: the live source is re-inventoried and compared first."
-  [{:keys [home data-dir manifest staged-by]}]
+  [{:keys [home data-dir manifest staged-by identity-only?]}]
   (when-not (= schema (:schema manifest))
     (throw (ex-info "Hermes migration schema が一致しません。"
                     {:type :bot-import/invalid-schema})))
   (let [home (.getCanonicalFile (io/file (or home (hermes-home))))
         rebuilt (preview {:home home
+                          :profile-id (get-in manifest [:source :profile-id])
                           :business (get-in manifest [:destination :business])
                           :migration-id (:migration-id manifest)
                           :captured-at (:captured-at manifest)})]
@@ -562,7 +578,7 @@
           parent (io/file data-dir "bot-imports")
           final-dir (io/file parent migration-id)
           temp-dir (io/file parent (str "." migration-id ".tmp-" (UUID/randomUUID)))
-          binary (hermes-binary home)]
+          binary (when-not identity-only? (hermes-binary home))]
       (when (.exists final-dir)
         (throw (ex-info (str "migration は既に stage 済みです: " migration-id)
                         {:type :bot-import/already-staged})))
@@ -578,7 +594,7 @@
         (throw (ex-info "Hermes bundle の一時ディレクトリを作れません。"
                         {:type :bot-import/stage-directory})))
       (try
-        (let [roots (stage-roots home)
+        (let [roots (stage-roots home (get-in rebuilt [:source :profile-id]))
               staged-profiles
               (mapv
                (fn [profile]
@@ -588,21 +604,25 @@
                        sessions (io/file temp-dir (str file-id ".sessions.jsonl"))
                        context (io/file temp-dir (str file-id ".runtime-context.md"))
                        profile-home (get roots id)]
-                   (*export-profile!* binary home id archive)
-                   (*export-sessions!* binary profile-home sessions)
-                   (*write-runtime-context!* id archive context)
-                   (assoc profile :artifacts
-                          [(artifact-record temp-dir archive
-                                            "hermes-profile-export" "application/gzip")
-                           (artifact-record temp-dir sessions
-                                            "hermes-session-export"
-                                            "application/x-ndjson"
-                                            :redacted true)
-                           (artifact-record temp-dir context
-                                            "hermes-runtime-context"
-                                            "text/markdown")])))
+                   (if identity-only?
+                     (assoc profile :artifacts [] :import-mode "identity-only")
+                     (do
+                       (*export-profile!* binary home id archive)
+                       (*export-sessions!* binary profile-home sessions)
+                       (*write-runtime-context!* id archive context)
+                       (assoc profile :artifacts
+                              [(artifact-record temp-dir archive
+                                                "hermes-profile-export" "application/gzip")
+                               (artifact-record temp-dir sessions
+                                                "hermes-session-export"
+                                                "application/x-ndjson"
+                                                :redacted true)
+                               (artifact-record temp-dir context
+                                                "hermes-runtime-context"
+                                                "text/markdown")])))))
                (:profiles rebuilt))
               after (preview {:home home
+                              :profile-id (get-in rebuilt [:source :profile-id])
                               :business (get-in rebuilt [:destination :business])
                               :migration-id migration-id
                               :captured-at (:captured-at rebuilt)})]
@@ -615,6 +635,9 @@
                                   :staged-at (str (Instant/now))
                                   :staged-by staged-by
                                   :profiles staged-profiles)
+                           (cond-> identity-only?
+                             (assoc :import-mode "identity-only")
+                             identity-only? (assoc-in [:safety :copies-conversations] false))
                            (assoc-in [:destination :bundle-path]
                                      (str "bot-imports/" migration-id)))]
             (spit (io/file temp-dir "manifest.json") (json/write-str staged))
@@ -792,6 +815,9 @@
   (when-not (and (= schema (:schema manifest)) (= "staged" (:status manifest)))
     (throw (ex-info "Only a staged Hermes v2 bundle can be provisioned."
                     {:type :bot-import/not-staged})))
+  (when (and (= "identity-only" (:import-mode manifest)) carry-over-permissions)
+    (throw (ex-info "Identity-only registration cannot carry source authority."
+                    {:type :bot-import/identity-only-authority-refused})))
   (let [migration-id (:migration-id manifest)
         provisioned-profiles
         (mapv

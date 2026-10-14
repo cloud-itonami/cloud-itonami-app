@@ -6815,7 +6815,8 @@
         (require-csrf! exchange session)
         (send! exchange 200
                (hermes-migration/preview
-                {:home (:home body)
+                {:profile-id (:profile-id body)
+                 :home (:home body)
                  :business (or (:business body) "cloud-itonami")})))
 
       (and (= method "POST")
@@ -6829,6 +6830,7 @@
         (require-csrf! exchange session)
         (let [staged (hermes-migration/stage!
                       {:home (:home body)
+                       :identity-only? (= true (:identity-only body))
                        :data-dir (config/data-dir)
                        :manifest (:manifest body)
                        :staged-by {:user-id (:user-id session)
