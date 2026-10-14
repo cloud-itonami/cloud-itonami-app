@@ -1,6 +1,7 @@
 # ADR-0143: Itonami agent is the Hermes agent; Itonami desktop is the bots-first Hermes desktop
 
-Status: accepted (owner instruction 2026-10-14:「hermes agent = itonami agent /
+Status: accepted, amended 2026-10-14 (Itonami profile; owner instruction
+「Hermes Profile の対応は Itonami も Itonami profile にしましょう」). Original (owner instruction 2026-10-14:「hermes agent = itonami agent /
 hermes desktop = itonami desktop（bots 中心）となるように整理して、itonami agent の
 bots は hermes の registry, profile, api と互換性を持つ様にして」)
 
@@ -27,7 +28,8 @@ Each piece was partly Hermes-compatible, and nothing said which is which.
 | Hermes | Cloud Itonami | Notes |
 |---|---|---|
 | Hermes agent (API server + profiles) | **Itonami agent**: the Itonami resident (port 1338, JVM or JVM-free) | speaks the Hermes API |
-| Hermes profile | **Bot** (one-to-one; an imported profile keeps its id) | ADR-0088 import, this ADR's export |
+| Hermes profile | **Itonami profile**: the same layout (SOUL.md, profile.yaml, config.yaml, skills/, cron/, scripts/) | ADR-0088 import, this ADR's export, itonami-registry `profile` entries |
+| Hermes Bot (Bot Mode) | **Bot**: an Itonami profile presented in the roster, with one canonical Bot Chat | every Bot is a profile; not every profile is a Bot |
 | Hermes desktop | **Itonami desktop**: the Cloud Itonami app, Bots first | this ADR |
 | Hermes registry (fathah/hermes-registry) | read by the Marketplace beside **itonami-registry** | same layout, pinned + verified |
 
@@ -37,12 +39,24 @@ host, placement, kagi fleet secrets), and until that moves it can reach an Itona
 agent as a remote Hermes, since the Itonami agent answers the Hermes API. New
 desktop features land in the Itonami desktop.
 
+### Terms: the same as Hermes
+
+Hermes defines these in `website/docs/user-guide/profiles.md` and `bot-mode.md`, and Itonami uses them unchanged.
+
+- **Profile:** the persistent home of an assistant's configuration and data. An **Itonami profile** is a Hermes profile.
+- **Agent:** the running assistant (the Itonami agent).
+- **Bot:** a profile presented in the roster (name, avatar, role) with one canonical Bot Chat. Every Bot owns one Itonami profile. An Itonami profile can exist without being a Bot, for example as a registry entry, and becomes one when it is installed.
+- **Messaging bot:** a platform account (Telegram, Discord, Slack …) behind a gateway.
+- **Subagent:** a child assistant for one delegated task.
+
+The API addresses the profile (`/api/profiles`, `/p/<profile>/`); the desktop presents the Bot.
+
 ### Bots first
 
 A Hermes desktop is organized around chats over one agent; the Itonami desktop is
 organized around Bots: each Bot is a named colleague with its own conversation,
-profile, tools and accounts (ADR-0034, ADR-0097). A Hermes profile appears as a
-Bot, not as a hidden configuration of a single agent.
+profile, tools and accounts (ADR-0034, ADR-0097). A Hermes profile arrives as an
+Itonami profile and appears as a Bot, not as a hidden configuration of a single agent.
 
 ### Compatibility contract
 
@@ -57,19 +71,19 @@ Bot, not as a hidden configuration of a single agent.
 | `POST /v1/chat/completions` (+stream) | the last user message is a Bot turn; `model` picks the Bot (new) |
 | `GET /v1/skills` | profile skills, imported skills, enabled tools (new) |
 | `/api/profiles`, `/api/sessions/*`, `/v1/runs/*`, `/p/<profile>/` | existing (`hermes_gateway`, `hermes_compat`) |
-| `GET /api/profiles/{profile}/export` | Bot → Hermes profile (new, Itonami extension) |
+| `GET /api/profiles/{profile}/export` | the Bot's Itonami profile, which is a Hermes profile (`object: itonami.profile`, `layout: hermes-profile`; new, Itonami extension) |
 | `/v1/responses`, `/api/jobs*`, `/api/sessions/{id}/fork`, `/api/sessions/{id}/model`, `/api/model/options`, `/v1/toolsets`, artifacts, browser control | not yet; not advertised in capabilities |
 
 **Profile.**
 
-- Hermes → Bot is ADR-0088 (credential-free bundle, `rebind-required`).
-- Bot → Hermes is `GET /api/profiles/{profile}/export`. It returns SOUL.md and `skills/<id>/SKILL.md` from the Bot's persistent profile (or the brief), plus profile.yaml and config.yaml (murakumo).
+- Hermes → Itonami profile is ADR-0088 (credential-free bundle, `rebind-required`).
+- Itonami profile → Hermes is `GET /api/profiles/{profile}/export`. It returns SOUL.md and `skills/<id>/SKILL.md` from the Bot's persistent profile (or the brief), plus profile.yaml and config.yaml (murakumo).
 - USER.md and MEMORY.md are about the owner and are listed as `not_exported`.
 - Accounts, connector grants, the wallet signer and approval policy never leave; they are listed as `rebind_required`.
 
 **Registry.**
 
-- The Marketplace Bot tab offers the agents of itonami-registry and of upstream fathah/hermes-registry.
+- The Marketplace Bot tab offers the Itonami profiles and agents of itonami-registry (its ADR 0002: a `profile` entry pins a profile folder in its owning repository) and the agents of upstream fathah/hermes-registry.
 - Each is generated from one registry commit with every folder checksum verified.
 - Hermes registry ids are qualified `hermes-<id>`.
 - Every offer installs inert.

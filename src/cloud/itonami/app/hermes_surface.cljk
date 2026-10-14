@@ -188,7 +188,7 @@
   (str "\"" (-> (str s) (str/replace "\\" "\\\\") (str/replace "\"" "\\\"") (str/replace "\n" "\\n")) "\""))
 
 (defn profile-export
-  "A Bot as a credential-free Hermes profile: the files `hermes profile import`
+  "A Bot's Itonami profile, credential-free — which is a Hermes profile: the files `hermes profile import`
   reads (SOUL.md, profile.yaml, config.yaml, skills/<id>/SKILL.md). The Bot's
   persistent profile supplies SOUL.md and skills when the resident has it
   (`profile-files`); otherwise SOUL.md is built from the brief. USER.md and
@@ -202,7 +202,11 @@
          soul (or (not-empty (get profile-files "SOUL.md"))
                   (str "# " (:name bot) "\n\n" (str/trim (str (:brief bot))) "\n"))
          skill-files (into {} (filter #(re-matches #"skills/[^/]+/SKILL\.md" (key %))) profile-files)]
-     {:object "hermes.profile.export"
+     ;; An Itonami profile IS a Hermes profile (ADR-0143): same files, so the
+     ;; object names Itonami and the layout says what a Hermes client reads.
+     {:object "itonami.profile"
+      :layout "hermes-profile"
+      :hermes_compatible true
       :profile profile
       :bot_id (:id bot)
       :files (merge {"SOUL.md" soul

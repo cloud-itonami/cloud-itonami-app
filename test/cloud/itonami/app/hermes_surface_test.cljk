@@ -69,6 +69,8 @@
          (:data (hs/skills bot))))
   (let [e (hs/profile-export bot)]
     (is (= "settings-help" (:profile e)) "an imported Bot exports under its Hermes profile id")
+    (is (= ["itonami.profile" "hermes-profile" true] ((juxt :object :layout :hermes_compatible) e))
+        "an Itonami profile is a Hermes profile")
     (is (= #{"SOUL.md" "profile.yaml" "config.yaml"} (set (keys (:files e)))))
     (is (re-find #"provider: murakumo" (get-in e [:files "config.yaml"])))
     (is (re-find #"default: \"mishima\"" (get-in e [:files "config.yaml"])))
