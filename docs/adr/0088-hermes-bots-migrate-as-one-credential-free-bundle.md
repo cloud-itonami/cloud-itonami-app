@@ -1,7 +1,8 @@
 # ADR-0088: Hermes Bots migrate as one credential-free bundle
 
 Status: accepted (amended 2026-09-03: permission carry-over, owner
-instruction「権限・ツール なども引き継いで」)
+instruction「権限・ツール なども引き継いで」; amended 2026-10-14: profile
+identity and the way back, root ADR-2610141512)
 
 Date: 2026-09-01
 
@@ -114,6 +115,49 @@ never a default the source did not state. Provision reports
 `ready-carry-over` and activation
 `interactive-ready-source-tool-authority-carried-over`, and
 `:safety.grants-carried-over` records that the reviewed flag was given.
+
+## Profile identity and the way back (amendment, 2026-10-14)
+
+Root ADR-2610141512: an agent is one identity tree. Its ed25519 seed is
+SHA-256(fleet-seed || 0x00 || key-id) -- the derivation `bot-identity`
+already used with key-id = Bot id -- and a Hermes profile's key-id is its
+profile id. Measured on c5827fc2, the import lost that identity twice: it
+read only `config.yaml` and the runtime-context files, so the profile's
+additive `itonami.edn` (schema `cloud.itonami.profile.v2`: `:ids`, org
+placement) never crossed; and the Bot's did derived from a Bot id that embeds
+the migration id, so it differed from the profile's did and changed on every
+re-import.
+
+- **The record crosses as provenance.** Preview reads `itonami.edn` with the
+  bounded EDN reader and records the non-secret subset (`:itonami/schema`,
+  `:profile/id`, `:profile/description`, `:profile/hermes-compatible`,
+  `:agent/kind`, `:org/world`, `:org/path`, `:org/unit`, `:org/layer`,
+  `:org/github`, `:invocation`, `:awai/business`, `:ids`, `:authority`) as
+  `:itonami-profile` on the profile record, the binding and the Bot
+  (`:bot/hermes-profile`). Runtime, placement, inference and bundle keys stay
+  on the source host. `:authority` is a reference to the governing yakuwari,
+  never a destination grant. An unreadable file is a `:warnings` row; it never
+  fails the import. `itonami.edn` joins the default profile's lock roots.
+- **The Bot keeps the profile's did.** The import sets `:bot/identity-key` to
+  the profile id, and every did / signing-seed derivation goes through
+  `bot-identity/identity-key` (`or identity-key bot-id`). The key is bound
+  only by `create-hermes-import!`; `create!`'s request body cannot name it,
+  and no update path writes it. Bots without it -- workforce Bots and Bots
+  imported before this amendment -- keep exactly the did they had.
+- **The way back.** `bots/export-hermes-profile` returns an imported Bot as
+  profile files: `SOUL.md` (the staged, digest-verified runtime-context
+  persona, verbatim), `config.yaml` (`model.provider` / `model.default` from
+  the Bot, nothing else), `profile.yaml` (description) and `itonami.edn`
+  rebuilt from the carried subset with `:ids :did` = the Bot's did. A profile
+  that came without `itonami.edn` gets the minimal v2 record. Credentials,
+  keys and grants are not exported. There is no HTTP route yet: a route here
+  must first be registered in `cloud-itonami-commands` (see `commands-test`).
+
+Consequence stated plainly: identity follows the profile id, so two imports of
+the same profile on one host -- a re-import, or another owner's import --
+answer to the same did and signing seed. That is the profile's identity under
+the one fleet seed, which the resident already held for every Bot; it is not
+a new custody boundary, and it grants no tool.
 
 ## Safety and lifecycle
 

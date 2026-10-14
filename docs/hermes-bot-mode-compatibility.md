@@ -13,6 +13,12 @@ Credentials, provider/account bindings and source tool authority are listed as
 `rebind-required`. Staging does not create or enable a Bot and does not widen a
 grant. See ADR-0088.
 
+A profile's `itonami.edn` (ids, org placement) crosses as provenance, the
+imported Bot's did is the profile's did (derived from the profile id), and
+`bots/export-hermes-profile` turns an imported Bot back into `SOUL.md`,
+`config.yaml`, `profile.yaml` and `itonami.edn` (ADR-0088 amendment
+2026-10-14).
+
 Cloud Itonami exposes a Hermes-shaped transport for its resident Bots. The
 identity mapping is one-to-one:
 

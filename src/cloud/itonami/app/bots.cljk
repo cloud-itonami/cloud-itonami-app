@@ -145,6 +145,11 @@
   it never synthesizes a user or widens the source/target Bot grants."
   nil)
 (def ^:dynamic ^:private *create-bot-id* nil)
+;; Who an imported Bot already was: `:bot/identity-key` and
+;; `:bot/hermes-profile`. Bound only by `create-hermes-import!`, for the same
+;; reason as the id above -- `create!` also takes a request body, and a body
+;; that could name an identity key could make a Bot answer to any did.
+(def ^:dynamic ^:private *create-bot-provenance* nil)
 
 (def max-turns 8)
 (def max-tool-calls 12)
@@ -927,7 +932,7 @@
   [session bot-id]
   (let [b (owned! session bot-id)]
     {:id (:bot/id b)
-     :did (bot-identity/bot-did (:bot/id b))
+     :did (bot-identity/bot-did (bot-identity/identity-key b))
      :name (:bot/name b)
      :owner-id (:bot/owner b)
      :organization-id (:bot/organization b)}))
@@ -1033,6 +1038,8 @@
                     :bot/workspace workspace
                     :bot/workspace-kind (:bot/workspace-kind managed)
                     :bot/workspace-sync-id (:bot/workspace-sync-id managed)
+                    :bot/identity-key (:bot/identity-key *create-bot-provenance*)
+                    :bot/hermes-profile (:bot/hermes-profile *create-bot-provenance*)
                     :bot/created-at now
                     :bot/updated-at now})]
     ;; Derive the performer here and discard it. The call is the point: it is
@@ -1095,6 +1102,33 @@
      (app-config/data-dir) (:migration-id binding)
      {:artifacts [(:session-export binding)]})))
 
+(defn export-hermes-profile
+  "An owned imported Bot as the files of a Hermes profile directory.
+
+  Returns `{:bot-id :profile-id :did :files}`, `:files` being relative path ->
+  text (`hermes-import-data/export-profile-files`). The persona is read back
+  from the staged, digest-verified runtime context, so a bundle that changed
+  after staging refuses rather than exporting something else. Writes nothing:
+  where the profile lands is the caller's decision."
+  [session bot-id]
+  (let [b (owned! session bot-id)
+        import-binding (get-in (snapshot) [:hermes-import-bindings bot-id])]
+    (when-not import-binding
+      (throw (ex-info "この Bot は Hermes から import されたものではありません。"
+                      {:type :bot-import/not-imported :bot bot-id})))
+    (let [did (bot-identity/bot-did (bot-identity/identity-key b))]
+      {:bot-id bot-id
+       :profile-id (or (get-in b [:bot/hermes-profile :id])
+                       (:profile-id import-binding))
+       :did did
+       :files (hermes-import-data/export-profile-files
+               {:bot b
+                :binding import-binding
+                :did did
+                :runtime-context (hermes-import-data/runtime-context
+                                  (app-config/data-dir) (:migration-id import-binding)
+                                  {:artifacts [(:runtime-context import-binding)]})})})))
+
 (defn create-hermes-import!
   "Idempotently provision one Bot from a reviewed Hermes bundle.
 
@@ -1107,10 +1141,18 @@
   bounded by its own governor. Omakase is never granted here: a source
   per-pattern approval is not a general delegation. The evidence and the
   unmapped remainder are recorded on the binding so an operator can audit
-  what crossed."
+  what crossed.
+
+  The Bot is named by its source profile, not by this migration: its
+  `:bot/identity-key` is the profile id, so its did is the did the profile
+  already had (root ADR-2610141512) and a re-import under a new migration id
+  answers to the same name. `:itonami-profile`, the non-secret subset of the
+  profile's `itonami.edn`, rides on the Bot and the binding as provenance for
+  `export-hermes-profile`; it grants nothing."
   [configuration session {:keys [migration-id profile-id name brief provider-id
                                   model runtime-context session-export
-                                  session-ids seed carry-over-grants]}]
+                                  session-ids seed carry-over-grants
+                                  itonami-profile]}]
   (let [bot-id (stable-hermes-bot-id session migration-id profile-id)
         expected {:migration-id migration-id :profile-id profile-id}
         existing (bot-by-id bot-id)
@@ -1142,7 +1184,13 @@
                       :goal? false :priority? false :pinned? false
                       :omakase? false})
             created
-            (binding [*create-bot-id* bot-id]
+            (binding [*create-bot-id* bot-id
+                      *create-bot-provenance*
+                      (when-let [source-id (some-> profile-id str not-empty)]
+                        {:bot/identity-key source-id
+                         :bot/hermes-profile (cond-> {:id source-id}
+                                               (seq itonami-profile)
+                                               (assoc :itonami itonami-profile))})]
               (create! configuration session
                        (merge {:name name :brief brief
                                :provider-id provider-id :model model}
@@ -1168,7 +1216,9 @@
                            :grants-carried-over (vec (filter #(contains? #{:writes? :browser? :computer? :coding? :virtual-shell? :goal?} %)
                                                              (keys carry)))
                            :source-permission-evidence (:source-permission-evidence carry)
-                           :unmapped-authority (:unmapped-authority carry))]
+                           :unmapped-authority (:unmapped-authority carry))
+            binding (cond-> binding
+                      (seq itonami-profile) (assoc :itonami-profile itonami-profile))]
         (transact! assoc-in [:hermes-import-bindings bot-id] binding)
         (when (seq messages)
           (transact! assoc-in [:conversations bot-id] messages))
@@ -2134,8 +2184,10 @@
      ;; mailbox, a delegated grant or a wallet allowance will name.
      ;; Derived from `:id`, which is itself derived from
      ;; organization:user:workforce-key -- so re-provisioning a role reproduces
-     ;; the same did rather than renaming the Bot.
-     :did (bot-identity/bot-did (:bot/id b))
+     ;; the same did rather than renaming the Bot. A Hermes import derives it
+     ;; from its source profile id instead (`bot-identity/identity-key`), so
+     ;; it keeps the did that profile already had.
+     :did (bot-identity/bot-did (bot-identity/identity-key b))
      :name (:bot/name b)
      ;; Where the name came from, so a screen can say it. Absent means nobody
      ;; renamed it: for a workforce Bot that is the registry's projection, and

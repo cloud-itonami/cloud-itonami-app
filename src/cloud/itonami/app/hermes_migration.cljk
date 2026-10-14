@@ -19,7 +19,9 @@
   reviewed preview tied to the bytes that were actually staged."
   (:require [kotoba.json :as json]
             [clojure.java.io :as io]
+            [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]
+            [cloud.itonami.app.bot :as bot]
             [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.hermes-import-data :as import-data])
   (:import [java.io File]
@@ -37,7 +39,7 @@
   #{"config.yaml" "SOUL.md" "MEMORY.md" "USER.md" "todo.json"
     "system_prompt.md" "AGENTS.md" ".cursorrules"
     "desktop.json" "skills" "cron" "scripts" "sessions" "plugins"
-    "memories" "knowledge" "preferences"})
+    "memories" "knowledge" "preferences" "itonami.edn"})
 (def ^:private runtime-context-files
   ["SOUL.md" "USER.md" "MEMORY.md" "system_prompt.md"
    "AGENTS.md" ".cursorrules"])
@@ -277,6 +279,53 @@
           provider (assoc :source-provider provider)
           model (assoc :source-model model))))))
 
+;; ── the itonami profile record ──────────────────────────────────────────
+;;
+;; A profile may carry an additive `itonami.edn` (schema
+;; cloud.itonami.profile.v2): Hermes ignores it, and it says who the agent is
+;; outside Hermes -- its did, its repository, where it sits in the org
+;; (root ADR-2610141512). Before this was read, an import kept the persona and
+;; dropped the name. Only the identity and placement subset crosses, as
+;; provenance: `:authority` is a REFERENCE to the governing yakuwari, recorded
+;; so the way back to Hermes can restore it, never a destination grant.
+;; Runtime, placement, inference and bundle keys describe the source host and
+;; stay there.
+
+(def itonami-profile-keys
+  [:itonami/schema :profile/id :profile/description :profile/hermes-compatible
+   :agent/kind :org/world :org/path :org/unit :org/layer :org/github
+   :invocation :awai/business :ids :authority])
+
+(def ^:private max-itonami-profile-bytes (* 64 1024))
+
+(defn itonami-profile
+  "Read a profile root's `itonami.edn`, keeping `itonami-profile-keys`.
+
+  Returns nil when there is no file, `{:itonami-profile subset}` when it
+  reads, and `{:warnings [...]}` when it does not: an unreadable record costs
+  the import its org placement, never the import. Read with the bounded EDN
+  reader -- no tagged literals, no evaluation."
+  [^File root]
+  (let [file (io/file root "itonami.edn")]
+    (when (regular-file? file)
+      (try
+        (when (> (.length file) max-itonami-profile-bytes)
+          (throw (ex-info "itonami.edn exceeds the admitted size" {})))
+        (let [value (edn/read-string (slurp file))
+              _ (when-not (map? value)
+                  (throw (ex-info "itonami.edn is not a map" {})))
+              subset (cond-> (select-keys value itonami-profile-keys)
+                       (not (map? (:ids value))) (dissoc :ids)
+                       (not (map? (:authority value))) (dissoc :authority))]
+          ;; The Bot carries the subset too, under the Bot record's bound.
+          (when (> (count (pr-str subset)) bot/max-hermes-profile-chars)
+            (throw (ex-info "itonami.edn subset exceeds the Bot record bound" {})))
+          (when (seq subset) {:itonami-profile subset}))
+        (catch Exception _
+          {:warnings [{:kind "itonami-profile-unreadable"
+                       :source-path "itonami.edn"
+                       :reason "not readable as an EDN map; ids and org placement were not carried"}]})))))
+
 (defn- profile-inventory [profile]
   (let [files (portable-files profile)
         root (or (:root profile) (hermes-home))
@@ -300,30 +349,34 @@
                        (str/join "\n"
                                  (map (fn [{:keys [path bytes control-token]}]
                                         (str path "\t" bytes "\t" control-token))
-                                      control-rows))))]
-    {:id (:id profile)
-     :root (str root)
-     :runtime (runtime-reference root)
-     :source {:files (count rows)
-              :bytes (reduce + 0 (map :bytes rows))
-              :revision revision}
-     :artifacts [{:kind "hermes-profile-export"
-                  :format "application/gzip"
-                  :state "planned"}
-                 {:kind "hermes-session-export"
-                  :format "application/x-ndjson"
-                  :redacted true
-                  :state "planned"}
-                 {:kind "hermes-runtime-context"
-                  :format "text/markdown"
-                  :state "planned"}]
-     :rebind-required
-     (into (credential-presence root)
-           [{:kind "provider-and-account-bindings"
-             :reason "tokens, OAuth sessions and external account authority are not portable"}
-            {:kind "cloud-itonami-grants"
-             :reason "source tool access is evidence, not authority in the destination"}])
-     :observed-permissions (observed-permissions root)}))
+                                      control-rows))))
+        ;; nil, {:itonami-profile subset} or {:warnings [...]}
+        itonami (itonami-profile root)]
+    (merge
+     {:id (:id profile)
+      :root (str root)
+      :runtime (runtime-reference root)
+      :source {:files (count rows)
+               :bytes (reduce + 0 (map :bytes rows))
+               :revision revision}
+      :artifacts [{:kind "hermes-profile-export"
+                   :format "application/gzip"
+                   :state "planned"}
+                  {:kind "hermes-session-export"
+                   :format "application/x-ndjson"
+                   :redacted true
+                   :state "planned"}
+                  {:kind "hermes-runtime-context"
+                   :format "text/markdown"
+                   :state "planned"}]
+      :rebind-required
+      (into (credential-presence root)
+            [{:kind "provider-and-account-bindings"
+              :reason "tokens, OAuth sessions and external account authority are not portable"}
+             {:kind "cloud-itonami-grants"
+              :reason "source tool access is evidence, not authority in the destination"}])
+      :observed-permissions (observed-permissions root)}
+     itonami)))
 
 (defn- source-revision [profiles]
   (sha256-string
@@ -817,7 +870,8 @@
                            :runtime-context context-artifact
                            :session-export session-artifact
                            :session-ids (mapv :id source-sessions)
-                           :seed seed}
+                           :seed seed
+                           :itonami-profile (:itonami-profile profile)}
                     carry-over-permissions (assoc :carry-over-grants
                                                   (assoc carry-grants
                                                          :source-permission-evidence

@@ -115,9 +115,9 @@
 
   Returns nil when there is no root key or the Bot has no did -- an
   unsignable token must not be approximated by an unsigned one."
-  [{:bot/keys [id workforce-key] :as bot} capability-policy]
+  [{:bot/keys [workforce-key] :as bot} capability-policy]
   (when-let [seed (root-seed)]
-    (when-let [holder (bot-identity/bot-did id)]
+    (when-let [holder (bot-identity/bot-did (bot-identity/identity-key bot))]
       (token/authority
        {:facts (into [['holder holder]] (capability-facts workforce-key capability-policy))
         :rules [] :checks []
@@ -143,9 +143,9 @@
 
   Returns nil rather than an unattenuated token when the Bot has no seed. A
   caller that cannot narrow must not silently pass on the wide one."
-  [{:bot/keys [id]} t scopes recipient-did]
+  [bot t scopes recipient-did]
   (when (and t (seq scopes) (some-> recipient-did str not-empty))
-    (when-let [seed (bot-identity/bot-signing-seed id)]
+    (when-let [seed (bot-identity/bot-signing-seed (bot-identity/identity-key bot))]
       (token/append
        t
        {:facts (vec (for [s scopes] ['scope s]))
@@ -301,7 +301,7 @@
     (if (or (str/blank? (str workforce-key)) (empty? gated))
       runnable
       (if-let [t (issue bot capability-policy)]
-        (let [holder (bot-identity/bot-did (:bot/id bot))
+        (let [holder (bot-identity/bot-did (bot-identity/identity-key bot))
               permitted? (fn [tool]
                            (authorized? t workforce-key (get tool->capability tool)
                                         {:now now :holder holder}))]
