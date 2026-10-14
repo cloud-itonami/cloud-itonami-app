@@ -199,25 +199,33 @@ Without an account the app is a usable read-only directory: search, a role
 menu built from `/api/fleet/facets`, a detail screen per actor, and an 情報
 pane with support and privacy addresses (Guideline 4.2).
 
-**Blockers that live in kotoba-shell, not here** (generated projects are not
-hand-edited):
+**Depends on kotoba-lang/shell PR #36** (branch `claude/mobile-store-blockers`,
+"Fix App Store / Google Play blockers in scaffolded iOS and Android apps").
+`app.mobile.kotoba.edn` uses the manifest keys that PR adds — `:ios/icon`,
+`:android/icon`, `:android/adaptive-icon`, `:ios/device-family [:iphone]`,
+`:ios/orientations [:portrait]`, `:ios/build-number`,
+`:ios/uses-non-exempt-encryption? false`, `:ios/privacy-accessed-api-types []`,
+`:android/allow-backup? false`, `:android/cleartext-traffic? false` — and an
+older shell ignores them, giving back every blocker below. Until it merges,
+scaffold with that branch (`SHELL_ROOT=<checkout of claude/mobile-store-blockers>`).
 
-- no app icon on either platform: `:app/icon` is read only by `app run`
-  (macOS window, iOS run helper); `app scaffold` writes no `Assets.xcassets`
-  (yet sets `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon`) and no
-  `android:icon` / mipmap resources.
-- iOS declares iPhone and iPad (`TARGETED_DEVICE_FAMILY = "1,2"`) with
-  portrait only: App Store validation rejects iPad multitasking without all
-  orientations or `UIRequiresFullScreen`, and iPad screenshots become
-  required. `CFBundleVersion` is fixed at `"1"`;
-  `ITSAppUsesNonExemptEncryption` is not set.
-- Android `targetSdk 35` makes the window edge-to-edge, and `MainActivity`
-  applies no insets: the WebView is full-screen under the status bar AND the
-  ActionBar. The WebView reports `safe-area-inset-top` 52px (status bar only),
-  so the ActionBar covers the pane buttons at the top of the page (measured
-  on API 35). The Android screenshots were scrolled past that strip.
-- Android asks for `POST_NOTIFICATIONS` on first launch although the policy
-  grants no notification command, and sets `usesCleartextTraffic="true"`.
+What it fixed, measured 2026-10-14 on an iPhone 17 Pro Max simulator (iOS
+26.5) and a Pixel 7 API 35 emulator (`google_apis`), `app scaffold` + `app
+build --execute` on both:
+
+- the い icon on the iOS Home screen and in the Android launcher (adaptive);
+- iOS `UIDeviceFamily [1]`, portrait, `CFBundleVersion 1`,
+  `ITSAppUsesNonExemptEncryption NO`, `PrivacyInfo.xcprivacy` in the bundle —
+  so no iPad screenshots are required;
+- Android: no ActionBar, the WebView sits between the status and gesture bars
+  (the screenshots are no longer scrolled past a hidden strip), no
+  notification prompt and no `POST_NOTIFICATIONS` at all (the policy grants
+  no `notify/show`), `usesCleartextTraffic` false, `allowBackup` false.
+
+**Android Back.** Panes and the detail screen are state, not URLs, so there
+is no WebView history for the shell's Back to walk. `app.cljk` handles the
+shell's cancelable `kotobaShell:back`: detail → list, コマンド / 情報 →
+フリート, and only on the fleet list does Back leave the app (measured).
 
 ## Verify
 

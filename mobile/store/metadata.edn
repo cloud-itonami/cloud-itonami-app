@@ -156,8 +156,8 @@ Support: support@itonami.cloud"
     :collected true :shared false :ephemeral false :required false
     :purposes ["App functionality"]}]
   :encrypted-in-transit true         ; every endpoint is HTTPS
-  ;; UNCERTAIN: the generated AndroidManifest sets android:usesCleartextTraffic="true";
-  ;; nothing in the app uses http://, but a reviewer reading the manifest may ask.
+  ;; android:usesCleartextTraffic="false" (:android/cleartext-traffic? false,
+  ;; kotoba-lang/shell PR #36).
   :deletion-request-mechanism :not-applicable   ; no account, nothing tied to a user
   :account-creation false
   :independent-security-review false
@@ -167,12 +167,13 @@ Support: support@itonami.cloud"
  ;; The app uses only the OS's HTTPS (URLSession/WebKit, Android WebView); it
  ;; contains no proprietary or non-standard cryptography. Apple: answer "uses
  ;; encryption: yes, exempt (standard HTTPS)" or set
- ;; ITSAppUsesNonExemptEncryption = NO in Info.plist. kotoba-shell's generated
- ;; Info.plist does NOT set that key today, so App Store Connect will ask on
- ;; every build. No ERN/CCATS needed. France declaration not needed.
+ ;; ITSAppUsesNonExemptEncryption = NO in Info.plist. Set by
+ ;; :ios/uses-non-exempt-encryption? false (kotoba-lang/shell PR #36), so App
+ ;; Store Connect does not ask per build. No ERN/CCATS needed. France
+ ;; declaration not needed.
  :export-compliance {:uses-encryption true :exempt true
                      :basis "standard HTTPS via OS networking only"
-                     :info-plist-key-set false}
+                     :info-plist-key-set true}
 
  :review-notes
  {:en "No account or sign-in is needed. Open the app: the フリート (Fleet) tab lists ~1,300 public actors read live from our edge. Use the search field or the 役割 (role) menu, then tap 詳しく見る (details). 情報 (About) shows support and privacy information. The コマンド (Command) tab is an optional companion to our desktop CLI; it sends nothing until a device is paired, and pairing is not needed to review the app."
@@ -183,9 +184,10 @@ Support: support@itonami.cloud"
             "screenshots/ios/03-actor-detail.png" "screenshots/ios/04-about.png"]  ; 1320x2868
   :android-phone ["screenshots/android/01-fleet.png" "screenshots/android/02-role-filter.png"
                   "screenshots/android/03-actor-detail.png" "screenshots/android/04-about.png"] ; 1080x2400
-  ;; UNCERTAIN: the generated iOS project declares iPhone AND iPad
-  ;; (UIDeviceFamily [1 2]). As built, App Store Connect requires 13" iPad
-  ;; screenshots as well. None were taken.
+  ;; iPhone only (UIDeviceFamily [1], :ios/device-family [:iphone]), so no
+  ;; iPad screenshots are required. Retaken 2026-10-14 on an iPhone 17 Pro Max
+  ;; simulator (iOS 26.5) and a Pixel 7 API 35 emulator against the live edge,
+  ;; with the kotoba-lang/shell PR #36 scaffold (no Android title bar).
   :ipad-13 nil}
 
  :art {:app-store-icon "art/ios-appstore-1024.png"           ; 1024, opaque

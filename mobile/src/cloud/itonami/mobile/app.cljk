@@ -313,7 +313,26 @@
                 (js/window.scrollTo 0 0))
     :on-retry (fn [_] (load! (:query @state) (:role @state)))}))
 
+;; Android system Back. kotoba-shell (PR #36) dispatches a cancelable
+;; `kotobaShell:back` on `window` before it tries WebView history and then
+;; leaves the app. This surface has no history to go back through -- panes
+;; and the detail screen are state, not URLs -- so without this Back on a
+;; detail screen would close the app. Detail -> list, another pane -> フリート,
+;; and only on the fleet list does Back leave. iOS has no Back button and
+;; never sends the event.
+(defn- on-back [^js e]
+  (let [{:keys [selected pane]} @state]
+    (cond
+      selected (do (.preventDefault e)
+                   (swap! state assoc :selected nil)
+                   (js/window.scrollTo 0 0))
+      (not= :fleet pane) (do (.preventDefault e)
+                             (swap! state assoc :pane :fleet :selected nil)
+                             (js/window.scrollTo 0 0))
+      :else nil)))
+
 (defn init []
+  (.addEventListener js/window "kotobaShell:back" on-back)
   (rdom/render [root] (.getElementById js/document "app"))
   (load! "" nil)
   (load-roles!))
