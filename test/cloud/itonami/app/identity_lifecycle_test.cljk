@@ -208,7 +208,7 @@
       (identity/start-central-authentication! nil "http://localhost:1338")
       (let [finished (finish-central!
                       principal
-                      {:acr "phishing-resistant" :amr ["webauthn"]
+                      {:acr "phishing-resistant" :amr ["webauthn" "kotoba-controller-link"]
                        :account_did account :active_did controller})
             state (get-in (store/snapshot) [:identity])
             user (get-in state [:users (:user-id finished)])

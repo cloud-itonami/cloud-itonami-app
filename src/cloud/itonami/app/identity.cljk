@@ -8,6 +8,7 @@
             [cloud.itonami.app.credential :as credential]
             [cloud.itonami.app.did :as did]
             [cloud.itonami.app.identity-axis :as axis]
+            [cloud.itonami.app.central-auth-claims :as central-claims]
             [cloud.itonami.app.org-root-did :as org-root-did]
             [cloud.itonami.app.email-login :as email-login]
             [cloud.itonami.app.store :as store]
@@ -2914,8 +2915,7 @@
                          account-did)
           scopes (set (str/split (str (:scope profile)) #"\s+"))
           amr (set (map str (:amr profile)))
-          passkey-proof? (and (= "phishing-resistant" (:acr profile))
-                              (= #{"webauthn"} amr))
+          passkey-proof? (central-claims/passkey-proof? profile)
           federated-methods #{"apple" "google" "github" "microsoft" "email"}
           federated-proof? (and (= "single-factor" (:acr profile))
                                 (= 1 (count amr))

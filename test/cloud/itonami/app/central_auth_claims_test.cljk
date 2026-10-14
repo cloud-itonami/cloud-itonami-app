@@ -1,0 +1,18 @@
+(ns cloud.itonami.app.central-auth-claims-test
+  (:require [kotoba.test :refer [deftest is]]
+            [cloud.itonami.app.central-auth-claims :as claims]))
+
+(deftest accepts-exact-first-party-controller-link-passkey-provenance
+  (doseq [amr [["webauthn"] ["webauthn" "kotoba-controller-link"]
+               ["kotoba-controller-link" "webauthn"]]]
+    (is (claims/passkey-proof? {:acr "phishing-resistant" :amr amr}))))
+
+(deftest controller-label-never-substitutes-for-verified-webauthn
+  (doseq [amr [nil [] "webauthn" ["kotoba-controller-link"] ["google"]
+               ["webauthn" "email"] ["webauthn" "unknown"]
+               ["webauthn" "kotoba-controller-link" "google"]
+               ["webauthn" "webauthn"] [:webauthn]
+               ["webauthn" nil]]]
+    (is (not (claims/passkey-proof? {:acr "phishing-resistant" :amr amr}))))
+  (doseq [acr [nil "single-factor" "authenticated"]]
+    (is (not (claims/passkey-proof? {:acr acr :amr ["webauthn" "kotoba-controller-link"]})))))
