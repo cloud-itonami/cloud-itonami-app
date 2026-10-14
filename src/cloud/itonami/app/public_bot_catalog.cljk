@@ -89,7 +89,12 @@
     (when (some true? (vals (get-in entry [:install :defaults])))
       (throw (ex-info "a registry offer may not turn a capability on"
                       {:type :public-bot-catalog/registry-grants :id (:id entry)})))
-    (when-not (= (get-in reg [:registry :commit]) (get-in entry [:profile-source :revision]))
+    ;; A template is pinned to the registry commit; an Itonami profile entry is
+    ;; pinned to its owning repository's commit, recorded by the registry.
+    (when-not (or (= (get-in reg [:registry :commit]) (get-in entry [:profile-source :revision]))
+                  (and (= "profile" (get-in entry [:registry :type]))
+                       (re-matches #"[0-9a-f]{40}" (str (get-in entry [:profile-source :revision])))
+                       (= (get-in entry [:registry :profile-commit]) (get-in entry [:profile-source :revision]))))
       (throw (ex-info "a registry offer must pin its profile to the registry commit"
                       {:type :public-bot-catalog/registry-unpinned :id (:id entry)}))))
   reg)

@@ -28,7 +28,7 @@ identity mapping is one-to-one:
 
 | Hermes | Cloud Itonami |
 |---|---|
-| profile | Bot id |
+| profile | Itonami profile (the Bot's id; the Bot is the profile in the roster) |
 | canonical `Bot Chat` session | that Bot's durable conversation |
 | run | durable Bot turn |
 | steer | queued follow-up at the next safe model/tool boundary |
@@ -64,7 +64,7 @@ the first pinned visible Bot, then the oldest visible Bot.
 | GET | `/v1/models` | every visible Bot as a model id = its profile id (ADR-0143) |
 | POST | `/v1/chat/completions` | OpenAI completion; last user message is the turn, `model` picks the Bot; `stream: true` sends chunks then `[DONE]` (ADR-0143) |
 | GET | `/v1/skills` | profile skills, imported skills, enabled tools (ADR-0143) |
-| GET | `/api/profiles/{profile}/export` | credential-free Hermes profile files; USER.md/MEMORY.md not exported (ADR-0143) |
+| GET | `/api/profiles/{profile}/export` | the Bot's Itonami profile (= Hermes profile files, `object: itonami.profile`), credential-free; USER.md/MEMORY.md not exported (ADR-0143) |
 
 The `itonami hermes ...` CLI covers profile/session discovery and run start,
 status, steer, stop and approval.
