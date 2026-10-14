@@ -27,8 +27,26 @@
             ["node:fs" :as fs]
             ["node:os" :as os]))
 
-(def registry-repository "cloud-itonami/itonami-registry")
 (def schema "cloud.itonami.app.itonami-registry-bots.v1")
+
+(def sources
+  "The registries this generator reads. Both use the Hermes registry layout
+  (`index.json` entries with a folder `path` and `checksum`); they differ in
+  what an agent folder carries.
+    :itonami  cloud-itonami/itonami-registry — templates/hermes/SOUL.md and an
+              itonami.json authority block (must not grant)
+    :hermes   fathah/hermes-registry (upstream Hermes) — AGENT.md + manifest;
+              ids are qualified `hermes-<id>` so they cannot collide"
+  {:itonami {:repository "cloud-itonami/itonami-registry"
+             :checkout "~/github/cloud-itonami/itonami-registry"
+             :out "resources/itonami-registry-bots.edn"
+             :id-prefix "" :profile-dir "templates/hermes" :profile-file "SOUL.md"
+             :authority-file "itonami.json"}
+   :hermes {:repository "fathah/hermes-registry"
+            :checkout "~/github/fathah/hermes-registry"
+            :out "resources/hermes-registry-bots.edn"
+            :id-prefix "hermes-" :profile-dir "" :profile-file "AGENT.md"
+            :authority-file nil}})
 
 (defn- arg [args flag default]
   (or (second (drop-while #(not= flag %) args)) default))
@@ -74,6 +92,9 @@
 (defn- json-at [dir commit file]
   (js->clj (js/JSON.parse (git-text dir "show" (str commit ":" file))) :keywordize-keys true))
 
+(defn- author-of [manifest]
+  (let [a (:author manifest)] (if (map? a) (or (:name a) "unknown") (str (or a "unknown")))))
+
 (defn- role-of [manifest]
   (let [[_ subtitle] (str/split (:name manifest) #"\s+—\s+" 2)]
     (or (not-empty subtitle) (:name manifest))))
@@ -81,25 +102,27 @@
 (defn offer
   "One registry agent → one catalog offer (the shape `public-bot-catalog`
   validates), with its registry provenance."
-  [commit entry manifest itonami]
-  {:id (:id entry)
-   :name (:name manifest)
-   :avatar "🧩"
-   :role (role-of manifest)
-   :brief (str (:description manifest)
-               (when-let [w (not-empty (:useWhen itonami))] (str "\n使う場面: " w))
-               (when-let [a (not-empty (:avoidWhen itonami))] (str "\n使わない場面: " a)))
-   :author (:author manifest)
-   :entry-url (str "https://github.com/" registry-repository "/tree/" commit "/" (:path entry))
-   :installed-surface "itonami-registry"
-   ;; Registry authority is `grants false, default blocked`: nothing starts on.
-   :install {:defaults {:writes? false :browser? false :computer? false
-                        :peers? false :omakase? false :coding? false}}
-   :profile-source {:repository registry-repository :revision commit
-                    :path (str (:path entry) "/templates/hermes")}
-   :registry {:id (:id entry) :type (:type entry) :version (:version manifest)
-              :path (:path entry) :checksum (:checksum entry)
-              :source (:source manifest) :effects (vec (:effects itonami))}})
+  [src commit entry manifest itonami]
+  (let [repo (:repository src)
+        profile-path (str/join "/" (remove str/blank? [(:path entry) (:profile-dir src)]))]
+    {:id (str (:id-prefix src) (:id entry))
+     :name (:name manifest)
+     :avatar "🧩"
+     :role (role-of manifest)
+     :brief (str (:description manifest)
+                 (when-let [w (not-empty (:useWhen itonami))] (str "\n使う場面: " w))
+                 (when-let [a (not-empty (:avoidWhen itonami))] (str "\n使わない場面: " a)))
+     :author (author-of manifest)
+     :entry-url (str "https://github.com/" repo "/tree/" commit "/" (:path entry))
+     :installed-surface (last (str/split repo #"/"))
+     ;; A registry entry grants nothing: every capability starts off.
+     :install {:defaults {:writes? false :browser? false :computer? false
+                          :peers? false :omakase? false :coding? false}}
+     :profile-source {:repository repo :revision commit :path profile-path
+                      :file (:profile-file src)}
+     :registry {:repository repo :id (:id entry) :type (:type entry) :version (:version manifest)
+                :path (:path entry) :checksum (:checksum entry)
+                :source (:source manifest) :effects (vec (:effects itonami))}}))
 
 (defn curated-ids
   "Ids the hand-written catalog already offers. Its entry is curated (an owner
@@ -110,48 +133,54 @@
     (set (map second (re-seq #":id \"([a-z0-9-]+)\"" (str (fs/readFileSync catalog-path "utf8")))))
     #{}))
 
-(defn generate [dir commit-ref curated]
+(defn generate [src dir commit-ref curated]
   (let [commit (git-text dir "rev-parse" (str commit-ref "^{commit}"))
         index (json-at dir commit "index.json")
         all-agents (filter #(= "agent" (:type %)) (:entries index))
-        agents (remove #(curated (:id %)) all-agents)]
+        qualified #(str (:id-prefix src) (:id %))
+        agents (remove #(curated (qualified %)) all-agents)]
     {:schema schema
-     :registry {:repository registry-repository :commit commit
+     :registry {:repository (:repository src) :commit commit
                 :generated (:generated index) :agents (count all-agents)
-                :curated-elsewhere (vec (sort (keep #(when (curated (:id %)) (:id %)) all-agents)))}
+                :curated-elsewhere (vec (sort (keep #(when (curated (qualified %)) (qualified %)) all-agents)))}
      :bots
      (vec
       (for [entry (sort-by :id agents)]
         (let [files (folder-files dir commit (:path entry))
               actual (folder-checksum files)
-              have (set (map first files))]
+              have (set (map first files))
+              profile-rel (str/join "/" (remove str/blank? [(:profile-dir src) (:profile-file src)]))]
           (when (not= actual (:checksum entry))
             (throw (ex-info (str "checksum mismatch for " (:path entry))
                             {:expected (:checksum entry) :actual actual :commit commit})))
-          (when-not (have "templates/hermes/SOUL.md")
-            (throw (ex-info (str (:path entry) " has no templates/hermes/SOUL.md") {:commit commit})))
-          (let [itonami (json-at dir commit (str (:path entry) "/itonami.json"))]
+          (when-not (have profile-rel)
+            (throw (ex-info (str (:path entry) " has no " profile-rel) {:commit commit})))
+          (let [itonami (if-let [f (:authority-file src)]
+                          (json-at dir commit (str (:path entry) "/" f))
+                          {})]
             (when (true? (get-in itonami [:authority :grants]))
               (throw (ex-info (str (:path entry) " claims authority; a registry entry grants nothing")
                               {:commit commit})))
-            (offer commit entry (json-at dir commit (str (:path entry) "/manifest.json")) itonami)))))}))
+            (offer src commit entry (json-at dir commit (str (:path entry) "/manifest.json")) itonami)))))}))
 
 (defn render [catalog]
   (str ";; GENERATED by scripts/sync-itonami-registry.cljk from "
-       registry-repository " @ " (get-in catalog [:registry :commit]) ".\n"
+       (get-in catalog [:registry :repository]) " @ " (get-in catalog [:registry :commit]) ".\n"
        ";; Do not edit by hand: change the registry, then regenerate. Every folder\n"
        ";; checksum below was verified against git objects at that commit.\n"
        (binding [*print-namespace-maps* false] (pr-str catalog)) "\n"))
 
 (let [args (vec *command-line-args*)
-      dir (expand-home (arg args "--registry" "~/github/cloud-itonami/itonami-registry"))
-      out (arg args "--out" "resources/itonami-registry-bots.edn")
+      which (keyword (arg args "--source" "itonami"))
+      src (or (sources which) (throw (ex-info (str "unknown --source " (name which)) {})))
+      dir (expand-home (arg args "--registry" (:checkout src)))
+      out (arg args "--out" (:out src))
       curated (curated-ids (arg args "--catalog" "resources/itonami-public-bots.edn"))
-      text (render (generate dir (arg args "--commit" "origin/main") curated))]
+      text (render (generate src dir (arg args "--commit" "origin/main") curated))]
   (if (some #{"--check"} args)
     (let [current (when (fs/existsSync out) (str (fs/readFileSync out "utf8")))]
       (if (= current text)
-        (println "itonami-registry-bots.edn is current")
-        (do (println "itonami-registry-bots.edn is stale; regenerate") (set! (.-exitCode js/process) 1))))
+        (println (str out " is current"))
+        (do (println (str out " is stale; regenerate")) (set! (.-exitCode js/process) 1))))
     (do (fs/writeFileSync out text)
         (println "wrote" out))))

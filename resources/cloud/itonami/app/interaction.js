@@ -13661,8 +13661,8 @@
           copy.append(make('h3', null, entry.avatar ? `${entry.avatar} ${entry.name}` : entry.name),
             make('p', null, entry.brief || entry.role || '公開 Bot'),
             make('p', null, entry.registry
-              // From cloud-itonami/itonami-registry, pinned to one commit: say so.
-              ? `itonami-registry @ ${String(entry['profile-source']?.revision || '').slice(0, 7)} · ${entry.author}`
+              // From a registry (itonami or upstream Hermes), pinned to one commit: say so.
+              ? `${entry['installed-surface']} @ ${String(entry['profile-source']?.revision || '').slice(0, 7)} · ${entry.author}`
               : `${entry.author} · ${entry['entry-url'] || ''}`));
           const add = make('button', 'tool-button', '追加'); add.type = 'button';
           add.setAttribute('aria-label', fmt('{name}を追加', {name: entry.name}));

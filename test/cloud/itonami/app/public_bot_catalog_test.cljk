@@ -74,12 +74,12 @@
     (is (seq registry) "the generated itonami-registry offers are merged in")
     (doseq [entry registry]
       (testing (str "registry offer " (:id entry))
-        (is (= "itonami-registry" (:installed-surface entry)))
+        (is (contains? #{"itonami-registry" "hermes-registry"} (:installed-surface entry)))
         (is (not-any? true? (vals (get-in entry [:install :defaults])))
             "a registry template grants nothing")
         (is (re-matches #"[0-9a-f]{40}" (str (get-in entry [:profile-source :revision]))))
-        (is (re-find #"/templates/hermes/SOUL\.md" (:brief (catalog/install-attributes entry)))
-            "the brief points at the pinned SOUL.md")
+        (is (re-find #"/blob/[0-9a-f]{40}/.+/(SOUL|AGENT)\.md" (:brief (catalog/install-attributes entry)))
+            "the brief points at the pinned profile file")
         (is (re-matches #"sha256:[0-9a-f]{64}" (str (get-in entry [:registry :checksum]))))))))
 
 (deftest a-registry-offer-that-grants-is-refused
@@ -92,3 +92,10 @@
     (is (thrown? #?(:clj Exception :cljs js/Error)
                  (catalog/merge-catalogs {:bots [entry]} {:bots [entry]}))
         "an id offered by both sources is an error")))
+
+(deftest hermes-registry-offers-are-qualified
+  (let [hermes (filter #(= "hermes-registry" (:installed-surface %)) (catalog/bots))]
+    (is (seq hermes) "upstream Hermes registry agents are offered")
+    (is (every? #(clojure.string/starts-with? (:id %) "hermes-") hermes)
+        "their ids are registry-qualified, so they cannot collide")
+    (is (every? #(= "AGENT.md" (get-in % [:profile-source :file])) hermes))))
