@@ -53,6 +53,29 @@
           (is (= (bot-identity/bot-did "bot-workforce-aaa") (:identity.subject/did s)))
           (is (contains? (:identity.subject/labels s) "mangaka/work-yamainu")))))))
 
+(deftest an-identity-key-names-the-bot-only-when-it-is-set
+  ;; A Hermes import carries its profile id as `:bot/identity-key`; nothing
+  ;; else does, and those Bots must keep the did derived from their id.
+  (let [dir (temp-dir)]
+    (with-seed-dir dir
+      (testing "without a key the id is the key -- every existing Bot's did"
+        (is (= "bot-workforce-aaa"
+               (bot-identity/identity-key {:bot/id "bot-workforce-aaa"})))
+        (is (= "bot-workforce-aaa"
+               (bot-identity/identity-key {:bot/id "bot-workforce-aaa"
+                                           :bot/identity-key ""}))
+            "a blank key is no key"))
+      (testing "with a key, the key is the name"
+        (is (= "murakumo-eng"
+               (bot-identity/identity-key {:bot/id "bot-1234"
+                                           :bot/identity-key "murakumo-eng"}))))
+      (testing "the subject's did follows the key, its id stays the row id"
+        (let [s (bot-identity/subject {:bot/id "bot-1234"
+                                       :bot/identity-key "murakumo-eng"
+                                       :bot/name "murakumo eng"})]
+          (is (= (bot-identity/bot-did "murakumo-eng") (:identity.subject/did s)))
+          (is (not= (bot-identity/bot-did "bot-1234") (:identity.subject/did s))))))))
+
 (deftest the-seed-is-written-once-and-not-silently-replaced
   ;; Regenerating renames every Bot at once. That must not happen as a side
   ;; effect of reading.

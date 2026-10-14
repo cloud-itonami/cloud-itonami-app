@@ -165,6 +165,26 @@
              :note (some-> (:note entry) str str/trim not-empty)}))
         (take max-capability-policy values)))
 
+(def max-identity-key 200)
+(def max-hermes-profile-chars 8192)
+
+(defn- hermes-profile
+  "The Hermes profile an imported Bot came from: its id and the non-secret
+  `itonami.edn` subset the import carried (ids, org placement, authority
+  reference), or nil. Provenance for the way back to Hermes; like workforce
+  metadata it is never consulted by tool admission."
+  [value]
+  (when (some? value)
+    (let [id (some-> (:id value) str str/trim not-empty)
+          itonami (:itonami value)]
+      (when-not (and id (<= (count id) max-identity-key)
+                     (or (nil? itonami) (map? itonami))
+                     (<= (count (pr-str itonami)) max-hermes-profile-chars))
+        (throw (ex-info "invalid Hermes profile reference"
+                        {:type :bot/invalid :field :bot/hermes-profile})))
+      (cond-> {:id id}
+        (seq itonami) (assoc :itonami itonami)))))
+
 (def skill-id-pattern #"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 (def skill-sha256-pattern #"^[0-9a-f]{64}$")
 
@@ -319,6 +339,16 @@
      ;; Stable mailbox identity. It is minted from the immutable Bot id by the
      ;; host and is not editable with the Bot's display name.
      :bot/email email
+     ;; What `bot-identity` derives this Bot's did and signing seed from when
+     ;; it is not `:bot/id`. Set only by a Hermes import, to the source profile
+     ;; id, when that profile was minted by this fleet and no other owner
+     ;; holds it, so the Bot keeps the did its profile already had; nil --
+     ;; every other Bot -- keeps the did derived from the id. Like the mailbox it is
+     ;; fixed at creation: no update path writes it, because changing it would
+     ;; rename the Bot everywhere its did is trusted.
+     :bot/identity-key (optional-name (:bot/identity-key value)
+                                      :bot/identity-key max-identity-key)
+     :bot/hermes-profile (hermes-profile (:bot/hermes-profile value))
      :bot/tools tools
      ;; WHICH accounts, not just which services. Empty means "the person's",
      ;; which is what somebody with one account at each provider means and

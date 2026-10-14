@@ -24,6 +24,19 @@
   same id and therefore the same did. A Bot's identity survives the fleet
   being re-provisioned, which is the whole point of it being an identity.
 
+  ## One tree, and the one Bot that is not keyed on its id
+
+  The same derivation names Hermes agent profiles outside this application:
+  SHA-256(fleet-seed || 0x00 || key-id) with key-id = the profile id (root
+  ADR-2610141512). A Bot imported from such a profile (ADR-0088) already had
+  a name before it arrived, and its `:bot/id` cannot be that name -- it is
+  minted per migration, so keying on it gave the import a second did that
+  changed on every re-import. Such a Bot carries `:bot/identity-key` (the
+  profile id) and `identity-key` derives from that instead -- only when the
+  profile's own record states the did this fleet derives for that id and no
+  other owner already holds it (`bots/hermes-identity-claim`). Every other
+  Bot has no identity key and keeps exactly the did it always had.
+
   ## What this deliberately does not do
 
   It does not put a signing key in the Bot's hands, and nothing here signs on
@@ -136,11 +149,24 @@
       (try (ed/did-key-from-seed (derive-seed fleet id))
            (catch Exception _ nil)))))
 
+(defn identity-key
+  "The key-id this Bot's did and signing seed derive from: `:bot/identity-key`
+  when the Bot carries one, otherwise `:bot/id`.
+
+  Only a Hermes import sets the identity key (to the source profile id, when
+  the import may claim it), so the imported Bot answers to the did its
+  profile already had. Every call site
+  that names a Bot's did or reaches its signing seed goes through here; one
+  that passed `:bot/id` directly would give an imported Bot two names."
+  [b]
+  (or (some-> (:bot/identity-key b) str not-empty)
+      (:bot/id b)))
+
 (defn subject
   "The Bot as an `identity.model/subject`, so it lands in the same shape every
   other identity in this workspace does rather than a second one."
-  [{:bot/keys [id name workforce-key]}]
-  (when-let [did (bot-did id)]
+  [{:bot/keys [id name workforce-key] :as b}]
+  (when-let [did (bot-did (identity-key b))]
     (identity-model/subject
      id :agent
      {:did did
