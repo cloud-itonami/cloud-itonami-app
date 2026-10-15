@@ -1,0 +1,148 @@
+(ns cloud.itonami.app.awai-apps-test
+  (:require [kotoba.test :refer [deftest is]]
+            [kotoba.protocol.install :as install]
+            [cloud.itonami.app.awai-apps :as apps]))
+
+(def app-id "net.kotoba.murakumo")
+(def publisher-did "did:key:z6MkoPd1PVGGf5gTMGy4nZNrBMszzfaeaNmZfSzgAZZNhDWq")
+(def bundle-cid "bafyreifq7onuoxumrs7tnpdtx5lsnnulu5k24cj75y44sz4ot7n5kz4l5u")
+(def other-cid (str (subs bundle-cid 0 10) "a" (subs bundle-cid 11)))
+
+(defn- release
+  ([overrides] (release overrides {}))
+  ([manifest-overrides release-overrides]
+   (merge {:verified? true
+           :app-id app-id
+           :channel "stable"
+           :publisher-did publisher-did
+           :sequence 1
+           :release-cid bundle-cid
+           :manifest-cid bundle-cid
+           :manifest (merge {:kotoba.app/id app-id
+                             :kotoba.app/version "1.0.0"
+                             :kotoba.app/kind "appview"
+                             :kotoba.app/appview-of {:routes ["/"]}
+                             :kotoba.app/bundle-cid bundle-cid
+                             :kotoba.app/caps ["graph/query"]}
+                            manifest-overrides)}
+          release-overrides)))
+
+(defn- resolved-install
+  ([manifest-overrides] (resolved-install manifest-overrides {}))
+  ([manifest-overrides release-overrides]
+   (let [release (release manifest-overrides release-overrides)
+         lock (:ok (install/create-install-lock release))]
+     (apps/prepare-install
+      {:decision :resolved
+       :domain "murakumo.cloud"
+       :binding-cid bundle-cid
+       :binding-sequence 1
+       :binding-expires-at 2000000000
+       :install-lock lock}))))
+
+(defn- install-it [prepared approvals]
+  (apps/finish-install
+   prepared
+   {:verified-cids (set (:required-content-cids prepared))
+    :approved-caps approvals
+    :host-supported ["graph/query" "graph/transact"]
+    :now 1800000000}))
+
+(deftest install-requires-verified-content-and-records-local-consent
+  (let [prepared (resolved-install {})
+        installed (install-it prepared ["graph/query"])
+        record (:installation installed)]
+    (is (= :install-prepared (:decision prepared)))
+    (is (= :installed (:decision installed)))
+    (is (= [] (apps/installation-problems record)))
+    (is (= ["graph/query"] (:approved-caps record)))
+    (is (= ["graph/query"] (:effective-capabilities installed)))
+    (is (= :content-not-verified
+           (:error (apps/finish-install
+                    prepared {:verified-cids []
+                              :approved-caps ["graph/query"]
+                              :host-supported ["graph/query"]
+                              :now 1800000000}))))
+    (is (= :invalid-domain-origin
+           (:error (apps/prepare-install
+                    {:decision :resolved
+                     :domain (apply str (interpose "." (repeat 4 (apply str (repeat 63 "a")))))
+                     :binding-cid bundle-cid
+                     :binding-sequence 1
+                     :binding-expires-at 2000000000
+                     :install-lock (:install-lock prepared)}))))))
+
+(deftest cached-launch-keeps-domain-status-outside-app-authority
+  (let [prepared (resolved-install {})
+        installed (install-it prepared ["graph/query"])
+        record (:installation installed)
+        launch (apps/launch-decision
+                record {:verified-cids (set (:required-content-cids prepared))
+                        :host-supported ["graph/query"]
+                        :domain-status :offline})]
+    (is (= :launch (:decision launch)))
+    (is (= :offline (:domain-status launch)))
+    (is (= "murakumo.cloud" (get-in launch [:origin :domain])))
+    (is (= ["graph/query"] (:capabilities launch)))
+    (is (= :content-not-verified
+           (:error (apps/launch-decision
+                    record {:verified-cids []
+                            :host-supported ["graph/query"]}))))))
+
+(deftest update-retains-existing-consent-and-requires-new-explicit-consent
+  (let [record (:installation (install-it (resolved-install {}) ["graph/query"]))
+        candidate (release {:kotoba.app/version "1.1.0"
+                            :kotoba.app/caps ["graph/query" "graph/transact"]}
+                           {:sequence 2 :release-cid other-cid :manifest-cid other-cid})
+        prepared (apps/prepare-update record candidate)
+        completed (apps/finish-update
+                   record prepared
+                   {:verified-cids (set (:required-content-cids prepared))
+                    :approved-new-caps ["graph/transact"]
+                    :host-supported ["graph/query" "graph/transact"]
+                    :now 1800000001})]
+    (is (= :ready (:decision prepared)))
+    (is (= ["graph/transact"] (:consent-required-caps prepared)))
+    (is (= :updated (:decision completed)))
+    (is (= ["graph/query" "graph/transact"]
+           (:approved-caps (:installation completed))))
+    (is (= ["graph/query" "graph/transact"]
+           (:effective-capabilities completed)))
+    (is (= :capability-not-requested
+           (:error (apps/finish-update
+                    record prepared
+                    {:verified-cids (set (:required-content-cids prepared))
+                     :approved-new-caps ["graph/admin"]
+                     :host-supported ["graph/query" "graph/transact"]
+                     :now 1800000001}))))))
+
+(deftest cell-changes-require-a-matching-runtime-migration-receipt
+  (let [manifest {:kotoba.app/cells [{:id "net.kotoba.murakumo.state"
+                                      :dna-cid bundle-cid}]}
+        record (:installation (install-it (resolved-install manifest) ["graph/query"]))
+        candidate (release {:kotoba.app/version "1.1.0"
+                            :kotoba.app/cells [{:id "net.kotoba.murakumo.state"
+                                                :dna-cid other-cid}]}
+                           {:sequence 2 :release-cid other-cid :manifest-cid other-cid})
+        prepared (apps/prepare-update record candidate)
+        runtime-input {:verified-cids (set (:required-content-cids prepared))
+                       :approved-new-caps []
+                       :host-supported ["graph/query"]
+                       :now 1800000001}
+        denied (apps/finish-update record prepared runtime-input)
+        receipt {:verified? true
+                 :app-id app-id
+                 :from-release-cid (:source-release-cid prepared)
+                 :to-release-cid (get-in prepared [:policy-plan :lock :release-cid])
+                 :changed-cells (:changed-cells prepared)}
+        completed (apps/finish-update record prepared
+                                      (assoc runtime-input :migration-receipt receipt))]
+    (is (= :requires-cell-migration (:decision prepared)))
+    (is (= :migration-receipt-required (:error denied)))
+    (is (= :updated (:decision completed)))
+    (is (= receipt (get-in completed [:installation :last-migration-receipt])))
+    (is (= :migration-receipt-required
+           (:error (apps/finish-update
+                    record prepared
+                    (assoc runtime-input
+                           :migration-receipt (assoc receipt :to-release-cid bundle-cid))))))))
