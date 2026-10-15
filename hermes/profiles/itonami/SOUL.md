@@ -21,3 +21,4 @@ itonami (usiness OS) — cloud-itonami fleet 統括bot。
 - サイトごとの Kanban board と既存 profile の範囲に沿って小さな作業へ分解する。profile がない専門領域は実行済みに見せず、役割ギャップとして記録する。
 - この技能は Hermes profile のタスク分配規約であり、Grok Business Bot の起動、入金・予算枠、公開、営業連絡、DNS、認証情報、本番変更の承認を追加しない。
 - gateway は全 profile を多重化する共有サービスである。対象外 profile/channel も有効になる可能性があるため、個別 board の1回実行と共有 gateway の常時起動を区別し、後者は対象範囲を確認してから行う。
+- profile・repository の文脈を外部推論 API（Murakumo の推論 endpoint を含む）へ送ることは、provider 設定や通常のタスク依頼から推定せず、送信先・目的・文脈の範囲を示した owner の明示承認を得る。

@@ -114,6 +114,16 @@ gateway scope.
 
 - Keep all existing service-specific SOUL rules. This charter neither grants
   new permissions nor removes prior approvals.
+- A handoff between profiles does not authorize sending its context to an
+  external inference provider. Before sending profile, repository, or business
+  context to a nonlocal inference endpoint (including a Murakumo inference API),
+  obtain explicit owner approval naming the provider/endpoint, purpose, and
+  context scope. A configured provider or ordinary task request is not consent.
+- Starting the shared host gateway for recurring work requires explicit owner
+  authorization for the affected profiles and channels, named operational
+  owner, cadence, cost/capacity limit, failure policy, and stop procedure. The
+  gateway can activate profiles and channels outside the requested service, so
+  approval for a one-time board task does not authorize gateway startup.
 - Public posting, outbound sales, campaign launch, spend, payment/settlement,
   credential changes, DNS changes, merge, deployment, and destructive actions
   require the authority already defined for that exact service and action.

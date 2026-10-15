@@ -96,8 +96,11 @@ comments, or attachments.
 
 - The coordinator organizes work; it does not own network-awai accounts,
   repositories, domains, game assets, or release decisions.
-- Context and evidence may pass between profiles. Approval, credentials, write
-  access, spending authority, and deployment authority do not pass with them.
+- Context and evidence may pass between profiles as internal handoffs. This
+  does not authorize sending them to an external inference provider; obtain
+  explicit owner approval for the provider/endpoint, purpose, and context scope
+  before any such transmission. Approval, credentials, write access, spending
+  authority, and deployment authority do not pass with an internal handoff.
 - Marketing and brand roles prepare research and drafts. Public posts, campaign
   launches, and brand changes require the applicable owner approval.
 - Sales prepares prospect research and outreach drafts. It does not send
