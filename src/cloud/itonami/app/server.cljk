@@ -9,6 +9,8 @@
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.app-client :as app-client]
             [cloud.itonami.app.app-directory :as app-directory]
+            [cloud.itonami.app.awai-apps :as awai-apps]
+            [cloud.itonami.app.awai-registry :as awai-registry]
             [cloud.itonami.app.public-bot-catalog :as public-bot-catalog]
             [cloud.itonami.app.hermes-surface :as hermes-surface]
             [cloud.itonami.app.authority.api :as authority-api]
@@ -6063,6 +6065,24 @@
   [config exchange method path]
   (let [session (require-human-session! exchange)]
     (cond
+      (and (= method "GET") (= path "/api/bots/awai-app-registry"))
+      (do (require-human-session! exchange)
+          (let [result (awai-registry/registry-snapshot)]
+            (if (= "ok" (:status result))
+              (let [resolution (awai-apps/registry-domain-candidates
+                                result (quot (System/currentTimeMillis) 1000))]
+                (if (= :candidates (:decision resolution))
+                  (send! exchange 200
+                         {:status "ok"
+                          :trust (:trust result)
+                          :dna-cid (get-in result [:snapshot :dna-cid])
+                          :registry-record-count (count (get-in result [:snapshot :records]))
+                          :candidates (:candidates resolution)})
+                  (send! exchange 503
+                         {:status "unavailable"
+                          :reason (name (:error resolution))})))
+              (send! exchange 503 result))))
+
       (and (= method "GET") (= path "/api/bots/workspace-apps"))
       (send! exchange 200 (app-directory/workspace-catalog session))
 

@@ -1,0 +1,76 @@
+(ns cloud.itonami.app.awai-content-test
+  "Signed Awai origin records select the pinned content transport set."
+  (:require [kotoba.test :refer [deftest is]]
+            [cloud.itonami.app.awai-content-policy :as content-policy]))
+
+(def app-id "net.kotoba.murakumo")
+(def publisher-did "did:key:z1")
+(def now 1800000000)
+
+(defn- origin [host pin-char operator-did]
+  {:app-id app-id
+   :publisher-did publisher-did
+   :operator-did operator-did
+   :host host
+   :spki-sha256 (apply str (repeat 64 pin-char))
+   :expires-at 2000000000})
+
+(defn- origin-set []
+  [(origin "content-a.example" \a "did:key:z1")
+   (origin "content-b.example" \b "did:key:z2")
+   (origin "content-c.example" \c "did:key:z3")])
+
+(deftest accepted-origin-records-select-three-distinct-pinned-hosts
+  (let [result (content-policy/content-origins
+                (origin-set) app-id publisher-did now)]
+    (is (= :origins-ready (:decision result)))
+    (is (= ["content-a.example" "content-b.example" "content-c.example"]
+           (mapv :host (:origins result))))
+    (is (= [\a \b \c]
+           (mapv #(first (:spki-sha256 %)) (:origins result))))
+    (is (= ["did:key:z1" "did:key:z2" "did:key:z3"]
+           (mapv :operator-did (:origins result))))))
+
+(deftest origin-records-reject-cloudflare-and-local-hosts
+  (doseq [host ["workers.dev" "pages.dev" "r2.dev" "cfargotunnel.com"
+                "localhost" "localhost.localdomain" "peer.local" "node.internal"]]
+    (let [records (assoc (origin-set) 0 (origin host \a "did:key:z1"))]
+      (is (= :invalid-content-origin
+             (:reason (content-policy/content-origins
+                       records app-id publisher-did now)))))))
+
+(deftest origin-records-reject-ambiguous-or-untrusted-sets
+  (let [origins (origin-set)]
+    (is (= :duplicate-origin-host
+           (:reason (content-policy/content-origins
+                     (assoc origins 1 (origin "content-a.example" \b "did:key:z2"))
+                     app-id publisher-did now))))
+    (is (= :duplicate-origin-key
+           (:reason (content-policy/content-origins
+                     (assoc origins 1 (origin "content-b.example" \a "did:key:z2"))
+                     app-id publisher-did now))))
+    (is (= :duplicate-origin-operator
+           (:reason (content-policy/content-origins
+                     (assoc origins 2 (origin "content-c.example" \c "did:key:z1"))
+                     app-id publisher-did now))))
+    (is (= :insufficient-distinct-origins
+           (:reason (content-policy/content-origins
+                     (subvec origins 0 2) app-id publisher-did now))))
+    (is (= :content-origin-scope-mismatch
+           (:reason (content-policy/content-origins
+                     (assoc origins 0 (assoc (first origins) :publisher-did "did:key:z9"))
+                     app-id publisher-did now))))
+    (is (= :expired-content-origin
+           (:reason (content-policy/content-origins
+                     (assoc origins 0 (assoc (first origins) :expires-at now))
+                     app-id publisher-did now))))
+    (is (= :invalid-content-origin
+           (:reason (content-policy/content-origins
+                     (assoc origins 0 (assoc (first origins) :spki-sha256 "not-a-pin"))
+                     app-id publisher-did now))))
+    (is (= :missing-content-origins
+           (:reason (content-policy/content-origins nil app-id publisher-did now))))
+    (is (= :invalid-clock
+           (:reason (content-policy/content-origins origins app-id publisher-did -1))))
+    (is (= :invalid-clock
+           (:reason (content-policy/content-origins origins app-id publisher-did nil))))))

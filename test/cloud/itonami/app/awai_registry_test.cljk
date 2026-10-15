@@ -1,0 +1,86 @@
+(ns cloud.itonami.app.awai-registry-test
+  "Awai registry resolution selects only releases with live signed origins."
+  (:require [kotoba.test :refer [deftest is]]
+            [cloud.itonami.app.awai-apps :as apps]))
+
+(def app-id "net.kotoba.murakumo")
+(def publisher-did "did:key:z6MkoPd1PVGGf5gTMGy4nZNrBMszzfaeaNmZfSzgAZZNhDWq") ;; gitleaks:allow public did:key fixture
+(def origin-cids
+  ["bafyreiajuvwx5c52tzkfugs6zzye45sunx4ivoioeht5ckn7o5ak3u3ynq"
+   "bafyreieixtse7yrlgr7fmdhmyrmb2nfedhcbwps6xdrw6ev6mkmfwtv37y"
+   "bafyreifq7onuoxumrs7tnpdtx5lsnnulu5k24cj75y44sz4ot7n5kz4l5u"])
+
+(defn- origin-record [cid host pin-char operator-did]
+  {:cid cid
+   :sequence 0
+   :type "content/origin"
+   :body {:app-id app-id
+          :publisher-did publisher-did
+          :operator-did operator-did
+          :host host
+          :spki-sha256 (apply str (repeat 64 pin-char))
+          :expires-at 2000000000}})
+
+(defn- snapshot [origins release-body]
+  {:schema "awai.app-registry.read.v1"
+   :dna-cid "bafkreifwintjn6lddprilx7xpbxrtorzkuxhjwhs7c4x3c4aippelcipnu"
+   :records (into
+             [{:cid "bafkreihbfo374yy4mz2w3sli2azqfw3ea73cnr3jm5gzqvub7wsh57uoxa"
+               :sequence 0
+               :type "domain/bind"
+               :body {:domain "murakumo.cloud"
+                      :app-id app-id
+                      :publisher-did publisher-did
+                      :domain-owner-did publisher-did
+                      :channel "stable"
+                      :sequence 1
+                      :previous-binding-cid ""
+                      :expires-at 2000000000}}
+              {:cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
+               :sequence 0
+               :type "app/release"
+               :body (merge {:app-id app-id
+                             :publisher-did publisher-did
+                             :channel "stable"
+                             :sequence 1
+                             :previous-release-cid ""
+                             :manifest-cid "bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny"}
+                            release-body)}]
+             origins)})
+
+(defn- registered-origins []
+  (mapv origin-record origin-cids
+        ["content-a.example" "content-b.example" "content-c.example"]
+        [\a \b \c]
+        ["did:key:z6MkpTHR8VHsExkJxkgDwbwisfb5Tq2mWiwWjcmSKqU2E" "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK" "did:key:z6MkpPd1PVGGf5gTMGy4nZNrBMszzfaeaNmZfSzgAZZNhDWq"])) ;; gitleaks:allow public did:key fixture
+
+(defn- resolve-candidates [snapshot]
+  (apps/registry-domain-candidates
+   {:trust "accepted-by-local-awai-node" :snapshot snapshot}
+   1800000000))
+
+(deftest first-domain-binding-release-and-origin-records-resolve
+  (let [records (registered-origins)
+        result (resolve-candidates
+                (snapshot records {:content-origin-cids origin-cids}))]
+    (is (= :candidates (:decision result)))
+    (is (= :candidate (get-in result [:candidates 0 :decision])))
+    (is (= 1 (get-in result [:candidates 0 :binding-sequence])))
+    (is (= 1 (get-in result [:candidates 0 :release-sequence])))
+    (is (= "ready" (get-in result [:candidates 0 :content-origin-status])))
+    (is (= ["content-a.example" "content-b.example" "content-c.example"]
+           (mapv :host (get-in result [:candidates 0 :content-origins]))))))
+
+(deftest releases-without-registered-origins-are-not-deployable-candidates
+  (let [result (resolve-candidates (snapshot [] {}))]
+    (is (= :content-origins-missing
+           (get-in result [:candidates 0 :decision])))))
+
+(deftest referenced-origin-expiry-blocks-the-release-candidate
+  (let [records (assoc (registered-origins) 0
+                       (assoc-in (first (registered-origins))
+                                 [:body :expires-at] 1800000000))
+        result (resolve-candidates
+                (snapshot records {:content-origin-cids origin-cids}))]
+    (is (= :content-origins-expired
+           (get-in result [:candidates 0 :decision])))))

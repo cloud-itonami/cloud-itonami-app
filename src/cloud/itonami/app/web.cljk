@@ -2136,13 +2136,14 @@
    [:section {:class "view" :data-view-panel "marketplace" :hidden true}
     (view-header "マーケットプレイス" "仕事に合わせて、Plugin・Bot・App を追加。")
     [:div {:class "market-tabs" :role "tablist" :aria-label "種類"}
-     (for [[id label] [["plugin" "Plugin"] ["bot" "Bot"] ["app" "App"]]]
+     (for [[id label] [["plugin" "Plugin"] ["bot" "Bot"] ["app" "App"]
+                       ["awai" "分散App"]]]
        [:button {:type "button" :role "tab" :id (str "market-tab-" id)
                  :data-market-tab id :aria-selected (= id "plugin")
                  :aria-controls "market-results" :tabindex (if (= id "plugin") 0 -1)} label])]
     [:label {:class "visually-hidden" :for "market-search"} "マーケットプレイスを検索"]
     [:input {:id "market-search" :type "search" :placeholder "名前や用途で検索"}]
-    [:div {:class "market-filters"}
+    [:div {:class "market-filters" :id "market-filters"}
      [:label [:input {:id "market-installed-only" :type "checkbox"}] "追加済みだけ"]]
     [:p {:id "market-status" :role "status" :aria-live "polite"}]
     [:div {:class "market-grid" :id "market-results" :role "tabpanel"
