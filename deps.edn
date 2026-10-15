@@ -97,7 +97,7 @@
   io.github.kotoba-lang/kotoba-protocol
   {:git/url "https://github.com/kotoba-lang/kotoba-protocol.git"
    ;; Shared Awai app identity, install, capability-consent, and offline-launch policy.
-   :git/sha "c2e54b4d17ac405398086e510db524229d48217e"}
+   :git/sha "4e3f3d456ec39c1b6419b55f113ae07298fec1ed"}
   ;; L2 graph CID: protocol.graph overlay + chain.core/commit! (ADR-2608145400).
   ;; Protocol does not hash and does not depend on chain.
   io.github.kotoba-lang/chain
