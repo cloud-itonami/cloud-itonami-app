@@ -24,6 +24,7 @@ sessions, memories, logs, caches, run state.
 |---|---|
 | `itonami-ad-operator` | aozora PR 掲載・反応測定・メール掲載交渉の広告運用代行。専用 agency MCP |
 | `itonami-sales-agent` | メール営業・返信・追客と aozora 暗号化 lead 管理の営業代行。専用 agency MCP |
+| `itonami-hermes-bridge` | Hermes ⇔ Itonami 互換（ADR-0143: API・Itonami profile・registry）を保ち、引き継ぎリストを 1 項目ずつ PR にする。propose only |
 | `itonami-dispatch` | cloud-itonami 各 business の bot 群を murakumo fleet 上で分散稼働させる dispatch bot。kanban |
 | `itonami-maint` |  |
 | `itonami-winfix` |  |
