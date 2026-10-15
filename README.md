@@ -50,6 +50,12 @@ responsibilities — the presentation gap is structural, not unfinished work: a
 Passkey signs its own `authenticatorData || clientDataHash` and cannot produce a
 Data Integrity proof.
 
+The shared external Awai-app lifecycle coordinator is an initial host-side
+policy slice in `cloud.itonami.app.awai-apps`; see
+[`docs/awai-app-runtime.md`](docs/awai-app-runtime.md). DNSSEC, Awai peers,
+independent content origins, cell migration, sandbox execution and the public
+`itonami.app` launcher are still adapter/runtime work and are not qualified.
+
 Wallet creation is Passkey-first: the first verified P-256 public key names a
 deterministic ERC-4337 counterfactual account, so no injected wallet extension
 is required to receive. A Passkey remains scoped to its WebAuthn RP ID; the

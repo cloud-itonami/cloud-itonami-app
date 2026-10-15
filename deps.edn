@@ -96,7 +96,8 @@
   ;; App identity: raw CIDv1 + :kotoba.app/* manifest (zero runtime deps).
   io.github.kotoba-lang/kotoba-protocol
   {:git/url "https://github.com/kotoba-lang/kotoba-protocol.git"
-   :git/sha "782a199849a425065e7685f76338ec5e534184e8"}
+   ;; Shared Awai app identity, install, capability-consent, and offline-launch policy.
+   :git/sha "c2e54b4d17ac405398086e510db524229d48217e"}
   ;; L2 graph CID: protocol.graph overlay + chain.core/commit! (ADR-2608145400).
   ;; Protocol does not hash and does not depend on chain.
   io.github.kotoba-lang/chain
