@@ -1,0 +1,134 @@
+(ns cloud.itonami.app.awai-registry
+  "Read the accepted app.registry projection from the local Awai peer host.
+
+  The local gateway is deliberately a single, loopback-only URL. This adapter
+  never discovers a fallback origin and does not treat DNS, release manifests,
+  or application bundles as verified; it only reports app releases, domain
+  bindings, and content origins accepted by the configured Awai node."
+  (:require [kotoba.json :as json]
+            [kotoba.lang.text :as str]
+            [kotoba.protocol.cid :as cid]
+            [kotoba.protocol.vocab :as vocab])
+  (:import [java.io ByteArrayOutputStream]
+           [java.net Proxy ProxySelector URI]
+           [java.net.http HttpClient HttpClient$Redirect HttpRequest
+            HttpResponse$BodyHandlers]
+           [java.time Duration]))
+
+(def ^:dynamic *environment* #(System/getenv %))
+(def schema "awai.app-registry.read.v1")
+(def maximum-records 1024)
+(def maximum-snapshot-bytes (* 16 1024 1024))
+(def accepted-types #{"app/release" "domain/bind" "content/origin"})
+
+(def ^:private peer-http-client
+  (let [builder (HttpClient/newBuilder)]
+    ;; This bridge must stay on loopback even if a peer returns Location or the
+    ;; process has an ambient proxy configured. Neither behavior is inherited
+    ;; from the app's general-purpose outbound HTTP transport.
+    (.followRedirects builder HttpClient$Redirect/NEVER)
+    (.connectTimeout builder (Duration/ofSeconds 2))
+    (.proxy builder
+            (reify ProxySelector
+              (select [_ _] (java.util.Collections/singletonList Proxy/NO_PROXY))
+              (connectFailed [_ _ _ _] nil)))
+    (.build builder)))
+
+(defn- read-peer-snapshot [uri]
+  (let [request (-> (HttpRequest/newBuilder uri)
+                    (.timeout (Duration/ofSeconds 2))
+                    (.header "Accept" "application/json")
+                    (.GET)
+                    (.build))
+        response (.send peer-http-client request (HttpResponse$BodyHandlers/ofInputStream))
+        body (.body response)]
+    (with-open [input body]
+      (let [output (ByteArrayOutputStream.)
+            buffer (byte-array 8192)]
+        (loop [total 0]
+          ;; Read at most one byte beyond the cap so a chunked or dishonest
+          ;; Content-Length response cannot make the JSON parser allocate an
+          ;; unbounded body. Closing the stream also cancels any excess read.
+          (let [limit (min (alength buffer) (inc (- maximum-snapshot-bytes total)))
+                count (.read input buffer 0 limit)]
+            (cond
+              (neg? count)
+              {:status (.statusCode response)
+               :body (.toString output "UTF-8")}
+
+              (zero? count)
+              (recur total)
+
+              (> (+ total count) maximum-snapshot-bytes)
+              {:status (.statusCode response) :too-large? true}
+
+              :else
+              (do
+                (.write output buffer 0 count)
+                (recur (+ total count))))))))))
+
+(defn- valid-cid? [value]
+  (boolean (and (vocab/cid? value)
+                (not (:error (cid/parse-cid value))))))
+
+(defn- endpoint-uri [value]
+  (try
+    (let [uri (URI/create value)]
+      (when (and (= "http" (.getScheme uri))
+                 (= "127.0.0.1" (.getHost uri))
+                 (<= 1 (.getPort uri) 65535)
+                 (= "/v1/app-registry" (.getPath uri))
+                 (nil? (.getUserInfo uri))
+                 (nil? (.getQuery uri))
+                 (nil? (.getFragment uri)))
+        uri))
+    (catch Exception _ nil)))
+
+(defn- valid-record? [record]
+  (and (map? record)
+       (valid-cid? (:cid record))
+       (string? (:type record))
+       (nat-int? (:sequence record))
+       (contains? accepted-types (:type record))
+       (map? (:body record))))
+
+(defn- valid-snapshot? [snapshot]
+  (and (map? snapshot)
+       (= schema (:schema snapshot))
+       (valid-cid? (:dna-cid snapshot))
+       (vector? (:records snapshot))
+       (<= (count (:records snapshot)) maximum-records)
+       (every? valid-record? (:records snapshot))))
+
+(defn registry-snapshot
+  "Read one bounded accepted-state snapshot; return an explicit unavailable
+  result when the adapter is unset, unreachable, or returns an invalid shape."
+  []
+  (let [configured (some-> (*environment* "ITONAMI_AWAI_REGISTRY_URL") str/trim not-empty)
+        uri (when configured (endpoint-uri configured))]
+    (cond
+      (nil? configured)
+      {:status "unavailable" :reason "unconfigured"}
+
+      (nil? uri)
+      {:status "unavailable" :reason "invalid-local-endpoint"}
+
+      :else
+      (try
+        (let [response (read-peer-snapshot uri)]
+          (cond
+            (not= 200 (:status response))
+            {:status "unavailable" :reason "peer-host-unavailable"}
+
+            (:too-large? response)
+            {:status "unavailable" :reason "snapshot-too-large"}
+
+            :else
+            (let [snapshot (json/read-str (:body response) :key-fn keyword)]
+              (if (valid-snapshot? snapshot)
+                {:status "ok"
+                 :trust "accepted-by-local-awai-node"
+                 :snapshot snapshot}
+                {:status "unavailable" :reason "invalid-peer-snapshot"}))))
+        (catch Exception _
+          {:status "unavailable" :reason "peer-host-unreachable"})))))

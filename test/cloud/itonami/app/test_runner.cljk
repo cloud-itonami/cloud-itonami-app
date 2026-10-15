@@ -32,6 +32,8 @@
             [cloud.itonami.app.connectors-test]
             [cloud.itonami.app.app-directory-test]
             [cloud.itonami.app.awai-apps-test]
+            [cloud.itonami.app.awai-content-test]
+            [cloud.itonami.app.awai-registry-test]
             [cloud.itonami.app.connectors-kotoba-parity-test]
             [cloud.itonami.app.appearance-kotoba-parity-test]
             [cloud.itonami.app.desktop-test]

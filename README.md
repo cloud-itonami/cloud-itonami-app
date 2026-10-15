@@ -51,10 +51,16 @@ Passkey signs its own `authenticatorData || clientDataHash` and cannot produce a
 Data Integrity proof.
 
 The shared external Awai-app lifecycle coordinator is an initial host-side
-policy slice in `cloud.itonami.app.awai-apps`; see
-[`docs/awai-app-runtime.md`](docs/awai-app-runtime.md). DNSSEC, Awai peers,
-independent content origins, cell migration, sandbox execution and the public
-`itonami.app` launcher are still adapter/runtime work and are not qualified.
+policy slice in `cloud.itonami.app.awai-apps`, including per-operation
+capability authorization and host-adapter dispatch. A local read-only bridge
+now connects accepted Awai registry records to the authenticated marketplace;
+see [`docs/awai-app-runtime.md`](docs/awai-app-runtime.md). DNSSEC, independent
+content origins, cell migration, sandbox execution and the public `itonami.app`
+launcher are still adapter/runtime work and are not qualified.
+The named public-domain inventory and staged migration gates are in
+[`docs/awai-app-domain-inventory.md`](docs/awai-app-domain-inventory.md); its
+Cloudflare snapshot is read-only and does not establish a complete external
+domain inventory.
 
 Wallet creation is Passkey-first: the first verified P-256 public key names a
 deterministic ERC-4337 counterfactual account, so no injected wallet extension

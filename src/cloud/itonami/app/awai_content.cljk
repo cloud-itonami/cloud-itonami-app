@@ -1,0 +1,187 @@
+(ns cloud.itonami.app.awai-content
+  "Fetch one immutable IPLD block from Awai-signed content origins.
+
+  This host adapter never discovers a default gateway or falls back to a
+  Cloudflare service. It verifies the returned block bytes against the CID
+  before returning them. It does not traverse a UnixFS/IPLD graph, persist an
+  install, or pass bytes into app code."
+  (:require [clojure.string :as str]
+            [cloud.itonami.app.awai-content-policy :as content-policy]
+            [kotoba.protocol.cid :as cid])
+  (:import [java.io ByteArrayOutputStream]
+           [java.net Proxy ProxySelector URI]
+           [java.net.http HttpClient HttpClient$Redirect HttpRequest
+            HttpResponse$BodyHandlers]
+           [java.security MessageDigest]
+           [java.time Duration]
+           [java.util HexFormat]
+           [java.security.cert CertificateException X509Certificate]
+           [javax.net.ssl SSLContext SSLParameters TrustManager X509TrustManager]))
+
+(def maximum-block-bytes (* 16 1024 1024))
+(def ^:private supported-codecs #{:raw :dag-pb :dag-cbor})
+(def ^:private accepted-content-types
+  ["application/octet-stream"
+   "application/vnd.ipld.raw"
+   "application/vnd.ipld.dag-pb"
+   "application/vnd.ipld.dag-cbor"])
+(defn- sha256-hex [^bytes value]
+  (.formatHex (HexFormat/of)
+              (.digest (MessageDigest/getInstance "SHA-256") value)))
+
+(defn- pinned-trust-manager [expected-pin]
+  (reify X509TrustManager
+    (getAcceptedIssuers [_] (make-array X509Certificate 0))
+    (checkClientTrusted [_ _ _]
+      (throw (CertificateException. "client certificates are not accepted")))
+    (checkServerTrusted [_ chain _]
+      (let [certificate (first chain)]
+        (when-not certificate
+          (throw (CertificateException. "server certificate chain is empty")))
+        (.checkValidity ^X509Certificate certificate)
+        (let [actual-pin (sha256-hex (.getEncoded (.getPublicKey certificate)))]
+          (when-not (= expected-pin actual-pin)
+            (throw (CertificateException. "TLS SPKI pin mismatch"))))))))
+
+(defn- content-http-client [origin]
+  (let [builder (HttpClient/newBuilder)
+        ssl-context (SSLContext/getInstance "TLS")
+        trust-managers (into-array TrustManager
+                                   [(pinned-trust-manager (:spki-sha256 origin))])
+        ssl-parameters (SSLParameters.)]
+    ;; The SPKI pin is the trust anchor for this origin. TLS still checks the
+    ;; certificate validity window and HTTPS hostname; a Cloudflare edge key
+    ;; cannot stand in for the operator-pinned key.
+    (.init ssl-context nil trust-managers nil)
+    (.setEndpointIdentificationAlgorithm ssl-parameters "HTTPS")
+    (.sslContext builder ssl-context)
+    (.sslParameters builder ssl-parameters)
+    ;; Content bytes must come from the configured origin itself. Do not inherit
+    ;; ambient proxy settings or follow a redirect to an unconfigured service.
+    (.followRedirects builder HttpClient$Redirect/NEVER)
+    (.connectTimeout builder (Duration/ofSeconds 5))
+    (.proxy builder
+            (proxy [ProxySelector] []
+              (select [_ _] (java.util.Collections/singletonList Proxy/NO_PROXY))
+              (connectFailed [_ _ _ _] nil)))
+    (.build builder)))
+
+(defn content-origins
+  "Validate origin records selected by a release accepted by the local Awai
+  peer. Pins are carried in signed registry state; there is no local override
+  or environment-variable fallback."
+  [records app-id publisher-did now]
+  (content-policy/content-origins records app-id publisher-did now))
+
+(defn- read-bounded-body [input]
+  (with-open [body input]
+    (let [output (ByteArrayOutputStream.)
+          buffer (byte-array 8192)]
+      (loop [total 0]
+        ;; Read only one byte beyond the limit. This bounds chunked responses
+        ;; even when Content-Length is absent or incorrect.
+        (let [limit (min (alength buffer) (inc (- maximum-block-bytes total)))
+              count (.read body buffer 0 limit)]
+          (cond
+            (neg? count)
+            {:bytes (.toByteArray output)}
+
+            (zero? count)
+            (recur total)
+
+            (> (+ total count) maximum-block-bytes)
+            {:error :block-too-large}
+
+            :else
+            (do
+              (.write output buffer 0 count)
+              (recur (+ total count)))))))))
+
+(defn- acceptable-content-type? [response]
+  (let [value (some-> (.firstValue (.headers response) "Content-Type")
+                      (.orElse "")
+                      str/lower-case
+                      (str/split #";" 2)
+                      first
+                      str/trim)]
+    (boolean (some #(= value %) accepted-content-types))))
+
+(defn- raw-block-uri [origin block-cid]
+  (URI/create (str (:origin origin)
+                   "/ipfs/" block-cid "?format=raw")))
+
+(defn- fetch-from-origin [origin block-cid]
+  (try
+    (let [request (-> (HttpRequest/newBuilder (raw-block-uri origin block-cid))
+                      (.timeout (Duration/ofSeconds 30))
+                      (.header "Accept" "application/vnd.ipld.raw, application/vnd.ipld.dag-pb, application/vnd.ipld.dag-cbor, application/octet-stream")
+                      (.header "Accept-Encoding" "identity")
+                      (.GET)
+                      (.build))
+          response (.send (content-http-client origin) request
+                          (HttpResponse$BodyHandlers/ofInputStream))]
+      (cond
+        (not= 200 (.statusCode response))
+        (do (.close (.body response))
+            {:error :http-status :status (.statusCode response)})
+
+        (not (acceptable-content-type? response))
+        (do (.close (.body response))
+            {:error :unexpected-content-type})
+
+        :else
+        (let [read-result (read-bounded-body (.body response))]
+          (if-let [bytes (:bytes read-result)]
+            (let [digest (.digest (MessageDigest/getInstance "SHA-256") bytes)
+                  digest-bytes (mapv #(bit-and 0xff %) digest)]
+              (if (cid/digest-matches-cid? block-cid digest-bytes)
+                {:bytes bytes :origin-host (:host origin)}
+                {:error :cid-mismatch}))
+            read-result))))
+    (catch Exception _ {:error :transport-failed})))
+
+(defn fetch-verified-block
+  "Fetch one raw IPLD block by CID from the origins selected by an accepted
+  Awai release, trying each once in order. Return bytes only after SHA-256/CID
+  verification. No origin is discovered from environment or Cloudflare config.
+  The caller must keep returned bytes in protected host storage; they are not
+  app-visible until a separate install decision succeeds."
+  [block-cid records app-id publisher-did now]
+  (let [{:keys [codec error]} (cid/parse-cid block-cid)
+        origin-result (content-origins records app-id publisher-did now)
+        origins (when (= :origins-ready (:decision origin-result))
+                  (:origins origin-result))]
+    (cond
+      error
+      {:decision :refuse :error :invalid-cid}
+
+      (not (contains? supported-codecs codec))
+      {:decision :refuse :error :unsupported-cid-codec}
+
+      (not (and (vector? origins)
+                (<= content-policy/minimum-origin-count (count origins) 8)
+                (every? #(and (map? %)
+                              (string? (:host %))
+                              (string? (:origin %))
+                              (string? (:spki-sha256 %)))
+                        origins)))
+      {:decision :unavailable :error :accepted-content-origins-required}
+
+      :else
+      (loop [remaining (seq origins) failures []]
+        (if-let [origin (first remaining)]
+          (let [result (fetch-from-origin origin block-cid)]
+            (if (:bytes result)
+              {:decision :verified
+               :cid block-cid
+               :bytes (:bytes result)
+               :origin-host (:origin-host result)
+               :failed-origins failures}
+              (recur (next remaining)
+                     (conj failures {:origin-host (:host origin)
+                                     :error (:error result)
+                                     :status (:status result)}))))
+          {:decision :unavailable
+           :error :all-origins-failed
+           :cid block-cid
+           :failed-origins failures})))))

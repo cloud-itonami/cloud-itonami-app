@@ -13578,6 +13578,9 @@
     // on the underlying Bot, connector and App actions.
     let workspaceApps = [];
     let publicBots = [];
+    let awaiRegistryState = null;
+    let awaiRegistryLoaded = false;
+    let awaiRegistryGeneration = 0;
     let marketKind = 'plugin';
     let appsLoadGeneration = 0;
     const appCard = (app, installedView = false) => {
@@ -13630,14 +13633,49 @@
       installed.forEach((app) => grid.append(appCard(app, true)));
       $('#apps-status').textContent = installed.length ? fmt('{length} 件インストール済み', {length: installed.length}) : 'マーケットプレイスから App を追加できます。';
     };
+    const renderAwaiRegistry = (grid, matches) => {
+      if (!awaiRegistryState) {
+        grid.append(make('p', 'empty-state', 'Awai registry を読み込んでいます…'));
+        return;
+      }
+      if (awaiRegistryState.status !== 'ok') {
+        grid.append(make('p', 'empty-state', 'ローカルAwaiノードに接続できません。共通基盤の接続後に再読み込みできます。'));
+        const retry = make('button', 'tool-button', '再読み込み'); retry.type = 'button';
+        retry.addEventListener('click', loadAwaiRegistry);
+        grid.append(retry);
+        return;
+      }
+      const candidates = awaiRegistryState.candidates || [];
+      const statusLabels = {candidate:'候補', expired:'期限切れ', conflict:'履歴不整合',
+        'binding-missing':'bindingなし', 'release-missing':'releaseなし'};
+      candidates.forEach((candidate) => {
+        const domain = candidate.domain || 'domain 不明';
+        const appId = candidate['app-id'] || 'App ID 不明';
+        const status = statusLabels[candidate.decision] || '要確認';
+        const details = `${appId} · channel ${candidate.channel || '不明'} · ${status}`;
+        if (!matches(`${domain} ${details} ${candidate['release-cid'] || ''} ${candidate['manifest-cid'] || ''}`)) return;
+        const card = make('article', 'market-card');
+        const copy = make('div', 'market-copy');
+        copy.append(make('h3', null, domain),
+          make('p', null, details),
+          make('p', 'form-help', `release sequence ${candidate['release-sequence'] ?? '不明'} · release CID ${candidate['release-cid'] || '未解決'} · manifest CID ${candidate['manifest-cid'] || '未解決'}`),
+          make('p', 'form-help', 'Awai受理済み履歴からの候補です。DNSSEC proof、manifestとbundleのbytes、revocation確認は未完了のため、install・起動はまだできません。'),
+          make('p', 'form-help', `binding CID ${candidate['binding-cid'] || '不明'} · ${candidate.reason || 'chain確認済み'}`));
+        card.append(copy); grid.append(card);
+      });
+      if (!grid.children.length) grid.append(make('p', 'empty-state', '検索に一致するdomain候補がありません。'));
+    };
     const renderMarketplace = () => {
       const grid = $('#market-results'); grid.replaceChildren();
       const query = $('#market-search').value.trim().toLocaleLowerCase('ja');
       const installedOnly = $('#market-installed-only').checked;
       const matches = (text) => text.toLocaleLowerCase('ja').includes(query);
+      $('#market-filters').hidden = marketKind === 'awai';
       if (marketKind === 'app') {
         workspaceApps.filter((app) => (!installedOnly || app['installed?']) && matches(`${app.name} ${app.description} ${app.category}`))
           .forEach((app) => grid.append(appCard(app)));
+      } else if (marketKind === 'awai') {
+        renderAwaiRegistry(grid, matches);
       } else if (marketKind === 'plugin') {
         Array.from($('#connector-list').children).filter((card) => card.matches('article')).forEach((source) => {
           if (!matches(source.textContent) || (installedOnly && source.dataset.connected !== 'true')) return;
@@ -13692,7 +13730,14 @@
           });
         }
       }
-      $('#market-status').textContent = grid.children.length ? fmt('{length} 件', {length: grid.children.length}) : '一致する項目がありません。検索条件を変えてください。';
+      if (marketKind === 'awai') {
+        const count = awaiRegistryState?.status === 'ok' ? (awaiRegistryState.candidates || []).length : 0;
+        $('#market-status').textContent = awaiRegistryState?.status === 'ok'
+          ? fmt('{length} 件のdomain候補。DNS proof・manifest・bundle・revocation検証後にinstall可能になります。', {length: count})
+          : 'Awai registryを取得できません。分散AppはCloudflare等の別originへフォールバックしません。';
+      } else {
+        $('#market-status').textContent = grid.children.length ? fmt('{length} 件', {length: grid.children.length}) : '一致する項目がありません。検索条件を変えてください。';
+      }
       grid.setAttribute('aria-labelledby', `market-tab-${marketKind}`);
     };
     const loadWorkspaceApps = async () => {
@@ -13718,12 +13763,31 @@
         publicBots = [];
       }
     };
+    const loadAwaiRegistry = async () => {
+      const generation = ++awaiRegistryGeneration;
+      awaiRegistryLoaded = true;
+      awaiRegistryState = null;
+      renderMarketplace();
+      try {
+        const response = await fetch('/api/bots/awai-app-registry', {cache:'no-store'});
+        const data = await response.json();
+        if (generation !== awaiRegistryGeneration || !appUnlocked) return;
+        awaiRegistryState = data;
+        renderMarketplace();
+      } catch (_) {
+        if (generation !== awaiRegistryGeneration) return;
+        awaiRegistryState = {status:'unavailable'};
+        renderMarketplace();
+      }
+    };
     const chooseMarketKind = (kind) => {
       marketKind = kind;
       $$('[data-market-tab]').forEach((button) => {
         const selected = button.dataset.marketTab === kind;
         button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1;
-      }); renderMarketplace();
+      });
+      renderMarketplace();
+      if (kind === 'awai' && appUnlocked && !awaiRegistryLoaded) loadAwaiRegistry();
     };
     $$('[data-market-tab]').forEach((button, index, tabs) => {
       button.addEventListener('click', () => chooseMarketKind(button.dataset.marketTab));
