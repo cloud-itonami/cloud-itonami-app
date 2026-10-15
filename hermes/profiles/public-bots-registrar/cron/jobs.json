@@ -17,7 +17,7 @@
         "minutes": 60,
         "display": "every 60m"
       },
-      "script": "registrar_tick.py",
+      "script": "registrar_tick.hy",
       "skill": null,
       "skills": [],
       "workdir": null

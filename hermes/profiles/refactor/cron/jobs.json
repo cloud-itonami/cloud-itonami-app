@@ -17,7 +17,7 @@
         "expr": "12,42 * * * *",
         "display": "12,42 * * * *"
       },
-      "script": "kotoba_slice_measure.py",
+      "script": "kotoba_slice_measure.hy",
       "skill": null,
       "skills": [],
       "workdir": null
