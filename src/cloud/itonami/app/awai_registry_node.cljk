@@ -2,10 +2,12 @@
   "Bounded Node/Nbb adapter for configured Awai peer checkpoints.
 
   It accepts only a fresh two-thirds quorum of peer-signed snapshots over the
-  same accepted-record CID set. Peer identities and operator labels are local
+  same accepted-record CID set. Local checks may use loopback HTTP; remote peers
+  require public-host HTTPS. Peer identities and operator labels are local
   trust configuration; this does not prove operator independence or consensus."
   (:require [cloud.itonami.app.awai-apps :as apps]
             [cloud.itonami.app.awai-envelope :as envelope]
+            [clojure.string :as str]
             [kotoba.protocol.vocab :as vocab]
             ["./awai_registry_checkpoint.mjs"
              :refer [validPeerId verifyCheckpoint]]))
@@ -22,14 +24,31 @@
   {:http-status 503
    :body {:status "unavailable" :reason reason}})
 
+(defn- public-peer-host? [hostname]
+  (and (string? hostname)
+       (= hostname (str/lower-case hostname))
+       (re-matches #"(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+"
+                   hostname)
+       (not (re-matches #"[0-9.]+" hostname))
+       (not-any? #(str/ends-with? hostname %)
+                 [".localhost" ".local" ".internal" ".home.arpa"
+                  ".test" ".invalid" ".example"])))
+
 (defn- endpoint-url [value]
   (try
     (let [url (js/URL. value)
-          port (when-not (empty? (.-port url))
-                 (js/parseInt (.-port url) 10))]
-      (when (and (= "http:" (.-protocol url))
-                 (= "127.0.0.1" (.-hostname url))
-                 (number? port) (<= 1 port 65535)
+          protocol (.-protocol url)
+          hostname (.-hostname url)
+          port (.-port url)
+          local? (and (= "http:" protocol)
+                      (= "127.0.0.1" hostname)
+                      (not (empty? port))
+                      (let [parsed (js/parseInt port 10)]
+                        (and (number? parsed) (<= 1 parsed 65535))))
+          public-tls? (and (= "https:" protocol)
+                           (public-peer-host? hostname)
+                           (or (empty? port) (= "443" port)))]
+      (when (and (or local? public-tls?)
                  (= "/v2/app-registry" (.-pathname url))
                  (empty? (.-username url))
                  (empty? (.-password url))
@@ -37,6 +56,11 @@
                  (empty? (.-hash url)))
         url))
     (catch :default _ nil)))
+
+(defn valid-peer-endpoint?
+  "Accept loopback HTTP for co-located tests and public-host HTTPS for peers."
+  [value]
+  (boolean (endpoint-url value)))
 
 (defn- bounded-json! [response]
   (let [content-length (.get (.-headers response) "content-length")

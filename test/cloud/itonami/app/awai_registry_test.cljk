@@ -61,6 +61,30 @@
    {:trust "configured-peer-checkpoint-quorum" :snapshot snapshot}
    1800000000))
 
+(deftest peer-endpoints-allow-independent-https-hosts-and-reject-unsafe-origins
+  (is (registry-node/valid-peer-endpoint?
+       "http://127.0.0.1:40381/v2/app-registry"))
+  (is (registry-node/valid-peer-endpoint?
+       "https://peer-a.example.com/v2/app-registry"))
+  (is (registry-node/valid-peer-endpoint?
+       "https://peer-b.example.net:443/v2/app-registry"))
+  (is (not (registry-node/valid-peer-endpoint?
+            "http://peer-a.example.com/v2/app-registry")))
+  (is (not (registry-node/valid-peer-endpoint?
+            "https://127.0.0.1/v2/app-registry")))
+  (is (not (registry-node/valid-peer-endpoint?
+            "https://localhost/v2/app-registry")))
+  (is (not (registry-node/valid-peer-endpoint?
+            "https://peer-a.local/v2/app-registry")))
+  (is (not (registry-node/valid-peer-endpoint?
+            "https://peer-a.example.com:8443/v2/app-registry")))
+  (is (not (registry-node/valid-peer-endpoint?
+            "https://peer-a.example.com/v2/app-registry?redirect=https://127.0.0.1")))
+  (is (not (registry-node/valid-peer-endpoint?
+            "https://user@peer-a.example.com/v2/app-registry")))
+  (is (not (registry-node/valid-peer-endpoint?
+            "https://peer-a.example.com/v2/other"))))
+
 (deftest first-domain-binding-release-and-origin-records-resolve
   (let [records (registered-origins)
         result (resolve-candidates

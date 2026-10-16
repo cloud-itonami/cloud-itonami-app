@@ -1,10 +1,11 @@
 (ns cloud.itonami.app.awai-registry
   "Read and compare signed app.registry checkpoints from configured Awai peers.
 
-  Every endpoint is loopback-only, each snapshot is signed by its libp2p
-  identity, and the host accepts only a two-thirds quorum over the exact
-  accepted-record CID set. This is a configured witness quorum, not consensus
-  finality; operator independence remains a deployment qualification."
+  Each snapshot is signed by its libp2p identity, and the host accepts only a
+  two-thirds quorum over the exact accepted-record CID set. Local checks use
+  loopback HTTP; remote peers require public-host HTTPS. This is a configured
+  witness quorum, not consensus finality; operator independence remains a
+  deployment qualification."
   (:require [clojure.string :as cstr]
             [kotoba.json :as json]
             [kotoba.lang.text :as str]
@@ -41,9 +42,9 @@
 
 (def ^:private peer-http-client
   (let [builder (HttpClient/newBuilder)]
-    ;; This bridge must stay on loopback even if a peer returns Location or the
-    ;; process has an ambient proxy configured. Neither behavior is inherited
-    ;; from the app's general-purpose outbound HTTP transport.
+    ;; Peer endpoints are an explicit operator allowlist. Never follow a
+    ;; redirect or inherit an ambient proxy from the app's general-purpose
+    ;; outbound HTTP transport.
     (.followRedirects builder HttpClient$Redirect/NEVER)
     (.connectTimeout builder (Duration/ofSeconds 2))
     (.proxy builder
@@ -181,18 +182,40 @@
               (.verify verifier signature-bytes)))))
     (catch Exception _ false)))
 
+(defn- public-peer-host? [hostname]
+  (and (string? hostname)
+       (= hostname (cstr/lower-case hostname))
+       (re-matches #"(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+"
+                   hostname)
+       (not (re-matches #"[0-9.]+" hostname))
+       (not-any? #(cstr/ends-with? hostname %)
+                 [".localhost" ".local" ".internal" ".home.arpa"
+                  ".test" ".invalid" ".example"])))
+
 (defn- endpoint-uri [value]
   (try
     (let [uri (URI/create value)]
-      (when (and (= "http" (.getScheme uri))
-                 (= "127.0.0.1" (.getHost uri))
-                 (<= 1 (.getPort uri) 65535)
+      (let [scheme (.getScheme uri)
+            hostname (.getHost uri)
+            port (.getPort uri)
+            local? (and (= "http" scheme)
+                        (= "127.0.0.1" hostname)
+                        (<= 1 port 65535))
+            public-tls? (and (= "https" scheme)
+                             (public-peer-host? hostname)
+                             (or (= -1 port) (= 443 port)))]
+      (when (and (or local? public-tls?)
                  (= "/v2/app-registry" (.getPath uri))
                  (nil? (.getUserInfo uri))
                  (nil? (.getQuery uri))
                  (nil? (.getFragment uri)))
-        uri))
+        uri)))
     (catch Exception _ nil)))
+
+(defn valid-peer-endpoint?
+  "Accept loopback HTTP for local checks and public-host HTTPS for peers."
+  [value]
+  (boolean (endpoint-uri value)))
 
 (defn- valid-record? [record]
   (and (map? record)
