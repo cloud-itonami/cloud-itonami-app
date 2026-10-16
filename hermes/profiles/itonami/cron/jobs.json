@@ -124,7 +124,7 @@
       "base_url": "https://api.murakumo.cloud/v1",
       "context_from": null,
       "deliver": "local",
-      "enabled": true,
+      "enabled": false,
       "enabled_toolsets": [
         "terminal"
       ],
@@ -303,6 +303,28 @@
       "skill": null,
       "skills": [],
       "workdir": null
+    },
+    {
+      "base_url": "https://api.murakumo.cloud/v1",
+      "context_from": null,
+      "deliver": "local",
+      "enabled": true,
+      "enabled_toolsets": null,
+      "id": "e63477869293",
+      "model": "mishima",
+      "name": "ISIC/ISCO registration check",
+      "no_agent": false,
+      "prompt": "Read the presence-check output and report only the observed ADR, business datom, and Valueflows datom counts plus any missing items. Do not create or edit artifacts, invent codes, publish, or merge. Treat REFUSED or missing source files as no result.",
+      "provider": "murakumo",
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 4 * * *",
+        "display": "0 4 * * *"
+      },
+      "script": "iscic-register-evidence.py",
+      "skill": null,
+      "skills": [],
+      "workdir": "~/github/cloud-itonami/cloud-itonami-app"
     }
   ]
 }
