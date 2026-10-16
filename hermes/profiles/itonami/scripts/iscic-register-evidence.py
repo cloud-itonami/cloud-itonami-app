@@ -6,7 +6,6 @@ It does not validate code assignments, create files, or open a pull request.
 """
 
 from pathlib import Path
-import sys
 
 EXPECTED_BUSINESS = (
     "bakery-cafe-cambodia-canvas.datoms.edn",
@@ -29,27 +28,37 @@ def main() -> int:
     business_dir = docs / "business"
     valueflows_dir = docs / "valueflows"
 
+    adr_present = adr_path.is_file()
     missing_business = [
         name for name in EXPECTED_BUSINESS
         if not (business_dir / name).is_file()
     ]
+    business_present = len(EXPECTED_BUSINESS) - len(missing_business)
     valueflows_count = len(list(valueflows_dir.glob("*.datoms.edn")))
     expected_valueflows = len(EXPECTED_BUSINESS)
-    complete = (
-        adr_path.is_file()
-        and not missing_business
-        and valueflows_count >= expected_valueflows
-    )
 
-    if complete:
-        print("OBSERVED: expected ADR, six business datoms, and six or more Valueflows datoms are present.")
-        print("Code assignments and Valueflows contents were not validated.")
+    missing_items = []
+    if not adr_present:
+        missing_items.append("90-docs/adr/adr-20260115-01-islmapping.md")
+    missing_items.extend(
+        f"90-docs/business/{name}" for name in missing_business
+    )
+    if valueflows_count < expected_valueflows:
+        missing_items.append(
+            f"Valueflows datom count below minimum: "
+            f"{valueflows_count}/{expected_valueflows}"
+        )
+
+    if missing_items:
+        print("REFUSED: ISIC/ISCO artifact presence is incomplete.")
     else:
-        print("REFUSED: ISIC/ISCO registration evidence is incomplete or unavailable.")
-        print(f"ADR present: {adr_path.is_file()}")
-        print(f"Business datoms present: {len(EXPECTED_BUSINESS) - len(missing_business)}/{len(EXPECTED_BUSINESS)}")
-        print(f"Missing business files: {missing_business}")
-        print(f"Valueflows datom count: {valueflows_count}/{expected_valueflows} minimum")
+        print("OBSERVED: expected artifact presence threshold is met.")
+
+    print(f"ADR present: {adr_present}")
+    print(f"Business datoms present: {business_present}/{len(EXPECTED_BUSINESS)}")
+    print(f"Valueflows datom count: {valueflows_count}/{expected_valueflows} minimum")
+    print(f"Missing items: {missing_items or 'none'}")
+    print("Limit: presence only; contents and code assignments were not validated.")
     return 0
 
 
