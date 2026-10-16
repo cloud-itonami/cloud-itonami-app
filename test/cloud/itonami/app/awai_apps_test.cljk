@@ -4,6 +4,8 @@
             [kotoba.test :refer [deftest is]]
             [kotoba.protocol.install :as install]
             [cloud.itonami.app.awai-apps :as apps]
+            [cloud.itonami.app.kotoba-oracle :as oracle]
+            [cloud.itonami.app.product-policy :as product-policy]
             [cloud.itonami.app.awai-manifest :as manifest]))
 
 (def app-id "net.kotoba.murakumo")
@@ -413,3 +415,16 @@
                                     (assoc input :verify-amano-ref (fn [_] true)))]
     (is (= :refuse (:decision result)))
     (is (= :amano-current-ref-proof-unavailable (:error result)))))
+
+(deftest shinshi-policy-call-uses-the-indexed-micro-luma-abi
+  (is (= [:i64 :i64]
+         (:input-abi (product-policy/policy-info "shinshi.club"))))
+  (is (= 1 (oracle/i64-value
+            (product-policy/call-policy
+             "shinshi.club" 'black-frame-code [1 7999999]))))
+  (is (= 0 (oracle/i64-value
+            (product-policy/call-policy
+             "shinshi.club" 'black-frame-code [1 8000000]))))
+  (is (= 1 (oracle/i64-value
+            (product-policy/call-policy
+             "shinshi.club" 'black-frame-code [0 8000000])))))

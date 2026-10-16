@@ -110,11 +110,11 @@ const workloads = {
   shinshi: {
     acceptedResult: 0,
     cases: [
-      { args: [1, 0.0], result: 1 }, { args: [1, 7.9], result: 1 },
-      { args: [1, 8.0], result: 0 }, { args: [1, 102.0], result: 0 },
-      { args: [0, 0.0], result: 1 },
+      { args: [1, 0], result: 1 }, { args: [1, 7_900_000], result: 1 },
+      { args: [1, 8_000_000], result: 0 }, { args: [1, 102_000_000], result: 0 },
+      { args: [0, 0], result: 1 },
     ],
-    policy: ([measured, meanLuma]) => Number(measured !== 1 || meanLuma < 8.0),
+    policy: ([measured, meanLumaMicrounits]) => Number(measured !== 1 || meanLumaMicrounits < 8_000_000),
   },
   awai: {
     acceptedResult: 0,

@@ -34,7 +34,7 @@
                                 [:collection-code :i64]]]
                   :field-abi [:i64 :i64 :i64 :i64 :i64 :i64]}
    :admit-result-codes [0]
-   :measured-source-match :updated-after-measurement}
+   :measured-source-match :exact}
   "oppai.fans"
   {:core :oppai-challenge-window
    :source "oppai/gen/challenge_window_core.kotoba"
@@ -83,16 +83,16 @@
                                 [:daily :i64]]]
                   :field-abi [:i64 :i64 :i64 :i64 :i64 :i64 :i64 :i64 :i64 :i64]}
    :admit-result-codes [0]
-   :measured-source-match :updated-after-measurement}
+   :measured-source-match :exact}
   "shinshi.club"
   {:core :shinshi-video-black-frame
    :source "shinshi/common/video_black_frame_core.kotoba"
    :driver "bench/products/shinshi_video_black_frame_selfhost_driver.kotoba"
    :empty-driver "bench/products/shinshi_video_black_frame_selfhost_empty_driver.kotoba"
    :export black-frame-code
-   :input-abi [:i64 :f64]
+   :input-abi [:i64 :i64]
    :pass-result-codes [0]
-   :measured-source-match :updated-after-measurement}
+   :measured-source-match :exact}
   "awai.network"
   {:core :awai-network-chat-admission
    :source "awai/apex/chat_admission_core.kotoba"

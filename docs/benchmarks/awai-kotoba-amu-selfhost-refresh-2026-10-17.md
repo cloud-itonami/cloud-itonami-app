@@ -77,19 +77,19 @@ unqualified while the host is heavily contended.
 | Domain | Source SHA-256 | Native-result source |
 |---|---|---|
 | `murakumo.cloud` | `81c98aa6cfa2d359b9708457084391fbce8d8fde1608159de9a5533bf94da87c` | Exact |
-| `aozora.app` | `320be9896c4d33734988898f1485ee8cc986644aadedb9ca3a942b52237a34fe` | Updated after measurement |
+| `aozora.app` | `320be9896c4d33734988898f1485ee8cc986644aadedb9ca3a942b52237a34fe` | Exact current source; latest run is contended |
 | `oppai.fans` | `97aceab094d46f7c72e98dcc231bf21ca2d7d21bc9c22a2d94cec00b52683368` | Exact |
 | `isekai.network` | `837dba2d2cd51199591010220bb33b72c17bf6ce995966d12b9d90b61423abc8` | Exact |
 | `babiniku.net` | `030af9b19b543b446401c5be3b59fcba0f2cfa2a037f3a1eea0f3761c0f5c7ab` | Exact |
-| `x402.nexus` | `fa1eef144b9a8a524892b9ac1fe7ee66da583c53143b4d2f077e5fd4882bb650` | Updated after measurement |
-| `shinshi.club` | `bb1d49b979b86b2ecc7b47fe2be3c3b8a643919e591304e0b226a3236998fe0d` | Updated after measurement |
+| `x402.nexus` | `fa1eef144b9a8a524892b9ac1fe7ee66da583c53143b4d2f077e5fd4882bb650` | Exact current source; latest run is contended |
+| `shinshi.club` | `27ff5e7e046c2fe88db3ffbd90df804ad9b1e30330a9707ddab7d7352bf82746` | Exact current micro-unit source; latest run is contended |
 | `awai.network` | `1332d4ed5456ea3a1dd407f380ea678423275c3fb858e61563d193d5d380ce67` | Exact |
 | shared `itonami.app` install core | `bd8455bfac6557362c08decbac92afc9dad00403f3e5b1dcf9ffa5c680ef48a6` | Exact |
 
 AMU build provenance for the original measurement set is retained in the raw
 recheck file linked above. The copied native drivers are now present under
-`bench/products/`. Current Aozora and x402 sources and drivers also build from
-the adopted seed; these are build qualifications only, without timing results.
+`bench/products/`. Current Aozora and x402 sources and drivers build from the
+adopted seed and have current-source contended timings below.
 
 The reference run used 1,000,000 decisions, seven alternating rounds, and one
 warmup per executable path. It ran on a 10-logical-CPU host at load averages
@@ -139,11 +139,8 @@ contended diagnostic; it does not measure the refactored predicate.
 
 The product-core source refresh on 2026-10-17 did not produce a comparable
 timing run. The initial host load snapshot was `164.18 / 137.07 / 125.45` on 10
-logical CPUs. Later Aozora and x402 builds and timing loops completed, but load
-remained far above 10 logical CPUs, so their current-source numbers below are
-diagnostics only. The 2026-10-16 table remains the last comparable set;
-Aozora, x402, and Shinshi need quiet-host reruns because their source hashes
-changed after those measurements.
+logical CPUs. Later Aozora and x402 timings remained diagnostics under heavy
+contention. The 2026-10-16 table remains the last comparable set.
 
 Reproducibility outputs are under
 `/Users/junkawasaki/github/workspaces/codex/itonami-app-plane-selfhost-bench-20261017-admission-r2/`
@@ -195,18 +192,48 @@ python3 bench/products/run_amu_selfhost_suite.py \
   --output /Users/junkawasaki/github/workspaces/codex/itonami-app-plane-selfhost-suite-<unique-id>
 ```
 
-No fresh eight-domain timing was recorded in this revision. The suite preflight
-read 213.99 one-minute load on a 10-logical-CPU machine and refused before
-creating output or compiling; the default guard would keep rejecting the run
-while load stays above ten. The earlier 2026-10-16 table remains the last
-comparable timing set; the Aozora, x402, and Shinshi rows still use prior
-source revisions. The 2026-10-17 Aozora and x402 diagnostics remain
-unqualified under heavy contention.
+The suite preflight first read 213.99 one-minute load on a 10-logical-CPU
+machine and refused before creating output or compiling. A later run completed
+all eight current source rows with `--allow-contended`; those results are
+diagnostics only. The earlier 2026-10-16 table remains the last comparable
+timing set.
 
-A follow-up preflight in the current work session observed load averages of
-231.17 / 230.09 / 244.99 on the same 10-logical-CPU host. The eight-domain
-suite was not started, so this observation adds no timing sample; it confirms
-that a fresh comparable run still needs a quiet host.
+A follow-up preflight in the prior work session observed load averages of
+231.17 / 230.09 / 244.99 on the same 10-logical-CPU host. It added no timing
+sample and confirms that a comparable run needs a quiet host.
+
+### Latest eight-domain AMU selfhost run — contended diagnostic
+
+The complete suite ran 1,000,000 decisions per sample with seven alternating
+rounds and one warmup per path. All native and JavaScript checksums passed. The
+source hashes in the linked CSV match the indexed Kotoba sources, including the
+current Aozora, x402, and Shinshi revisions. The Shinshi core accepts integer
+micro-luma units (`floor(mean-luma * 1,000,000)`) and compares them to
+8,000,000, preserving the strict 8.0 threshold while compiling on AMU's
+`aarch64-macos` selfhost target.
+
+The host had 10 logical CPUs. Initial load averages were 84.20 / 56.05 / 49.37;
+per-domain 1-minute load ranged from 84.10 to 101.45 and ended at 90.15. Every
+row is a contended diagnostic and must not be used to rank implementations or
+claim a performance win. This is a decision-core microbenchmark, not full app,
+chain, or network latency.
+
+| Domain | AMU selfhost native | JavaScript reference | Native / JS | Status |
+|---|---:|---:|---:|---|
+| Murakumo | 23.08 ns/decision | 228.17 ns/decision | 0.10× | Contended diagnostic |
+| Aozora | 127.95 ns/decision | 32.93 ns/decision | 3.89× | Contended diagnostic |
+| Oppai | 19.21 ns/decision | 20.74 ns/decision | 0.93× | Contended diagnostic |
+| Isekai | 7.80 ns/decision | 16.31 ns/decision | 0.48× | Contended diagnostic |
+| Babiniku | 22.19 ns/decision | 19.86 ns/decision | 1.12× | Contended diagnostic |
+| x402 | 168.29 ns/decision | 27.87 ns/decision | 6.04× | Contended diagnostic |
+| Shinshi | 16.98 ns/decision | 11.78 ns/decision | 1.44× | Contended diagnostic |
+| Awai Network | 19.07 ns/decision | 13.19 ns/decision | 1.45× | Contended diagnostic |
+
+Raw rows with source, compiler, and native-image hashes are in
+[`awai-kotoba-amu-selfhost-suite-2026-10-17-contended.csv`](awai-kotoba-amu-selfhost-suite-2026-10-17-contended.csv).
+Per-domain logs and native build reports are retained at
+`/Users/junkawasaki/github/workspaces/codex/itonami-app-plane-amu-selfhost-suite-20261017-r3/`.
+The earlier Aozora/x402 diagnostic run is superseded by these rows.
 
 ## Deployment qualification
 

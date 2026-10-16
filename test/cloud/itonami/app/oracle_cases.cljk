@@ -1108,9 +1108,11 @@
      :args (mapv oracle/i64 [100 500 950 1000])
      :expect 8 :read oracle/i64-value}
     {:oracle :shinshi-video-black-frame :export 'black-frame-code
-     :args [(oracle/i64 1) 8.0] :expect 0 :read oracle/i64-value}
+     :args (mapv oracle/i64 [1 8000000]) :expect 0 :read oracle/i64-value}
     {:oracle :shinshi-video-black-frame :export 'black-frame-code
-     :args [(oracle/i64 1) 7.9] :expect 1 :read oracle/i64-value}
+     :args (mapv oracle/i64 [1 7999999]) :expect 1 :read oracle/i64-value}
+    {:oracle :shinshi-video-black-frame :export 'black-frame-code
+     :args (mapv oracle/i64 [1 0]) :expect 1 :read oracle/i64-value}
     {:oracle :awai-network-chat-admission :export 'chat-admission-code
      :args (mapv oracle/i64 [1 40 24000])
      :expect 0 :read oracle/i64-value}

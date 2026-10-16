@@ -5,19 +5,19 @@
 
 (defn- decision [case-code]
   (cond
-    (= case-code 0) (policy/black-frame-code 1 0.0)
-    (= case-code 1) (policy/black-frame-code 1 7.9)
-    (= case-code 2) (policy/black-frame-code 1 8.0)
-    (= case-code 3) (policy/black-frame-code 1 102.0)
-    :else (policy/black-frame-code 0 0.0)))
+    (= case-code 0) (policy/black-frame-code 1 0)
+    (= case-code 1) (policy/black-frame-code 1 7900000)
+    (= case-code 2) (policy/black-frame-code 1 8000000)
+    (= case-code 3) (policy/black-frame-code 1 102000000)
+    :else (policy/black-frame-code 0 0)))
 
 (defn main [] :i64
   (let [cases-ok?
-        (and (= 1 (policy/black-frame-code 1 0.0))
-             (= 1 (policy/black-frame-code 1 7.9))
-             (= 0 (policy/black-frame-code 1 8.0))
-             (= 0 (policy/black-frame-code 1 102.0))
-             (= 1 (policy/black-frame-code 0 0.0)))
+        (and (= 1 (policy/black-frame-code 1 0))
+             (= 1 (policy/black-frame-code 1 7900000))
+             (= 0 (policy/black-frame-code 1 8000000))
+             (= 0 (policy/black-frame-code 1 102000000))
+             (= 1 (policy/black-frame-code 0 0)))
         kept
         (loop [i 0 count 0]
           (if (< i 1000000)

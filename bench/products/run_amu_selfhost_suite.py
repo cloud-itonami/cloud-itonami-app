@@ -107,7 +107,8 @@ def main():
         })
 
     with (output / "results.csv").open("w", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=rows[0].keys())
+        writer = csv.DictWriter(stream, fieldnames=rows[0].keys(),
+                                lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
     (output / "suite.json").write_text(json.dumps({

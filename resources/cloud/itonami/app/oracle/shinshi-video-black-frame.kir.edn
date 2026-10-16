@@ -1,21 +1,17 @@
-{:format :kotoba.kir/v4,
+{:format :kotoba.kir/v3,
  :signature nil,
  :functions
  [{:name black-frame-code,
-   :params [measured mean-luma],
+   :params [measured mean-luma-microunits],
    :result :i64,
    :effects #{},
    :body
    (if
     (let
      [__kotoba_or_2 (if (= measured 1) false true)]
-     (if
-      __kotoba_or_2
-      __kotoba_or_2
-      (f64-lt mean-luma (f64-from-bits 4620693217682128896))))
+     (if __kotoba_or_2 __kotoba_or_2 (< mean-luma-microunits 8000000)))
     1
-    0),
-   :param-types [:i64 :f64]}],
+    0)}],
  :oracle-value 0,
  :schema-identities nil,
  :exports [black-frame-code],
