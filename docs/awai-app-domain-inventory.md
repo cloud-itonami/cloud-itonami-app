@@ -117,41 +117,42 @@ receipts.
 
 The common host is assembled from merged protocol and Itonami runtime slices,
 with the Awai registry integration and production serving still outstanding.
-The merged source is not a deployed runtime. Current PR metadata was refreshed
-on 2026-10-16.
+The merged source is not a deployed runtime. Current PR and CI metadata was
+refreshed on 2026-10-16.
 
 | Foundation layer | Current source and review state | Evidence available | Remaining qualification |
 |---|---|---|---|
-| Itonami app host | [`cloud-itonami-app#431`](https://github.com/cloud-itonami/cloud-itonami-app/pull/431) merged on 2026-10-16 as `e708d000e6ff634a9368fbb3a832867db1d7e6fe`; the remote follow-up branch is at `ee67edd7ec0b01744030556abeb6ea82166bcc51`, and its local successor adds public-HTTPS peer endpoint support. No follow-up PR exists. | The merged PR's CI passed. Current focused app, registry, and sandbox suites passed 20 tests / 77 assertions; the Node checkpoint verifier passed 2 tests. | Release-pin, CSP, v4 checkpoint/quorum, public-HTTPS peer endpoint, gateway, and exposure-inventory changes are not in `main`. No signed production app release is qualified. |
-| Bootstrap HTTPS ingress | [`deploy/awai-public-gateway`](deploy/awai-public-gateway), on the Itonami follow-up branch; not part of PR #431 | Node syntax check and all 9 policy tests pass after gateway-owned CSP replacement. A local HTTPS smoke with a disposable certificate and fake upstream passed launcher and plan preview, credential stripping, blocked install route, wrong SNI, foreign Origin, and fixed CSP despite a permissive upstream CSP. | Direct public DNS, production certificate, independent host operations, registry freshness, and external readback remain unverified. This bootstrap gateway does not yet route or execute product apps. |
+| Itonami app host | [`cloud-itonami-app#431`](https://github.com/cloud-itonami/cloud-itonami-app/pull/431) merged on 2026-10-16 as `e708d000e6ff634a9368fbb3a832867db1d7e6fe`. Its common-foundation follow-up is [PR #432](https://github.com/cloud-itonami/cloud-itonami-app/pull/432), open as a draft at `1f1a61bdb1d9e6dd5f402afeb2616df0ac88a2bd`. | Focused app lifecycle suite: 14 tests / 39 assertions passed under Nbb. The branch-scoped Gitleaks scan covered all six PR commits and found no leaks. Current CI run 761 has `amu-jvm-free-emit` and `awai-public-gateway` passing; `windows-launch-smoke` is running; `secret-scan` fails on seven findings across the 1,233-commit repository history. | The current-ref host verifier is not connected to the install route. The broader JVM suite remains unverified. The historical secret findings need separate triage; they are outside the six commits in this PR. |
+| Bootstrap HTTPS ingress | [`deploy/awai-public-gateway`](deploy/awai-public-gateway), included in PR #432 | The gateway CI syntax check and all nine policy tests pass. A local HTTPS smoke with a disposable certificate and fake upstream passed launcher and plan preview, credential stripping, blocked install route, wrong SNI, foreign Origin, and fixed CSP despite a permissive upstream CSP. | Direct public DNS, production certificate, independent host operations, registry freshness, and external readback remain unverified. This bootstrap gateway does not yet route or execute product apps. |
 | Awai registry and peer host | [`network-awai-apex#19`](https://github.com/network-awai/network-awai-apex/pull/19), open draft at head `95b7ae601e1665836e725f1e577e670930150be7`. | All 16 `app-registry --host` gates passed, including 32 vectors on three targets (96/96), peer-checkpoint replication, and G15. The peer gateway has six policy tests and a disposable-certificate loopback HTTPS smoke. Current Wasm SHA-256: `15692fa9f19cc322d8ee8b7294f822234db0794f25bcc9c1654da4310f2f2610`. | The PR remains draft and unmerged. G14 uses two processes on one host over loopback; independent operators, public peer discovery, NAT traversal, production DNA, and node-loss recovery remain unqualified. The HTTPS gateway has no public host, certificate, or DNS readback. |
-| Amano lifecycle refs | Inga adds `current-ref-read/v1` at feature commit `7e368fbc0c3777dbb95f8b7153b47f18d174d68d` on the existing `e5948e1` dependency baseline for challenge-bound signed quorum observations (8 tests / 29 assertions). Inga-node adds `GET /current-ref` at feature commit `3707ce2` for one node-signed committed projection (15 tests / 78 assertions). Both commits are on pushed feature branches, not `main`. Itonami's focused lifecycle suite passes 14 tests / 39 assertions under Nbb and now keeps its DNS clock in seconds separate from the millisecond current-ref clock. A host-owned `verify-amano-ref` verifier is still required at resolution and install time to cover exact refs, chain-profile identity, challenge, quorum-read/finality facts, and freshness. | An earlier same-day read-only probe reached w4 from this host and reported `head=null` for Murakumo's domain and app refs. The endpoint test verifies one witness's Ed25519 signature and challenge binding, rejects duplicate or extra query parameters, and refuses a head without its stored commitment proof. | The Inga pieces are not integrated into the active Itonami adapter; no multi-witness response collection, exact-event finality adapter, deployed current-ref API, or verified chain profile is connected. The earlier probe found 1/4 witness health endpoints reachable and reported `DEGRADED`; the timed-out nodes' process state is unknown. No app-domain binding or release is established on this chain. |
+| Amano lifecycle refs | Inga adds `current-ref-read/v1` at feature commit `7e368fbc0c3777dbb95f8b7153b47f18d174d68d` on the existing `e5948e1` dependency baseline for challenge-bound signed quorum observations (8 tests / 29 assertions). Inga-node adds `GET /current-ref` at `8429459fdf9b2e0dce4fb335e88dad8e254c754f` for one node-signed committed projection; `3707ce2` only pins that branch to the Inga baseline (15 tests / 78 assertions are on the endpoint branch). Both endpoint changes remain on pushed feature branches, not `main`. Itonami's focused lifecycle suite passes 14 tests / 39 assertions under Nbb and keeps DNS freshness in seconds separate from the millisecond current-ref clock. A host-owned `verify-amano-ref` verifier is still required at resolution and install time to cover exact refs, chain-profile identity, challenge, quorum-read/finality facts, and freshness. | The endpoint rejects malformed or duplicate query parameters and will not report a head unless its stored commitment proof is present. An earlier same-day read-only probe reached w4 and found no Murakumo domain/app heads. A fresh read-only check from this host could not connect to local Tailscale and reached 0/4 witness health endpoints. | The Inga pieces are not integrated into Itonami; no multi-witness response collection, exact-event finality adapter, reachable current-ref API, or verified production chain profile is connected. The fresh reachability failure describes this host's access only; it does not establish that remote witness processes are down. No app-domain binding or release is established on this chain. |
 | App-to-cell capability contract | [`kotoba-protocol#16`](https://github.com/kotoba-lang/kotoba-protocol/pull/16), merged on 2026-10-16 as `3aadfbcb31c4e995276993af9c0d80520b33c1b8` | The focused `protocol_test` namespace passed 96 tests and 576 assertions; direct local checks confirmed read remains grantable and write is denied without a trusted label. | The full portable suite remains unverified because unchanged `credential_test.cljk` fails on both the merged-base predecessor and the earlier PR head. No public runtime uses this contract yet. |
 
 The Itonami host consumes the merged protocol contract and Awai registry
 projection. Awai integration follow-ups, independent peer operations,
 production signed releases and content origins, public DNSSEC and TLS, and
 external readback remain outstanding before `itonami.app` can serve as the
-common public bootstrap. The gateway code has no production host or
-certificate, and the pushed Itonami branch has no review PR.
-No migration cohort hostname has an accepted Awai domain binding, and no public
-domain has been switched to this runtime. `murakumo.cloud` stays the first
-product pilot after these shared gates pass.
+common public bootstrap. PR #432 contains the current source follow-up but is
+still draft; the gateway has no production host or certificate. No migration
+cohort hostname has an accepted Awai domain binding, and no public domain has
+been switched to this runtime. `murakumo.cloud` stays the first product pilot
+after these shared gates pass.
 
 ## Chain endpoint read-only reachability check (2026-10-16)
 
-The existing `ao-amano-dns` `dns_evidence.py` probe was run again from this
-host. w1, w2, and w3 health requests timed out; w4 responded. The script
-reported `1/4` endpoints reachable and quorum status `DEGRADED`. This is a
-reachability result from this host, not proof that the three timed-out witness
-processes are stopped.
+The checked-in `chain-amano-dns` probe configuration names four Tailscale
+addresses. A fresh read-only check on 2026-10-16 found that the local CLI could
+not connect to its Tailscale daemon and all four HTTP health requests from this
+host failed. This proves only that this host currently has no route to those
+endpoints; it does not prove that remote witness processes are stopped.
 
-The direct w4 `/health` response identified its chain as
-`inga-reservation-20260911-v1` (witness `w4`), at view `212206`, height `6458`,
-committed height `6456`, with zero inbound/outbound peers and three reported
-equivocations. That response does not establish that this is a qualified
-Amano/Awai app-lifecycle chain; its chain profile and current quorum could not
-be verified from this host.
+An earlier same-day probe reached w4 and reported `1/4` endpoints reachable
+with quorum status `DEGRADED`. The direct w4 `/health` response identified its
+chain as `inga-reservation-20260911-v1` (witness `w4`), at view `212206`, height
+`6458`, committed height `6456`, with zero inbound/outbound peers and three
+reported equivocations. That response does not establish that this is a
+qualified Amano/Awai app-lifecycle chain; its chain profile and current quorum
+could not be verified from this host.
 
 Read-only `GET /committed` queries to w4 for
 `awai/domain/murakumo.cloud` and
@@ -868,9 +869,9 @@ DNS operator.
    event finality proofs, DNSSEC proof, three independent content origins, CID
    verification, consent, install, sandboxed launch, cell reads/writes,
    revocation, update, rollback, and offline recovery. The current operator
-   host could reach only one of four witness endpoints and has no working local
-   Tailscale daemon, so Amano quorum remains unverified and no production app
-   may be anchored yet. Package the DNSSEC validator and reviewed root-anchor
+   host currently cannot reach any of the four witness endpoints and has no
+   working local Tailscale daemon, so Amano quorum remains unverified and no
+   production app may be anchored yet. Package the DNSSEC validator and reviewed root-anchor
    refresh for the deployment platform; add export/import receipts for D1/KV/R2
    state and service bindings before replacing those applications. Missing
    adapters fail closed; there is no Cloudflare fallback.
