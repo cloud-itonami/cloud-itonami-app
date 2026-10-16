@@ -108,17 +108,17 @@ on 2026-10-16.
 
 | Foundation layer | Current source and review state | Evidence available | Remaining qualification |
 |---|---|---|---|
-| Itonami app host | [`cloud-itonami-app#431`](https://github.com/cloud-itonami/cloud-itonami-app/pull/431) merged on 2026-10-16 as `e708d000e6ff634a9368fbb3a832867db1d7e6fe`; current v4/quorum follow-ups are local and uncommitted. | The merged PR's CI passed. Current focused app, registry, and sandbox suites passed 19 tests / 66 assertions; the Node checkpoint verifier passed 2 tests. | Local release-pin, CSP, v4 checkpoint/quorum, and gateway changes are not merged. No signed production app release is qualified. |
-| Bootstrap HTTPS ingress | [`deploy/awai-public-gateway`](deploy/awai-public-gateway), current worktree only; not part of PR #431 | Node syntax check and all 9 policy tests pass after gateway-owned CSP replacement. A local HTTPS smoke with a disposable certificate and fake upstream passed launcher and plan preview, credential stripping, blocked install route, wrong SNI, foreign Origin, and fixed CSP despite a permissive upstream CSP. | Direct public DNS, production certificate, independent host operations, registry freshness, and external readback remain unverified. This bootstrap gateway does not yet route or execute product apps. |
-| Awai registry and peer host | [`network-awai-apex#19`](https://github.com/network-awai/network-awai-apex/pull/19), open draft, unmerged; head `9201bb486774e56be9fcad496698ddb96959941f` | The current worktree passed all 15 `app-registry --host` gates, including 32 vectors on three targets (96/96), peer-checkpoint replication, and G9–G14. Current Wasm SHA-256: `15692fa9f19cc322d8ee8b7294f822234db0794f25bcc9c1654da4310f2f2610`. | Follow-up source remains uncommitted and is not in PR #19. G14 uses two processes on one host over loopback; independent operators, public peer discovery, NAT traversal, production DNA, and node-loss recovery remain unqualified. |
+| Itonami app host | [`cloud-itonami-app#431`](https://github.com/cloud-itonami/cloud-itonami-app/pull/431) merged on 2026-10-16 as `e708d000e6ff634a9368fbb3a832867db1d7e6fe`; the remote follow-up branch is at `ee67edd7ec0b01744030556abeb6ea82166bcc51`, and its local successor adds public-HTTPS peer endpoint support. No follow-up PR exists. | The merged PR's CI passed. Current focused app, registry, and sandbox suites passed 20 tests / 77 assertions; the Node checkpoint verifier passed 2 tests. | Release-pin, CSP, v4 checkpoint/quorum, public-HTTPS peer endpoint, gateway, and exposure-inventory changes are not in `main`. No signed production app release is qualified. |
+| Bootstrap HTTPS ingress | [`deploy/awai-public-gateway`](deploy/awai-public-gateway), on the Itonami follow-up branch; not part of PR #431 | Node syntax check and all 9 policy tests pass after gateway-owned CSP replacement. A local HTTPS smoke with a disposable certificate and fake upstream passed launcher and plan preview, credential stripping, blocked install route, wrong SNI, foreign Origin, and fixed CSP despite a permissive upstream CSP. | Direct public DNS, production certificate, independent host operations, registry freshness, and external readback remain unverified. This bootstrap gateway does not yet route or execute product apps. |
+| Awai registry and peer host | [`network-awai-apex#19`](https://github.com/network-awai/network-awai-apex/pull/19), open draft at head `9201bb486774e56be9fcad496698ddb96959941f`; local follow-up commits are `982d60a` and `991e5f4`. | The current worktree passed all 16 `app-registry --host` gates, including 32 vectors on three targets (96/96), peer-checkpoint replication, gateway policy checks, and G9–G15. Current Wasm SHA-256: `15692fa9f19cc322d8ee8b7294f822234db0794f25bcc9c1654da4310f2f2610`. | Follow-up source is not pushed to PR #19. G14 uses two processes on one host over loopback; independent operators, public peer discovery, NAT traversal, production DNA, and node-loss recovery remain unqualified. The HTTPS gateway has no public host, certificate, or DNS readback. |
 | App-to-cell capability contract | [`kotoba-protocol#16`](https://github.com/kotoba-lang/kotoba-protocol/pull/16), merged on 2026-10-16 as `3aadfbcb31c4e995276993af9c0d80520b33c1b8` | The focused `protocol_test` namespace passed 96 tests and 576 assertions; direct local checks confirmed read remains grantable and write is denied without a trusted label. | The full portable suite remains unverified because unchanged `credential_test.cljk` fails on both the merged-base predecessor and the earlier PR head. No public runtime uses this contract yet. |
 
 The Itonami host consumes the merged protocol contract and Awai registry
 projection. Awai integration follow-ups, independent peer operations,
 production signed releases and content origins, public DNSSEC and TLS, and
 external readback remain outstanding before `itonami.app` can serve as the
-common public bootstrap. The gateway worktree changes remain unpushed and have
-no production host or certificate.
+common public bootstrap. The gateway code has no production host or
+certificate, and the pushed Itonami branch has no review PR.
 No migration cohort hostname has an accepted Awai domain binding, and no public
 domain has been switched to this runtime. `murakumo.cloud` stays the first
 product pilot after these shared gates pass.
@@ -790,66 +790,34 @@ DNS operator.
 
 ## Migration order and acceptance gates
 
-1. **Finish and qualify the common host.** Source now includes the host-neutral
-   lifecycle policy, loopback-only Itonami registry reader, pure Awai
-   v2 accepted-state projection with signed entry envelopes, Itonami-side
-   envelope verification, deterministic domain-to-release chain resolution,
-   authenticated candidate view, DNSSEC resolver, CID-verified
-   bounded content staging, and protected local install-record store. An
-   experimental Awai peer-host worktree serves the projection through a
-   loopback HTTP bridge.
-   The active Itonami guest admits `/health`,
-   `GET /api/awai/app-registry`, `GET /api/awai/domain-proof`,
-   `POST /api/awai/install-plan`, `POST /api/awai/install-content`, `/`, and
-   `/awai-launcher.js`; the Node host fetches the registry only from an exact
-   loopback URL. DNS proof, plan preview, and content staging are
-   candidate-gated and compare the proof CID with the accepted registry
-   binding. The plan preview fetches and caches a verified manifest; content
-   staging is source-implemented, loopback-only, and so far has only fail-closed
-   readbacks. Neither route installs an app. The launcher and guest artifact pass local loopback
-   readback. A no-peer loopback readback returned 503 `registry-unavailable`
-   for content staging and 403 for a cross-origin attempt. In a separate
-   isolated peer-host smoke, eight signed fixture records were
-   accepted; Itonami verified each envelope and returned the `murakumo.cloud`
-   candidate for `net.kotoba.murakumo`. Proof, plan, and content-stage requests
-   stopped at `dnssec-not-secure`; the scratch content store remained empty. An
-   unlisted hostname stopped before DNS. This used a
-   fixture DNA and registry, not a production release or live app registry.
-   Independent-host transport and
-   multi-peer accepted-state agreement are not qualified, no production
-   Itonami node is connected, and no Awai-backed product app is installed or
-   launched. A local dummy install exercised the static bundle-launch route
-   only.
-   The DNSSEC route cannot accept the named zones because their delegation has
-   no DNSSEC chain. The active host now performs local proof validation after a
-   registry candidate is available; a production package still needs a
-   platform-matched libunbound/ldns helper and reviewed root-anchor refresh.
-   The active plan-preview route verifies and caches the public
-   `kotoba.app.manifest.v1` release block against the signed Awai release after
-   a candidate and matching DNS proof are available; this path has not yet been
-   exercised with a live non-fixture candidate. The new loopback install route
-   now records explicit consent and protected install state and invokes the
-   optional token-protected Awai cell API; it has not passed the fixture DNSSEC
-   gate, and does not launch the app as part of the install transaction. The
-   separate static launch path has only been exercised with a local dummy
-   install. A future installer can read the immutable
-   exported entity without the publisher graph decryption key. The `chain`
-   authority adapter still needs a production grant resolver if graph-history
-   verification is required. The next common-host step is to qualify install
-   against a non-fixture Awai node and signed pilot release, package DNSSEC
-   validation for the deployment platform, and implement consented updates.
-   Qualify publisher-signed release revocation against independent peers and
-   add publisher-rotation records; qualify bundle delivery and sandbox
-   isolation against a signed pilot release,
-   connect the complete update/rollback flow, and add cell migration and
-   capability-mediated effects. In parallel, choose an independent DNS
-   operator and establish signed delegation for a dedicated pilot name before
-   attempting live DNS proof. Qualify all of these against one non-fixture
-   release, then test independent-host replication and offline recovery using
-   the shared acceptance gates in [`awai-app-runtime.md`](awai-app-runtime.md).
-   Add export/import receipts for the D1/KV/R2 state and service bindings listed
-   above before replacing those Pages applications. Missing adapters fail
-   closed; there is no Cloudflare fallback.
+1. **Finish and qualify the common host.** The merged protocol and Itonami
+   runtime provide signed app identity, DNSSEC candidate checks, CID-verified
+   content staging, explicit local install consent, sandboxed launch, and
+   capability-mediated Awai cell access. Follow-up source adds exact release
+   pins and signed v4 registry checkpoints; Itonami requires a fresh
+   `ceil(2N/3)` quorum across 3–12 configured peer IDs. Loopback HTTP is for
+   local checks; remote peer endpoints use public-host HTTPS. The gateway
+   package is still bootstrap-only and has no production host, certificate, or
+   direct-DNS name.
+
+   Local evidence includes all 16 Awai `app-registry --host` gates, 96/96
+   validator vectors, two-process checkpoint replication, 20 Itonami tests / 77
+   assertions, two checkpoint-verifier tests, and the gateway's nine policy
+   tests plus a loopback TLS smoke. Those checks use fixtures and same-host
+   processes. The JVM bridge has not been exercised end to end, and no
+   independently operated Awai peer or signed production release is connected.
+
+   Before any production hostname uses the host, deploy at least three Awai
+   peers under distinct operators, expose their read-only registry API through
+   direct HTTPS endpoints with no CDN/runtime proxy, and verify peer IDs,
+   operator ownership, fresh quorum, one stale/unavailable peer, and recovery
+   when a node is removed. Then run a non-fixture signed pilot release through
+   DNSSEC proof, three independent content origins, CID verification, consent,
+   install, sandboxed launch, cell reads/writes, revocation, update, rollback,
+   and offline recovery. Package the DNSSEC validator and reviewed root-anchor
+   refresh for the deployment platform; add export/import receipts for D1/KV/R2
+   state and service bindings before replacing those applications. Missing
+   adapters fail closed; there is no Cloudflare fallback.
 2. **Qualify `itonami.app` itself.** Publish the signed launcher and registry
    client to at least three independently operated content origins and verify
    state writes through at least two independent Awai nodes. Verify direct
