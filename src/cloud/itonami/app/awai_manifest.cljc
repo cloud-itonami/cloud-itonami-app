@@ -107,5 +107,5 @@
              :manifest-cid manifest-cid
              :app-id expected-app-id
              :manifest entity}))
-        (catch Exception _
+        (catch #?(:clj Exception :cljs :default) _
           {:decision :refuse :error :invalid-manifest-cbor})))))

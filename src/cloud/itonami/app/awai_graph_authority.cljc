@@ -112,7 +112,7 @@
                    :visited (:visited report 0)
                    :findings (:findings report [])}
             reason (assoc :reason reason)))
-        (catch Exception _
+        (catch #?(:clj Exception :cljs :default) _
           {:decision :unavailable
            :error :graph-history-verification-failed
            :app-id app-id

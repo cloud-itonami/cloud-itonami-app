@@ -1,7 +1,7 @@
 # Awai app domain inventory and migration gates
 
 Snapshot date: 2026-10-16 (latest read-only account and Registrar API refresh:
-2026-10-16; focused DNS/zone snapshot: 2026-10-16T01:11:47Z).
+2026-10-16; focused DNS/zone snapshot: 2026-10-16T07:00:48Z).
 This is a read-only inventory from the connected
 Cloudflare accounts API: zones, DNS records, Worker custom domains/routes and
 `workers.dev` settings, Pages projects/domains/previews, Tunnel hostnames, and
@@ -83,12 +83,25 @@ each block CID. Installation follows local consent and protected install-record
 readback before it calls the token-protected Awai cell API. A separate local
 route launches an already-installed bundle at an app-specific `.localhost`
 origin inside an opaque-origin iframe with network access and host effects
-disabled. Its local dummy-install smoke passed. The full launcher flow is
-currently stopped at `dnssec-not-secure`: the ten migration zones have DNSSEC
-disabled and no parent DS. Production content delivery, TLS serving, sandbox
-qualification, updates, and capability-mediated effects are not deployed or
-qualified. The registry reader fails closed and has no public or Cloudflare
-fallback.
+disabled. Its local dummy-install smoke passed. The full launcher flow currently
+stops at `dnssec-not-secure`: the ten migration zones have DNSSEC disabled and
+no parent DS. Independently, the active install-scope resolver now requires a
+host-owned Amano proof verifier. The shared Inga source now contains a
+challenge-bound current-ref quorum reader, and the isolated Inga-node source
+adds a signed `GET /current-ref` response from a node's local committed
+projection. Their local suites pass 8 tests / 29 assertions and 15 tests / 78
+assertions, respectively. The Inga core and Inga-node changes are pushed to
+feature branches, not `main`, and are not yet wired into Itonami: the
+install-scope route still supplies neither current-ref proofs nor a verifier,
+so it returns `amano-current-ref-proof-unavailable` before content retrieval
+even after DNSSEC is enabled. The lifecycle contract now keeps DNS freshness in
+seconds and Amano current-ref freshness in milliseconds; its focused app suite
+passes 14 tests / 39 assertions under Nbb. The node response is one witness
+observation, not quorum or exact-event finality evidence. `finish-install`
+repeats the verifier check before writing an install lock. Production content
+delivery, TLS serving, sandbox qualification, updates, and capability-mediated
+effects are not deployed or qualified. The registry reader fails closed and
+has no public or Cloudflare fallback.
 
 The app layer does not collapse distinct services into one identity. For
 example, Murakumo inference remains an execution service that an app may call
@@ -110,7 +123,8 @@ on 2026-10-16.
 |---|---|---|---|
 | Itonami app host | [`cloud-itonami-app#431`](https://github.com/cloud-itonami/cloud-itonami-app/pull/431) merged on 2026-10-16 as `e708d000e6ff634a9368fbb3a832867db1d7e6fe`; the remote follow-up branch is at `ee67edd7ec0b01744030556abeb6ea82166bcc51`, and its local successor adds public-HTTPS peer endpoint support. No follow-up PR exists. | The merged PR's CI passed. Current focused app, registry, and sandbox suites passed 20 tests / 77 assertions; the Node checkpoint verifier passed 2 tests. | Release-pin, CSP, v4 checkpoint/quorum, public-HTTPS peer endpoint, gateway, and exposure-inventory changes are not in `main`. No signed production app release is qualified. |
 | Bootstrap HTTPS ingress | [`deploy/awai-public-gateway`](deploy/awai-public-gateway), on the Itonami follow-up branch; not part of PR #431 | Node syntax check and all 9 policy tests pass after gateway-owned CSP replacement. A local HTTPS smoke with a disposable certificate and fake upstream passed launcher and plan preview, credential stripping, blocked install route, wrong SNI, foreign Origin, and fixed CSP despite a permissive upstream CSP. | Direct public DNS, production certificate, independent host operations, registry freshness, and external readback remain unverified. This bootstrap gateway does not yet route or execute product apps. |
-| Awai registry and peer host | [`network-awai-apex#19`](https://github.com/network-awai/network-awai-apex/pull/19), open draft at head `aaa81f5137fb7bbba960704a055cdee53bca7299`; the source-only follow-up is now on the PR branch. | All 16 `app-registry --host` gates passed, including 32 vectors on three targets (96/96), peer-checkpoint replication, and G15. The peer gateway has six policy tests and a disposable-certificate loopback HTTPS smoke. Current Wasm SHA-256: `15692fa9f19cc322d8ee8b7294f822234db0794f25bcc9c1654da4310f2f2610`. | The PR remains draft and unmerged. G14 uses two processes on one host over loopback; independent operators, public peer discovery, NAT traversal, production DNA, and node-loss recovery remain unqualified. The HTTPS gateway has no public host, certificate, or DNS readback. |
+| Awai registry and peer host | [`network-awai-apex#19`](https://github.com/network-awai/network-awai-apex/pull/19), open draft at head `95b7ae601e1665836e725f1e577e670930150be7`. | All 16 `app-registry --host` gates passed, including 32 vectors on three targets (96/96), peer-checkpoint replication, and G15. The peer gateway has six policy tests and a disposable-certificate loopback HTTPS smoke. Current Wasm SHA-256: `15692fa9f19cc322d8ee8b7294f822234db0794f25bcc9c1654da4310f2f2610`. | The PR remains draft and unmerged. G14 uses two processes on one host over loopback; independent operators, public peer discovery, NAT traversal, production DNA, and node-loss recovery remain unqualified. The HTTPS gateway has no public host, certificate, or DNS readback. |
+| Amano lifecycle refs | Inga adds `current-ref-read/v1` at feature commit `7e368fbc0c3777dbb95f8b7153b47f18d174d68d` on the existing `e5948e1` dependency baseline for challenge-bound signed quorum observations (8 tests / 29 assertions). Inga-node adds `GET /current-ref` at feature commit `3707ce2` for one node-signed committed projection (15 tests / 78 assertions). Both commits are on pushed feature branches, not `main`. Itonami's focused lifecycle suite passes 14 tests / 39 assertions under Nbb and now keeps its DNS clock in seconds separate from the millisecond current-ref clock. A host-owned `verify-amano-ref` verifier is still required at resolution and install time to cover exact refs, chain-profile identity, challenge, quorum-read/finality facts, and freshness. | An earlier same-day read-only probe reached w4 from this host and reported `head=null` for Murakumo's domain and app refs. The endpoint test verifies one witness's Ed25519 signature and challenge binding, rejects duplicate or extra query parameters, and refuses a head without its stored commitment proof. | The Inga pieces are not integrated into the active Itonami adapter; no multi-witness response collection, exact-event finality adapter, deployed current-ref API, or verified chain profile is connected. The earlier probe found 1/4 witness health endpoints reachable and reported `DEGRADED`; the timed-out nodes' process state is unknown. No app-domain binding or release is established on this chain. |
 | App-to-cell capability contract | [`kotoba-protocol#16`](https://github.com/kotoba-lang/kotoba-protocol/pull/16), merged on 2026-10-16 as `3aadfbcb31c4e995276993af9c0d80520b33c1b8` | The focused `protocol_test` namespace passed 96 tests and 576 assertions; direct local checks confirmed read remains grantable and write is denied without a trusted label. | The full portable suite remains unverified because unchanged `credential_test.cljk` fails on both the merged-base predecessor and the earlier PR head. No public runtime uses this contract yet. |
 
 The Itonami host consumes the merged protocol contract and Awai registry
@@ -122,6 +136,31 @@ certificate, and the pushed Itonami branch has no review PR.
 No migration cohort hostname has an accepted Awai domain binding, and no public
 domain has been switched to this runtime. `murakumo.cloud` stays the first
 product pilot after these shared gates pass.
+
+## Chain endpoint read-only reachability check (2026-10-16)
+
+The existing `ao-amano-dns` `dns_evidence.py` probe was run again from this
+host. w1, w2, and w3 health requests timed out; w4 responded. The script
+reported `1/4` endpoints reachable and quorum status `DEGRADED`. This is a
+reachability result from this host, not proof that the three timed-out witness
+processes are stopped.
+
+The direct w4 `/health` response identified its chain as
+`inga-reservation-20260911-v1` (witness `w4`), at view `212206`, height `6458`,
+committed height `6456`, with zero inbound/outbound peers and three reported
+equivocations. That response does not establish that this is a qualified
+Amano/Awai app-lifecycle chain; its chain profile and current quorum could not
+be verified from this host.
+
+Read-only `GET /committed` queries to w4 for
+`awai/domain/murakumo.cloud` and
+`awai/app/net.kotoba.murakumo/stable` both returned `ok=true`,
+`source=filesystem`, `records=1`, and `head=null`. This endpoint response is a
+single-node filesystem read, not a quorum-authenticated current-ref proof or
+finality evidence. It does not establish that a Murakumo binding or release is
+committed across the chain. The Itonami resolver must not treat this endpoint
+or chain as an app trust anchor. No chain, DNS, or runtime settings were
+changed.
 
 The shared runtime model and its readiness gates are maintained in
 [`awai-app-runtime.md`](awai-app-runtime.md). Awai's signed predecessor chains
@@ -141,7 +180,7 @@ The Pages API's paginated read returned 16 projects (10 on page 1 and 6 on
 page 2). This inventory is account-scoped and is not a complete list of
 registrar delegations or public origins.
 
-The ten migration cohort zones below were individually rechecked at 01:11 UTC;
+The ten migration cohort zones below were individually rechecked at 07:00 UTC;
 each returned `status: disabled` from its Cloudflare `/dnssec` API endpoint.
 Consequently the proposed `_itonami-app.<domain>` DNSSEC proof cannot be
 qualified against any of them in the current configuration. Every zone also
@@ -163,7 +202,7 @@ descriptions remain subject to independent DNS/HTTP readback.
 | `babiniku.net` | 6 | 0 | 0 | 1 | disabled |
 | `awai.network` | 9 | 2 | 0 | 0 | disabled |
 
-The focused zone/DNS/Worker/Pages read at `2026-10-16T01:11:47Z` also
+The focused zone/DNS/Worker/Pages read at `2026-10-16T07:00:48Z` also
 confirmed the current serving-resource mapping below. DNS record counts include
 mail records; this is provider configuration evidence, not public HTTP or mail
 flow verification.
@@ -658,6 +697,13 @@ ten. Nine also pass `not_waiting`; `oppai.fans` does not. This is account-side
 eligibility metadata, not authorization to unlock or transfer a domain. No
 auth code was requested or read, and no transfer was started.
 
+A 07:00 UTC read of all ten exact Registrar domain records re-confirmed
+`current_registrar=Cloudflare`, `locked=true`, empty DS records, no pending
+transfer, and the same Cloudflare nameservers. `oppai.fans` remains the only
+cohort domain with `not_waiting=false`; the other nine return true. The matching
+Cloudflare zone API read reports DNSSEC disabled on all ten zones. No registrar,
+DNS, Worker, Pages, or Tunnel setting was changed.
+
 Namecheap is one technically compatible gaining-registrar candidate: its
 published transfer list includes all seven cohort TLDs (`.app`, `.cloud`,
 `.fans`, `.network`, `.nexus`, `.club`, and `.net`), and it documents DS-record
@@ -812,9 +858,13 @@ DNS operator.
    direct HTTPS endpoints with no CDN/runtime proxy, and verify peer IDs,
    operator ownership, fresh quorum, one stale/unavailable peer, and recovery
    when a node is removed. Then run a non-fixture signed pilot release through
-   DNSSEC proof, three independent content origins, CID verification, consent,
-   install, sandboxed launch, cell reads/writes, revocation, update, rollback,
-   and offline recovery. Package the DNSSEC validator and reviewed root-anchor
+   a qualified Amano quorum with challenge-bound current-ref reads and exact
+   event finality proofs, DNSSEC proof, three independent content origins, CID
+   verification, consent, install, sandboxed launch, cell reads/writes,
+   revocation, update, rollback, and offline recovery. The current operator
+   host could reach only one of four witness endpoints and has no working local
+   Tailscale daemon, so Amano quorum remains unverified and no production app
+   may be anchored yet. Package the DNSSEC validator and reviewed root-anchor
    refresh for the deployment platform; add export/import receipts for D1/KV/R2
    state and service bindings before replacing those applications. Missing
    adapters fail closed; there is no Cloudflare fallback.
