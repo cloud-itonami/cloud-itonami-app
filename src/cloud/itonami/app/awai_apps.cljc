@@ -103,7 +103,7 @@
        :cell-id cell-id
        :bundle-cid bundle-cid})))
 
-(defn prepare-install
+(defn- prepare-install
   "Turn a verified domain resolution into a fetch-and-consent plan.
 
   Every requested capability is presented for explicit local consent on a new
@@ -138,7 +138,9 @@
        :origin (select-keys resolved
                             [:domain :binding-cid :binding-sequence
                              :binding-expires-at :dns-proof-checked-at
-                             :dns-proof-expires-at])
+                             :dns-proof-expires-at :amano-chain-profile
+                             :amano-ref-proofs :amano-ref-proofs-checked-at-ms
+                             :amano-challenge])
        :dns-proof (:dns-proof resolved)
        :required-content-cids (install/required-content-cids lock)
        :consent-required-caps (:requested-caps lock)})))
@@ -550,35 +552,137 @@
           {:decision :refuse :error :invalid-release-manifest :problems problems}
           {:decision :verified :release descriptor})))))
 
+(defn- verified-amano-current-ref?
+  [verify-ref proof chain-profile ref head-cid challenge now-ms]
+  (and (fn? verify-ref)
+       (map? chain-profile)
+       (every? (fn [key]
+                 (let [value (get chain-profile key)]
+                   (and (string? value) (seq value))))
+               [:profile-id :chain-id :genesis-hash :validator-set-id])
+       (map? proof)
+       (= "amano-inga-verified-current-ref" (:trust proof))
+       (= :verified (:decision proof))
+       (= (:profile-id chain-profile) (:profile-id proof))
+       (= (:chain-id chain-profile) (:chain-id proof))
+       (= (:genesis-hash chain-profile) (:genesis-hash proof))
+       (= (:validator-set-id chain-profile) (:validator-set-id proof))
+       (= ref (:ref proof))
+       (= head-cid (:head-cid proof))
+       (= challenge (:challenge proof))
+       (true? (:current? proof))
+       (true? (:quorum-read-verified? proof))
+       (map? (:current-read-proof proof))
+       (seq (:current-read-proof proof))
+       (true? (:finality-proof-verified? proof))
+       (= head-cid (:finalized-event-cid proof))
+       (map? (:finality-proof proof))
+       (seq (:finality-proof proof))
+       (nat-int? (:observed-at proof))
+       (nat-int? (:expires-at proof))
+       (<= (:observed-at proof) now-ms)
+       (< now-ms (:expires-at proof))
+       (try
+         (true? (verify-ref {:proof proof
+                             :chain-profile chain-profile
+                             :ref ref
+                             :head-cid head-cid
+                             :challenge challenge
+                             :now-ms now-ms}))
+         (catch #?(:clj Exception :cljs :default) _ false))))
+
+(defn- amano-current-ref-proof-state
+  [domain binding release ref-proofs challenge chain-profile now-ms verify-ref]
+  (let [domain-ref (str "awai/domain/" domain)
+        app-ref (str "awai/app/" (:app-id release) "/" (:channel release))
+        expected-refs #{domain-ref app-ref}]
+    (cond
+      (not (nat-int? now-ms))
+      :unavailable
+
+      (or (not (and (string? challenge) (<= 16 (count challenge) 256)))
+          (not (map? ref-proofs))
+          (not (map? chain-profile))
+          (not (fn? verify-ref)))
+      :unavailable
+
+      (not= expected-refs (set (keys ref-proofs)))
+      :invalid
+
+      (not (and (verified-amano-current-ref?
+                 verify-ref (get ref-proofs domain-ref) chain-profile domain-ref
+                 (:entry-cid binding) challenge now-ms)
+                (verified-amano-current-ref?
+                 verify-ref (get ref-proofs app-ref) chain-profile app-ref
+                 (:release-cid release) challenge now-ms)))
+      :invalid
+
+      :else :verified)))
+
 (defn resolve-domain
   "Resolve one hostname from already verified adapter facts and attach its
-  install plan. The DNS adapter supplies a fresh DNSSEC-verified TXT proof; the
-  Awai adapter supplies the verified binding and selected release."
-  [domain {:keys [binding txt-proof release now]}]
-  (if-not (dnssec-policy/fresh-proof? domain txt-proof now)
-    {:decision :refuse :error :dnssec-proof-not-fresh-or-invalid}
-    (let [resolved (install/resolve-entry domain binding txt-proof release now)
-          resolved (cond-> resolved
-                     (= :resolved (:decision resolved))
-                     (assoc :dns-proof-checked-at (:checked-at txt-proof)
-                            :dns-proof-expires-at (:expires-at txt-proof)
-                            :dns-proof txt-proof
-                            :resolved-at now))]
-      (if (= :resolved (:decision resolved))
-        (assoc resolved :install-plan (prepare-install resolved))
-        resolved))))
+  install plan. The DNS adapter supplies a fresh DNSSEC-verified TXT proof. The
+  Amano adapter must supply independently verified finality and a fresh,
+  challenge-bound current-ref proof for both the domain binding and app
+  release. `verify-amano-ref` is a synchronous host-owned port that must verify
+  the Inga signatures, chain profile, challenge-bound quorum read, and exact
+  event finality. This function checks the normalized result and invokes that
+  port; it does not implement Inga cryptography itself."
+  [domain {:keys [binding txt-proof release now amano-now-ms amano-ref-proofs challenge
+                  amano-chain-profile verify-amano-ref]}]
+  (let [amano-state (amano-current-ref-proof-state
+                     domain binding release amano-ref-proofs challenge
+                     amano-chain-profile amano-now-ms verify-amano-ref)]
+    (cond
+      (not (dnssec-policy/fresh-proof? domain txt-proof now))
+      {:decision :refuse :error :dnssec-proof-not-fresh-or-invalid}
+
+      (= :unavailable amano-state)
+      {:decision :refuse :error :amano-current-ref-proof-unavailable}
+
+      (= :invalid amano-state)
+      {:decision :refuse :error :invalid-amano-current-ref-proof}
+
+      :else
+      (let [resolved (install/resolve-entry domain binding txt-proof release now)
+            resolved (cond-> resolved
+                       (= :resolved (:decision resolved))
+                       (assoc :dns-proof-checked-at (:checked-at txt-proof)
+                              :dns-proof-expires-at (:expires-at txt-proof)
+                              :dns-proof txt-proof
+                              :resolved-at now
+                              :amano-chain-profile amano-chain-profile
+                              :amano-ref-proofs amano-ref-proofs
+                              :amano-ref-proofs-checked-at-ms amano-now-ms
+                              :amano-challenge challenge))]
+        (if (= :resolved (:decision resolved))
+          (assoc resolved :install-plan (prepare-install resolved))
+          resolved)))))
 
 (defn finish-install
   "Produce a host installation record after content verification and the
   user's capability decision. The caller must write it atomically to protected
   local storage before invoking the app runtime."
-  [prepared {:keys [verified-cids approved-caps host-supported now]}]
+  [prepared {:keys [verified-cids approved-caps host-supported now amano-now-ms
+                    verify-amano-ref]}]
   (let [lock (:install-lock prepared)
         verified (string-set verified-cids)
         approved (string-set approved-caps)
         supported (string-set host-supported)
         required (install/required-content-cids lock)
         missing (when verified (into [] (remove verified) required))
+        origin (:origin prepared)
+        amano-state (amano-current-ref-proof-state
+                     (:domain origin)
+                     {:entry-cid (:binding-cid origin)}
+                     {:app-id (:app-id lock)
+                      :channel (:channel lock)
+                      :release-cid (:release-cid lock)}
+                     (:amano-ref-proofs origin)
+                     (:amano-challenge origin)
+                     (:amano-chain-profile origin)
+                     amano-now-ms
+                     verify-amano-ref)
         requested (or (string-set (:requested-caps lock)) #{})]
     (cond
       (not= :install-prepared (:decision prepared))
@@ -601,6 +705,12 @@
                  (get-in prepared [:origin :domain])
                  (:dns-proof prepared) now)))
       {:decision :refuse :error :dnssec-proof-expired}
+
+      (= :unavailable amano-state)
+      {:decision :refuse :error :amano-current-ref-proof-unavailable}
+
+      (= :invalid amano-state)
+      {:decision :refuse :error :invalid-amano-current-ref-proof}
 
       (seq missing)
       {:decision :refuse :error :content-not-verified :missing-cids missing}
