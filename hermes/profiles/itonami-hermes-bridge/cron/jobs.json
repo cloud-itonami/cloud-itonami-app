@@ -3,7 +3,7 @@
     {
       "base_url": null,
       "context_from": null,
-      "deliver": "bot-chat:itonami-hermes-bridge",
+      "deliver": "local",
       "enabled": true,
       "enabled_toolsets": null,
       "id": "aad486c789c6",
