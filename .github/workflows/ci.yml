@@ -84,6 +84,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Install app runtime dependencies
+        run: npm ci
       # The engine's lib/nbb_deps.js also invokes `bb` on Windows; install it
       # here too so the smoke does not fail on a missing bb.
       - name: Install babashka (bb) for the engine's deps download

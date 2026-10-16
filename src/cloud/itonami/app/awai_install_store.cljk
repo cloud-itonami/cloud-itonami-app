@@ -1,0 +1,315 @@
+(ns cloud.itonami.app.awai-install-store
+  "Host-private persistence for externally installed Awai app records.
+
+  Install records stay under Itonami's local data directory and are never
+  served as resources. Updates use an expected-current-release check so a
+  stale install cannot overwrite a newer one; a failed launch can restore the
+  exact previous record."
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
+            [cloud.itonami.app.awai-apps :as apps]
+            [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.secure-file :as secure-file]
+            [kotoba.protocol.vocab :as vocab])
+  (:import [java.nio ByteBuffer]
+           [java.nio.channels FileChannel FileLock]
+           [java.nio.charset StandardCharsets]
+           [java.lang ProcessHandle]
+           [java.nio.file CopyOption FileAlreadyExistsException Files LinkOption
+            OpenOption Path StandardCopyOption StandardOpenOption]
+           [java.nio.file.attribute FileAttribute]
+           [java.security MessageDigest]
+           [java.util HexFormat UUID]))
+
+(def schema "itonami.app.install-store-receipt.v1")
+(def maximum-install-record-bytes (* 1024 1024))
+(def ^:private nofollow-options
+  (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+(def ^:private process-lock (Object.))
+
+(defn- app-key [app-id]
+  (.formatHex (HexFormat/of)
+              (.digest (MessageDigest/getInstance "SHA-256")
+                       (.getBytes ^String app-id StandardCharsets/UTF_8))))
+
+(defn- valid-app-id? [app-id]
+  (and (string? app-id)
+       (vocab/reverse-dns-id? app-id)))
+
+(defn- ensure-directory! ^Path [^Path path]
+  (when (Files/isSymbolicLink path)
+    (throw (ex-info "Awai install store path may not be a symlink"
+                    {:type :awai-install-store/unsafe-path})))
+  (Files/createDirectories path (make-array FileAttribute 0))
+  (when (or (Files/isSymbolicLink path)
+            (not (Files/isDirectory path nofollow-options)))
+    (throw (ex-info "Awai install store is not a directory"
+                    {:type :awai-install-store/unsafe-path})))
+  (secure-file/harden! path "rwx------")
+  path)
+
+(defn- installation-root ^Path []
+  (let [data-root (.toPath (.getCanonicalFile (io/file (config/data-dir))))
+        app-root (.resolve data-root "awai-apps")
+        root (.resolve app-root "installations")]
+    (ensure-directory! app-root)
+    (ensure-directory! root)))
+
+(defn- installation-path ^Path [^Path root app-id]
+  (.resolve root (str (app-key app-id) ".edn")))
+
+(defn- lock-path ^Path [^Path root app-id]
+  (.resolve root (str (app-key app-id) ".lock")))
+
+(defn- open-app-lock! [^Path root app-id]
+  (let [path (lock-path root app-id)]
+    (when (Files/isSymbolicLink path)
+      (throw (ex-info "Awai install lock may not be a symlink"
+                      {:type :awai-install-store/unsafe-lock})))
+    (when-not (Files/exists path nofollow-options)
+      (try
+        (secure-file/create-file! path)
+        (catch FileAlreadyExistsException _ nil)))
+    (secure-file/harden! path "rw-------")
+    (let [channel (FileChannel/open path
+                                    (into-array OpenOption
+                                                [StandardOpenOption/WRITE]))]
+      (try
+        {:lock (.lock channel) :channel channel}
+        (catch Exception error
+          (try (.close channel) (catch Exception _ nil))
+          (throw error))))))
+
+(defn- portable-guard-path ^Path [^Path root app-id]
+  (.resolve root (str (app-key app-id) ".guard")))
+
+(defn- acquire-portable-guard!
+  "Serialize the JVM and Node hosts with one atomic directory creation.
+
+  The Node host cannot acquire Java's FileLock, so both writers also use this
+  short-lived guard directory. A process crash leaves the guard in place and
+  blocks later writes until an operator confirms the owner is stopped and
+  removes the stale guard."
+  [^Path root app-id]
+  (let [guard (portable-guard-path root app-id)
+        owner (.resolve guard "owner")
+        token (str (.pid (ProcessHandle/current)) "\n" (UUID/randomUUID) "\n")]
+    (when (Files/isSymbolicLink guard)
+      (throw (ex-info "Awai install guard may not be a symlink"
+                      {:type :awai-install-store/unsafe-guard})))
+    (try
+      (Files/createDirectory guard (make-array FileAttribute 0))
+      (catch FileAlreadyExistsException _
+        (throw (ex-info "Awai install store is busy"
+                        {:type :awai-install-store/busy}))))
+    (try
+      (secure-file/harden! guard "rwx------")
+      (secure-file/create-file! owner)
+      (with-open [channel (FileChannel/open
+                           owner
+                           (into-array OpenOption [StandardOpenOption/WRITE]))]
+        (let [buffer (ByteBuffer/wrap (.getBytes token StandardCharsets/UTF_8))]
+          (while (.hasRemaining buffer)
+            (.write channel buffer))
+          (.force channel true)))
+      (secure-file/harden! owner "rw-------")
+      {:path guard :owner owner :token token}
+      (catch Exception error
+        (try (Files/deleteIfExists owner) (catch Exception _ nil))
+        (try (Files/deleteIfExists guard) (catch Exception _ nil))
+        (throw error)))))
+
+(defn- release-portable-guard! [{:keys [^Path path ^Path owner token]}]
+  (try
+    (when (and (not (Files/isSymbolicLink path))
+               (Files/isDirectory path nofollow-options)
+               (not (Files/isSymbolicLink owner))
+               (Files/isRegularFile owner nofollow-options)
+               (= token (String. (Files/readAllBytes owner)
+                                 StandardCharsets/UTF_8)))
+      (Files/delete owner)
+      (Files/delete path))
+    (catch Exception _ nil)))
+
+(defn- with-app-lock [app-id f]
+  (locking process-lock
+    (let [root (installation-root)
+          {:keys [lock channel]} (open-app-lock! root app-id)]
+      (try
+        (let [guard (acquire-portable-guard! root app-id)]
+          (try
+            (f root)
+            (finally
+              (release-portable-guard! guard))))
+        (finally
+          (try (.release ^FileLock lock) (catch Exception _ nil))
+          (try (.close ^FileChannel channel) (catch Exception _ nil)))))))
+
+(defn- valid-record-for-app? [app-id record]
+  (and (map? record)
+       (= app-id (get-in record [:install-lock :app-id]))
+       (empty? (apps/installation-problems record))))
+
+(defn- read-record-under-lock [^Path root app-id]
+  (let [path (installation-path root app-id)]
+    (cond
+      (not (Files/exists path nofollow-options))
+      {:decision :missing}
+
+      (or (Files/isSymbolicLink path)
+          (not (Files/isRegularFile path nofollow-options))
+          (> (Files/size path) maximum-install-record-bytes))
+      {:decision :refuse :error :invalid-install-record-file}
+
+      :else
+      (try
+        (let [record (edn/read-string
+                      (String. (Files/readAllBytes path) StandardCharsets/UTF_8))]
+          (if (valid-record-for-app? app-id record)
+            {:decision :found :installation record}
+            {:decision :refuse :error :invalid-installation-record}))
+        (catch Exception _
+          {:decision :refuse :error :unreadable-installation-record})))))
+
+(defn- atomic-write-record! [^Path root app-id record]
+  (let [target (installation-path root app-id)
+        temporary (.resolve root (str "." (app-key app-id) "."
+                                       (UUID/randomUUID) ".tmp"))
+        bytes (.getBytes (str (pr-str record) "\n") StandardCharsets/UTF_8)]
+    (when (> (alength bytes) maximum-install-record-bytes)
+      (throw (ex-info "Awai installation record exceeds its size limit"
+                      {:type :awai-install-store/record-too-large})))
+    (try
+      (secure-file/create-file! temporary)
+      (with-open [channel (FileChannel/open
+                           temporary
+                           (into-array OpenOption [StandardOpenOption/WRITE]))]
+        (let [buffer (ByteBuffer/wrap bytes)]
+          (while (.hasRemaining buffer)
+            (.write channel buffer))
+          (.force channel true)))
+      (Files/move temporary target
+                  (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE
+                                          StandardCopyOption/REPLACE_EXISTING]))
+      (secure-file/harden! target "rw-------")
+      (let [readback (read-record-under-lock root app-id)]
+        (when-not (and (= :found (:decision readback))
+                       (= record (:installation readback)))
+          (throw (ex-info "Awai installation record readback failed"
+                          {:type :awai-install-store/readback-failed})))
+        {:decision :persisted
+         :installation record
+         :receipt {:schema schema
+                   :app-id app-id
+                   :release-cid (get-in record [:install-lock :release-cid])
+                   :installed-at (:installed-at record)}})
+      (finally
+        (Files/deleteIfExists temporary)))))
+
+(defn read-installation
+  "Read and validate one app's protected install record. No path is returned."
+  [app-id]
+  (if-not (valid-app-id? app-id)
+    {:decision :refuse :error :invalid-app-id}
+    (try
+      (with-app-lock app-id #(read-record-under-lock % app-id))
+      (catch Exception _
+        {:decision :unavailable :error :install-store-unavailable}))))
+
+(defn authorize-cell-install
+  "Authorize an exact DNA cell reference using the app's current protected
+  install record. This is a local host adapter; callers must not expose it
+  without the Itonami user's authenticated install session."
+  [app-id cell-id bundle-cid]
+  (let [stored (read-installation app-id)]
+    (case (:decision stored)
+      :found (apps/authorize-cell-install (:installation stored)
+                                          cell-id bundle-cid)
+      :missing {:decision :refuse :error :installation-not-found}
+      :refuse stored
+      :unavailable stored
+      {:decision :unavailable :error :install-store-unavailable})))
+
+(defn commit-installation!
+  "Persist a finished installation with compare-and-swap on its previous tip.
+
+  Use nil `expected-current-release-cid` only for a first install. For updates,
+  pass the release CID that was current when the update plan was prepared. The
+  returned `:previous` record is host-only and can be supplied to
+  `rollback-installation!` if the newly persisted release fails to start."
+  [app-id expected-current-release-cid record]
+  (cond
+    (not (valid-app-id? app-id))
+    {:decision :refuse :error :invalid-app-id}
+
+    (not (valid-record-for-app? app-id record))
+    {:decision :refuse :error :invalid-installation-record}
+
+    :else
+    (try
+      (with-app-lock
+       app-id
+       (fn [root]
+         (let [current (read-record-under-lock root app-id)
+               current-installation (:installation current)
+               current-cid (get-in current-installation [:install-lock :release-cid])
+               expectation-matches? (if (nil? expected-current-release-cid)
+                                      (= :missing (:decision current))
+                                      (and (= :found (:decision current))
+                                           (= expected-current-release-cid current-cid)))]
+           (cond
+             (= :refuse (:decision current))
+             current
+
+             (not expectation-matches?)
+             {:decision :refuse :error :installation-tip-changed
+              :current-release-cid current-cid}
+
+             :else
+             (let [written (atomic-write-record! root app-id record)]
+               (assoc written :previous current-installation))))))
+      (catch Exception _
+        {:decision :unavailable :error :install-store-write-failed}))))
+
+(defn rollback-installation!
+  "Restore the exact prior record only if the failed release is still current.
+
+  Pass nil as `previous` to remove a first install that failed to launch."
+  [app-id failed-release-cid previous]
+  (cond
+    (not (valid-app-id? app-id))
+    {:decision :refuse :error :invalid-app-id}
+
+    (not (and (string? failed-release-cid) (not-empty failed-release-cid)))
+    {:decision :refuse :error :invalid-failed-release}
+
+    (and previous (not (valid-record-for-app? app-id previous)))
+    {:decision :refuse :error :invalid-rollback-record}
+
+    :else
+    (try
+      (with-app-lock
+       app-id
+       (fn [root]
+         (let [current (read-record-under-lock root app-id)
+               current-cid (get-in current [:installation :install-lock :release-cid])]
+           (cond
+             (not= :found (:decision current))
+             {:decision :refuse :error :installation-not-current}
+
+             (not= failed-release-cid current-cid)
+             {:decision :refuse :error :installation-tip-changed
+              :current-release-cid current-cid}
+
+             previous
+             (let [written (atomic-write-record! root app-id previous)]
+               (assoc written :restored-release-cid
+                      (get-in previous [:install-lock :release-cid])))
+
+             :else
+             (do
+               (Files/delete (installation-path root app-id))
+               {:decision :rolled-back
+                :removed-release-cid failed-release-cid})))))
+      (catch Exception _
+        {:decision :unavailable :error :install-store-rollback-failed}))))

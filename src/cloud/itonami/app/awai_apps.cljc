@@ -10,7 +10,8 @@
             [kotoba.protocol.cid :as cid]
             [kotoba.protocol.install :as install]
             [kotoba.protocol.vocab :as vocab]
-            [cloud.itonami.app.awai-content-policy :as content-policy]))
+            [cloud.itonami.app.awai-content-policy :as content-policy]
+            [cloud.itonami.app.awai-dnssec-policy :as dnssec-policy]))
 
 (def installation-schema "itonami.app.external-install.v1")
 
@@ -53,7 +54,14 @@
       (not (and (integer? (:binding-sequence origin))
                 (pos? (:binding-sequence origin))
                 (integer? (:binding-expires-at origin))
-                (pos? (:binding-expires-at origin))))
+                (pos? (:binding-expires-at origin))
+                (nat-int? (:dns-proof-checked-at origin))
+                (nat-int? (:dns-proof-expires-at origin))
+                (nat-int? (:installed-at record))
+                (< (:dns-proof-checked-at origin)
+                   (:dns-proof-expires-at origin))
+                (<= (:dns-proof-checked-at origin) (:installed-at record))
+                (< (:installed-at record) (:dns-proof-expires-at origin))))
       (conj {:field :origin :error :invalid-binding-clock})
 
       (not (and (vector? approved)
@@ -64,6 +72,36 @@
 
       (not (nat-int? (:installed-at record)))
       (conj {:field :installed-at :error :invalid-clock}))))
+
+(defn authorize-cell-install
+  "Derive Awai's exact cell-install authorization receipt from a protected local
+  Itonami installation record. This checks the declared app-local cell ID and
+  DNA bundle CID; the host must first authenticate the record's private store."
+  [record cell-id bundle-cid]
+  (let [lock (:install-lock record)
+        cells (:cells lock)
+        cell (some #(when (= cell-id (:id %)) %) cells)
+        bundle-cid-info (when (string? bundle-cid) (cid/parse-cid bundle-cid))]
+    (cond
+      (seq (installation-problems record))
+      {:decision :refuse :error :invalid-installation}
+
+      (not (and (string? cell-id)
+                (vocab/reverse-dns-id? cell-id)
+                (string? bundle-cid)
+                (not (:error bundle-cid-info))
+                (= :dag-cbor (:codec bundle-cid-info))))
+      {:decision :refuse :error :invalid-cell-install-reference}
+
+      (not= bundle-cid (:dna-cid cell))
+      {:decision :refuse :error :cell-not-declared-by-install-lock}
+
+      :else
+      {:decision :authorized
+       :app-id (:app-id lock)
+       :release-cid (:release-cid lock)
+       :cell-id cell-id
+       :bundle-cid bundle-cid})))
 
 (defn prepare-install
   "Turn a verified domain resolution into a fetch-and-consent plan.
@@ -84,7 +122,14 @@
                 (integer? (:binding-sequence resolved))
                 (pos? (:binding-sequence resolved))
                 (integer? (:binding-expires-at resolved))
-                (pos? (:binding-expires-at resolved))))
+                (pos? (:binding-expires-at resolved))
+                (nat-int? (:dns-proof-checked-at resolved))
+                (nat-int? (:dns-proof-expires-at resolved))
+                (dnssec-policy/fresh-proof? (:domain resolved)
+                                            (:dns-proof resolved)
+                                            (:resolved-at resolved))
+                (< (:dns-proof-checked-at resolved)
+                   (:dns-proof-expires-at resolved))))
       {:decision :refuse :error :invalid-domain-origin}
 
       :else
@@ -92,7 +137,9 @@
        :install-lock lock
        :origin (select-keys resolved
                             [:domain :binding-cid :binding-sequence
-                             :binding-expires-at])
+                             :binding-expires-at :dns-proof-checked-at
+                             :dns-proof-expires-at])
+       :dns-proof (:dns-proof resolved)
        :required-content-cids (install/required-content-cids lock)
        :consent-required-caps (:requested-caps lock)})))
 
@@ -148,12 +195,14 @@
         previous-field (case type
                          "app/release" :previous-release-cid
                          "domain/bind" :previous-binding-cid
+                         "app/revoke" :previous-revoke-cid
                          nil)
         previous (get body previous-field)
-        unexpected-previous-field (case type
-                                    "app/release" :previous-binding-cid
-                                    "domain/bind" :previous-release-cid
-                                    nil)]
+        unexpected-previous-fields (case type
+                                     "app/release" #{:previous-binding-cid :previous-revoke-cid}
+                                     "domain/bind" #{:previous-release-cid :previous-revoke-cid}
+                                     "app/revoke" #{:previous-release-cid :previous-binding-cid}
+                                     #{:previous-release-cid :previous-binding-cid :previous-revoke-cid})]
     (and (map? record)
          (= type (:type record))
          (cidv1? (:cid record))
@@ -162,7 +211,7 @@
          (nat-int? (:sequence record))
          (map? body)
          (integer? sequence) (pos? sequence)
-         (not (contains? body unexpected-previous-field))
+         (not-any? #(contains? body %) unexpected-previous-fields)
          ;; The app.registry host projects nullable genesis predecessor CIDs as
          ;; the empty string. Treat it like absence here; the chain resolver
          ;; still requires every non-root entry to connect to the unique root.
@@ -202,6 +251,59 @@
          (string? (:spki-sha256 body))
          (re-matches #"[0-9a-f]{64}" (:spki-sha256 body))
          (nat-int? (:expires-at body)))))
+
+(defn- valid-revocation-record? [record]
+  (let [body (:body record)]
+    (and (map? record)
+         (= "app/revoke" (:type record))
+         (cidv1? (:cid record))
+         (nat-int? (:sequence record))
+         (valid-registry-record? record "app/revoke")
+         (map? body)
+         (or (= #{:app-id :publisher-did :release-cid :sequence :reason-code :issued-at}
+                (set (keys body)))
+             (= #{:app-id :publisher-did :release-cid :sequence :previous-revoke-cid
+                  :reason-code :issued-at}
+                (set (keys body))))
+         (vocab/reverse-dns-id? (:app-id body))
+         (vocab/did-key? (:publisher-did body))
+         (cidv1? (:release-cid body))
+         (string? (:reason-code body))
+         (re-matches #"[a-z][a-z0-9-]{0,31}" (:reason-code body))
+         (nat-int? (:issued-at body)))))
+
+(defn- release-revocation [release records]
+  (let [body (:body release)
+        revocations (filter #(and (= "app/revoke" (:type %))
+                                  (= (:app-id body) (get-in % [:body :app-id]))
+                                  (= (:publisher-did body)
+                                     (get-in % [:body :publisher-did])))
+                            records)
+        chain (when (seq revocations)
+                (registry-linear-tip revocations :previous-revoke-cid))
+        revocation (some #(when (= (:cid release) (get-in % [:body :release-cid])) %)
+                         revocations)]
+    (cond
+      (= :conflict (:decision chain))
+      {:decision :conflict :reason :revocation-chain-conflict}
+
+      revocation
+      {:decision :revoked :record revocation}
+
+      :else
+      {:decision :clear})))
+
+(defn- valid-revocation-targets? [records]
+  (every? (fn [revocation]
+            (let [body (:body revocation)
+                  target (some #(when (= (:release-cid body) (:cid %)) %)
+                               records)]
+              (and target
+                   (= "app/release" (:type target))
+                   (= (:app-id body) (get-in target [:body :app-id]))
+                   (= (:publisher-did body)
+                      (get-in target [:body :publisher-did])))))
+          (filter #(= "app/revoke" (:type %)) records)))
 
 (defn- release-content-origins [release records now]
   (let [body (:body release)
@@ -260,6 +362,8 @@
                               records)
             release-result (registry-linear-tip releases :previous-release-cid)
             release-record (:record release-result)
+            revocation-result (when (= :tip (:decision release-result))
+                                (release-revocation release-record records))
             content-origin-result (when (= :tip (:decision release-result))
                                     (release-content-origins release-record records now))
             base {:domain domain
@@ -271,7 +375,11 @@
                   :channel (:channel binding)
                   :dns-proof-status :not-checked
                   :manifest-status :not-fetched
-                  :revocation-status :unsupported
+                  :revocation-status (cond
+                                       (= :revoked (:decision revocation-result)) "revoked"
+                                       (= :conflict (:decision revocation-result)) "conflict"
+                                       (= :clear (:decision revocation-result)) "clear"
+                                       :else "not-checked")
                   :content-origin-status (if content-origin-result
                                            (name (:decision content-origin-result))
                                            "not-checked")}]
@@ -281,6 +389,17 @@
 
           (= :missing (:decision release-result))
           (assoc base :decision :release-missing)
+
+          (= :conflict (:decision revocation-result))
+          (assoc base :decision :conflict
+                 :reason (:reason revocation-result))
+
+          (= :revoked (:decision revocation-result))
+          (assoc base :decision :revoked
+                 :reason :release-revoked
+                 :release-cid (:cid release-record)
+                 :release-sequence (get-in release-record [:body :sequence])
+                 :manifest-cid (get-in release-record [:body :manifest-cid]))
 
           (<= (:expires-at binding) now)
           (assoc base :decision :expired
@@ -311,17 +430,18 @@
 
 (defn registry-domain-candidates
   "Derive deterministic domain→release-tip candidates from a read snapshot
-  accepted by the local Awai node. A unique linear chain is only a discovery
-  fact: this does not verify DNSSEC, L5 manifest bytes, revocation, or bundles."
+  whose canonical entry CIDs and signatures were independently verified by
+  the Itonami host. A unique linear chain and revocation state are only
+  discovery facts: DNSSEC, manifest bytes, and bundles are verified separately."
   [registry-result now]
   (let [snapshot (:snapshot registry-result)
         records (:records snapshot)]
     (cond
-      (not= "accepted-by-local-awai-node" (:trust registry-result))
+      (not= "independently-verified-awai-envelopes" (:trust registry-result))
       {:decision :refuse :error :untrusted-registry-snapshot}
 
       (not (and (map? snapshot)
-                (= "awai.app-registry.read.v1" (:schema snapshot))
+                (= "awai.app-registry.read.v3" (:schema snapshot))
                 (cidv1? (:dna-cid snapshot))
                 (vector? records) (<= (count records) 1024)))
       {:decision :refuse :error :invalid-registry-snapshot}
@@ -332,12 +452,16 @@
       (not-every? (fn [record]
                     (or (valid-binding-record? record)
                         (valid-release-record? record)
-                        (valid-content-origin-record? record)))
+                        (valid-content-origin-record? record)
+                        (valid-revocation-record? record)))
                   records)
       {:decision :refuse :error :invalid-registry-record}
 
       (not= (count records) (count (set (map :cid records))))
       {:decision :refuse :error :duplicate-registry-cid}
+
+      (not (valid-revocation-targets? records))
+      {:decision :refuse :error :invalid-revocation-target}
 
       :else
       (let [domains (->> records
@@ -348,15 +472,85 @@
         {:decision :candidates
          :candidates (mapv #(domain-candidate % records now) domains)}))))
 
+(defn verified-release-descriptor
+  "Join one verified manifest block to the exact app/release record that names
+  it. `registry-result` must come from the Awai adapter after it verified every
+  signed envelope; `manifest-result` must come from `awai-manifest/verify-block`.
+  The returned descriptor is the trusted input expected by kotoba.protocol.install."
+  [registry-result release-cid manifest-result]
+  (let [snapshot (:snapshot registry-result)
+        records (:records snapshot)
+        release (some #(when (= release-cid (:cid %)) %) records)
+        body (:body release)
+        revocation (when release (release-revocation release records))
+        manifest (:manifest manifest-result)
+        descriptor (when release
+                     {:verified? true
+                      :app-id (:app-id body)
+                      :publisher-did (:publisher-did body)
+                      :channel (:channel body)
+                      :release-cid (:cid release)
+                      :manifest-cid (:manifest-cid body)
+                      :sequence (:sequence body)
+                      :manifest manifest})]
+    (cond
+      (not= "independently-verified-awai-envelopes" (:trust registry-result))
+      {:decision :refuse :error :untrusted-registry-snapshot}
+
+      (not (and (map? snapshot)
+                (= "awai.app-registry.read.v3" (:schema snapshot))
+                (vector? records)
+                (<= (count records) 1024)))
+      {:decision :refuse :error :invalid-registry-snapshot}
+
+      (not (and release (valid-release-record? release)))
+      {:decision :refuse :error :release-record-not-found-or-invalid}
+
+      (not (every? valid-revocation-record?
+                   (filter #(= "app/revoke" (:type %)) records)))
+      {:decision :refuse :error :invalid-revocation-record}
+
+      (not (valid-revocation-targets? records))
+      {:decision :refuse :error :invalid-revocation-target}
+
+      (= :revoked (:decision revocation))
+      {:decision :refuse :error :release-revoked}
+
+      (= :conflict (:decision revocation))
+      {:decision :refuse :error :revocation-chain-conflict}
+
+      (not= :verified (:decision manifest-result))
+      {:decision :refuse :error :manifest-block-not-verified}
+
+      (not= (:manifest-cid body) (:manifest-cid manifest-result))
+      {:decision :refuse :error :manifest-cid-does-not-match-release}
+
+      (not= (:app-id body) (:app-id manifest-result))
+      {:decision :refuse :error :manifest-app-id-does-not-match-release}
+
+      :else
+      (let [problems (install/verified-release-problems descriptor)]
+        (if (seq problems)
+          {:decision :refuse :error :invalid-release-manifest :problems problems}
+          {:decision :verified :release descriptor})))))
+
 (defn resolve-domain
   "Resolve one hostname from already verified adapter facts and attach its
   install plan. The DNS adapter supplies a fresh DNSSEC-verified TXT proof; the
   Awai adapter supplies the verified binding and selected release."
   [domain {:keys [binding txt-proof release now]}]
-  (let [resolved (install/resolve-entry domain binding txt-proof release now)]
-    (if (= :resolved (:decision resolved))
-      (assoc resolved :install-plan (prepare-install resolved))
-      resolved)))
+  (if-not (dnssec-policy/fresh-proof? domain txt-proof now)
+    {:decision :refuse :error :dnssec-proof-not-fresh-or-invalid}
+    (let [resolved (install/resolve-entry domain binding txt-proof release now)
+          resolved (cond-> resolved
+                     (= :resolved (:decision resolved))
+                     (assoc :dns-proof-checked-at (:checked-at txt-proof)
+                            :dns-proof-expires-at (:expires-at txt-proof)
+                            :dns-proof txt-proof
+                            :resolved-at now))]
+      (if (= :resolved (:decision resolved))
+        (assoc resolved :install-plan (prepare-install resolved))
+        resolved))))
 
 (defn finish-install
   "Produce a host installation record after content verification and the
@@ -382,6 +576,15 @@
 
       (not (nat-int? now))
       {:decision :refuse :error :invalid-clock}
+
+      (not (and (nat-int? (get-in prepared [:origin :dns-proof-expires-at]))
+                (< now (get-in prepared [:origin :dns-proof-expires-at]))
+                (= (get-in prepared [:origin :binding-cid])
+                   (get-in prepared [:dns-proof :binding-cid]))
+                (dnssec-policy/fresh-proof?
+                 (get-in prepared [:origin :domain])
+                 (:dns-proof prepared) now)))
+      {:decision :refuse :error :dnssec-proof-expired}
 
       (seq missing)
       {:decision :refuse :error :content-not-verified :missing-cids missing}

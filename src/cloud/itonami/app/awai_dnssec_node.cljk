@@ -1,0 +1,134 @@
+(ns cloud.itonami.app.awai-dnssec-node
+  "Node host adapter for the local Unbound DNSSEC proof helper.
+
+  The native helper validates from the packaged root DS anchors. It uses the
+  configured system recursive server only as untrusted response transport and
+  returns one exact TXT RRset plus its authenticated TTL and RRSIG expiry."
+  (:require ["node:child_process" :as child-process]
+            ["node:path" :as path]
+            [clojure.string :as str]
+            [kotoba.protocol.cid :as cid]
+            [kotoba.protocol.install :as install]
+            [cloud.itonami.app.awai-dnssec-policy :as proof-policy]))
+
+(def maximum-proof-output-bytes 4096)
+(def helper-timeout-ms 10000)
+
+(defn- proof-from-wire [domain expected-qname stdout]
+  (try
+    (let [wire (js->clj (js/JSON.parse stdout) :keywordize-keys true)
+          expected-keys #{:status :qname :txtValue :checkedAt
+                          :ttlSeconds :signatureExpiresAt}]
+      (if-not (and (map? wire)
+                   (= expected-keys (set (keys wire)))
+                   (= "verified" (:status wire))
+                   (= expected-qname (:qname wire))
+                   (string? (:txtValue wire))
+                   (integer? (:checkedAt wire))
+                   (integer? (:ttlSeconds wire))
+                   (integer? (:signatureExpiresAt wire)))
+        {:decision :unavailable :error :dnssec-helper-invalid-response}
+        (let [prefix "awai-app="
+              txt-value (:txtValue wire)
+              binding-cid (when (str/starts-with? txt-value prefix)
+                            (subs txt-value (count prefix)))
+              parsed-cid (when binding-cid (cid/parse-cid binding-cid))
+              ttl (:ttlSeconds wire)
+              checked-at (:checkedAt wire)
+              signature-expires-at (:signatureExpiresAt wire)
+              now (quot (.now js/Date) 1000)
+              proof {:verified? true
+                     :fresh? true
+                     :dnssec-status :secure
+                     :validator "libunbound+ldns/iana-root-ds"
+                     :domain domain
+                     :qname expected-qname
+                     :binding-cid binding-cid
+                     :checked-at checked-at
+                     :ttl-seconds ttl
+                     :expires-at (+ checked-at ttl)
+                     :signature-expires-at signature-expires-at
+                     :alias-chain []
+                     :txt-record-count 1}]
+          (cond
+            (or (nil? binding-cid) (:error parsed-cid))
+            {:decision :refuse :error :invalid-awai-binding-txt}
+
+            (not (and (nat-int? checked-at)
+                      (<= 1 ttl proof-policy/maximum-proof-ttl-seconds)
+                      (nat-int? signature-expires-at)
+                      (<= (+ checked-at ttl) signature-expires-at)))
+            {:decision :refuse :error :invalid-dnssec-proof-lifetime}
+
+            (not (proof-policy/fresh-proof? domain proof now))
+            {:decision :refuse :error :dns-proof-expired-or-invalid}
+
+            :else
+            {:decision :verified :proof proof}))))
+    (catch :default _
+      {:decision :unavailable :error :dnssec-helper-invalid-response})))
+
+(defn- helper-result [domain qname callback-error stdout]
+  (if callback-error
+    {:decision :unavailable :error :dnssec-resolution-failed}
+    (try
+      (let [wire (js->clj (js/JSON.parse stdout) :keywordize-keys true)]
+        (case (:status wire)
+          "verified" (proof-from-wire domain qname stdout)
+          "refuse" (if (= #{:status :reason} (set (keys wire)))
+                     {:decision :refuse
+                      :error (case (:reason wire)
+                               "dnssec-bogus" :dnssec-bogus
+                               "dnssec-not-secure" :dnssec-not-secure
+                               "dns-name-alias-or-mismatch" :dns-name-alias-or-mismatch
+                               "dns-answer-not-exact" :dns-answer-not-exact
+                               "dns-signature-expired" :dns-signature-expired
+                               :dnssec-proof-refused)}
+                     {:decision :unavailable
+                      :error :dnssec-helper-invalid-response})
+          "unavailable" (if (= #{:status :reason} (set (keys wire)))
+                          {:decision :unavailable
+                           :error (case (:reason wire)
+                                    "dns-record-not-found" :dns-record-not-found
+                                    "dns-resolution-failed" :dns-resolution-failed
+                                    "dnssec-validator-unavailable"
+                                    :dnssec-validator-unavailable
+                                    :dnssec-resolution-unavailable)}
+                          {:decision :unavailable
+                           :error :dnssec-helper-invalid-response})
+          {:decision :unavailable :error :dnssec-helper-invalid-response}))
+      (catch :default _
+        {:decision :unavailable :error :dnssec-helper-invalid-response}))))
+
+(defn resolve-domain-proof!
+  "Resolve and locally validate `_itonami-app.<domain>`.
+
+  `helper-path` and `anchor-path` are absolute paths selected by the host, not
+  values supplied by the requester. The child is launched without a shell."
+  [domain helper-path anchor-path]
+  (let [qname (when (install/canonical-domain? domain)
+                (str "_itonami-app." domain "."))]
+    (cond
+      (nil? qname)
+      (js/Promise.resolve {:decision :refuse :error :invalid-domain})
+
+      (not (and (string? helper-path) (.isAbsolute path helper-path)
+                (string? anchor-path) (.isAbsolute path anchor-path)))
+      (js/Promise.resolve {:decision :unavailable
+                           :error :dnssec-helper-path-unavailable})
+
+      :else
+      (js/Promise.
+       (fn [resolve _reject]
+         (.execFile
+          child-process helper-path
+          #js [qname anchor-path]
+          #js {:encoding "utf8"
+               :timeout helper-timeout-ms
+               :maxBuffer maximum-proof-output-bytes
+               :windowsHide true}
+          (fn [error stdout _stderr]
+            (if error
+              (resolve {:decision :unavailable
+                        :error :dnssec-resolution-failed})
+              (resolve (helper-result domain qname nil stdout))))))))))

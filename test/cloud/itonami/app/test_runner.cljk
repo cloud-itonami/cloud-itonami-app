@@ -32,8 +32,15 @@
             [cloud.itonami.app.connectors-test]
             [cloud.itonami.app.app-directory-test]
             [cloud.itonami.app.awai-apps-test]
+            [cloud.itonami.app.awai-install-store-test]
+            [cloud.itonami.app.awai-envelope-test]
+            [cloud.itonami.app.awai-manifest-test]
+            [cloud.itonami.app.awai-graph-authority-test]
             [cloud.itonami.app.awai-content-test]
-            [cloud.itonami.app.awai-registry-test]
+            [cloud.itonami.app.awai-bundle-node-test]
+            [cloud.itonami.app.awai-sandbox-policy-test]
+            [cloud.itonami.app.awai-registry-node-test]
+            [cloud.itonami.app.awai-install-bridge-test]
             [cloud.itonami.app.connectors-kotoba-parity-test]
             [cloud.itonami.app.appearance-kotoba-parity-test]
             [cloud.itonami.app.desktop-test]
@@ -285,6 +292,16 @@
     cloud.itonami.app.commands-test
     cloud.itonami.app.connectors-test
     cloud.itonami.app.app-directory-test
+    cloud.itonami.app.awai-apps-test
+    cloud.itonami.app.awai-install-store-test
+    cloud.itonami.app.awai-envelope-test
+    cloud.itonami.app.awai-manifest-test
+    cloud.itonami.app.awai-graph-authority-test
+    cloud.itonami.app.awai-content-test
+    cloud.itonami.app.awai-bundle-node-test
+    cloud.itonami.app.awai-sandbox-policy-test
+    cloud.itonami.app.awai-registry-node-test
+    cloud.itonami.app.awai-install-bridge-test
     cloud.itonami.app.connectors-kotoba-parity-test
     cloud.itonami.app.appearance-kotoba-parity-test
     cloud.itonami.app.desktop-test

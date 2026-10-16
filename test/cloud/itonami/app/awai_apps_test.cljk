@@ -1,148 +1,274 @@
 (ns cloud.itonami.app.awai-apps-test
-  (:require [kotoba.test :refer [deftest is]]
+  "Awai registry resolution selects only releases with live signed origins."
+  (:require [ipld.core :as ipld]
+            [kotoba.test :refer [deftest is]]
             [kotoba.protocol.install :as install]
-            [cloud.itonami.app.awai-apps :as apps]))
+            [cloud.itonami.app.awai-apps :as apps]
+            [cloud.itonami.app.awai-manifest :as manifest]))
 
 (def app-id "net.kotoba.murakumo")
-(def publisher-did "did:key:z6MkoPd1PVGGf5gTMGy4nZNrBMszzfaeaNmZfSzgAZZNhDWq")
-(def bundle-cid "bafyreifq7onuoxumrs7tnpdtx5lsnnulu5k24cj75y44sz4ot7n5kz4l5u")
-(def other-cid (str (subs bundle-cid 0 10) "a" (subs bundle-cid 11)))
+(def publisher-did "did:key:z1")
+(def cell-id "net.kotoba.murakumo.notes")
+(def cell-cid (ipld/cid (ipld/encode {"dna" "notes"})))
+(def origin-cids
+  ["bafyreiajuvwx5c52tzkfugs6zzye45sunx4ivoioeht5ckn7o5ak3u3ynq"
+   "bafyreieixtse7yrlgr7fmdhmyrmb2nfedhcbwps6xdrw6ev6mkmfwtv37y"
+   "bafyreig5lceinj4lu7dmntsmf3ggbhhys2j3y4dhnqtqobjeot5bdj4hg4"])
 
-(defn- release
-  ([overrides] (release overrides {}))
-  ([manifest-overrides release-overrides]
-   (merge {:verified? true
-           :app-id app-id
-           :channel "stable"
-           :publisher-did publisher-did
-           :sequence 1
-           :release-cid bundle-cid
-           :manifest-cid bundle-cid
-           :manifest (merge {:kotoba.app/id app-id
-                             :kotoba.app/version "1.0.0"
-                             :kotoba.app/kind "appview"
-                             :kotoba.app/appview-of {:routes ["/"]}
-                             :kotoba.app/bundle-cid bundle-cid
-                             :kotoba.app/caps ["graph/query"]}
-                            manifest-overrides)}
-          release-overrides)))
+(defn- origin-record [cid host pin-char operator-did]
+  {:cid cid
+   :sequence 0
+   :type "content/origin"
+   :body {:app-id app-id
+          :publisher-did publisher-did
+          :operator-did operator-did
+          :host host
+          :spki-sha256 (apply str (repeat 64 pin-char))
+          :expires-at 2000000000}})
 
-(defn- resolved-install
-  ([manifest-overrides] (resolved-install manifest-overrides {}))
-  ([manifest-overrides release-overrides]
-   (let [release (release manifest-overrides release-overrides)
-         lock (:ok (install/create-install-lock release))]
-     (apps/prepare-install
-      {:decision :resolved
-       :domain "murakumo.cloud"
-       :binding-cid bundle-cid
-       :binding-sequence 1
-       :binding-expires-at 2000000000
-       :install-lock lock}))))
+(defn- snapshot [origins release-body]
+  {:schema "awai.app-registry.read.v3"
+   :dna-cid "bafkreifwintjn6lddprilx7xpbxrtorzkuxhjwhs7c4x3c4aippelcipnu"
+   :records (into
+             [{:cid "bafkreihbfo374yy4mz2w3sli2azqfw3ea73cnr3jm5gzqvub7wsh57uoxa"
+               :sequence 0
+               :type "domain/bind"
+               :body {:domain "murakumo.cloud"
+                      :app-id app-id
+                      :publisher-did publisher-did
+                      :domain-owner-did publisher-did
+                      :channel "stable"
+                      :sequence 1
+                      :previous-binding-cid ""
+                      :expires-at 2000000000}}
+              {:cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
+               :sequence 0
+               :type "app/release"
+               :body (merge {:app-id app-id
+                             :publisher-did publisher-did
+                             :channel "stable"
+                             :sequence 1
+                             :previous-release-cid ""
+                             :manifest-cid "bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny"}
+                            release-body)}]
+             origins)})
 
-(defn- install-it [prepared approvals]
-  (apps/finish-install
-   prepared
-   {:verified-cids (set (:required-content-cids prepared))
-    :approved-caps approvals
-    :host-supported ["graph/query" "graph/transact"]
-    :now 1800000000}))
+(defn- registered-origins []
+  (mapv origin-record origin-cids
+        ["content-a.example" "content-b.example" "content-c.example"]
+        [\a \b \c]
+        ["did:key:z2" "did:key:z3" "did:key:z4"]))
 
-(deftest install-requires-verified-content-and-records-local-consent
-  (let [prepared (resolved-install {})
-        installed (install-it prepared ["graph/query"])
-        record (:installation installed)]
-    (is (= :install-prepared (:decision prepared)))
-    (is (= :installed (:decision installed)))
-    (is (= [] (apps/installation-problems record)))
-    (is (= ["graph/query"] (:approved-caps record)))
-    (is (= ["graph/query"] (:effective-capabilities installed)))
-    (is (= :content-not-verified
-           (:error (apps/finish-install
-                    prepared {:verified-cids []
-                              :approved-caps ["graph/query"]
-                              :host-supported ["graph/query"]
-                              :now 1800000000}))))
-    (is (= :invalid-domain-origin
-           (:error (apps/prepare-install
-                    {:decision :resolved
-                     :domain (apply str (interpose "." (repeat 4 (apply str (repeat 63 "a")))))
-                     :binding-cid bundle-cid
-                     :binding-sequence 1
-                     :binding-expires-at 2000000000
-                     :install-lock (:install-lock prepared)}))))))
+(defn- resolve-candidates [snapshot]
+  (apps/registry-domain-candidates
+   {:trust "independently-verified-awai-envelopes" :snapshot snapshot}
+   1800000000))
 
-(deftest cached-launch-keeps-domain-status-outside-app-authority
-  (let [prepared (resolved-install {})
-        installed (install-it prepared ["graph/query"])
-        record (:installation installed)
-        launch (apps/launch-decision
-                record {:verified-cids (set (:required-content-cids prepared))
-                        :host-supported ["graph/query"]
-                        :domain-status :offline})]
-    (is (= :launch (:decision launch)))
-    (is (= :offline (:domain-status launch)))
-    (is (= "murakumo.cloud" (get-in launch [:origin :domain])))
-    (is (= ["graph/query"] (:capabilities launch)))
-    (is (= :content-not-verified
-           (:error (apps/launch-decision
-                    record {:verified-cids []
-                            :host-supported ["graph/query"]}))))))
+(defn- installed-record [cells]
+  {:schema apps/installation-schema
+   :install-lock {:schema install/install-lock-schema
+                  :app-id app-id
+                  :version "1.0.0"
+                  :channel "stable"
+                  :publisher-did
+                  "did:key:z6MkoPd1PVGGf5gTMGy4nZNrBMszzfaeaNmZfSzgAZZNhDWq"
+                  :release-sequence 1
+                  :release-cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
+                  :manifest-cid "bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny"
+                  :bundle-cid "bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny"
+                  :cells cells
+                  :requested-caps []}
+   :origin {:domain "murakumo.cloud"
+            :binding-cid "bafkreihbfo374yy4mz2w3sli2azqfw3ea73cnr3jm5gzqvub7wsh57uoxa"
+            :binding-sequence 1
+            :binding-expires-at 1900000000
+            :dns-proof-checked-at 1800000000
+            :dns-proof-expires-at 1800000300}
+   :approved-caps []
+   :installed-at 1800000001})
 
-(deftest update-retains-existing-consent-and-requires-new-explicit-consent
-  (let [record (:installation (install-it (resolved-install {}) ["graph/query"]))
-        candidate (release {:kotoba.app/version "1.1.0"
-                            :kotoba.app/caps ["graph/query" "graph/transact"]}
-                           {:sequence 2 :release-cid other-cid :manifest-cid other-cid})
-        prepared (apps/prepare-update record candidate)
-        completed (apps/finish-update
-                   record prepared
-                   {:verified-cids (set (:required-content-cids prepared))
-                    :approved-new-caps ["graph/transact"]
-                    :host-supported ["graph/query" "graph/transact"]
-                    :now 1800000001})]
-    (is (= :ready (:decision prepared)))
-    (is (= ["graph/transact"] (:consent-required-caps prepared)))
-    (is (= :updated (:decision completed)))
-    (is (= ["graph/query" "graph/transact"]
-           (:approved-caps (:installation completed))))
-    (is (= ["graph/query" "graph/transact"]
-           (:effective-capabilities completed)))
-    (is (= :capability-not-requested
-           (:error (apps/finish-update
-                    record prepared
-                    {:verified-cids (set (:required-content-cids prepared))
-                     :approved-new-caps ["graph/admin"]
-                     :host-supported ["graph/query" "graph/transact"]
-                     :now 1800000001}))))))
+(deftest first-domain-binding-release-and-origin-records-resolve
+  (let [records (registered-origins)
+        result (resolve-candidates
+                (snapshot records {:content-origin-cids origin-cids}))]
+    (is (= :candidates (:decision result)))
+    (is (= :candidate (get-in result [:candidates 0 :decision])))
+    (is (= 1 (get-in result [:candidates 0 :binding-sequence])))
+    (is (= 1 (get-in result [:candidates 0 :release-sequence])))
+    (is (= "ready" (get-in result [:candidates 0 :content-origin-status])))
+    (is (= ["content-a.example" "content-b.example" "content-c.example"]
+           (mapv :host (get-in result [:candidates 0 :content-origins]))))))
 
-(deftest cell-changes-require-a-matching-runtime-migration-receipt
-  (let [manifest {:kotoba.app/cells [{:id "net.kotoba.murakumo.state"
-                                      :dna-cid bundle-cid}]}
-        record (:installation (install-it (resolved-install manifest) ["graph/query"]))
-        candidate (release {:kotoba.app/version "1.1.0"
-                            :kotoba.app/cells [{:id "net.kotoba.murakumo.state"
-                                                :dna-cid other-cid}]}
-                           {:sequence 2 :release-cid other-cid :manifest-cid other-cid})
-        prepared (apps/prepare-update record candidate)
-        runtime-input {:verified-cids (set (:required-content-cids prepared))
-                       :approved-new-caps []
-                       :host-supported ["graph/query"]
-                       :now 1800000001}
-        denied (apps/finish-update record prepared runtime-input)
-        receipt {:verified? true
-                 :app-id app-id
-                 :from-release-cid (:source-release-cid prepared)
-                 :to-release-cid (get-in prepared [:policy-plan :lock :release-cid])
-                 :changed-cells (:changed-cells prepared)}
-        completed (apps/finish-update record prepared
-                                      (assoc runtime-input :migration-receipt receipt))]
-    (is (= :requires-cell-migration (:decision prepared)))
-    (is (= :migration-receipt-required (:error denied)))
-    (is (= :updated (:decision completed)))
-    (is (= receipt (get-in completed [:installation :last-migration-receipt])))
-    (is (= :migration-receipt-required
-           (:error (apps/finish-update
-                    record prepared
-                    (assoc runtime-input
-                           :migration-receipt (assoc receipt :to-release-cid bundle-cid))))))))
+(deftest publisher-revocation-removes-the-release-from-domain-candidates
+  (let [release-cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
+        revocation {:cid (ipld/cid (ipld/encode {"revocation" release-cid}))
+                    :sequence 0
+                    :type "app/revoke"
+                    :body {:app-id app-id
+                           :publisher-did publisher-did
+                           :release-cid release-cid
+                           :sequence 1
+                           :previous-revoke-cid ""
+                           :reason-code "security-review"
+                           :issued-at 1800000000}}
+        registry (snapshot (registered-origins) {})
+        result (resolve-candidates (update registry :records conj revocation))
+        candidate (first (:candidates result))]
+    (is (= :revoked (:decision candidate)))
+    (is (= :release-revoked (:reason candidate)))
+    (is (= "revoked" (:revocation-status candidate)))
+    (is (= release-cid (:release-cid candidate)))))
+
+(deftest conflicting-revocation-sequences-block-install-candidates
+  (let [release-cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
+        revoke (fn [reason]
+                 {:cid (ipld/cid (ipld/encode {"revocation" reason}))
+                  :sequence 0 :type "app/revoke"
+                  :body {:app-id app-id :publisher-did publisher-did
+                         :release-cid release-cid :sequence 1
+                         :previous-revoke-cid "" :reason-code reason
+                         :issued-at 1800000000}})
+        registry (snapshot (registered-origins) {})]
+    ;; Construct two signed-chain roots; neither may be selected by arrival order.
+    (let [result (resolve-candidates
+                  (update registry :records into
+                          [(revoke "security-review") (revoke "publisher-request")]))
+          candidate (first (:candidates result))]
+      (is (= :conflict (:decision candidate)))
+      (is (= :revocation-chain-conflict (:reason candidate)))
+      (is (= "conflict" (:revocation-status candidate))))))
+
+(deftest revocation-cannot-reference-an-unrelated-publisher-release
+  (let [revocation {:cid (ipld/cid (ipld/encode {"revocation" "mismatch"}))
+                    :sequence 0
+                    :type "app/revoke"
+                    :body {:app-id app-id
+                           :publisher-did publisher-did
+                           :release-cid "bafkreiajuvwx5c52tzkfugs6zzye45sunx4ivoioeht5ckn7o5ak3u3ynq"
+                           :sequence 1
+                           :previous-revoke-cid ""
+                           :reason-code "security-review"
+                           :issued-at 1800000000}}
+        result (resolve-candidates
+                (update (snapshot (registered-origins) {}) :records conj revocation))]
+    (is (= :refuse (:decision result)))
+    (is (= :invalid-revocation-target (:error result)))))
+
+(deftest releases-without-registered-origins-are-not-deployable-candidates
+  (let [result (resolve-candidates (snapshot [] {}))]
+    (is (= :content-origins-missing
+           (get-in result [:candidates 0 :decision])))))
+
+(deftest referenced-origin-expiry-blocks-the-release-candidate
+  (let [records (assoc (registered-origins) 0
+                       (assoc-in (first (registered-origins))
+                                 [:body :expires-at] 1800000000))
+        result (resolve-candidates
+                (snapshot records {:content-origin-cids origin-cids}))]
+    (is (= :content-origins-expired
+           (get-in result [:candidates 0 :decision])))))
+
+(deftest public-manifest-must-match-its-verified-awai-release
+  (let [wire {"schema" "kotoba.app.manifest.v1"
+              "entity" {"kotoba.app/id" app-id
+                        "kotoba.app/version" "1.0.0"
+                        "kotoba.app/kind" "embed"
+                        "kotoba.app/bundle-cid"
+                        "bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny"
+                        "kotoba.app/entry" "index.html"}}
+        manifest-bytes (ipld/encode wire)
+        manifest-cid (ipld/cid manifest-bytes)
+        manifest-result (manifest/verify-block manifest-cid manifest-bytes app-id)
+        release-cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
+        release-record {:cid release-cid
+                        :sequence 0
+                        :type "app/release"
+                        :body {:app-id app-id
+                               :manifest-cid manifest-cid
+                               :publisher-did publisher-did
+                               :channel "stable"
+                               :sequence 1}}
+        registry-result {:trust "independently-verified-awai-envelopes"
+                         :snapshot {:schema "awai.app-registry.read.v3"
+                                    :records [release-record]}}
+        result (apps/verified-release-descriptor
+                registry-result release-cid manifest-result)]
+    (is (= :verified (:decision result)))
+    (is (= release-cid (get-in result [:release :release-cid])))
+    (is (= manifest-cid (get-in result [:release :manifest-cid])))
+    (is (= "net.kotoba.murakumo"
+           (get-in result [:release :manifest :kotoba.app/id])))))
+
+(deftest public-manifest-cannot-be-substituted-for-another-release
+  (let [wire {"schema" "kotoba.app.manifest.v1"
+              "entity" {"kotoba.app/id" app-id
+                        "kotoba.app/version" "1.0.0"
+                        "kotoba.app/kind" "embed"
+                        "kotoba.app/bundle-cid"
+                        "bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny"}}
+        manifest-bytes (ipld/encode wire)
+        manifest-result (manifest/verify-block (ipld/cid manifest-bytes)
+                                               manifest-bytes app-id)
+        release-cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
+        release-record {:cid release-cid :sequence 0 :type "app/release"
+                        :body {:app-id app-id
+                               :manifest-cid "bafkreifwintjn6lddprilx7xpbxrtorzkuxhjwhs7c4x3c4aippelcipnu"
+                               :publisher-did publisher-did
+                               :channel "stable" :sequence 1}}
+        registry-result {:trust "independently-verified-awai-envelopes"
+                         :snapshot {:schema "awai.app-registry.read.v3"
+                                    :records [release-record]}}
+        result (apps/verified-release-descriptor
+                registry-result release-cid manifest-result)]
+    (is (= :refuse (:decision result)))
+    (is (= :manifest-cid-does-not-match-release (:error result)))))
+
+(deftest verified-release-descriptor-refuses-a-revoked-release
+  (let [wire {"schema" "kotoba.app.manifest.v1"
+              "entity" {"kotoba.app/id" app-id
+                        "kotoba.app/version" "1.0.0"
+                        "kotoba.app/kind" "embed"
+                        "kotoba.app/bundle-cid"
+                        "bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny"
+                        "kotoba.app/entry" "index.html"}}
+        manifest-bytes (ipld/encode wire)
+        manifest-cid (ipld/cid manifest-bytes)
+        manifest-result (manifest/verify-block manifest-cid manifest-bytes app-id)
+        release-cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
+        release-record {:cid release-cid :sequence 0 :type "app/release"
+                        :body {:app-id app-id :manifest-cid manifest-cid
+                               :publisher-did publisher-did :channel "stable"
+                               :sequence 1}}
+        revocation {:cid (ipld/cid (ipld/encode {"revoked" release-cid}))
+                    :sequence 1 :type "app/revoke"
+                    :body {:app-id app-id :publisher-did publisher-did
+                           :release-cid release-cid :sequence 1
+                           :previous-revoke-cid "" :reason-code "security-review"
+                           :issued-at 1800000000}}
+        registry-result {:trust "independently-verified-awai-envelopes"
+                         :snapshot {:schema "awai.app-registry.read.v3"
+                                    :records [release-record revocation]}}
+        result (apps/verified-release-descriptor
+                registry-result release-cid manifest-result)]
+    (is (= :refuse (:decision result)))
+    (is (= :release-revoked (:error result)))))
+
+(deftest protected-install-record-authorizes-only-its-exact-cell-cid
+  (let [record (installed-record [{:id cell-id :dna-cid cell-cid}])
+        authorized (apps/authorize-cell-install record cell-id cell-cid)
+        other-cid (ipld/cid (ipld/encode {"dna" "other"}))
+        wrong-cid (apps/authorize-cell-install record cell-id other-cid)
+        undeclared-cell (apps/authorize-cell-install
+                         record "net.kotoba.murakumo.other" cell-cid)
+        corrupted (apps/authorize-cell-install
+                   (assoc-in record [:install-lock :release-cid] "not-a-cid")
+                   cell-id cell-cid)]
+    (is (= {:decision :authorized
+            :app-id app-id
+            :release-cid (get-in record [:install-lock :release-cid])
+            :cell-id cell-id
+            :bundle-cid cell-cid}
+           authorized))
+    (is (= :cell-not-declared-by-install-lock (:error wrong-cid)))
+    (is (= :cell-not-declared-by-install-lock (:error undeclared-cell)))
+    (is (= :invalid-installation (:error corrupted)))))

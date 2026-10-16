@@ -54,3 +54,17 @@ a6b86ad192e4fbfaac43ebd89dd7545340f05b6f:test/cloud/itonami/app/credential_http_
 # Re-saved public zero-seed DID vectors; identical to the existing allowances above.
 d8c308948ae0faf09e09406df9bf29fdc303a0dc:hermes/profiles/itonami-mktg/skills/java-kotoba-migration/references/kotoba-guest-porting.md:generic-api-key:121
 d8c308948ae0faf09e09406df9bf29fdc303a0dc:hermes/profiles/itonami-mktg/skills/java-kotoba-migration/SKILL.md:generic-api-key:174
+
+# Awai app-plane fixtures use public did:key identifiers as publisher identities;
+# the DID encodes public key material only. The envelope test also uses an
+# intentionally malformed did:key string to prove publisher-mismatch rejection.
+# The line-7 apps fixture predates this PR; the remaining exact fingerprints are
+# the app-plane commit under review. No private key or signing seed is present.
+4112a72c27e2a44dbaff5e905a39e982f83bf70c:test/cloud/itonami/app/awai_apps_test.cljk:generic-api-key:7
+2cc76af623ed141d2b35371b5895366d5cf580cb:test/cloud/itonami/app/awai_graph_authority_test.cljk:generic-api-key:7
+2cc76af623ed141d2b35371b5895366d5cf580cb:test/cloud/itonami/app/awai_install_bridge_test.cljk:generic-api-key:18
+2cc76af623ed141d2b35371b5895366d5cf580cb:test/cloud/itonami/app/awai_envelope_test.cljk:generic-api-key:166
+2cc76af623ed141d2b35371b5895366d5cf580cb:test/cloud/itonami/app/awai_install_store_test.cljk:generic-api-key:12
+2cc76af623ed141d2b35371b5895366d5cf580cb:test/cloud/itonami/app/awai_real_peer_integration_run.cljk:generic-api-key:23
+2cc76af623ed141d2b35371b5895366d5cf580cb:test/cloud/itonami/app/awai_install_bridge_client_run.cljk:generic-api-key:24
+2cc76af623ed141d2b35371b5895366d5cf580cb:test/cloud/itonami/app/awai_apps_test.cljk:generic-api-key:74

@@ -1,0 +1,293 @@
+(ns cloud.itonami.app.awai-install-store-node
+  "Node host port for the same protected installation records as the JVM host.
+
+  Records use the existing EDN schema and SHA-256 app key. The JVM and Node
+  writers coordinate through an atomic per-app guard directory; the active
+  Node host can therefore persist the exact record later consumed by the Awai
+  DNA-install bridge without loading the legacy JVM server namespace."
+  (:require ["node:crypto" :as crypto]
+            ["node:fs" :as fs]
+            ["node:path" :as path]
+            [clojure.edn :as edn]
+            [cloud.itonami.app.awai-apps :as apps]
+            [kotoba.protocol.vocab :as vocab]))
+
+(def schema "itonami.app.install-store-receipt.v1")
+(def maximum-install-record-bytes (* 1024 1024))
+(def directory-mode 448) ; 0700
+(def file-mode 384)      ; 0600
+
+(defn- fail! [type]
+  (throw (ex-info (name type) {:type type})))
+
+(defn- valid-app-id? [app-id]
+  (and (string? app-id) (vocab/reverse-dns-id? app-id)))
+
+(defn- app-key [app-id]
+  (-> (.createHash crypto "sha256")
+      (.update app-id "utf8")
+      (.digest "hex")))
+
+(defn- safe-ancestors? [directory]
+  (loop [current (.resolve path directory)]
+    (let [parent (.dirname path current)
+          stat (try (.lstatSync fs current)
+                    (catch :default error
+                      (when-not (= "ENOENT" (.-code error))
+                        (throw error))
+                      nil))]
+      (cond
+        (nil? stat) (if (= current parent) false (recur parent))
+        (.isSymbolicLink stat) false
+        (= current parent) true
+        :else (recur parent)))))
+
+(defn- owner-only? [stat]
+  (let [uid-reader (.-getuid js/process)]
+    (and (fn? uid-reader)
+         (= (.-uid stat) (.getuid js/process))
+         (zero? (bit-and (.-mode stat) 63)))))
+
+(defn- ensure-private-directory! [directory]
+  (when-not (safe-ancestors? directory)
+    (fail! :unsafe-install-store-path))
+  (.mkdirSync fs directory #js {:recursive true :mode directory-mode})
+  (let [stat (.lstatSync fs directory)]
+    (when (or (not (safe-ancestors? directory))
+              (.isSymbolicLink stat)
+              (not (.isDirectory stat)))
+      (fail! :unsafe-install-store-path))
+    (.chmodSync fs directory directory-mode)
+    (when-not (owner-only? (.lstatSync fs directory))
+      (fail! :unsafe-install-store-permissions)))
+  directory)
+
+(defn- installation-root [data-root]
+  (when (or (= "win32" (.-platform js/process))
+            (not (string? data-root)))
+    (fail! :posix-install-store-required))
+  (let [base (.resolve path data-root)
+        app-root (.resolve path base "awai-apps")
+        root (.resolve path app-root "installations")]
+    (ensure-private-directory! app-root)
+    (ensure-private-directory! root)))
+
+(defn- record-path [root app-id]
+  (.resolve path root (str (app-key app-id) ".edn")))
+
+(defn- guard-path [root app-id]
+  (.resolve path root (str (app-key app-id) ".guard")))
+
+(defn- acquire-guard! [root app-id]
+  (let [directory (guard-path root app-id)
+        owner (.resolve path directory "owner")
+        token (str (.-pid js/process) "\n"
+                   (.toString (.randomBytes crypto 32) "hex") "\n")]
+    (try
+      (.mkdirSync fs directory directory-mode)
+      (catch :default error
+        (if (= "EEXIST" (.-code error))
+          (fail! :install-store-busy)
+          (throw error))))
+    (try
+      (.chmodSync fs directory directory-mode)
+      (let [fd (.openSync fs owner "wx" file-mode)]
+        (try
+          (.writeFileSync fs fd token "utf8")
+          (.fsyncSync fs fd)
+          (finally (.closeSync fs fd))))
+      (.chmodSync fs owner file-mode)
+      {:directory directory :owner owner :token token}
+      (catch :default error
+        (try (.unlinkSync fs owner) (catch :default _ nil))
+        (try (.rmdirSync fs directory) (catch :default _ nil))
+        (throw error)))))
+
+(defn- release-guard! [{:keys [directory owner token]}]
+  (try
+    (let [directory-stat (.lstatSync fs directory)
+          owner-stat (.lstatSync fs owner)]
+      (when (and (not (.isSymbolicLink directory-stat))
+                 (.isDirectory directory-stat)
+                 (not (.isSymbolicLink owner-stat))
+                 (.isFile owner-stat)
+                 (owner-only? directory-stat)
+                 (owner-only? owner-stat)
+                 (= token (.readFileSync fs owner "utf8")))
+        (.unlinkSync fs owner)
+        (.rmdirSync fs directory)))
+    (catch :default _ nil)))
+
+(defn- with-app-lock [data-root app-id f]
+  (let [root (installation-root data-root)
+        guard (acquire-guard! root app-id)]
+    (try
+      (f root)
+      (finally (release-guard! guard)))))
+
+(defn- valid-record-for-app? [app-id record]
+  (and (map? record)
+       (= app-id (get-in record [:install-lock :app-id]))
+       (empty? (apps/installation-problems record))))
+
+(defn- read-record-under-lock [root app-id]
+  (let [target (record-path root app-id)
+        stat (try (.lstatSync fs target)
+                  (catch :default error
+                    (when-not (= "ENOENT" (.-code error))
+                      (throw error))
+                    nil))]
+    (cond
+      (nil? stat) {:decision :missing}
+
+      (or (.isSymbolicLink stat)
+          (not (.isFile stat))
+          (not (owner-only? stat))
+          (> (.-size stat) maximum-install-record-bytes))
+      {:decision :refuse :error :invalid-install-record-file}
+
+      :else
+      (try
+        (let [record (edn/read-string (.readFileSync fs target "utf8"))]
+          (if (valid-record-for-app? app-id record)
+            {:decision :found :installation record}
+            {:decision :refuse :error :invalid-installation-record}))
+        (catch :default _
+          {:decision :refuse :error :unreadable-installation-record})))))
+
+(defn- write-record-under-lock! [root app-id record]
+  (let [target (record-path root app-id)
+        target-stat (try (.lstatSync fs target)
+                         (catch :default error
+                           (when-not (= "ENOENT" (.-code error))
+                             (throw error))
+                           nil))
+        temporary (.resolve path root
+                            (str "." (app-key app-id) "."
+                                 (.randomUUID crypto) ".tmp"))
+        content (str (pr-str record) "\n")
+        byte-count (.-length (.from js/Buffer content "utf8"))]
+    (when (and target-stat (.isSymbolicLink target-stat))
+      (fail! :unsafe-install-record-target))
+    (when (> byte-count maximum-install-record-bytes)
+      (fail! :install-record-too-large))
+    (try
+      (let [fd (.openSync fs temporary "wx" file-mode)]
+        (try
+          (.writeFileSync fs fd content "utf8")
+          (.fsyncSync fs fd)
+          (finally (.closeSync fs fd))))
+      (.renameSync fs temporary target)
+      (.chmodSync fs target file-mode)
+      (let [readback (read-record-under-lock root app-id)]
+        (when-not (and (= :found (:decision readback))
+                       (= record (:installation readback)))
+          (fail! :install-record-readback-failed))
+        {:decision :persisted
+         :installation record
+         :receipt {:schema schema
+                   :app-id app-id
+                   :release-cid (get-in record [:install-lock :release-cid])
+                   :installed-at (:installed-at record)}})
+      (finally
+        (try (.unlinkSync fs temporary) (catch :default _ nil))))))
+
+(defn read-installation
+  "Read one protected installation record using the shared cross-host guard."
+  [data-root app-id]
+  (if-not (valid-app-id? app-id)
+    {:decision :refuse :error :invalid-app-id}
+    (try
+      (with-app-lock data-root app-id #(read-record-under-lock % app-id))
+      (catch :default _
+        {:decision :unavailable :error :install-store-unavailable}))))
+
+(defn authorize-cell-install
+  "Authorize an exact Awai DNA cell from the host-private install record."
+  [data-root app-id cell-id bundle-cid]
+  (let [stored (read-installation data-root app-id)]
+    (case (:decision stored)
+      :found (apps/authorize-cell-install (:installation stored)
+                                          cell-id bundle-cid)
+      :missing {:decision :refuse :error :installation-not-found}
+      :refuse stored
+      :unavailable stored
+      {:decision :unavailable :error :install-store-unavailable})))
+
+(defn commit-installation!
+  "Atomically commit a user-approved install/update with compare-and-swap.
+
+  The caller must create `record` only after authenticating the human and
+  recording explicit capability consent. The store itself authenticates its
+  bytes and install tip, not the user's intent."
+  [data-root app-id expected-current-release-cid record]
+  (cond
+    (not (valid-app-id? app-id))
+    {:decision :refuse :error :invalid-app-id}
+
+    (not (valid-record-for-app? app-id record))
+    {:decision :refuse :error :invalid-installation-record}
+
+    :else
+    (try
+      (with-app-lock
+       data-root app-id
+       (fn [root]
+         (let [current (read-record-under-lock root app-id)
+               current-record (:installation current)
+               current-cid (get-in current-record [:install-lock :release-cid])
+               matches? (if (nil? expected-current-release-cid)
+                          (= :missing (:decision current))
+                          (and (= :found (:decision current))
+                               (= expected-current-release-cid current-cid)))]
+           (cond
+             (= :refuse (:decision current)) current
+             (not matches?)
+             {:decision :refuse :error :installation-tip-changed
+              :current-release-cid current-cid}
+             :else
+             (assoc (write-record-under-lock! root app-id record)
+                    :previous current-record)))))
+      (catch :default _
+        {:decision :unavailable :error :install-store-write-failed}))))
+
+(defn rollback-installation!
+  "Restore the exact prior record only while the failed release is current."
+  [data-root app-id failed-release-cid previous]
+  (cond
+    (not (valid-app-id? app-id))
+    {:decision :refuse :error :invalid-app-id}
+
+    (not (and (string? failed-release-cid) (not-empty failed-release-cid)))
+    {:decision :refuse :error :invalid-failed-release}
+
+    (and previous (not (valid-record-for-app? app-id previous)))
+    {:decision :refuse :error :invalid-rollback-record}
+
+    :else
+    (try
+      (with-app-lock
+       data-root app-id
+       (fn [root]
+         (let [current (read-record-under-lock root app-id)
+               current-cid (get-in current [:installation :install-lock :release-cid])]
+           (cond
+             (not= :found (:decision current))
+             {:decision :refuse :error :installation-not-current}
+
+             (not= failed-release-cid current-cid)
+             {:decision :refuse :error :installation-tip-changed
+              :current-release-cid current-cid}
+
+             previous
+             (assoc (write-record-under-lock! root app-id previous)
+                    :restored-release-cid
+                    (get-in previous [:install-lock :release-cid]))
+
+             :else
+             (do
+               (.unlinkSync fs (record-path root app-id))
+               {:decision :rolled-back
+                :removed-release-cid failed-release-cid})))))
+      (catch :default _
+        {:decision :unavailable :error :install-store-rollback-failed}))))

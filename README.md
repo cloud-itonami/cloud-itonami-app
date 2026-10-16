@@ -52,11 +52,18 @@ Data Integrity proof.
 
 The shared external Awai-app lifecycle coordinator is an initial host-side
 policy slice in `cloud.itonami.app.awai-apps`, including per-operation
-capability authorization and host-adapter dispatch. A local read-only bridge
-now connects accepted Awai registry records to the authenticated marketplace;
-see [`docs/awai-app-runtime.md`](docs/awai-app-runtime.md). DNSSEC, independent
-content origins, cell migration, sandbox execution and the public `itonami.app`
-launcher are still adapter/runtime work and are not qualified.
+capability authorization, host-adapter dispatch, and protected local install
+records. Local registry, DNSSEC, and content-origin adapters now exist in
+source, and the authenticated marketplace can inspect accepted candidates and
+check a domain binding proof. A separate launcher now has a loopback-only,
+explicit-consent install route that can call the token-protected Awai cell
+bridge; it has not passed a successful end-to-end installation. Isolated app
+execution is now available for a locally installed, CID-verified bundle in a
+per-app `.localhost` iframe with a restrictive CSP and browser sandbox;
+network access and host capabilities are disabled. This has only been exercised
+with a local fixture. Update consent, a host-capability bridge, and the public
+`itonami.app` gateway remain unconnected. See
+[`docs/awai-app-runtime.md`](docs/awai-app-runtime.md).
 The named public-domain inventory and staged migration gates are in
 [`docs/awai-app-domain-inventory.md`](docs/awai-app-domain-inventory.md); its
 Cloudflare snapshot is read-only and does not establish a complete external

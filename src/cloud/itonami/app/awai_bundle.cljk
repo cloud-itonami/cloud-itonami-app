@@ -1,0 +1,208 @@
+(ns cloud.itonami.app.awai-bundle
+  "Materialize one app entry from the verified local UnixFS block store.
+
+  This is a host-only reader: it never fetches network data or exposes a
+  filesystem path. Every block is re-read through the CID-checking store. The
+  caller must still verify the publisher/release authorization and mount the
+  returned bytes inside the app sandbox before showing them to a user."
+  (:require [clojure.string :as str]
+            [ipld.dag-pb :as dag-pb]
+            [protobuf.wire :as protobuf]
+            [kotoba.protocol.cid :as cid]
+            [cloud.itonami.app.awai-content-store :as content-store])
+  (:import [java.io ByteArrayOutputStream]
+           [java.nio.charset StandardCharsets]))
+
+(def maximum-entry-bytes (* 64 1024 1024))
+(def maximum-entry-blocks 4096)
+(def maximum-directory-depth 32)
+(def maximum-file-depth 32)
+
+(def ^:private unixfs-data-schema
+  {1 {:name :type :type :enum}
+   2 {:name :data :type :bytes}
+   3 {:name :filesize :type :uint64}
+   4 {:name :blocksizes :type :uint64 :repeated true}})
+
+(def ^:private unixfs-directory-type 1)
+(def ^:private unixfs-file-type 2)
+(def ^:private raw-codec :raw)
+(def ^:private dag-pb-codec :dag-pb)
+(def ^:private byte-array-class (class (byte-array 0)))
+
+(def ^:private content-types
+  {".html" "text/html; charset=utf-8"
+   ".htm" "text/html; charset=utf-8"
+   ".css" "text/css; charset=utf-8"
+   ".js" "text/javascript; charset=utf-8"
+   ".mjs" "text/javascript; charset=utf-8"
+   ".json" "application/json; charset=utf-8"
+   ".wasm" "application/wasm"
+   ".svg" "image/svg+xml"
+   ".png" "image/png"
+   ".jpg" "image/jpeg"
+   ".jpeg" "image/jpeg"
+   ".webp" "image/webp"
+   ".woff2" "font/woff2"})
+
+(defn- refuse! [reason data]
+  (throw (ex-info (name reason) (assoc data :reason reason))))
+
+(defn- cid-codec [block-cid]
+  (when-not (string? block-cid)
+    (refuse! :invalid-cid {:cid block-cid}))
+  (let [{:keys [codec error]} (cid/parse-cid block-cid)]
+    (when error
+      (refuse! :invalid-cid {:cid block-cid}))
+    codec))
+
+(defn- read-block! [block-cid budget]
+  (let [next-count (swap! budget inc)]
+    (when (> next-count maximum-entry-blocks)
+      (refuse! :entry-block-limit {:maximum maximum-entry-blocks}))
+    (let [result (content-store/read-verified-block block-cid)]
+      (when-not (and (= :verified (:decision result))
+                     (= block-cid (:cid result))
+                     (instance? byte-array-class (:bytes result)))
+        (refuse! :verified-content-block-unavailable
+                 {:cid block-cid :store-decision (:decision result)}))
+      (:bytes result))))
+
+(defn- decode-unixfs-data [block-cid node-bytes]
+  (let [node (try
+               (dag-pb/decode node-bytes)
+               (catch Exception _
+                 (refuse! :invalid-dag-pb-node {:cid block-cid})))
+        data (try
+               (protobuf/decode unixfs-data-schema (:data node))
+               (catch Exception _
+                 (refuse! :invalid-unixfs-data {:cid block-cid})))]
+    (assoc data :links (:links node))))
+
+(defn- valid-entry-path? [entry]
+  (and (string? entry)
+       (not-empty entry)
+       (<= (alength (.getBytes ^String entry StandardCharsets/UTF_8)) 2048)
+       (not (.startsWith ^String entry "/"))
+       (not (.endsWith ^String entry "/"))
+       (not (.contains ^String entry "\\"))
+       (every? (fn [segment]
+                 (and (not-empty segment)
+                      (not (#{"." ".."} segment))
+                      (<= (alength (.getBytes ^String segment StandardCharsets/UTF_8)) 255)
+                      (not-any? #(or (< (int %) 0x20) (= (int %) 0x7f)) segment)))
+               (.split ^String entry "/" -1))))
+
+(defn- directory-links [directory-cid directory-bytes]
+  (let [data (decode-unixfs-data directory-cid directory-bytes)
+        links (:links data)
+        names (mapv :name links)]
+    (when-not (= unixfs-directory-type (:type data))
+      (refuse! :bundle-root-or-path-component-not-directory
+               {:cid directory-cid :unixfs-type (:type data)}))
+    (when-not (and (vector? links)
+                   (every? (fn [{:keys [cid name]}]
+                             (and (string? cid) (not-empty cid)
+                                  (string? name) (not-empty name)
+                                  (not (#{"." ".."} name))
+                                  (not (re-find #"[/\\\u0000-\u001f]" name))))
+                           links)
+                   (= (count names) (count (set names))))
+      (refuse! :invalid-unixfs-directory-links {:cid directory-cid}))
+    links))
+
+(defn- resolve-entry-cid [bundle-cid entry-path budget]
+  (when-not (= dag-pb-codec (cid-codec bundle-cid))
+    (refuse! :bundle-root-must-be-dag-pb-directory {:cid bundle-cid}))
+  (let [segments (vec (.split ^String entry-path "/" -1))]
+    (loop [current-cid bundle-cid
+           remaining segments
+           depth 0]
+      (when (> depth maximum-directory-depth)
+        (refuse! :bundle-directory-depth-limit
+                 {:maximum maximum-directory-depth}))
+      (let [node-bytes (read-block! current-cid budget)
+            links (directory-links current-cid node-bytes)
+            child-name (first remaining)
+            matches (filter #(= child-name (:name %)) links)]
+        (when-not (= 1 (count matches))
+          (refuse! :bundle-entry-path-not-found {:segment child-name}))
+        (let [child-cid (:cid (first matches))]
+          (if (= 1 (count remaining))
+            child-cid
+            (recur child-cid (subvec remaining 1) (inc depth))))))))
+
+(defn- append-file! [^ByteArrayOutputStream output file-cid budget depth]
+  (when (> depth maximum-file-depth)
+    (refuse! :unixfs-file-depth-limit {:maximum maximum-file-depth}))
+  (let [codec (cid-codec file-cid)
+        block-bytes (read-block! file-cid budget)]
+    (case codec
+      :raw
+      (do
+        (when (> (+ (.size output) (alength ^bytes block-bytes))
+                 maximum-entry-bytes)
+          (refuse! :entry-size-limit {:maximum maximum-entry-bytes}))
+        (.write output ^bytes block-bytes 0 (alength ^bytes block-bytes)))
+
+      :dag-pb
+      (let [data (decode-unixfs-data file-cid block-bytes)
+            inline (byte-array (map unchecked-byte (or (:data data) [])))
+            links (:links data)
+            block-sizes (vec (or (:blocksizes data) []))
+            declared-size (:filesize data)
+            start-size (.size output)]
+        (when-not (= unixfs-file-type (:type data))
+          (refuse! :unixfs-entry-is-not-a-file
+                   {:cid file-cid :unixfs-type (:type data)}))
+        (when-not (and (vector? links)
+                       (= (count links) (count block-sizes))
+                       (every? #(and (integer? %) (not (neg? %))) block-sizes)
+                       (integer? declared-size) (not (neg? declared-size))
+                       (<= declared-size maximum-entry-bytes)
+                       (= declared-size (+ (alength inline) (reduce + 0 block-sizes))))
+          (refuse! :invalid-unixfs-file-size-metadata {:cid file-cid}))
+        (when (> (+ start-size declared-size) maximum-entry-bytes)
+          (refuse! :entry-size-limit {:maximum maximum-entry-bytes}))
+        (.write output inline 0 (alength inline))
+        (doseq [[link expected-size] (map vector links block-sizes)]
+          (let [before (.size output)]
+            (append-file! output (:cid link) budget (inc depth))
+            (when-not (= expected-size (- (.size output) before))
+              (refuse! :unixfs-child-size-mismatch
+                       {:cid (:cid link) :expected expected-size}))))
+        (when-not (= declared-size (- (.size output) start-size))
+          (refuse! :unixfs-file-size-mismatch {:cid file-cid})))
+
+      (refuse! :unsupported-unixfs-file-codec {:cid file-cid :codec codec}))))
+
+(defn materialize-entry
+  "Read one manifest entry from a previously staged UnixFS bundle.
+
+  `bundle-cid` must identify a normal DAG-PB UnixFS directory. `entry` is a
+  slash-separated relative path such as `index.html`. Returned bytes are
+  intended only for a verified, sandboxed app host. This reader supports
+  regular directories and files, not HAMT-sharded directories or symlinks."
+  [bundle-cid entry]
+  (if-not (valid-entry-path? entry)
+    {:decision :refuse :error :invalid-entry-path}
+    (let [budget (atom 0)]
+      (try
+        (let [entry-cid (resolve-entry-cid bundle-cid entry budget)
+              output (ByteArrayOutputStream.)]
+          (append-file! output entry-cid budget 0)
+          (let [bytes (.toByteArray output)
+                extension (some->> (last (.split ^String entry "/" -1))
+                                   (re-find #"\.[^.]+$")
+                                   str/lower-case)]
+            {:decision :materialized
+             :bundle-cid bundle-cid
+             :entry entry
+             :entry-cid entry-cid
+             :content-type (get content-types extension "application/octet-stream")
+             :byte-count (alength ^bytes bytes)
+             :block-count @budget
+             :bytes bytes}))
+        (catch Exception error
+          {:decision :refuse
+           :error (or (:reason (ex-data error)) :bundle-entry-unavailable)})))))

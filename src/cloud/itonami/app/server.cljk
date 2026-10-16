@@ -10,6 +10,9 @@
             [cloud.itonami.app.app-client :as app-client]
             [cloud.itonami.app.app-directory :as app-directory]
             [cloud.itonami.app.awai-apps :as awai-apps]
+            [cloud.itonami.app.awai-dnssec :as awai-dnssec]
+            [cloud.itonami.app.awai-install-store :as awai-install-store]
+            [cloud.itonami.app.awai-manifest-store :as awai-manifest-store]
             [cloud.itonami.app.awai-registry :as awai-registry]
             [cloud.itonami.app.public-bot-catalog :as public-bot-catalog]
             [cloud.itonami.app.hermes-surface :as hermes-surface]
@@ -6052,6 +6055,32 @@
       (throw (ex-info "その受付IDの切り抜きはありません。"
                       {:type :issue-comment/not-found})))))
 
+(defn- candidate-installation-status [candidate]
+  (if (= :candidate (:decision candidate))
+    (let [result (awai-install-store/read-installation (:app-id candidate))]
+      (case (:decision result)
+        :missing
+        (assoc candidate :local-installation-status "not-installed")
+
+        :found
+        (let [record (:installation result)
+              installed-lock (:install-lock record)
+              installed-release-cid (:release-cid installed-lock)
+              installed-sequence (:release-sequence installed-lock)
+              candidate-sequence (:release-sequence candidate)
+              status (cond
+                       (= installed-release-cid (:release-cid candidate)) "current"
+                       (> installed-sequence candidate-sequence) "local-ahead"
+                       (< installed-sequence candidate-sequence) "update-available"
+                       :else "sequence-conflict")]
+          (assoc candidate
+                 :local-installation-status status
+                 :installed-release-cid installed-release-cid
+                 :installed-release-sequence installed-sequence))
+
+        (assoc candidate :local-installation-status "unavailable")))
+    candidate))
+
 (defn- handle-bots!
   "The Bots surface.
 
@@ -6077,11 +6106,156 @@
                           :trust (:trust result)
                           :dna-cid (get-in result [:snapshot :dna-cid])
                           :registry-record-count (count (get-in result [:snapshot :records]))
-                          :candidates (:candidates resolution)})
+                          :candidates (mapv candidate-installation-status
+                                            (:candidates resolution))})
                   (send! exchange 503
                          {:status "unavailable"
                           :reason (name (:error resolution))})))
               (send! exchange 503 result))))
+
+      (and (= method "POST") (= path "/api/bots/awai-app-domain-proof"))
+      (do (require-origin! exchange config)
+          (require-csrf! exchange session)
+          (let [domain (:domain (read-json-limited exchange 1024 keyword))
+                snapshot-result (awai-registry/registry-snapshot)
+                resolution (when (= "ok" (:status snapshot-result))
+                             (awai-apps/registry-domain-candidates
+                              snapshot-result (quot (System/currentTimeMillis) 1000)))
+                candidate (when (= :candidates (:decision resolution))
+                            (some #(when (= domain (:domain %)) %) (:candidates resolution)))]
+            (cond
+              (not (string? domain))
+              (send! exchange 400 {:status "refused" :reason "invalid-domain"})
+
+              (not= "ok" (:status snapshot-result))
+              (send! exchange 503 {:status "unavailable" :reason "local-awai-node-unavailable"})
+
+              (nil? candidate)
+              (send! exchange 404 {:status "not-found" :reason "domain-not-in-accepted-registry"})
+
+              (not= :candidate (:decision candidate))
+              (send! exchange 409 {:status "refused" :reason "domain-candidate-not-ready"})
+
+              :else
+              (let [proof-result (awai-dnssec/resolve-domain-proof domain)
+                    proof (:proof proof-result)
+                    binding-match? (and (= :verified (:decision proof-result))
+                                        (= (:binding-cid candidate)
+                                           (:binding-cid proof)))]
+                (send! exchange 200
+                       {:status (if binding-match? "verified" "not-verified")
+                        :decision (name (:decision proof-result))
+                        :reason (some-> (:error proof-result) name)
+                        :domain domain
+                        :binding-match? (boolean binding-match?)
+                        :binding-cid (when binding-match? (:binding-cid proof))
+                        :proof-expires-at (when binding-match? (:expires-at proof))}))))
+
+      (and (= method "POST") (= path "/api/bots/awai-app-install-plan"))
+      (do (require-origin! exchange config)
+          (require-csrf! exchange session)
+          (let [domain (:domain (read-json-limited exchange 1024 keyword))
+                now (quot (System/currentTimeMillis) 1000)
+                snapshot-result (awai-registry/registry-snapshot)
+                resolution (when (= "ok" (:status snapshot-result))
+                             (awai-apps/registry-domain-candidates
+                              snapshot-result now))
+                candidate (when (= :candidates (:decision resolution))
+                            (some #(when (= domain (:domain %)) %)
+                                  (:candidates resolution)))]
+            (cond
+              (not (string? domain))
+              (send! exchange 400 {:status "refused" :reason "invalid-domain"})
+
+              (not= "ok" (:status snapshot-result))
+              (send! exchange 503 {:status "unavailable"
+                                   :reason "local-awai-node-unavailable"})
+
+              (nil? candidate)
+              (send! exchange 404 {:status "not-found"
+                                    :reason "domain-not-in-accepted-registry"})
+
+              (not= :candidate (:decision candidate))
+              (send! exchange 409 {:status "refused"
+                                   :reason "domain-candidate-not-ready"})
+
+              :else
+              (let [proof-result (awai-dnssec/resolve-domain-proof domain)
+                    proof (:proof proof-result)
+                    binding-match? (and (= :verified (:decision proof-result))
+                                        (= (:binding-cid candidate)
+                                           (:binding-cid proof)))]
+                (if-not binding-match?
+                  (send! exchange 409 {:status "refused"
+                                       :reason (if (= :verified (:decision proof-result))
+                                                 "dns-binding-mismatch"
+                                                 (name (:decision proof-result)))})
+                  (let [manifest-result
+                        (awai-manifest-store/fetch-release-manifest!
+                         candidate (quot (System/currentTimeMillis) 1000))
+                        release-result
+                        (when (= :verified (:decision manifest-result))
+                          (awai-apps/verified-release-descriptor
+                           snapshot-result (:release-cid candidate) manifest-result))
+                        now (quot (System/currentTimeMillis) 1000)
+                        binding {:verified? true
+                                 :domain domain
+                                 :entry-cid (:binding-cid candidate)
+                                 :app-id (:app-id candidate)
+                                 :publisher-did (:publisher-did candidate)
+                                 :channel (:channel candidate)
+                                 :sequence (:binding-sequence candidate)
+                                 :expires-at (:binding-expires-at candidate)}
+                        resolved (when (= :verified (:decision release-result))
+                                   (awai-apps/resolve-domain
+                                    domain {:binding binding
+                                            :txt-proof proof
+                                            :release (:release release-result)
+                                            :now now}))]
+                    (cond
+                      (not= :verified (:decision manifest-result))
+                      (send! exchange 503 {:status "unavailable"
+                                           :reason (name (or (:error manifest-result)
+                                                             :manifest-unavailable))})
+
+                      (not= :verified (:decision release-result))
+                      (send! exchange 409 {:status "refused"
+                                           :reason (name (or (:error release-result)
+                                                             :release-manifest-invalid))})
+
+                      (not= :install-prepared
+                            (get-in resolved [:install-plan :decision]))
+                      (send! exchange 409 {:status "refused"
+                                           :reason (name (or (get-in resolved
+                                                                    [:install-plan :error])
+                                                             (:error resolved)
+                                                             :install-plan-unavailable))})
+
+                      :else
+                      (let [plan (:install-plan resolved)
+                            lock (:install-lock plan)
+                            app-manifest (:manifest (:release release-result))]
+                        (send! exchange 200
+                               {:status "install-plan-ready"
+                                :domain domain
+                                :app-id (:app-id candidate)
+                                :publisher-did (:publisher-did candidate)
+                                :channel (:channel candidate)
+                                :release-cid (:release-cid candidate)
+                                :release-sequence (:release-sequence candidate)
+                                :manifest-cid (:manifest-cid candidate)
+                                :version (:kotoba.app/version app-manifest)
+                                :kind (:kotoba.app/kind app-manifest)
+                                :bundle-cid (:kotoba.app/bundle-cid app-manifest)
+                                :cells (:cells lock)
+                                :required-capabilities
+                                (:consent-required-caps plan)
+                                :required-content-cids
+                                (:required-content-cids plan)
+                                :dns-proof-expires-at
+                                (get-in plan [:origin :dns-proof-expires-at])
+                                :manifest-storage-receipt
+                                (:storage-receipt manifest-result)}))))))))
 
       (and (= method "GET") (= path "/api/bots/workspace-apps"))
       (send! exchange 200 (app-directory/workspace-catalog session))

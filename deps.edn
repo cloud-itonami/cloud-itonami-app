@@ -81,6 +81,9 @@
         ;; already had. kotoba-lang/async is channels, a different model, and
         ;; not a substitute.
         funcool/promesa {:mvn/version "12.0.1"}
+        ;; Embedded DNSSEC validation for Awai domain binding TXT proofs.
+        ;; Pin a release after CVE-2024-25638 and KeyTrap fixes.
+        dnsjava/dnsjava {:mvn/version "3.6.5"}
        org.clojure/clojure {:mvn/version "1.12.5"}
   ;; 回遊 — the shared visit-telemetry vocabulary. Used here for the LOCAL
   ;; workspace counters only: nothing this library touches is transmitted
@@ -97,12 +100,27 @@
   io.github.kotoba-lang/kotoba-protocol
   {:git/url "https://github.com/kotoba-lang/kotoba-protocol.git"
    ;; Shared Awai app identity, install, capability-consent, and offline-launch policy.
-   :git/sha "4e3f3d456ec39c1b6419b55f113ae07298fec1ed"}
-  ;; L2 graph CID: protocol.graph overlay + chain.core/commit! (ADR-2608145400).
+   :git/sha "3aadfbcb31c4e995276993af9c0d80520b33c1b8"}
+  ;; Shared host content traversal for canonical DAG-CBOR and UnixFS DAG-PB.
+  ;; Match the compiler test pins so chain.core and the host use one IPLD codec.
+  io.github.kotoba-lang/io-multiformats
+  {:git/url "https://github.com/kotoba-lang/io-multiformats.git"
+   :git/sha "e7ae323d3ccbb9aacc92edfd2f3dda20d9b90eed"}
+  io.github.kotoba-lang/io-ipld
+  {:git/url "https://github.com/kotoba-lang/io-ipld.git"
+   :git/sha "c7b8f76b707ec22fa1692907201d44db54d98f13"}
+  ;; The app bundle reader decodes UnixFS Data metadata from DAG-PB blocks.
+  ;; Keep the wire decoder explicit instead of relying on io-ipld's transitives.
+  io.github.kotoba-lang/dev-protobuf
+  {:git/url "https://github.com/kotoba-lang/dev-protobuf.git"
+   :git/sha "cfd0b29997abbcae918ec5e90fddd621dbfb97b6"}
+  ;; L2 graph history verification. This pin adds chain.authorized on top of
+  ;; chain.core's causal CID/parent verification; Itonami still supplies the
+  ;; graph-scoped grant resolver and must state evaluation time/revocation.
   ;; Protocol does not hash and does not depend on chain.
   io.github.kotoba-lang/chain
   {:git/url "https://github.com/kotoba-lang/chain.git"
-   :git/sha "9646b8b858085fdb1172482ce9ce77d6739c75de"}
+   :git/sha "1ef235acf428e9b436cef9532d5794567437e835"}
   ;; IPNS latest pointer: real IPNS Record + delegated DHT routing.
   ;; Exclude ipns's ed25519 / dag-cbor so cacao's org-ietf-* copies of the
   ;; same namespaces (ed25519.core, cbor.core) win.

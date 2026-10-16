@@ -1,0 +1,62 @@
+(ns cloud.itonami.app.awai-manifest-test
+  (:require [ipld.core :as ipld]
+            [kotoba.test :refer [deftest is testing]]
+            [cloud.itonami.app.awai-manifest :as manifest]))
+
+(def app-id "net.kotoba.demo")
+(def bundle-cid "bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny")
+(def dna-cid "bafyreifq7onuoxumrs7tnpdtx5lsnnulu5k24cj75y44sz4ot7n5kz4l5u")
+
+(def valid-entity
+  {"kotoba.app/id" app-id
+   "kotoba.app/version" "1.0.0"
+   "kotoba.app/kind" "embed"
+   "kotoba.app/bundle-cid" bundle-cid
+   "kotoba.app/entry" "index.html"
+   "kotoba.app/caps" ["graph/query"]
+   "kotoba.app/cells" [{"id" "net.kotoba.demo.state"
+                         "dna-cid" dna-cid}]})
+
+(defn- block [schema entity]
+  (ipld/encode {"schema" schema "entity" entity}))
+
+(deftest public-manifest-block-is-cid-bound-and-schema-validated
+  (let [bytes (block "kotoba.app.manifest.v1" valid-entity)
+        cid (ipld/cid bytes)
+        result (manifest/verify-block cid bytes app-id)]
+    (is (= :verified (:decision result)))
+    (is (= cid (:manifest-cid result)))
+    (is (= app-id (:app-id result)))
+    (is (= app-id (get-in result [:manifest :kotoba.app/id])))
+    (is (= [{:id "net.kotoba.demo.state" :dna-cid dna-cid}]
+           (get-in result [:manifest :kotoba.app/cells])))))
+
+(deftest manifest-block-fails-closed-on-wrong-cid-or-app-identity
+  (let [bytes (block "kotoba.app.manifest.v1" valid-entity)
+        cid (ipld/cid bytes)]
+    (is (= :manifest-cid-mismatch
+           (:error (manifest/verify-block
+                    "bafyreihtmsbgoruyxye4ate3jaacwztkamyxkj25kjerg46hlg5hvzcwem"
+                    bytes app-id))))
+    (is (= :invalid-app-manifest
+           (:error (manifest/verify-block cid bytes "net.kotoba.other"))))))
+
+(deftest manifest-block-requires-supported-closed-dag-cbor-envelope
+  (testing "raw data is not a release-manifest block"
+    (is (= :manifest-cid-must-be-dag-cbor
+           (:error (manifest/verify-block bundle-cid (byte-array 0) app-id)))))
+  (testing "unsupported schema cannot be reinterpreted"
+    (let [bytes (block "kotoba.app.manifest.v0" valid-entity)]
+      (is (= :unsupported-manifest-schema
+             (:error (manifest/verify-block (ipld/cid bytes) bytes app-id))))))
+  (testing "unknown top-level fields are rejected"
+    (let [bytes (ipld/encode {"schema" "kotoba.app.manifest.v1"
+                              "entity" valid-entity
+                              "source-graph-cid" "bafkreifwintjn6lddprilx7xpbxrtorzkuxhjwhs7c4x3c4aippelcipnu"})]
+      (is (= :invalid-manifest-envelope
+             (:error (manifest/verify-block (ipld/cid bytes) bytes app-id))))))
+  (testing "unknown Kotoba application attributes are rejected"
+    (let [bytes (block "kotoba.app.manifest.v1"
+                       (assoc valid-entity "kotoba.app/not-a-field" true))]
+      (is (= :invalid-app-manifest
+             (:error (manifest/verify-block (ipld/cid bytes) bytes app-id)))))))

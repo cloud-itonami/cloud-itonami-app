@@ -1,0 +1,130 @@
+(ns cloud.itonami.app.awai-install-store-test
+  (:require [clojure.java.io :as io]
+            [ipld.core :as ipld]
+            [kotoba.test :refer [deftest is]]
+            [kotoba.protocol.install :as install]
+            [cloud.itonami.app.awai-apps :as apps]
+            [cloud.itonami.app.awai-install-store :as install-store]
+            [cloud.itonami.app.config :as config]))
+
+(def app-id "net.kotoba.murakumo")
+(def publisher-did
+  "did:key:z6MkoPd1PVGGf5gTMGy4nZNrBMszzfaeaNmZfSzgAZZNhDWq")
+(def binding-cid
+  "bafkreihbfo374yy4mz2w3sli2azqfw3ea73cnr3jm5gzqvub7wsh57uoxa")
+(def release-cid
+  "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4")
+(def next-release-cid
+  "bafkreic3qbo3fka7dmphpbdn7biccz2fectguonary4walibfqqeuwskny")
+(def manifest-cid
+  "bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny")
+(def bundle-cid
+  "bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny")
+(def cell-id "net.kotoba.murakumo.notes")
+(def dna-cid (ipld/cid (ipld/encode {"dna" "notes"})))
+(def other-dna-cid (ipld/cid (ipld/encode {"dna" "other"})))
+
+(defn- delete-tree! [file]
+  (when (.exists file)
+    (doseq [entry (reverse (file-seq file))]
+      (.delete entry))))
+
+(defn- install-record [release-cid release-sequence installed-at]
+  {:schema apps/installation-schema
+   :install-lock {:schema install/install-lock-schema
+                  :app-id app-id
+                  :version "1.0.0"
+                  :channel "stable"
+                  :publisher-did publisher-did
+                  :release-sequence release-sequence
+                  :release-cid release-cid
+                  :manifest-cid manifest-cid
+                  :bundle-cid bundle-cid
+                  :cells []
+                  :requested-caps []}
+   :origin {:domain "murakumo.cloud"
+            :binding-cid binding-cid
+            :binding-sequence 1
+            :binding-expires-at 1900000000
+            :dns-proof-checked-at 1800000000
+            :dns-proof-expires-at 1800000300}
+   :approved-caps []
+   :installed-at installed-at})
+
+(deftest install-record-survives-cas-update-and-rollback
+  (let [directory (io/file (System/getProperty "java.io.tmpdir")
+                           (str "itonami-awai-install-"
+                                (random-uuid)))
+        first-record (install-record release-cid 1 1800000001)
+        next-record (install-record next-release-cid 2 1800000101)]
+    (try
+      (with-redefs [config/data-dir (constantly directory)]
+        (is (= :missing (:decision (install-store/read-installation app-id))))
+        (let [first-write (install-store/commit-installation!
+                           app-id nil first-record)]
+          (is (= :persisted (:decision first-write)))
+          (is (= first-record
+                 (:installation (install-store/read-installation app-id))))
+          (let [stale (install-store/commit-installation!
+                       app-id next-release-cid next-record)]
+            (is (= :refuse (:decision stale)))
+            (is (= :installation-tip-changed (:error stale)))
+            (is (= first-record
+                   (:installation (install-store/read-installation app-id)))))
+          (let [updated (install-store/commit-installation!
+                         app-id release-cid next-record)]
+            (is (= :persisted (:decision updated)))
+            (is (= first-record (:previous updated)))
+            (is (= next-record
+                   (:installation (install-store/read-installation app-id))))
+            (let [rolled-back (install-store/rollback-installation!
+                               app-id next-release-cid (:previous updated))]
+              (is (= :persisted (:decision rolled-back)))
+              (is (= release-cid (:restored-release-cid rolled-back)))
+              (is (= first-record
+                     (:installation
+                      (install-store/read-installation app-id))))))))
+      (finally
+        (delete-tree! directory)))))
+
+(deftest failed-first-launch-can-remove-the-first-install
+  (let [directory (io/file (System/getProperty "java.io.tmpdir")
+                           (str "itonami-awai-first-install-"
+                                (random-uuid)))
+        record (install-record release-cid 1 1800000001)]
+    (try
+      (with-redefs [config/data-dir (constantly directory)]
+        (is (= :persisted
+               (:decision (install-store/commit-installation! app-id nil record))))
+        (is (= :rolled-back
+               (:decision (install-store/rollback-installation!
+                           app-id release-cid nil))))
+        (is (= :missing
+               (:decision (install-store/read-installation app-id)))))
+      (finally
+        (delete-tree! directory)))))
+
+(deftest protected-install-store-authorizes-only-declared-dna-cell
+  (let [directory (io/file (System/getProperty "java.io.tmpdir")
+                           (str "itonami-awai-cell-install-" (random-uuid)))
+        record (assoc-in (install-record release-cid 1 1800000001)
+                         [:install-lock :cells]
+                         [{:id cell-id :dna-cid dna-cid}])]
+    (try
+      (with-redefs [config/data-dir (constantly directory)]
+        (is (= :missing (:decision (install-store/read-installation app-id))))
+        (is (= :refuse (:decision
+                        (install-store/authorize-cell-install app-id cell-id dna-cid))))
+        (is (= :persisted
+               (:decision (install-store/commit-installation! app-id nil record))))
+        (is (= {:decision :authorized
+                :app-id app-id
+                :release-cid release-cid
+                :cell-id cell-id
+                :bundle-cid dna-cid}
+               (install-store/authorize-cell-install app-id cell-id dna-cid)))
+        (is (= :cell-not-declared-by-install-lock
+               (:error (install-store/authorize-cell-install
+                        app-id cell-id other-dna-cid)))))
+      (finally
+        (delete-tree! directory)))))

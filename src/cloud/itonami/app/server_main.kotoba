@@ -14,11 +14,58 @@
 ;; launcher (amu `--jvm-free` under it), not by bumping that pin.
 
 (ns cloud.itonami.app.server-main
-  (:export [main health-route?]))
+  (:export [main health-route? app-registry-route? platform-status-route?
+            app-domain-proof-route? app-install-plan-route?
+            app-content-stage-route? app-install-route? app-launch-route?
+            app-operation-route? app-static-route? launcher-route?]))
 
 (defn health-route? [method :string path :string] :bool
   (and (string=? method "GET")
        (string=? path "/health")))
+
+(defn app-registry-route? [method :string path :string] :bool
+  (and (string=? method "GET")
+       (string=? path "/api/awai/app-registry")))
+
+(defn platform-status-route? [method :string path :string] :bool
+  (and (string=? method "GET")
+       (string=? path "/api/awai/platform-status")))
+
+(defn app-domain-proof-route? [method :string path :string] :bool
+  (and (string=? method "GET")
+       (string=? path "/api/awai/domain-proof")))
+
+(defn app-install-plan-route? [method :string path :string] :bool
+  (and (string=? method "POST")
+       (string=? path "/api/awai/install-plan")))
+
+(defn app-content-stage-route? [method :string path :string] :bool
+  (and (string=? method "POST")
+       (string=? path "/api/awai/install-content")))
+
+(defn app-install-route? [method :string path :string] :bool
+  (and (string=? method "POST")
+       (string=? path "/api/awai/install")))
+
+(defn app-launch-route? [method :string path :string] :bool
+  (and (string=? method "POST")
+       (string=? path "/api/awai/app-launch")))
+
+(defn app-operation-route? [method :string path :string] :bool
+  (and (string=? method "POST")
+       (string=? path "/api/awai/app-operation")))
+
+;; The Node host applies this guest admission only after recognizing an
+;; app-id.localhost Host on its loopback listener. Any GET path is then
+;; resolved through the installed, CID-verified app bundle; no API methods or
+;; host effects are admitted on this separate app origin.
+(defn app-static-route? [method :string path :string] :bool
+  (string=? method "GET"))
+
+(defn launcher-route? [method :string path :string] :bool
+  (and (string=? method "GET")
+       (or (string=? path "/")
+           (string=? path "/awai-launcher.js"))))
 
 ;; Process start token the host already bound. Not guest listen.
 ;; 1338 is the loopback port the nbb host adapter opens.
