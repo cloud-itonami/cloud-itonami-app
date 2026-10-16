@@ -100,7 +100,7 @@
   io.github.kotoba-lang/kotoba-protocol
   {:git/url "https://github.com/kotoba-lang/kotoba-protocol.git"
    ;; Shared Awai app identity, install, capability-consent, and offline-launch policy.
-   :git/sha "05a27f48b7c9fddab61277bd0041f37ebf0e07e7"}
+   :git/sha "3aadfbcb31c4e995276993af9c0d80520b33c1b8"}
   ;; Shared host content traversal for canonical DAG-CBOR and UnixFS DAG-PB.
   ;; Match the compiler test pins so chain.core and the host use one IPLD codec.
   io.github.kotoba-lang/io-multiformats
