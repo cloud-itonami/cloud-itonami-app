@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.awai-registry-test
   "Awai registry resolution selects only releases with live signed origins."
   (:require [kotoba.test :refer [deftest is]]
+            [cloud.itonami.app.awai-registry-node :as registry-node]
             [cloud.itonami.app.awai-apps :as apps]))
 
 (def app-id "net.kotoba.murakumo")
@@ -22,7 +23,7 @@
           :expires-at 2000000000}})
 
 (defn- snapshot [origins release-body]
-  {:schema "awai.app-registry.read.v1"
+  {:schema "awai.app-registry.read.v4"
    :dna-cid "bafkreifwintjn6lddprilx7xpbxrtorzkuxhjwhs7c4x3c4aippelcipnu"
    :records (into
              [{:cid "bafkreihbfo374yy4mz2w3sli2azqfw3ea73cnr3jm5gzqvub7wsh57uoxa"
@@ -33,6 +34,7 @@
                       :publisher-did publisher-did
                       :domain-owner-did publisher-did
                       :channel "stable"
+                      :release-cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
                       :sequence 1
                       :previous-binding-cid ""
                       :expires-at 2000000000}}
@@ -56,7 +58,7 @@
 
 (defn- resolve-candidates [snapshot]
   (apps/registry-domain-candidates
-   {:trust "accepted-by-local-awai-node" :snapshot snapshot}
+   {:trust "configured-peer-checkpoint-quorum" :snapshot snapshot}
    1800000000))
 
 (deftest first-domain-binding-release-and-origin-records-resolve
@@ -84,3 +86,35 @@
                 (snapshot records {:content-origin-cids origin-cids}))]
     (is (= :content-origins-expired
            (get-in result [:candidates 0 :decision])))))
+
+(def checkpoint-dna-cid "bafkreifwintjn6lddprilx7xpbxrtorzkuxhjwhs7c4x3c4aippelcipnu")
+
+(defn- observation [peer-id operator-did cids]
+  {:peer-id peer-id
+   :operator-did operator-did
+   :snapshot {:dna-cid checkpoint-dna-cid
+              :records (mapv #(hash-map :cid %) cids)}})
+
+(deftest checkpoint-quorum-tolerates-one-stale-peer
+  (let [current ["bafkreiajuvwx5c52tzkfugs6zzye45sunx4ivoioeht5ckn7o5ak3u3ynq"]
+        stale ["bafkreieixtse7yrlgr7fmdhmyrmb2nfedhcbwps6xdrw6ev6mkmfwtv37y"]
+        observations [(observation "peer-a" "did:key:operator-a" current)
+                      (observation "peer-b" "did:key:operator-b" current)
+                      (observation "peer-c" "did:key:operator-c" stale)]
+        result (registry-node/checkpoint-quorum observations 3)]
+    (is (= :quorum (:decision result)))
+    (is (= 2 (:required result)))
+    (is (= 2 (:observed result)))
+    (is (= current (mapv :cid (get-in result [:snapshot :records]))))))
+
+(deftest checkpoint-quorum-refuses-no-majority-and-requires-three-configured-peers
+  (let [left (observation "peer-a" "did:key:operator-a"
+                          ["bafkreiajuvwx5c52tzkfugs6zzye45sunx4ivoioeht5ckn7o5ak3u3ynq"])
+        right (observation "peer-b" "did:key:operator-b"
+                           ["bafkreieixtse7yrlgr7fmdhmyrmb2nfedhcbwps6xdrw6ev6mkmfwtv37y"])
+        split (registry-node/checkpoint-quorum [left right] 3)]
+    (is (= :refuse (:decision split)))
+    (is (= :registry-quorum-unavailable (:error split)))
+    (is (= 2 (registry-node/quorum-size 3)))
+    (is (= 3 (registry-node/quorum-size 4)))
+    (is (= 4 (registry-node/quorum-size 5)))))

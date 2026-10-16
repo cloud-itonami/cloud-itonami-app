@@ -227,6 +227,7 @@
          (vocab/did-key? (:publisher-did body))
          (vocab/did-key? (:domain-owner-did body))
          (string? (:channel body)) (not-empty (:channel body))
+         (cidv1? (:release-cid body))
          (nat-int? (:expires-at body)))))
 
 (defn- valid-release-record? [record]
@@ -360,7 +361,22 @@
                                      (= (:publisher-did binding) (:publisher-did body))
                                      (= (:channel binding) (:channel body))))
                               records)
-            release-result (registry-linear-tip releases :previous-release-cid)
+            release-chain-result (registry-linear-tip releases :previous-release-cid)
+            pinned-release (some #(when (and (= "app/release" (:type %))
+                                             (= (:release-cid binding) (:cid %))) %)
+                                 records)
+            release-result (cond
+                             (not= :tip (:decision release-chain-result))
+                             release-chain-result
+
+                             (nil? pinned-release)
+                             {:decision :missing :reason :pinned-release-missing}
+
+                             (not (some #(= (:cid pinned-release) (:cid %)) releases))
+                             {:decision :conflict :reason :pinned-release-scope-mismatch}
+
+                             :else
+                             {:decision :tip :record pinned-release})
             release-record (:record release-result)
             revocation-result (when (= :tip (:decision release-result))
                                 (release-revocation release-record records))
@@ -429,7 +445,7 @@
                  :content-origins (:origins content-origin-result)))))))
 
 (defn registry-domain-candidates
-  "Derive deterministic domain→release-tip candidates from a read snapshot
+  "Derive deterministic domain→release-pin candidates from a read snapshot
   whose canonical entry CIDs and signatures were independently verified by
   the Itonami host. A unique linear chain and revocation state are only
   discovery facts: DNSSEC, manifest bytes, and bundles are verified separately."
@@ -437,11 +453,11 @@
   (let [snapshot (:snapshot registry-result)
         records (:records snapshot)]
     (cond
-      (not= "independently-verified-awai-envelopes" (:trust registry-result))
+      (not= "configured-peer-checkpoint-quorum" (:trust registry-result))
       {:decision :refuse :error :untrusted-registry-snapshot}
 
       (not (and (map? snapshot)
-                (= "awai.app-registry.read.v3" (:schema snapshot))
+                (= "awai.app-registry.read.v4" (:schema snapshot))
                 (cidv1? (:dna-cid snapshot))
                 (vector? records) (<= (count records) 1024)))
       {:decision :refuse :error :invalid-registry-snapshot}
@@ -494,11 +510,11 @@
                       :sequence (:sequence body)
                       :manifest manifest})]
     (cond
-      (not= "independently-verified-awai-envelopes" (:trust registry-result))
+      (not= "configured-peer-checkpoint-quorum" (:trust registry-result))
       {:decision :refuse :error :untrusted-registry-snapshot}
 
       (not (and (map? snapshot)
-                (= "awai.app-registry.read.v3" (:schema snapshot))
+                (= "awai.app-registry.read.v4" (:schema snapshot))
                 (vector? records)
                 (<= (count records) 1024)))
       {:decision :refuse :error :invalid-registry-snapshot}

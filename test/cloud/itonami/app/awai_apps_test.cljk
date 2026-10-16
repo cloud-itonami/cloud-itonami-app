@@ -27,7 +27,7 @@
           :expires-at 2000000000}})
 
 (defn- snapshot [origins release-body]
-  {:schema "awai.app-registry.read.v3"
+  {:schema "awai.app-registry.read.v4"
    :dna-cid "bafkreifwintjn6lddprilx7xpbxrtorzkuxhjwhs7c4x3c4aippelcipnu"
    :records (into
              [{:cid "bafkreihbfo374yy4mz2w3sli2azqfw3ea73cnr3jm5gzqvub7wsh57uoxa"
@@ -38,6 +38,7 @@
                       :publisher-did publisher-did
                       :domain-owner-did publisher-did
                       :channel "stable"
+                      :release-cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
                       :sequence 1
                       :previous-binding-cid ""
                       :expires-at 2000000000}}
@@ -61,7 +62,7 @@
 
 (defn- resolve-candidates [snapshot]
   (apps/registry-domain-candidates
-   {:trust "independently-verified-awai-envelopes" :snapshot snapshot}
+   {:trust "configured-peer-checkpoint-quorum" :snapshot snapshot}
    1800000000))
 
 (defn- installed-record [cells]
@@ -98,6 +99,36 @@
     (is (= "ready" (get-in result [:candidates 0 :content-origin-status])))
     (is (= ["content-a.example" "content-b.example" "content-c.example"]
            (mapv :host (get-in result [:candidates 0 :content-origins]))))))
+
+(deftest domain-binding-stays-on-its-explicit-release-pin
+  (let [records (registered-origins)
+        release-one "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
+        release-two {:cid (ipld/cid (ipld/encode {"release" "next"}))
+                     :sequence 1
+                     :type "app/release"
+                     :body {:app-id app-id
+                            :publisher-did publisher-did
+                            :channel "stable"
+                            :sequence 2
+                            :previous-release-cid release-one
+                            :manifest-cid (ipld/cid (ipld/encode {"manifest" "next"}))
+                            :content-origin-cids origin-cids}}
+        result (resolve-candidates
+                (update (snapshot records {:content-origin-cids origin-cids})
+                        :records conj release-two))
+        candidate (first (:candidates result))]
+    (is (= :candidate (:decision candidate)))
+    (is (= release-one (:release-cid candidate)))
+    (is (= 1 (:release-sequence candidate)))
+    (is (= "bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny"
+           (:manifest-cid candidate)))))
+
+(deftest domain-binding-requires-a-release-cid
+  (let [registry (update-in (snapshot (registered-origins) {})
+                            [:records 0 :body] dissoc :release-cid)
+        result (resolve-candidates registry)]
+    (is (= :refuse (:decision result)))
+    (is (= :invalid-registry-record (:error result)))))
 
 (deftest publisher-revocation-removes-the-release-from-domain-candidates
   (let [release-cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
@@ -188,8 +219,8 @@
                                :publisher-did publisher-did
                                :channel "stable"
                                :sequence 1}}
-        registry-result {:trust "independently-verified-awai-envelopes"
-                         :snapshot {:schema "awai.app-registry.read.v3"
+        registry-result {:trust "configured-peer-checkpoint-quorum"
+                         :snapshot {:schema "awai.app-registry.read.v4"
                                     :records [release-record]}}
         result (apps/verified-release-descriptor
                 registry-result release-cid manifest-result)]
@@ -215,8 +246,8 @@
                                :manifest-cid "bafkreifwintjn6lddprilx7xpbxrtorzkuxhjwhs7c4x3c4aippelcipnu"
                                :publisher-did publisher-did
                                :channel "stable" :sequence 1}}
-        registry-result {:trust "independently-verified-awai-envelopes"
-                         :snapshot {:schema "awai.app-registry.read.v3"
+        registry-result {:trust "configured-peer-checkpoint-quorum"
+                         :snapshot {:schema "awai.app-registry.read.v4"
                                     :records [release-record]}}
         result (apps/verified-release-descriptor
                 registry-result release-cid manifest-result)]
@@ -245,8 +276,8 @@
                            :release-cid release-cid :sequence 1
                            :previous-revoke-cid "" :reason-code "security-review"
                            :issued-at 1800000000}}
-        registry-result {:trust "independently-verified-awai-envelopes"
-                         :snapshot {:schema "awai.app-registry.read.v3"
+        registry-result {:trust "configured-peer-checkpoint-quorum"
+                         :snapshot {:schema "awai.app-registry.read.v4"
                                     :records [release-record revocation]}}
         result (apps/verified-release-descriptor
                 registry-result release-cid manifest-result)]

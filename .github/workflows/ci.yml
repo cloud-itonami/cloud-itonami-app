@@ -69,6 +69,20 @@ jobs:
       - name: Scan Git history
         run: gitleaks git --redact --no-banner
 
+  awai-public-gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check public gateway syntax
+        run: node --check server.mjs
+        working-directory: deploy/awai-public-gateway
+      - name: Test public gateway route and header policy
+        run: npm test
+        working-directory: deploy/awai-public-gateway
+
   # Smoke-tests the Windows launch path end to end: kbb + engine + guest-wasm
   # server, first-boot health on 1338. This is the run path the resident
   # actually uses since adr-2609112000. The OLD smoke ran the JVM uberjar;
