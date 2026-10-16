@@ -16,6 +16,11 @@ schemas, and service behavior stay with that app. The common host owns
 resolution, content verification, installation, isolation, capability consent,
 updates, and rollback.
 
+Each signed `domain/bind` now pins one exact release CID. Publishing a new
+app release does not silently change the public domain; the domain owner must
+sign a new binding and update its DNSSEC proof. This source change is not yet
+merged or requalified.
+
 The Awai `app.registry` DNA is a signed discovery and binding log replicated
 between validating peers. Its per-publisher predecessor chains are not a single
 globally ordered ledger and do not claim block finality. App state belongs in
@@ -36,9 +41,10 @@ for the other. Email routing remains a separate service plane.
 
 1. The DNS adapter canonicalizes a hostname, validates its DNSSEC TXT proof,
    and returns the exact `awai-app=<binding CID>` value with freshness metadata.
-2. The Awai adapter verifies the signed domain binding and release chain and
-   returns normalized binding/release facts. `resolve-domain` passes those facts
-   to `kotoba.protocol.install` and returns a fetch-and-consent plan.
+2. The Awai adapter verifies the signed domain binding and the exact release it
+   pins, checks that app, publisher, and channel match, then returns normalized
+   binding/release facts. `resolve-domain` passes those facts to
+   `kotoba.protocol.install` and returns a fetch-and-consent plan.
 3. The content adapter retrieves every required CID from configured independent
    origins, recomputes each CID, and supplies only the verified CID set to
    `finish-install` or `finish-update`.
@@ -74,33 +80,42 @@ listener on a public interface.
 
 ## Current registry bridge
 
-The Awai DNA host now has a pure read projection for accepted public
-`app/release`, `app/revoke`, `domain/bind`, and `content/origin` entries. It emits the bounded
-`awai.app-registry.read.v3` shape, including each canonical signed envelope as
-bounded lowercase hex. The Awai closed schema normalizes each binary SPKI
-`id32` to lowercase hex before the projection. An unmerged experimental
-libp2p peer-host worktree connects that projection to `GET /v2/app-registry` on
-IPv4 loopback and includes a local two-process replication check. This is
-source and loopback evidence only: no real peer service is deployed for
-Itonami, and independent-host transport is not qualified. The Itonami
-Node/WASM host admits `GET /api/awai/app-registry` through its guest export and
-reads the peer snapshot from an exact loopback URL. In a fixture-backed smoke,
-the Awai peer-host replayed eight signed records on fixture DNA; Itonami
-verified the envelopes and returned the `murakumo.cloud` candidate for
-`net.kotoba.murakumo`. This is not a production DNA or live app registry, and it
-does not prove multi-peer accepted-state agreement.
-Itonami reads it only from an exact loopback URL in
-`ITONAMI_AWAI_REGISTRY_URL`, for example
-`http://127.0.0.1:43180/v2/app-registry`, and will not try a public or Cloudflare
-origin if the local node is absent. Itonami derives one deterministic
-domain-to-release-tip candidate per domain by following accepted binding and
-release predecessor chains. It fails closed on forks, gaps, duplicate CIDs,
+The Awai DNA host emits the bounded `awai.app-registry.read.v4` projection for
+accepted public `app/release`, `app/revoke`, `domain/bind`, and
+`content/origin` entries. Each response includes canonical signed envelopes
+and a checkpoint signed by that node's persistent libp2p Ed25519 identity; the
+signature covers the DNA CID, peer ID, issue time, and complete ordered
+record-CID set. The Awai host gate starts two fixture peers and verifies each
+checkpoint against its peer ID. Both peers ran on one machine, so this does not
+qualify independent operators or public peer discovery.
+
+Itonami accepts a configured set of 3–12 distinct peer IDs and operator-DID
+labels through `ITONAMI_AWAI_REGISTRY_PEERS`. Every endpoint must be a specific
+`127.0.0.1` URL for `/v2/app-registry`; redirects and public origins are
+refused. The adapter verifies Ed25519 checkpoint signatures, requires issue
+times within a 120-second age and 30-second future-skew bound, and accepts only
+one exact accepted-record CID set with at least `ceil(2N/3)` configured peer
+attestations. Two current peers can therefore outvote one stale peer in a
+three-peer set. Operator-DID uniqueness is a local configuration assertion;
+it does not prove independent operation, and a matching quorum is not global
+consensus or proof that no majority has omitted a record.
+
+The Node/Nbb signature helper and quorum policy have focused checks (two crypto
+tests plus quorum cases in the 19-test Itonami suite). The live Awai HTTP API
+signature was checked on two fixture peer processes. The full Java server
+bridge has not yet been exercised end to end against multiple peers; neither
+production DNA nor independent peer operations are qualified. The authenticated
+Itonami route returns a candidate only after its configured quorum succeeds
+and does not fall back to a public or Cloudflare origin. Itonami derives one deterministic
+domain-to-release-pin candidate per domain by following the accepted binding
+chain and resolving each binding's exact `release-cid`. Release updates require
+a new domain binding; candidates do not float to the channel tip. It fails closed on forks, gaps, duplicate CIDs,
 disconnected history, and releases without live signed content origins.
-The active local discovery response now carries the release-selected public
+The active local discovery response carries the release-selected public
 content-origin records needed by the later host fetch adapter, while omitting
-derived origin objects and unrelated candidate fields. This remains a
-single-peer, unauthenticated loopback read; it is not an install authorization
-or proof of multi-peer accepted-state agreement.
+derived origin objects and unrelated candidate fields. A configured quorum is
+discovery evidence, not install authorization; domain DNSSEC, bundle/CID
+verification, and local capability consent remain separate checks.
 The authenticated marketplace tab source shows those candidates and the local
 install-record status. The active Node/WASM host serves a launcher at `GET /`
 and `/awai-launcher.js`; it displays registry candidates and offers a
@@ -193,8 +208,8 @@ registry, consented updates, and sandbox qualification against an Awai-backed
 release remain outstanding. Candidate responses do not return local
 capability grants.
 
-Before publishing candidates, the Itonami reader now verifies every v3
-registry envelope itself: bounded hex decoding, canonical DAG-CBOR round-trip, entry CID,
+Before publishing candidates, the Itonami reader verifies every registry
+envelope itself: bounded hex decoding, canonical DAG-CBOR round-trip, entry CID,
 registry DNA, Ed25519 signature, signer-to-publisher/owner/operator identity,
 and exact equality between the signed body and its JSON projection. This
 removes the need to trust the node for envelope authentication. The node's
@@ -343,8 +358,8 @@ requires a grant resolver to attest grant CID, signature, app scope, and
 `kotoba://can/datom:transact` at an explicit time and revocation policy. That
 adapter remains separate from public release-block verification; no production
 graph grant resolver is connected. Publisher rotation still needs an explicit
-accepted registry record. Publisher-signed release revocations are now part of
-the v3 read projection and block matching release candidates; this source path
+accepted registry record. Publisher-signed release revocations are part of the
+v4 read projection and block matching release candidates; this source path
 still needs cross-node and production qualification.
 
 The registry route connects the accepted registry read path and deterministic
@@ -411,37 +426,65 @@ full launcher install flow.
 
 | Shared component | Current state | Required evidence before a domain uses it |
 |---|---|---|
-| App identity and release history | `app.registry` accepts publisher-signed `app/revoke` records for exact accepted release CIDs, and Itonami rejects revoked release tips. Registry read uses v3 so older readers cannot silently omit revocations. Registry state is still local-only. | Qualify accepted-state agreement across independent Awai nodes, connect a production graph grant resolver if graph-history verification is required, and add publisher-rotation records before installation. |
-| Domain resolution | The active Node host has a candidate-gated read-only DNSSEC proof route backed by a native libunbound/ldns helper and packaged IANA root DS anchors. It checks an exact TXT RRset, authenticated TTL/RRSIG lifetime, and equality with the accepted registry binding CID. A signed public TXT smoke validates the helper; no Awai migration binding has passed. | Refresh root anchors through a reviewed release process; qualify secure, insecure, bogus, alias, mismatched-CID, and expiration cases; then publish and independently read a real signed binding that matches one accepted `domain/bind` CID. |
+| App identity and release history | `app.registry` accepts publisher-signed `app/revoke` records for exact accepted release CIDs. Each domain binding pins one accepted release; Itonami resolves that exact release and rejects revoked pins. Read v4 checkpoints bind each response to a libp2p peer identity; the adapter source requires a fresh two-thirds matching CID-set quorum across 3–12 configured peer IDs. The base runtime merged as Itonami PR #431; the current v4/quorum follow-up and 19-test focused run are local and unmerged. Operator independence, the JVM bridge end-to-end path, and resistance to a stale majority remain unqualified. | Verify operator identities and independent network paths; prove one stale peer cannot control routing while the remaining quorum is current; connect a production graph grant resolver if required; add publisher rotation before installation. |
+| Domain resolution | The active Node host checks an exact DNSSEC TXT RRset, authenticated TTL/RRSIG lifetime, and equality with the accepted binding CID. A signed public TXT smoke validates the helper, and the current resolver suite verifies exact release pins; no Awai migration binding has passed. | Refresh root anchors through a reviewed release process; qualify secure, insecure, bogus, alias, mismatched-CID, and expiration cases; publish and independently read a real signed binding and matching DNS proof. |
 | Content | The active Node/WASM host exposes a loopback-only content-stage route that revalidates the registry candidate, DNS proof, manifest, signed origins, and each CID before local storage. A host-only reader resolves normal UnixFS directories; HAMT sharding is unsupported. No live content origin has passed through the route yet. | Prove the origins have independent operators, support production directory layouts, complete a release fetch with one origin offline, and connect verified blocks to consented installation and sandboxed entry serving. |
 | Local app host | The active Node/WASM host has loopback-only consent/install routes and a per-app `.localhost` static bundle origin. It rechecks installed content CIDs, serves assets from the verified bundle, and embeds the app in an opaque-origin iframe. Only capabilities approved in the protected install record are advertised; each cell operation is mediated by a `MessageChannel` and reauthorized by the host. A bridge-level real-peer smoke now passes, but the full launcher installation has not passed a live DNSSEC/candidate gate. | Qualify the full install flow against a signed pilot release and independent Awai nodes; complete updates and rollback; qualify revocation response and isolation against untrusted app code; and confirm every host effect stays within a declared, consented capability. |
 | App state | The registry DNA replicates over the experimental peer host. An Awai loopback integration test stages a five-block DNA bundle by CID, installs it through the HTTP API, persists its validator and descriptor, restores the cell, and replays its event log. Two independently Ed25519-signed chained notes are accepted by the real validator; a duplicate is idempotent, a broken signature is rejected, and both accepted notes read back through the bounded cursor API. A second two-process smoke now uses Itonami's adapter against the running Awai API to transfer the fixture bundle, install the cell, submit both signed notes, reject the bad signature, and read the accepted notes back. These are single-host fixture results; full launcher installation, independent-host convergence, migration receipts, and recovery after node loss remain unverified. | Connect the adapter to the full consented launcher installation path and prove signed read/write plus convergence across independent nodes, migration receipts, and recovery after node loss. |
-| Public serving | Existing Itonami web server and local TLS pieces are not a qualified Awai app gateway. | Serve the same immutable release from independent gateways over direct DNS and TLS, route by verified host binding, and pass external read/write checks without Cloudflare. |
+| Public serving | `deploy/awai-public-gateway` now contains a Node HTTPS bootstrap gateway for `itonami.app`. It proxies only launcher HTML/JS, registry read, DNSSEC proof, and same-origin install-plan preview to the Itonami loopback host. It does not serve installed apps or expose install, launch, operation, or health routes. | Deploy on a direct-DNS host with an independently issued TLS certificate; then implement signed host-to-app resolution, current multi-peer registry state, public app content delivery, and capability-mediated operations before any product hostname uses it. |
 | Operations | Candidate registry records are visible in the authenticated app tab. | Add host health, publisher rotation, update consent, operation receipts, backup/restore, and a tested rollback path. |
 
+The current app-plane worktree has unpushed follow-ups beyond merged PR #431: the app response CSP applies `sandbox allow-scripts` to direct document navigation, `domain/bind` pins an exact release CID, registry reads require a configured peer-checkpoint quorum, and `deploy/awai-public-gateway` contains the launcher ingress package and systemd template. The focused Itonami app, registry, and sandbox suites passed 19 tests and 66 assertions; the Node checkpoint verifier passed 2 tests. The Awai `app-registry --host` gate passed all 15 gates, including the two-process registry-checkpoint/peer integration check after allowing loopback binds. The gateway package passed `node --check` and all 9 Node tests. A loopback TLS smoke with a disposable certificate and fake upstream passed launcher and plan preview, credential stripping, blocked install route, SNI mismatch, foreign Origin, and the gateway's fixed CSP when the upstream returned a permissive policy. The JVM server bridge and whole repository suite remain unverified; a prior wider run stopped before tests at the unchanged `Exception` reference in `awai_manifest.cljc`. These are local source checks only. No external certificate, host, DNS record, or runtime has been provisioned.
 These are shared platform gates. A product migration starts only after one
 reference app passes them end to end and remains usable with the launcher and
 one serving node unavailable. Then each product supplies a small app-specific
 adapter/migration package and proves its own state and protocol behavior; it
 does not replace the common host.
 
-### App-registry validator gate snapshot
+### Security review follow-ups (2026-10-16)
 
-On 2026-10-16, the Awai `app-registry --host` gate passed all 15 checks:
-the `wasm32-browser` build, G1–G4, Node and Deno vector/fuel checks,
-deterministic fuzz, G8 rule-to-definition-CID mapping, G9 fixture host replay,
-and G10–G14 app-cell, bundle, persistent-store, install-API, and peer-host
-checks. The 30 validator cases passed on all three semantic targets (90/90);
-the independent fixture host matched 28/28 entries and projected ten accepted
-public records, including four pinned origins. Two local peer processes
-converged on the same two accepted app-cell CIDs over TCP/Noise/Yamux. The
-Wasm artifact SHA-256 was
-`81932aa9f9b0ff109ffe20b5002728588ab817a85bce4b0e7f5bb8563f636f23`.
-Itonami's focused portable app-plane suites also passed 37 tests and 129
-assertions across app resolution, signed envelopes, registry reads, install
-bridge, manifest, graph authority, content, bundle, and sandbox policy. The
-full Itonami `:test` alias did not run under SCI because its broader suite loads
-JVM-only Jackson and NIO classes; the JVM-backed install-store path remains
-unverified in this run. These results qualify local validators and same-host
-fixtures only. They do not qualify production Awai DNA identity, independently
-operated hosts, DNSSEC, public content delivery, or app execution.
+A read-only review of the app-plane source identified two items to close
+before public app execution is qualified:
+
+- The original single-peer snapshot finding now has a local source mitigation:
+  v4 responses carry peer-signed freshness checkpoints, and Itonami requires a
+  fresh two-thirds quorum of matching CID sets from configured peer IDs.
+  Same-host fixtures pass, but independent operator/network identities,
+  partition behavior, and stale-peer rejection have not been qualified across
+  independently operated nodes. Exact release pins prevent a binding from
+  silently following a channel tip; production routing still needs an
+  independently verified revocation freshness policy.
+- The launcher applies its iframe sandbox only when it creates the iframe.
+  The host also serves the CID-verified bundle from a per-app `.localhost`
+  origin, so direct navigation could execute the document without that
+  iframe-provided sandbox. The response CSP now adds `sandbox allow-scripts`,
+  and its policy test passes 14 assertions. The review did not exercise a
+  browser, so direct navigation and embedded launch still need browser-level
+  confirmation before app isolation is qualified.
+
+These are review candidates, not production incidents. They do not change the
+current status: the runtime remains loopback-bound, the public gateway is not
+qualified, and no domain has been cut over.
+
+### App-registry validator gate snapshots
+
+An earlier 2026-10-16 pre-release-pin snapshot passed all 15 Awai
+`app-registry --host` gates. Its 30 validator cases passed on three semantic
+targets (90/90), the fixture host matched 28/28 entries, and two local peer
+processes converged over TCP/Noise/Yamux. Its Wasm SHA-256 was
+`81932aa9f9b0ff109ffe20b5002728588ab817a85bce4b0e7f5bb8563f636f23`. That is
+historical baseline evidence for the earlier source, not the current artifact.
+
+After adding exact release-pin validation, but before the v4 checkpoint/quorum
+follow-up, the Awai `app-registry --host` worktree passed all 15 gates. The 32 validator vectors
+passed on all three semantic targets (96/96), including fixture replay, local
+install-API authorization, and a peer-host check using two processes on the
+same machine over loopback. The current Wasm SHA-256 is
+`15692fa9f19cc322d8ee8b7294f822234db0794f25bcc9c1654da4310f2f2610`.
+Itonami's current focused app, registry, and sandbox suites passed 17 tests and
+57 assertions. These changes remain unmerged and unpushed. They qualify local
+validators and same-host fixtures only; independent operators, public peer
+discovery, production DNA, DNSSEC, public content delivery, and app execution
+remain unqualified. A prior wider Itonami run stopped before tests at the
+unchanged `Exception` reference in `awai_manifest.cljc`; the full repository
+suite remains unverified.

@@ -18,6 +18,8 @@
         csp (policy/content-security-policy app-origin parent-origin)]
     (is (str/includes? csp (str "script-src " app-origin)))
     (is (str/includes? csp "default-src 'none'"))
+    (is (str/includes? csp "sandbox allow-scripts"))
+    (is (not (str/includes? csp "allow-same-origin")))
     (is (str/includes? csp "connect-src 'none'"))
     (is (str/includes? csp "worker-src 'none'"))
     (is (str/includes? csp "form-action 'none'"))
