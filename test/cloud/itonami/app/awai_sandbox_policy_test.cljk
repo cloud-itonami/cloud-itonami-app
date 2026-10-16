@@ -1,0 +1,27 @@
+(ns cloud.itonami.app.awai-sandbox-policy-test
+  (:require [clojure.string :as str]
+            [kotoba.test :refer [deftest is]]
+            [cloud.itonami.app.awai-sandbox-policy :as policy]))
+
+(deftest static-assets-accept-only-navigation-or-the-app-origin
+  (let [app-origin "http://net.kotoba.demo.localhost:1338"]
+    (is (policy/static-origin-allowed? app-origin nil))
+    (is (policy/static-origin-allowed? app-origin "null"))
+    (is (policy/static-origin-allowed? app-origin app-origin))
+    (is (not (policy/static-origin-allowed?
+              app-origin "https://untrusted.example")))
+    (is (not (policy/static-origin-allowed? nil nil)))))
+
+(deftest app-csp-allows-only-local-bundle-assets
+  (let [app-origin "http://net.kotoba.demo.localhost:1338"
+        parent-origin "http://127.0.0.1:1338"
+        csp (policy/content-security-policy app-origin parent-origin)]
+    (is (str/includes? csp (str "script-src " app-origin)))
+    (is (str/includes? csp "default-src 'none'"))
+    (is (str/includes? csp "connect-src 'none'"))
+    (is (str/includes? csp "worker-src 'none'"))
+    (is (str/includes? csp "form-action 'none'"))
+    (is (str/includes? csp (str "frame-ancestors " parent-origin)))
+    (is (nil? (policy/content-security-policy
+               "http://app.localhost:1338; connect-src https://evil.example"
+               parent-origin)))))

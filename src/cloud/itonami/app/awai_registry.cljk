@@ -4,9 +4,11 @@
   The local gateway is deliberately a single, loopback-only URL. This adapter
   never discovers a fallback origin and does not treat DNS, release manifests,
   or application bundles as verified; it only reports app releases, domain
-  bindings, and content origins accepted by the configured Awai node."
+  bindings, and content origins accepted by the configured Awai node. Each
+  signed envelope is then independently verified before the snapshot is trusted."
   (:require [kotoba.json :as json]
             [kotoba.lang.text :as str]
+            [cloud.itonami.app.awai-envelope :as envelope]
             [kotoba.protocol.cid :as cid]
             [kotoba.protocol.vocab :as vocab])
   (:import [java.io ByteArrayOutputStream]
@@ -16,10 +18,11 @@
            [java.time Duration]))
 
 (def ^:dynamic *environment* #(System/getenv %))
-(def schema "awai.app-registry.read.v1")
+(def schema "awai.app-registry.read.v3")
 (def maximum-records 1024)
 (def maximum-snapshot-bytes (* 16 1024 1024))
-(def accepted-types #{"app/release" "domain/bind" "content/origin"})
+(def maximum-safe-integer 9007199254740991)
+(def accepted-types #{"app/release" "app/revoke" "domain/bind" "content/origin"})
 
 (def ^:private peer-http-client
   (let [builder (HttpClient/newBuilder)]
@@ -77,7 +80,7 @@
       (when (and (= "http" (.getScheme uri))
                  (= "127.0.0.1" (.getHost uri))
                  (<= 1 (.getPort uri) 65535)
-                 (= "/v1/app-registry" (.getPath uri))
+                 (= "/v2/app-registry" (.getPath uri))
                  (nil? (.getUserInfo uri))
                  (nil? (.getQuery uri))
                  (nil? (.getFragment uri)))
@@ -88,9 +91,14 @@
   (and (map? record)
        (valid-cid? (:cid record))
        (string? (:type record))
-       (nat-int? (:sequence record))
+       (and (integer? (:sequence record))
+            (<= 0 (:sequence record) maximum-safe-integer))
        (contains? accepted-types (:type record))
-       (map? (:body record))))
+       (map? (:body record))
+       (string? (:envelope-hex record))
+       (<= 2 (count (:envelope-hex record)) (* 2 envelope/maximum-entry-bytes))
+       (even? (count (:envelope-hex record)))
+       (re-matches #"[0-9a-f]+" (:envelope-hex record))))
 
 (defn- valid-snapshot? [snapshot]
   (and (map? snapshot)
@@ -125,10 +133,13 @@
 
             :else
             (let [snapshot (json/read-str (:body response) :key-fn keyword)]
-              (if (valid-snapshot? snapshot)
-                {:status "ok"
-                 :trust "accepted-by-local-awai-node"
-                 :snapshot snapshot}
-                {:status "unavailable" :reason "invalid-peer-snapshot"}))))
+              (if-not (valid-snapshot? snapshot)
+                {:status "unavailable" :reason "invalid-peer-snapshot"}
+                (if (every? #(-> (envelope/verify-record (:dna-cid snapshot) %) :ok?)
+                            (:records snapshot))
+                  {:status "ok"
+                   :trust "independently-verified-awai-envelopes"
+                   :snapshot snapshot}
+                  {:status "unavailable" :reason "unverified-peer-envelope"}))))))
         (catch Exception _
           {:status "unavailable" :reason "peer-host-unreachable"})))))

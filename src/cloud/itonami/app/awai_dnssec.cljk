@@ -1,0 +1,154 @@
+(ns cloud.itonami.app.awai-dnssec
+  "Resolve Awai domain-binding TXT proofs with local DNSSEC validation.
+
+  The upstream recursive resolver is an untrusted transport. dnsjava validates
+  the response chain from the packaged IANA root trust anchors. This adapter
+  accepts one exact-owner TXT RRset only; alias and ambiguous answers fail
+  closed. It never calls a Cloudflare resolver API or HTTP endpoint."
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [kotoba.protocol.cid :as cid]
+            [kotoba.protocol.install :as install]
+            [kotoba.protocol.vocab :as vocab]
+            [cloud.itonami.app.awai-dnssec-policy :as proof-policy])
+  (:import [java.io ByteArrayInputStream]
+           [java.nio.charset StandardCharsets]
+           [java.time Duration]
+           [org.xbill.DNS DClass Flags Message Name Rcode Record RRset
+            RRSIGRecord Section SimpleResolver TXTRecord Type]
+           [org.xbill.DNS.dnssec ValidatingResolver]))
+
+(def proof-ttl-cap-seconds 300)
+(def root-anchor-resource "cloud/itonami/app/dns-root-trust-anchors.txt")
+(def ^:dynamic *now-seconds*
+  #(quot (System/currentTimeMillis) 1000))
+
+(defn- root-anchors-bytes []
+  (if-let [resource (io/resource root-anchor-resource)]
+    (.getBytes (slurp resource) StandardCharsets/US_ASCII)
+    (throw (ex-info "DNSSEC root trust anchors are unavailable"
+                    {:type :awai-dnssec/missing-root-anchors}))))
+
+(defn- validating-resolver []
+  (let [resolver (ValidatingResolver. (SimpleResolver.))
+        anchors (ByteArrayInputStream. (root-anchors-bytes))]
+    (.setTimeout resolver (Duration/ofSeconds 5))
+    (with-open [input anchors]
+      (.loadTrustAnchors resolver input))
+    resolver))
+
+(defn- exact-question? [response qname]
+  (let [questions (vec (.getSection response Section/QUESTION))]
+    (and (= 1 (count questions))
+         (= qname (.getName (first questions)))
+         (= Type/TXT (.getType (first questions)))
+         (= DClass/IN (.getDClass (first questions))))))
+
+(defn- exact-txt-rrset [response qname]
+  (let [answer-sets (vec (.getSectionRRsets response Section/ANSWER))]
+    (when (and (= 1 (count answer-sets))
+               (= qname (.getName ^RRset (first answer-sets)))
+               (= Type/TXT (.getType ^RRset (first answer-sets)))
+               (= DClass/IN (.getDClass ^RRset (first answer-sets))))
+      (let [rrset (first answer-sets)
+            records (vec (.rrs ^RRset rrset))]
+        (when (and (= 1 (count records))
+                   (instance? TXTRecord (first records)))
+          {:record (first records) :rrset rrset})))))
+
+(defn- txt-value [^TXTRecord record]
+  ;; TXT chunks in one RDATA concatenate; multiple TXT RDATA records are
+  ;; rejected by exact-txt-rrset to prevent multiple competing binding values.
+  (str/join "" (.getStrings record)))
+
+(defn- valid-binding-cid? [value]
+  (boolean (and (vocab/cid? value)
+                (not (:error (cid/parse-cid value))))))
+
+(defn- response-proof [domain qname response now]
+  (cond
+    (not (exact-question? response qname))
+    {:decision :refuse :error :dns-question-mismatch}
+
+    (= Rcode/SERVFAIL (.getRcode response))
+    {:decision :refuse :error :dnssec-bogus-or-upstream-servfail}
+
+    (not= Rcode/NOERROR (.getRcode response))
+    {:decision :unavailable :error :dns-response-not-found}
+
+    (not (.getFlag (.getHeader response) Flags/AD))
+    {:decision :refuse :error :dnssec-not-secure}
+
+    :else
+    (if-let [{:keys [record rrset]} (exact-txt-rrset response qname)]
+      (let [value (txt-value record)
+            prefix "awai-app="
+            binding-cid (when (and (string? value)
+                                   (str/starts-with? value prefix))
+                          (subs value (count prefix)))
+            ttl (long (.getTTL record))
+            signature-expiries (mapv #(.getEpochSecond
+                                       (.getExpire ^RRSIGRecord %))
+                                    (.sigs ^RRset rrset))
+            signature-expires-at (when (seq signature-expiries)
+                                   (apply min signature-expiries))
+            signature-ttl (when signature-expires-at
+                            (- signature-expires-at now))]
+        (cond
+          (not (valid-binding-cid? binding-cid))
+          {:decision :refuse :error :invalid-awai-binding-txt}
+
+          (or (not (pos? ttl)) (nil? signature-ttl) (not (pos? signature-ttl)))
+          {:decision :unavailable :error :dns-proof-expired-or-unsigned}
+
+          :else
+          (let [freshness-ttl (min ttl proof-ttl-cap-seconds signature-ttl)]
+            {:decision :verified
+             :proof {:verified? true
+                     :fresh? true
+                     :dnssec-status :secure
+                     :validator "dnsjava-3.6.5/iana-root-ds"
+                     :domain domain
+                     :qname (str qname)
+                     :binding-cid binding-cid
+                     :checked-at now
+                     :ttl-seconds freshness-ttl
+                     :expires-at (+ now freshness-ttl)
+                     :signature-expires-at signature-expires-at
+                     :alias-chain []
+                     :txt-record-count 1}})))
+      ;; CNAME/DNAME answers, extra RRsets, and multiple TXT values all land
+      ;; here. They are not aliases for a cryptographically bound app name.
+      {:decision :refuse :error :dns-answer-not-exact})))
+
+(defn resolve-domain-proof
+  "Query `_itonami-app.<domain>` and return a fresh DNSSEC-validated proof.
+
+  `domain` must already be a canonical lower-case A-label. The DNSSEC
+  validating stub follows the configured system recursive resolver for data,
+  but validates DNSSEC itself from the packaged root anchors. A missing DS,
+  bogus chain, non-secure response, alias, extra answer, or multiple TXT values
+  never becomes a verified proof."
+  [domain]
+  (let [now (*now-seconds*)]
+    (cond
+      (not (install/canonical-domain? domain))
+      {:decision :refuse :error :invalid-domain}
+
+      (not (nat-int? now))
+      {:decision :refuse :error :invalid-clock}
+
+      :else
+      (try
+        (let [qname (Name/fromString (str "_itonami-app." domain "."))
+              question (Record/newRecord qname Type/TXT DClass/IN)
+              response (.send (validating-resolver) (Message/newQuery question))
+              result (response-proof domain qname response now)]
+          (if (and (= :verified (:decision result))
+                   (proof-policy/fresh-proof? domain (:proof result) now))
+            result
+            (if (= :verified (:decision result))
+              {:decision :refuse :error :invalid-dnssec-proof-shape}
+              result)))
+        (catch Exception _
+          {:decision :unavailable :error :dnssec-resolution-failed})))))

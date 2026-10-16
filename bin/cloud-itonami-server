@@ -1,10 +1,9 @@
 #!/usr/bin/env kbb
 ;; Loopback HTTP host. Does not spawn java or clojure.
 ;;
-;; Listen is Node `http`. Admission for `/health` is the guest export
-;; `health-route?` from `server_main.wasm`. Duplicating that predicate in
-;; this host is not the guest running — this file loads the wasm and calls
-;; into it. Guest `main` must return the listen-port token (1338), not 0.
+;; Listen is Node `http`. Route admission is decided by the guest exports
+;; from `server_main.wasm`; this host loads the wasm and calls into it.
+;; Guest `main` must return the listen-port token (1338), not 0.
 ;;
 ;; http/accept and http/reply remain kotoba-lang HOLD
 ;; (lang/capability-catalog.edn :friendly-qualified). This host listens;
@@ -15,6 +14,21 @@
             ["node:fs" :as fs]
             ["node:http" :as http]
             ["node:path" :as path]
+            [clojure.string :as str]
+            [cloud.itonami.app.awai-apps :as awai-apps]
+            [cloud.itonami.app.awai-bundle-node :as awai-bundle]
+            [cloud.itonami.app.awai-content-node :as awai-content]
+            [cloud.itonami.app.awai-content-store-node :as awai-content-store]
+            [cloud.itonami.app.awai-dnssec-node :as awai-dnssec]
+            [cloud.itonami.app.awai-install-bridge :as awai-install-bridge]
+            [cloud.itonami.app.awai-install-store-node :as awai-install-store]
+            [cloud.itonami.app.awai-manifest :as awai-manifest-policy]
+            [cloud.itonami.app.awai-manifest-node :as awai-manifest]
+            [cloud.itonami.app.awai-registry-node :as awai-registry]
+            [cloud.itonami.app.awai-sandbox-policy :as awai-sandbox-policy]
+            [kotoba.protocol.cid :as app-cid]
+            [kotoba.protocol.install :as app-install]
+            [kotoba.protocol.vocab :as vocab]
             [guest-runtime :as guest]
             [nbb.core :refer [*file*]]))
 
@@ -25,23 +39,1159 @@
   (or (aget js/process.env "CLOUD_ITONAMI_DATA_DIR")
       (path/resolve app-directory "data")))
 
+(defn- dnssec-helper-path []
+  (path/resolve app-directory "target/awai-dnssec-proof"))
+
+(defn- dnssec-anchor-path []
+  (path/resolve app-directory
+                "resources/cloud/itonami/app/dns-root-trust-anchors.txt"))
+
+(defn- dnssec-capability []
+  (if (.existsSync fs (dnssec-helper-path))
+    "local-proof-adapter-available"
+    "native-proof-helper-not-built"))
+
 (defn- store-fingerprint []
   (-> (crypto/createHash "sha256")
       (.update (str (data-dir)) "utf8")
       (.digest "hex")
       (subs 0 16)))
 
+(defn- configured-port []
+  (let [value (or (aget js/process.env "CLOUD_ITONAMI_PORT") "1338")]
+    (when (and (string? value)
+               (re-matches #"[1-9][0-9]{0,4}" value))
+      (let [port (js/Number value)]
+        (when (<= 1 port 65535) port)))))
+
 (defn- json-response [res status body]
   (.writeHead res status #js {"content-type" "application/json; charset=utf-8"
-                              "cache-control" "no-store"})
+                              "cache-control" "no-store"
+                              "x-content-type-options" "nosniff"})
   (.end res (js/JSON.stringify (clj->js body))))
 
-(defn- handle [hosted guest-main req res]
-  (let [method (.-method req)
-        url-path (.-pathname (js/URL. (str "http://127.0.0.1" (.-url req))))
-        admitted? (guest/call-bool hosted "health-route?" method url-path)]
+(defn- launcher-response [res url-path]
+  (if (= url-path "/")
+    (let [port (configured-port)
+          csp (str "default-src 'none'; script-src 'self'; connect-src 'self'; "
+                   "style-src 'self'; frame-src http://*.localhost:" port "; "
+                   "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")]
+      (.writeHead res 200 #js {"content-type" "text/html; charset=utf-8"
+                               "cache-control" "no-store"
+                               "x-content-type-options" "nosniff"
+                               "referrer-policy" "no-referrer"
+                               "content-security-policy" csp})
+      (.end res
+            (str "<!doctype html><html lang=\"ja\"><head>"
+                 "<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+                 "<title>Itonami — Awai App Launcher</title></head><body>"
+                 "<main><h1>Itonami</h1>"
+                 "<p>Awai Chain 上の公開アプリ候補を確認できます。</p>"
+                 "<p id=\"awai-trust\">ローカル Awai peer を確認しています。</p>"
+                 "<button id=\"awai-retry\" type=\"button\">再読み込み</button>"
+                 "<section aria-labelledby=\"awai-apps-title\"><h2 id=\"awai-apps-title\">公開アプリ</h2>"
+                 "<div id=\"awai-apps\" aria-live=\"polite\"></div></section>"
+                 "<section aria-labelledby=\"awai-runtime-title\"><h2 id=\"awai-runtime-title\">ローカル app runtime</h2>"
+                 "<div id=\"awai-app-runtime\" aria-live=\"polite\"></div></section>"
+                 "<p>ローカルでは capability ごとに同意して導入し、app ID ごとの隔離 origin で起動できます。"
+                 "この段階の起動は静的 asset のみで、host API 操作は無効です。</p>"
+                 "</main><script src=\"/awai-launcher.js\" defer></script></body></html>")))
+    (try
+      (.writeHead res 200 #js {"content-type" "text/javascript; charset=utf-8"
+                               "cache-control" "no-store"
+                               "x-content-type-options" "nosniff"
+                               "referrer-policy" "no-referrer"})
+      (.end res (.readFileSync fs
+                              (path/resolve app-directory
+                                            "resources/cloud/itonami/app/awai-launcher.js")
+                              "utf8"))
+      (catch :default _
+        (json-response res 503 {:error {:type "launcher-asset/unavailable"}})))))
+
+(defn- domain-proof-response! [res request-url]
+  (let [parameters (.-searchParams request-url)
+        domain-values (.getAll parameters "domain")
+        domain (when (= 1 (.-length domain-values))
+                 (aget domain-values 0))]
+    (if (or (not= 1 (.-size parameters)) (not (string? domain)))
+      (json-response res 400 {:status "refused"
+                              :reason "one-domain-query-parameter-required"})
+      (-> (awai-registry/registry-response!)
+          (.then
+           (fn [registry]
+             (if (not= 200 (:http-status registry))
+               (json-response res 503 {:status "unavailable"
+                                       :domain domain
+                                       :reason "registry-unavailable"})
+               (let [candidates (get-in registry [:body :candidates])
+                     candidate (some #(when (= domain (:domain %)) %)
+                                     candidates)]
+                 (cond
+                   (nil? candidate)
+                   (json-response res 404 {:status "unavailable"
+                                           :domain domain
+                                           :reason "domain-not-in-awai-registry"})
+
+                   (not= :candidate (:decision candidate))
+                   (json-response res 409 {:status "refused"
+                                           :domain domain
+                                           :reason "registry-domain-not-a-candidate"})
+
+                   :else
+                   (-> (awai-dnssec/resolve-domain-proof!
+                        domain (dnssec-helper-path) (dnssec-anchor-path))
+                       (.then
+                        (fn [result]
+                          (case (:decision result)
+                            :verified
+                            (json-response
+                             res 200
+                             {:status "verified"
+                              :domain domain
+                              :binding-match? (= (:binding-cid candidate)
+                                                 (get-in result [:proof :binding-cid]))
+                              :proof (:proof result)})
+
+                            :refuse
+                            (json-response res 409
+                                           {:status "refused"
+                                            :domain domain
+                                            :reason (name (:error result))})
+
+                            (json-response
+                             res 503
+                             {:status "unavailable"
+                              :domain domain
+                              :reason (name (or (:error result)
+                                                :dnssec-proof-unavailable))}))))
+                       (.catch
+                        (fn [_]
+                          (json-response res 503
+                                         {:status "unavailable"
+                                          :domain domain
+                                          :reason "dnssec-proof-unavailable"})))))))))
+          (.catch
+           (fn [_]
+             (json-response res 503 {:status "unavailable"
+                                     :domain domain
+                                     :reason "registry-unavailable"})))))))
+
+(defn- install-scope-value [domain registry candidate proof manifest-result]
+  (let [trusted-registry {:trust "independently-verified-awai-envelopes"
+                          :snapshot (:verified-snapshot registry)}
+        release-result (when (= :verified (:decision manifest-result))
+                         (awai-apps/verified-release-descriptor
+                          trusted-registry (:release-cid candidate)
+                          manifest-result))
+        now (quot (.now js/Date) 1000)
+        binding {:verified? true
+                 :domain domain
+                 :entry-cid (:binding-cid candidate)
+                 :app-id (:app-id candidate)
+                 :publisher-did (:publisher-did candidate)
+                 :channel (:channel candidate)
+                 :sequence (:binding-sequence candidate)
+                 :expires-at (:binding-expires-at candidate)}
+        resolved (when (= :verified (:decision release-result))
+                   (awai-apps/resolve-domain
+                    domain {:binding binding
+                            :txt-proof proof
+                            :release (:release release-result)
+                            :now now}))
+        plan (:install-plan resolved)]
     (cond
-      admitted?
+      (not= :verified (:decision manifest-result))
+      {:decision (if (= :refuse (:decision manifest-result)) :refuse :unavailable)
+       :error (or (:error manifest-result) :manifest-unavailable)}
+
+      (not= :verified (:decision release-result))
+      {:decision :refuse
+       :error (or (:error release-result) :release-manifest-invalid)}
+
+      (not= :install-prepared (:decision plan))
+      {:decision :refuse
+       :error (or (:error plan) (:error resolved) :install-plan-unavailable)}
+
+      :else
+      {:decision :ready
+       :domain domain
+       :candidate candidate
+       :proof proof
+       :release (:release release-result)
+       :plan plan})))
+
+(defn- resolve-install-scope! [domain registry candidate]
+  (-> (awai-dnssec/resolve-domain-proof!
+       domain (dnssec-helper-path) (dnssec-anchor-path))
+      (.then
+       (fn [proof-result]
+         (let [proof (:proof proof-result)]
+           (cond
+             (not= :verified (:decision proof-result))
+             {:decision (if (= :refuse (:decision proof-result))
+                          :refuse :unavailable)
+              :error (or (:error proof-result) :dns-proof-not-verified)}
+
+             (not= (:binding-cid candidate) (:binding-cid proof))
+             {:decision :refuse :error :dns-binding-mismatch}
+
+             :else
+             (-> (awai-manifest/fetch-release-manifest! (data-dir) candidate)
+                 (.then (fn [manifest-result]
+                          (install-scope-value domain registry candidate proof
+                                               manifest-result))))))))
+      (.catch (fn [_]
+                {:decision :unavailable :error :install-scope-unavailable}))))
+
+(defn- install-scope-error! [res domain scope]
+  (json-response res (if (= :refuse (:decision scope)) 409 503)
+                 {:status (if (= :refuse (:decision scope))
+                            "refused" "unavailable")
+                  :domain domain
+                  :reason (name (or (:error scope) :install-scope-unavailable))}))
+
+(defn- install-plan-ready-response! [res domain scope]
+  (let [candidate (:candidate scope)
+        plan (:plan scope)
+        lock (:install-lock plan)
+        app-manifest (:manifest (:release scope))]
+    (json-response
+     res 200
+     {:status "install-plan-ready"
+      :domain domain
+      :app-id (:app-id candidate)
+      :publisher-did (:publisher-did candidate)
+      :channel (:channel candidate)
+      :release-cid (:release-cid candidate)
+      :release-sequence (:release-sequence candidate)
+      :manifest-cid (:manifest-cid candidate)
+      :version (:kotoba.app/version app-manifest)
+      :kind (:kotoba.app/kind app-manifest)
+      :bundle-cid (:kotoba.app/bundle-cid app-manifest)
+      :cells (:cells lock)
+      :required-capabilities (:consent-required-caps plan)
+      :required-content-cids (:required-content-cids plan)
+      :dns-proof-expires-at (get-in plan [:origin :dns-proof-expires-at])
+      :manifest-cached? true})))
+
+(defn- install-plan-from-candidate! [res domain registry candidate]
+  (-> (resolve-install-scope! domain registry candidate)
+      (.then (fn [scope]
+               (if (= :ready (:decision scope))
+                 (install-plan-ready-response! res domain scope)
+                 (install-scope-error! res domain scope))))))
+
+(defn- configured-app-origin []
+  (let [configured (aget js/process.env "ITONAMI_APP_ORIGIN")
+        port (configured-port)]
+    (if (or (not (string? configured)) (empty? configured))
+      (when (number? port) (str "http://127.0.0.1:" port))
+      (try
+        (let [url (js/URL. configured)
+              protocol (.-protocol url)
+              valid-http-loopback? (and (= "http:" protocol)
+                                        (= "127.0.0.1" (.-hostname url))
+                                        (number? port)
+                                        (= (str port) (.-port url)))
+              valid-https? (= "https:" protocol)]
+          (when (and (= configured (.-origin url))
+                     (or valid-http-loopback? valid-https?))
+            configured))
+        (catch :default _ nil)))))
+
+(defn- install-plan-request-origin? [req]
+  (let [origin (aget (.-headers req) "origin")
+        expected (configured-app-origin)
+        local (when-let [port (configured-port)]
+                (str "http://127.0.0.1:" port))]
+    (and (string? origin)
+         (or (and (string? expected) (= origin expected))
+             (and (string? local) (= origin local))))))
+
+(defn- local-installer-request? [req]
+  (let [port (configured-port)
+        expected (when (number? port) (str "http://127.0.0.1:" port))
+        origin (aget (.-headers req) "origin")
+        host (aget (.-headers req) "host")]
+    (and (string? expected)
+         (= expected origin)
+         (= (str "127.0.0.1:" port) host))))
+
+(def maximum-install-request-bytes 16384)
+(def maximum-app-operation-request-bytes (+ (* 2 128 1024) 4096))
+
+(defn- read-install-request-json! [req maximum-bytes]
+  (js/Promise.
+   (fn [resolve reject]
+     (let [chunks #js []
+           total (atom 0)
+           oversized? (atom false)]
+       (.on req "data"
+            (fn [chunk]
+              (let [size (+ @total (.-length chunk))]
+                (if (> size maximum-bytes)
+                  (reset! oversized? true)
+                  (do (reset! total size)
+                      (.push chunks chunk))))))
+       (.on req "error" reject)
+       (.on req "end"
+            (fn []
+              (cond
+                @oversized?
+                (resolve {:error :install-request-too-large})
+
+                (zero? @total)
+                (resolve {:error :empty-install-request})
+
+                :else
+                (try
+                  (resolve (js->clj
+                            (js/JSON.parse
+                             (.toString (.concat js/Buffer chunks) "utf8"))
+                            :keywordize-keys true))
+                  (catch :default _
+                    (resolve {:error :invalid-install-request-json}))))))))))
+
+(defn- local-install-bridge-config []
+  (let [enabled? (= "true" (aget js/process.env
+                                  "ITONAMI_AWAI_INSTALL_ENABLED"))
+        configured (aget js/process.env "ITONAMI_AWAI_INSTALL_API_ORIGIN")
+        token-file (aget js/process.env "ITONAMI_AWAI_INSTALL_TOKEN_FILE")]
+    (when (and enabled? (string? configured) (string? token-file)
+               (.isAbsolute path token-file)
+               (awai-install-bridge/local-install-token-ready? token-file))
+      (try
+        (let [url (js/URL. configured)
+              port (js/Number (.-port url))
+              local-port (configured-port)
+              local-origin? (and (= "http:" (.-protocol url))
+                                 (= "127.0.0.1" (.-hostname url))
+                                 (js/Number.isInteger port)
+                                 (<= 1 port 65535)
+                                 (not= port local-port)
+                                 (contains? #{(.-origin url)
+                                              (str (.-origin url) "/")}
+                                            configured)
+                                 (empty? (.-username url))
+                                 (empty? (.-password url))
+                                 (empty? (.-search url))
+                                 (empty? (.-hash url)))]
+          (when local-origin?
+            {:endpoint (str (.-origin url) "/v2/stage-dna-block")
+             :install-endpoint (str (.-origin url) "/v2/install-dna")
+             :cell-endpoint (str (.-origin url) "/v2/cell-entries")
+             :token-file token-file}))
+        (catch :default _ nil)))))
+
+(defn- valid-install-request-body? [body]
+  (let [approved (:approved-capabilities body)]
+    (and (map? body)
+         (= #{:domain :release-cid :approved-capabilities} (set (keys body)))
+         (string? (:domain body))
+         (<= 1 (count (:domain body)) 253)
+         (string? (:release-cid body))
+         (<= 1 (count (:release-cid body)) 128)
+         (vector? approved)
+         (<= (count approved) 64)
+         (= (count approved) (count (set approved)))
+         (every? #(and (string? %) (<= 1 (count %) 128)) approved))))
+
+(defn- install-plan-response! [res req request-url]
+  (let [parameters (.-searchParams request-url)
+        domain-values (.getAll parameters "domain")
+        domain (when (= 1 (.-length domain-values))
+                 (aget domain-values 0))
+        headers (.-headers req)
+        content-length (aget headers "content-length")
+        transfer-encoding (aget headers "transfer-encoding")]
+    (cond
+      (not (install-plan-request-origin? req))
+      (do (.resume req)
+          (json-response res 403 {:status "refused"
+                                  :reason "same-origin-request-required"}))
+
+      (or (not= 1 (.-size parameters)) (not (string? domain)))
+      (do (.resume req)
+          (json-response res 400 {:status "refused"
+                                  :reason "one-domain-query-parameter-required"}))
+
+      (or (and content-length (not= "0" content-length))
+          (and transfer-encoding (not= "" transfer-encoding)))
+      (do (.resume req)
+          (json-response res 400 {:status "refused"
+                                  :reason "request-body-not-accepted"}))
+
+      :else
+      (-> (awai-registry/registry-response!)
+          (.then
+           (fn [registry]
+             (if (not= 200 (:http-status registry))
+               (json-response res 503 {:status "unavailable"
+                                       :domain domain
+                                       :reason "registry-unavailable"})
+               (let [candidate
+                     (some #(when (= domain (:domain %)) %)
+                           (:verified-candidates registry))]
+                 (cond
+                   (nil? candidate)
+                   (json-response res 404 {:status "unavailable"
+                                           :domain domain
+                                           :reason "domain-not-in-awai-registry"})
+
+                   (not= :candidate (:decision candidate))
+                   (json-response res 409 {:status "refused"
+                                           :domain domain
+                                           :reason "registry-domain-not-a-candidate"})
+
+                   :else
+                   (install-plan-from-candidate!
+                    res domain registry candidate))))))
+          (.catch
+           (fn [_]
+             (json-response res 503 {:status "unavailable"
+                                     :domain domain
+                                     :reason "registry-unavailable"})))))))
+
+(defn- install-content-stage-response! [res req request-url]
+  (let [parameters (.-searchParams request-url)
+        domain-values (.getAll parameters "domain")
+        domain (when (= 1 (.-length domain-values))
+                 (aget domain-values 0))
+        headers (.-headers req)
+        content-length (aget headers "content-length")
+        transfer-encoding (aget headers "transfer-encoding")]
+    (cond
+      (not (local-installer-request? req))
+      (do (.resume req)
+          (json-response res 403 {:status "refused"
+                                  :reason "local-same-origin-request-required"}))
+
+      (or (not= 1 (.-size parameters)) (not (string? domain)))
+      (do (.resume req)
+          (json-response res 400 {:status "refused"
+                                  :reason "one-domain-query-parameter-required"}))
+
+      (or (and content-length (not= "0" content-length))
+          (and transfer-encoding (not= "" transfer-encoding)))
+      (do (.resume req)
+          (json-response res 400 {:status "refused"
+                                  :reason "request-body-not-accepted"}))
+
+      :else
+      (-> (awai-registry/registry-response!)
+          (.then
+           (fn [registry]
+             (if (not= 200 (:http-status registry))
+               (json-response res 503 {:status "unavailable"
+                                       :domain domain
+                                       :reason "registry-unavailable"})
+               (let [candidate (some #(when (= domain (:domain %)) %)
+                                     (:verified-candidates registry))]
+                 (cond
+                   (nil? candidate)
+                   (json-response res 404 {:status "unavailable"
+                                           :domain domain
+                                           :reason "domain-not-in-awai-registry"})
+
+                   (not= :candidate (:decision candidate))
+                   (json-response res 409 {:status "refused"
+                                           :domain domain
+                                           :reason "registry-domain-not-a-candidate"})
+
+                   :else
+                   (-> (resolve-install-scope! domain registry candidate)
+                       (.then
+                        (fn [scope]
+                          (if-not (= :ready (:decision scope))
+                            (install-scope-error! res domain scope)
+                            (-> (awai-content/fetch-install-content!
+                                 (data-dir) (:plan scope)
+                                 {:origin-records
+                                  (:content-origin-records candidate)
+                                  :app-id (:app-id candidate)
+                                  :publisher-did (:publisher-did candidate)})
+                                (.then
+                                 (fn [result]
+                                   (if (= :content-staged (:decision result))
+                                     (json-response
+                                      res 200
+                                      {:status "content-staged"
+                                       :domain domain
+                                       :app-id (:app-id candidate)
+                                       :release-cid (:release-cid candidate)
+                                       :verified-cids (:verified-cids result)
+                                       :block-count (:block-count result)
+                                       :byte-count (:byte-count result)})
+                                     (json-response
+                                      res (if (= :refuse (:decision result)) 409 503)
+                                      {:status (if (= :refuse (:decision result))
+                                                 "refused" "unavailable")
+                                       :domain domain
+                                       :reason (name (or (:error result)
+                                                         :content-stage-failed))
+                                       :verified-cid-count
+                                       (count (:verified-cids result))}))))))))))))))
+          (.catch
+           (fn [_]
+             (json-response res 503 {:status "unavailable"
+                                     :domain domain
+                                     :reason "content-stage-unavailable"})))))))
+
+(defn- install-cells-sequentially!
+  [cells installation-result content-stage bridge-config installed]
+  (reduce
+   (fn [chain cell]
+     (.then
+      chain
+      (fn [progress]
+        (if-not (= :installed (:decision progress))
+          progress
+          (let [cell-id (:id cell)
+                bundle-cid (:dna-cid cell)]
+            (-> (awai-install-bridge/stage-authorized-dna-blocks!
+                 {:installation-result installation-result
+                  :cell-id cell-id
+                  :bundle-cid bundle-cid
+                  :content-stage content-stage
+                  :content-root (.resolve path (data-dir) "awai-apps" "content")
+                  :endpoint (:endpoint bridge-config)
+                  :install-endpoint (:install-endpoint bridge-config)
+                  :token-file (:token-file bridge-config)})
+                (.then
+                 (fn [result]
+                   (if (contains? #{:installed :already-installed}
+                                  (:decision result))
+                     {:decision :installed
+                      :installed-cells
+                      (conj (:installed-cells progress)
+                            (cond-> {:cell-id cell-id :bundle-cid bundle-cid}
+                              (:validator-cid result)
+                              (assoc :validator-cid (:validator-cid result))))}
+                     {:decision :failed
+                      :error (or (:error result) :awai-cell-install-failed)
+                      :failed-cell-id cell-id
+                      :installed-cells (:installed-cells progress)})))
+                (.catch (fn [_]
+                          {:decision :failed
+                           :error :awai-cell-install-unavailable
+                           :failed-cell-id cell-id
+                           :installed-cells (:installed-cells progress)}))))))))
+   (js/Promise.resolve {:decision :installed :installed-cells installed})
+   cells))
+
+(defn- perform-consented-install! [res body scope bridge-config]
+  (let [candidate (:candidate scope)
+        plan (:plan scope)
+        app-id (:app-id candidate)
+        release-cid (:release-cid candidate)
+        approved (:approved-capabilities body)
+        requested (set (:consent-required-caps plan))
+        cells (get-in plan [:install-lock :cells])]
+    (cond
+      (not= release-cid (:release-cid body))
+      (json-response res 409 {:status "refused"
+                              :domain (:domain candidate)
+                              :reason "release-changed-since-consent"})
+
+      (not (every? requested approved))
+      (json-response res 409 {:status "refused"
+                              :domain (:domain candidate)
+                              :reason "capability-consent-outside-release"})
+
+      (and (seq cells) (nil? bridge-config))
+      (json-response res 503 {:status "unavailable"
+                              :domain (:domain candidate)
+                              :reason "local-awai-install-bridge-not-configured"})
+
+      :else
+      (let [current (awai-install-store/read-installation (data-dir) app-id)]
+        (case (:decision current)
+          :found
+          (if (= release-cid
+                 (get-in current [:installation :install-lock :release-cid]))
+            (json-response res 200 {:status "already-installed"
+                                    :domain (:domain candidate)
+                                    :app-id app-id
+                                    :release-cid release-cid
+                                    :launch-status "local-loopback-static-only"})
+            (json-response res 409 {:status "refused"
+                                    :domain (:domain candidate)
+                                    :reason "update-consent-flow-not-connected"}))
+
+          :refuse
+          (json-response res 409 {:status "refused"
+                                  :domain (:domain candidate)
+                                  :reason (name (or (:error current)
+                                                    :invalid-current-installation))})
+
+          :unavailable
+          (json-response res 503 {:status "unavailable"
+                                  :domain (:domain candidate)
+                                  :reason "local-install-store-unavailable"})
+
+          :missing
+          (-> (awai-content/fetch-install-content!
+               (data-dir) plan
+               {:origin-records (:content-origin-records candidate)
+                :app-id app-id
+                :publisher-did (:publisher-did candidate)})
+              (.then
+               (fn [content-stage]
+                 (if-not (= :content-staged (:decision content-stage))
+                   (json-response
+                    res (if (= :refuse (:decision content-stage)) 409 503)
+                    {:status (if (= :refuse (:decision content-stage))
+                               "refused" "unavailable")
+                     :domain (:domain candidate)
+                     :reason (name (or (:error content-stage)
+                                       :content-stage-failed))
+                     :verified-cid-count (count (:verified-cids content-stage))})
+                   (let [now (quot (.now js/Date) 1000)
+                         finished (awai-apps/finish-install
+                                   plan {:verified-cids
+                                         (:verified-cids content-stage)
+                                         :approved-caps approved
+                                         :host-supported #{}
+                                         :now now})]
+                     (if-not (= :installed (:decision finished))
+                       (json-response res 409
+                                      {:status "refused"
+                                       :domain (:domain candidate)
+                                       :reason (name (or (:error finished)
+                                                         :install-finalization-failed))})
+                       (let [committed (awai-install-store/commit-installation!
+                                        (data-dir) app-id nil
+                                        (:installation finished))]
+                         (if-not (= :persisted (:decision committed))
+                           (json-response
+                            res (if (= :refuse (:decision committed)) 409 503)
+                            {:status (if (= :refuse (:decision committed))
+                                       "refused" "unavailable")
+                             :domain (:domain candidate)
+                             :reason (name (or (:error committed)
+                                               :install-record-write-failed))})
+                           (let [installation-result
+                                 (awai-install-store/read-installation
+                                  (data-dir) app-id)]
+                             (if-not (= :found (:decision installation-result))
+                               (let [rollback
+                                     (awai-install-store/rollback-installation!
+                                      (data-dir) app-id release-cid nil)]
+                                 (json-response
+                                  res 503
+                                  {:status "unavailable"
+                                   :domain (:domain candidate)
+                                   :reason "install-record-readback-failed"
+                                   :rollback-status (name (:decision rollback))}))
+                               (-> (install-cells-sequentially!
+                                    cells installation-result content-stage
+                                    bridge-config [])
+                                   (.then
+                                    (fn [installed]
+                                      (if-not (= :installed (:decision installed))
+                                        (let [rollback
+                                              (awai-install-store/rollback-installation!
+                                               (data-dir) app-id release-cid nil)]
+                                          (json-response
+                                           res 503
+                                           {:status "install-incomplete"
+                                            :domain (:domain candidate)
+                                            :app-id app-id
+                                            :release-cid release-cid
+                                            :reason (name (or (:error installed)
+                                                              :awai-cell-install-failed))
+                                            :failed-cell-id (:failed-cell-id installed)
+                                            :installed-cells (:installed-cells installed)
+                                            :local-record-rollback
+                                            (name (:decision rollback))}))
+                                        (json-response
+                                         res 201
+                                         {:status "installed"
+                                          :domain (:domain candidate)
+                                          :app-id app-id
+                                          :release-cid release-cid
+                                          :approved-capabilities approved
+                                          :installed-cells
+                                          (:installed-cells installed)
+                                          :content-block-count
+                                          (:block-count content-stage)
+                                          :launch-status "local-loopback-static-only"}))))))))))))))
+
+          {:decision :unavailable}
+          (json-response res 503 {:status "unavailable"
+                                  :domain (:domain candidate)
+                                  :reason "local-install-store-unavailable"})
+
+          (json-response res 503 {:status "unavailable"
+                                  :domain (:domain candidate)
+                                  :reason "local-install-store-unavailable"})))))))
+
+(defn- install-request-response! [res req request-url]
+  (let [parameters (.-searchParams request-url)
+        headers (.-headers req)
+        content-type (aget headers "content-type")
+        content-length (aget headers "content-length")
+        configured (local-install-bridge-config)]
+    (cond
+      (not (local-installer-request? req))
+      (do (.resume req)
+          (json-response res 403 {:status "refused"
+                                  :reason "local-same-origin-request-required"}))
+
+      (not (and (zero? (.-size parameters))
+                (string? content-type)
+                (= "application/json"
+                   (.trim (aget (.split (.toLowerCase content-type) ";") 0)))))
+      (do (.resume req)
+          (json-response res 400 {:status "refused"
+                                  :reason "json-body-and-no-query-required"}))
+
+      (and content-length
+           (> (js/Number content-length) maximum-install-request-bytes))
+      (do (.resume req)
+          (json-response res 413 {:status "refused"
+                                  :reason "install-request-too-large"}))
+
+      :else
+      (-> (read-install-request-json! req maximum-install-request-bytes)
+          (.then
+           (fn [body]
+             (cond
+               (= :install-request-too-large (:error body))
+               (json-response res 413 {:status "refused"
+                                       :reason "install-request-too-large"})
+
+               (:error body)
+               (json-response res 400 {:status "refused"
+                                       :reason (name (:error body))})
+
+               (not (valid-install-request-body? body))
+               (json-response res 400 {:status "refused"
+                                       :reason "invalid-install-request"})
+
+               :else
+               (-> (awai-registry/registry-response!)
+                   (.then
+                    (fn [registry]
+                      (if (not= 200 (:http-status registry))
+                        (json-response res 503 {:status "unavailable"
+                                                :domain (:domain body)
+                                                :reason "registry-unavailable"})
+                        (let [candidate
+                              (some #(when (= (:domain body) (:domain %)) %)
+                                    (:verified-candidates registry))]
+                          (cond
+                            (nil? candidate)
+                            (json-response res 404 {:status "unavailable"
+                                                    :domain (:domain body)
+                                                    :reason "domain-not-in-awai-registry"})
+
+                            (not= :candidate (:decision candidate))
+                            (json-response res 409 {:status "refused"
+                                                    :domain (:domain body)
+                                                    :reason "registry-domain-not-a-candidate"})
+
+                            :else
+                            (-> (resolve-install-scope! (:domain body) registry candidate)
+                                (.then
+                                 (fn [scope]
+                                   (if-not (= :ready (:decision scope))
+                                     (install-scope-error! res (:domain body) scope)
+                                     (perform-consented-install!
+                                      res body scope configured))))))))))
+                   (.catch
+                    (fn [_]
+                      (json-response res 503 {:status "unavailable"
+                                              :domain (:domain body)
+                                              :reason "registry-unavailable"})))))))
+          (.catch
+           (fn [_]
+             (json-response res 503 {:status "unavailable"
+                                     :reason "install-request-unavailable"})))))))
+
+(defn- sandbox-origin [app-id]
+  (when-let [port (configured-port)]
+    (str "http://" app-id ".localhost"
+         (when-not (= 80 port) (str ":" port)))))
+
+(defn- sandbox-app-id [req]
+  (let [raw-host (aget (.-headers req) "host")
+        port (configured-port)
+        suffix (when (number? port)
+                 (str ".localhost" (when-not (= 80 port) (str ":" port))))]
+    (when (and (string? raw-host) (string? suffix)
+               (str/ends-with? raw-host suffix)
+               (> (count raw-host) (count suffix)))
+      (let [app-id (subs raw-host 0 (- (count raw-host) (count suffix)))]
+        (when (and (= raw-host (str app-id suffix))
+                   (vocab/reverse-dns-id? app-id))
+          app-id)))))
+
+(defn- sandbox-host? [req]
+  (let [host (aget (.-headers req) "host")]
+    (and (string? host)
+         (or (str/ends-with? host ".localhost")
+             (str/includes? host ".localhost:")))))
+
+(defn- verified-local-app [app-id]
+  (let [stored (awai-install-store/read-installation (data-dir) app-id)]
+    (if-not (= :found (:decision stored))
+      {:decision (:decision stored) :error (:error stored)}
+      (let [record (:installation stored)
+            lock (:install-lock record)
+            required-cids (app-install/required-content-cids lock)
+            required (when (sequential? required-cids) (vec required-cids))]
+        (if-not (and (seq required)
+                     (<= (count required) 4096)
+                     (= (count required) (count (set required))))
+          {:decision :refuse :error :invalid-installed-content-set}
+          (let [verified (into #{}
+                               (keep (fn [block-cid]
+                                       (let [result
+                                             (awai-content-store/read-verified-block
+                                              (data-dir) block-cid)]
+                                         (when (and (= :verified (:decision result))
+                                                    (= block-cid (:cid result)))
+                                           block-cid))))
+                               required)
+                host-supported (if (local-install-bridge-config)
+                                 [awai-install-bridge/cell-read-capability
+                                  awai-install-bridge/cell-write-capability]
+                                 [])
+                launch (awai-apps/launch-decision
+                        record {:verified-cids verified
+                                :host-supported host-supported
+                                :domain-status :cached-offline})
+                manifest-cid (:manifest-cid lock)
+                manifest-block (awai-content-store/read-verified-block
+                                (data-dir) manifest-cid)
+                manifest-result
+                (when (= :verified (:decision manifest-block))
+                  (awai-manifest-policy/verify-block manifest-cid
+                                                     (:bytes manifest-block)
+                                                     app-id))
+                manifest (:manifest manifest-result)
+                bundle-cid (:bundle-cid lock)
+                entry (:kotoba.app/entry manifest)]
+            (cond
+              (not= :launch (:decision launch))
+              {:decision :refuse :error :installed-app-not-launchable
+               :launch-decision launch}
+
+              (not= :verified (:decision manifest-result))
+              {:decision :refuse :error :installed-app-manifest-invalid}
+
+              (not= bundle-cid (:kotoba.app/bundle-cid manifest))
+              {:decision :refuse :error :installed-bundle-cid-mismatch}
+
+              (not (and (string? entry) (not-empty entry)))
+              {:decision :refuse :error :installed-app-entry-missing}
+
+              :else
+              {:decision :ready
+               :app-id app-id
+               :record record
+               :verified-cids verified
+               :launch launch
+               :manifest manifest
+               :entry entry
+               :bundle-cid bundle-cid})))))))
+
+(defn- app-launch-response! [res req request-url]
+  (let [parameters (.-searchParams request-url)
+        app-values (.getAll parameters "app-id")
+        app-id (when (= 1 (.-length app-values))
+                 (aget app-values 0))
+        headers (.-headers req)]
+    (cond
+      (not (local-installer-request? req))
+      (json-response res 403 {:status "refused"
+                              :reason "local-same-origin-request-required"})
+
+      (or (not= 1 (.-size parameters))
+          (not (and (string? app-id) (vocab/reverse-dns-id? app-id))))
+      (json-response res 400 {:status "refused"
+                              :reason "one-valid-app-id-query-required"})
+
+      (or (and (aget headers "content-length")
+               (not= "0" (aget headers "content-length")))
+          (aget headers "transfer-encoding"))
+      (json-response res 400 {:status "refused"
+                              :reason "request-body-not-accepted"})
+
+      :else
+      (let [runtime (verified-local-app app-id)]
+        (if-not (= :ready (:decision runtime))
+          (json-response res (if (= :missing (:decision runtime)) 404 409)
+                         {:status "unavailable"
+                          :app-id app-id
+                          :reason (name (or (:error runtime)
+                                            (when (= :missing (:decision runtime))
+                                              :installation-not-found)
+                                            :installed-app-unavailable))})
+          (json-response res 200
+                         {:status "ready"
+                          :app-id app-id
+                          :release-cid
+                          (get-in runtime [:record :install-lock :release-cid])
+                          :entry (:entry runtime)
+                          :sandbox-origin (sandbox-origin app-id)
+                          :runtime "static-app-isolation-v1"
+                          :host-capabilities
+                          (vec (filter #{awai-install-bridge/cell-read-capability
+                                         awai-install-bridge/cell-write-capability}
+                                       (get-in runtime [:launch :capabilities])))}))))))
+
+(defn- valid-app-operation-body? [body]
+  (and (map? body)
+       (= #{:app-id :capability :request} (set (keys body)))
+       (string? (:app-id body))
+       (vocab/reverse-dns-id? (:app-id body))
+       (case (:capability body)
+         "awai.cell.read" (awai-install-bridge/valid-cell-read-request?
+                           (:request body))
+         "awai.cell.write" (awai-install-bridge/valid-cell-write-request?
+                            (:request body))
+         false)))
+
+(defn- app-operation-response! [res req request-url]
+  (let [headers (.-headers req)
+        content-type (some-> (aget headers "content-type")
+                             str/lower-case
+                             (.split ";")
+                             first
+                             str/trim)
+        content-length (aget headers "content-length")
+        configured (local-install-bridge-config)]
+    (cond
+      (not (local-installer-request? req))
+      (do (.resume req)
+          (json-response res 403 {:schema "itonami.app.operation.v1"
+                                  :status "refused"
+                                  :reason "local-same-origin-request-required"}))
+
+      (or (pos? (.-size (.-searchParams request-url)))
+          (not= "application/json" content-type))
+      (do (.resume req)
+          (json-response res 400 {:schema "itonami.app.operation.v1"
+                                  :status "refused"
+                                  :reason "json-body-and-no-query-required"}))
+
+      (and content-length
+           (> (js/Number content-length) maximum-app-operation-request-bytes))
+      (do (.resume req)
+          (json-response res 413 {:schema "itonami.app.operation.v1"
+                                  :status "refused"
+                                  :reason "app-operation-request-too-large"}))
+
+      (nil? configured)
+      (do (.resume req)
+          (json-response res 503 {:schema "itonami.app.operation.v1"
+                                  :status "unavailable"
+                                  :reason "local-awai-cell-bridge-not-configured"}))
+
+      :else
+      (-> (read-install-request-json! req maximum-app-operation-request-bytes)
+          (.then
+           (fn [body]
+             (cond
+               (:error body)
+               (json-response res 400 {:schema "itonami.app.operation.v1"
+                                       :status "refused"
+                                       :reason (name (:error body))})
+
+               (not (valid-app-operation-body? body))
+               (json-response res 400 {:schema "itonami.app.operation.v1"
+                                       :status "refused"
+                                       :reason "invalid-app-operation"})
+
+               :else
+               (let [runtime (verified-local-app (:app-id body))]
+                 (if-not (= :ready (:decision runtime))
+                   (json-response res (if (= :missing (:decision runtime)) 404 409)
+                                  {:schema "itonami.app.operation.v1"
+                                   :status "unavailable"
+                                   :app-id (:app-id body)
+                                   :reason (name (or (:error runtime)
+                                                     :installed-app-unavailable))})
+                   (-> (js/Promise.resolve
+                        (awai-install-bridge/dispatch-cell-operation!
+                         {:installation (:record runtime)
+                          :runtime-facts
+                          {:verified-cids (:verified-cids runtime)
+                           :host-supported
+                           [awai-install-bridge/cell-read-capability
+                            awai-install-bridge/cell-write-capability]
+                           :domain-status :cached-offline}
+                          :capability (:capability body)
+                          :request (:request body)
+                          :endpoint (:cell-endpoint configured)
+                          :token-file (:token-file configured)}))
+                       (.then
+                        (fn [operation]
+                          (let [status (case (:decision operation)
+                                         :completed 200
+                                         :refuse 403
+                                         503)
+                                result (cond-> {:schema "itonami.app.operation.v1"
+                                                :status (name (or (:decision operation)
+                                                                  :unavailable))
+                                                :app-id (:app-id body)}
+                                         (:capability operation)
+                                         (assoc :capability (:capability operation))
+                                         (:error operation)
+                                         (assoc :reason (name (:error operation)))
+                                         (:result operation)
+                                         (assoc :result (:result operation)))
+                                result (if (contains? operation :retry-safe?)
+                                         (assoc result :retry-safe?
+                                                (:retry-safe? operation))
+                                         result)]
+                            (json-response res status result))))))))))
+          (.catch
+           (fn [_]
+             (when-not (.-headersSent res)
+               (json-response res 503 {:schema "itonami.app.operation.v1"
+                                       :status "unavailable"
+                                       :reason "app-operation-unavailable"}))))))))
+
+(defn- sandbox-request-entry [request-url default-entry]
+  (let [url-path (.-pathname request-url)]
+    (if (= "/" url-path)
+      default-entry
+      (try
+        (let [decoded (js/decodeURIComponent (subs url-path 1))]
+          (when (and (string? decoded) (not-empty decoded)) decoded))
+        (catch :default _ nil)))))
+
+(defn- app-static-response! [hosted res req request-url app-id]
+  (let [expected-origin (sandbox-origin app-id)
+        request-origin (aget (.-headers req) "origin")
+        port (configured-port)
+        parent-origin (when port (str "http://127.0.0.1:" port))]
+    (cond
+      ;; `sandbox` without `allow-same-origin` gives the app an opaque origin.
+      ;; `null` is accepted only for this read-only, CID-verified asset route.
+      (not (awai-sandbox-policy/static-origin-allowed?
+            expected-origin request-origin))
+      (json-response res 403 {:status "refused"
+                              :reason "app-origin-mismatch"})
+
+      (not (guest/call-bool hosted "app-static-route?" (.-method req)
+                            (.-pathname request-url)))
+      (json-response res 404 {:status "refused"
+                              :reason "guest-route-not-admitted"})
+
+      :else
+      (let [runtime (verified-local-app app-id)]
+        (if-not (= :ready (:decision runtime))
+          (json-response res (if (= :missing (:decision runtime)) 404 409)
+                         {:status "unavailable"
+                          :app-id app-id
+                          :reason (name (or (:error runtime)
+                                            (when (= :missing (:decision runtime))
+                                              :installation-not-found)
+                                            :installed-app-unavailable))})
+          (let [entry (sandbox-request-entry request-url (:entry runtime))
+                raw-bundle? (= :raw (:codec
+                                     (app-cid/parse-cid
+                                      (:bundle-cid runtime))))
+                materialized
+                (when (and entry
+                           (or (not raw-bundle?) (= entry (:entry runtime))))
+                  (awai-bundle/materialize-entry
+                   (data-dir) (:bundle-cid runtime) entry))]
+            (if-not (= :materialized (:decision materialized))
+              (json-response res 404 {:status "unavailable"
+                                      :app-id app-id
+                                      :reason (name (or (:error materialized)
+                                                        :app-asset-unavailable))})
+              (let [csp (awai-sandbox-policy/content-security-policy
+                         expected-origin parent-origin)
+                    headers #js {"content-type" (:content-type materialized)
+                                 "cache-control" "no-store"
+                                 "x-content-type-options" "nosniff"
+                                 "referrer-policy" "no-referrer"
+                                 "cross-origin-resource-policy" "cross-origin"
+                                 "permissions-policy"
+                                 "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+                                 "content-security-policy" csp}]
+                (when (= "null" request-origin)
+                  (aset headers "access-control-allow-origin" "null")
+                  (aset headers "vary" "Origin"))
+                (.writeHead res 200 headers)
+                (.end res (:bytes materialized))))))))))
+
+(defn- platform-status-response! [res]
+  (let [install-bridge-ready? (boolean (local-install-bridge-config))]
+   (-> (awai-registry/registry-response!)
+      (.then
+       (fn [registry]
+         (json-response
+          res 200
+          {:schema "awai.app-platform-status.v1"
+           :status "local-install-only"
+           :registry-reader (if (= 200 (:http-status registry))
+                              "available-single-local-peer"
+                              "unavailable")
+           :active-host-capabilities
+           {:guest-route-admission "active"
+            :registry-envelope-verification "active"
+            :candidate-launcher "active"
+            :dnssec-domain-binding (dnssec-capability)
+            :manifest-plan-preview "active"
+            :verified-content-staging "local-loopback-only"
+            :manifest-and-content-install "local-loopback-only"
+            :explicit-user-consent "local-loopback-only"
+            :awai-cell-install (if install-bridge-ready?
+                                "local-loopback-token-configured"
+                                "local-bridge-unconfigured")
+            :isolated-app-launch "local-loopback-static-only"
+            :host-effect-bridge (if install-bridge-ready?
+                                   "local-loopback-messagechannel"
+                                   "not-connected")
+            :independent-public-gateway "not-connected"}})))
+      (.catch
+       (fn [_]
+         (json-response
+          res 200
+          {:schema "awai.app-platform-status.v1"
+           :status "local-install-only"
+           :registry-reader "unavailable"
+           :active-host-capabilities
+           {:guest-route-admission "active"
+            :registry-envelope-verification "active"
+            :candidate-launcher "active"
+            :dnssec-domain-binding (dnssec-capability)
+            :manifest-plan-preview "active"
+            :verified-content-staging "local-loopback-only"
+            :manifest-and-content-install "local-loopback-only"
+            :explicit-user-consent "local-loopback-only"
+            :awai-cell-install (if install-bridge-ready?
+                                "local-loopback-token-configured"
+                                "local-bridge-unconfigured")
+            :isolated-app-launch "local-loopback-static-only"
+            :host-effect-bridge (if install-bridge-ready?
+                                   "local-loopback-messagechannel"
+                                   "not-connected")
+           :independent-public-gateway "not-connected"}}))))))
+
+(defn- handle-standard [hosted guest-main req res]
+  (let [method (.-method req)
+        request-url (js/URL. (str "http://127.0.0.1" (.-url req)))
+        url-path (.-pathname request-url)
+        health-admitted? (guest/call-bool hosted "health-route?" method url-path)
+        registry-admitted? (guest/call-bool hosted "app-registry-route?" method url-path)
+        platform-status-admitted? (guest/call-bool hosted "platform-status-route?" method url-path)
+        domain-proof-admitted? (guest/call-bool hosted "app-domain-proof-route?" method url-path)
+        install-plan-admitted? (guest/call-bool hosted "app-install-plan-route?" method url-path)
+        install-content-admitted? (guest/call-bool hosted "app-content-stage-route?" method url-path)
+        install-admitted? (guest/call-bool hosted "app-install-route?" method url-path)
+        app-launch-admitted? (guest/call-bool hosted "app-launch-route?" method url-path)
+        app-operation-admitted? (guest/call-bool hosted "app-operation-route?" method url-path)
+        launcher-admitted? (guest/call-bool hosted "launcher-route?" method url-path)]
+    (cond
+      health-admitted?
       (json-response res 200 {:ok true
                               :service "cloud-itonami-app"
                               :schema "cloud.itonami.app.health.v1"
@@ -49,18 +1199,55 @@
                               :guest-main guest-main
                               :store (store-fingerprint)})
 
-      (and (= method "GET") (= url-path "/"))
-      (do
-        (.writeHead res 200 #js {"content-type" "text/html; charset=utf-8"})
-        (.end res
-              (str "<!doctype html><meta charset=\"utf-8\">"
-                   "<title>Cloud Itonami</title>"
-                   "<p>nbb host + guest wasm. GET /health is admitted by "
-                   "server_main.wasm. The leftover JVM page is not this process.</p>")))
+      registry-admitted?
+      (-> (awai-registry/registry-response!)
+          (.then (fn [result]
+                   (json-response res (:http-status result) (:body result))))
+          (.catch (fn [_]
+                    (json-response res 503 {:status "unavailable"
+                                            :reason "peer-host-unavailable"}))))
+
+      platform-status-admitted?
+      (platform-status-response! res)
+
+      domain-proof-admitted?
+      (domain-proof-response! res request-url)
+
+      install-plan-admitted?
+      (install-plan-response! res req request-url)
+
+      install-content-admitted?
+      (install-content-stage-response! res req request-url)
+
+      install-admitted?
+      (install-request-response! res req request-url)
+
+      app-launch-admitted?
+      (app-launch-response! res req request-url)
+
+      app-operation-admitted?
+      (app-operation-response! res req request-url)
+
+      launcher-admitted?
+      (launcher-response res url-path)
 
       :else
       (json-response res 404 {:error {:type "guest-wasm/not-admitted"
-                                      :message "guest health-route? refused this request; leftover JVM API is not loaded"}}))))
+                                      :message "guest-wasm refused this request; leftover JVM API is not loaded"}}))))
+
+(defn- handle [hosted guest-main req res]
+  (let [request-url (js/URL. (str "http://127.0.0.1" (.-url req)))
+        app-id (sandbox-app-id req)]
+    (cond
+      app-id
+      (app-static-response! hosted res req request-url app-id)
+
+      (sandbox-host? req)
+      (json-response res 421 {:status "refused"
+                              :reason "invalid-app-sandbox-host"})
+
+      :else
+      (handle-standard hosted guest-main req res))))
 
 (defn -main [& _]
   (-> (guest/load-guest app-directory "target/amu/server_main.wasm")
@@ -72,7 +1259,10 @@
              (throw (ex-info "guest main stayed 0; unused guest is not a run"
                              {:guest-main guest-main})))
            (let [host (or (aget js/process.env "CLOUD_ITONAMI_HOST") "127.0.0.1")
-                 port (js/parseInt (or (aget js/process.env "CLOUD_ITONAMI_PORT") "1338") 10)
+                 port (configured-port)
+                 _ (when-not (and (= "127.0.0.1" host) (number? port))
+                     (throw (ex-info "host must bind IPv4 loopback with a valid TCP port"
+                                     {:host host :port port})))
                  server (.createServer http (fn [req res]
                                               (handle hosted guest-main req res)))]
              (.listen server port host

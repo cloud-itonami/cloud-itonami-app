@@ -49,7 +49,22 @@
         ;; production server runs through Nbb and does not read deps.edn.
         io.github.kotoba-lang/kotoba-protocol
         {:git/url "https://github.com/kotoba-lang/kotoba-protocol.git"
-         :git/sha "4e3f3d456ec39c1b6419b55f113ae07298fec1ed"}
+         :git/sha "05a27f48b7c9fddab61277bd0041f37ebf0e07e7"}
+        ;; Shared host content traversal for canonical DAG-CBOR and UnixFS
+        ;; DAG-PB. Keep these pins in sync with deps.edn and the compiler hold.
+        io.github.kotoba-lang/io-multiformats
+        {:git/url "https://github.com/kotoba-lang/io-multiformats.git"
+         :git/sha "e7ae323d3ccbb9aacc92edfd2f3dda20d9b90eed"}
+        io.github.kotoba-lang/io-ipld
+        {:git/url "https://github.com/kotoba-lang/io-ipld.git"
+         :git/sha "c7b8f76b707ec22fa1692907201d44db54d98f13"}
+        ;; Portable Awai envelope signature verification for the Node host.
+        io.github.kotoba-lang/org-ietf-ed25519
+        {:git/url "https://github.com/kotoba-lang/org-ietf-ed25519.git"
+         :git/sha "238e32d4662b2682e7112c870818a1dcdde2143c"}
+        ;; Embedded DNSSEC validation for Awai domain binding TXT proofs.
+        ;; Pin a release after CVE-2024-25638 and KeyTrap fixes.
+        dnsjava/dnsjava {:mvn/version "3.6.5"}
        ;; kotoba replaced JVM interop here (2026-09-24). An explicit
         ;; floor: tools.deps takes the NEWEST sha it is shown.
         io.github.kotoba-lang/coll {:git/sha "f74e248f0a07e8ae572885f50fab6bdb39dc24be"}

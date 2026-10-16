@@ -1,0 +1,370 @@
+(ns cloud.itonami.app.awai-content-node
+  "Node host adapter for pinned, bounded Awai content retrieval.
+
+  Origins come only from verified signed content/origin records. The adapter
+  rejects redirects, proxy settings, unapproved hosts, oversized blocks, and
+  CID mismatches before any bytes reach the private content store."
+  (:require ["node:crypto" :as crypto]
+            ["node:https" :as https]
+            ["node:tls" :as tls]
+            [clojure.string :as str]
+            [ipld.core :as ipld]
+            [ipld.dag-pb :as dag-pb]
+            [kotoba.protocol.cid :as cid]
+            [cloud.itonami.app.awai-content-policy :as content-policy]
+            [cloud.itonami.app.awai-content-store-node :as content-store]))
+
+(def maximum-block-bytes (* 16 1024 1024))
+(def maximum-install-content-blocks 4096)
+(def maximum-install-content-bytes (* 1024 1024 1024))
+(def supported-codecs #{:raw :dag-pb :dag-cbor})
+(def accepted-content-types
+  #{"application/octet-stream"
+    "application/vnd.ipld.raw"
+    "application/vnd.ipld.dag-pb"
+    "application/vnd.ipld.dag-cbor"})
+
+(defn- now-seconds []
+  (quot (.now js/Date) 1000))
+
+(defn- sha256-hex [bytes]
+  (-> (crypto/createHash "sha256")
+      (.update bytes)
+      (.digest "hex")))
+
+(defn- pinned-agent [origin]
+  (let [check-server-identity
+        (fn [host certificate]
+          (let [identity-error (.checkServerIdentity tls host certificate)
+                actual-pin (when (.-pubkey certificate)
+                             (sha256-hex (.-pubkey certificate)))]
+            (cond
+              identity-error identity-error
+              (= (:spki-sha256 origin) actual-pin) nil
+              :else (js/Error. "tls-spki-pin-mismatch"))))]
+    ;; Node verifies the chain and certificate lifetime before calling the
+    ;; identity hook. Keep hostname verification and add the Awai-published
+    ;; SPKI pin. An explicit empty proxy environment prevents inherited proxy
+    ;; settings from changing the selected origin.
+    (https/Agent. #js {:keepAlive false
+                      :maxCachedSessions 0
+                      :proxyEnv #js {}
+                      :checkServerIdentity check-server-identity})))
+
+(defn- acceptable-response? [response maximum-bytes]
+  (let [headers (.-headers response)
+        content-type (some-> (aget headers "content-type")
+                             str/lower-case
+                             (str/split #";" 2)
+                             first
+                             str/trim)
+        content-encoding (some-> (aget headers "content-encoding")
+                                 str/lower-case
+                                 str/trim)
+        declared (some-> (aget headers "content-length") js/Number)]
+    (cond
+      (not= 200 (.-statusCode response))
+      {:error :http-status :status (.-statusCode response)}
+
+      (not (contains? accepted-content-types content-type))
+      {:error :unexpected-content-type}
+
+      (and content-encoding (not= "identity" content-encoding))
+      {:error :unexpected-content-encoding}
+
+      (and (number? declared) (js/Number.isFinite declared)
+           (> declared maximum-bytes))
+      {:error :block-too-large}
+
+      :else nil)))
+
+(defn- request-block! [origin block-cid maximum-bytes]
+  (let [url (js/URL. (str (:origin origin) "/ipfs/" block-cid "?format=raw"))
+        agent (pinned-agent origin)]
+    (js/Promise.
+     (fn [resolve _reject]
+       (let [settled? (atom false)
+             chunks (atom [])
+             total (atom 0)
+             finish! (fn [result]
+                       (when-not @settled?
+                         (reset! settled? true)
+                         (.destroy agent)
+                         (resolve result)))
+             request (.request
+                      https url
+                      #js {:method "GET"
+                           :agent agent
+                           :timeout 30000
+                           :headers #js
+                           {"accept" "application/vnd.ipld.raw, application/vnd.ipld.dag-pb, application/vnd.ipld.dag-cbor, application/octet-stream"
+                            "accept-encoding" "identity"}}
+                      (fn [response]
+                        (if-let [rejection (acceptable-response? response maximum-bytes)]
+                          (do
+                            (.destroy response)
+                            (finish! rejection))
+                          (do
+                            (.on response "data"
+                                 (fn [chunk]
+                                   (when-not @settled?
+                                     (let [size (+ @total (.-byteLength chunk))]
+                                       (if (> size maximum-bytes)
+                                         (do
+                                           (.destroy response)
+                                           (finish! {:error :block-too-large}))
+                                         (do
+                                           (swap! chunks conj chunk)
+                                           (reset! total size)))))))
+                            (.on response "end"
+                                 (fn []
+                                   (when-not @settled?
+                                     (finish! {:bytes
+                                               (.concat js/Buffer
+                                                        (clj->js @chunks)
+                                                        @total)}))))
+                            (.on response "error"
+                                 (fn [_]
+                                   (finish! {:error :transport-failed})))))))]
+         (.on request "timeout"
+              (fn []
+                (.destroy request (js/Error. "content-timeout"))
+                (finish! {:error :transport-timeout})))
+         (.on request "error"
+              (fn [_]
+                (finish! {:error :transport-failed})))
+         (.end request))))))
+
+(defn- fetch-from-origin! [origin block-cid maximum-bytes]
+  (-> (request-block! origin block-cid maximum-bytes)
+      (.then
+       (fn [result]
+         (if-let [bytes (:bytes result)]
+           (if (cid/digest-matches-cid?
+                block-cid
+                (vec (array-seq (-> (crypto/createHash "sha256")
+                                    (.update bytes)
+                                    (.digest)))) )
+             {:bytes bytes :origin-host (:host origin)}
+             {:error :cid-mismatch})
+           result)))
+      (.catch (fn [_] {:error :transport-failed}))))
+
+(defn fetch-verified-block!
+  "Fetch one immutable block from the signed origin set, then verify its CID.
+
+  This returns bytes only to the host lifecycle coordinator. App code must
+  receive bytes only after content traversal and installation policy succeed."
+  ([block-cid records app-id publisher-did]
+   (fetch-verified-block! block-cid records app-id publisher-did maximum-block-bytes))
+  ([block-cid records app-id publisher-did maximum-bytes]
+   (let [{:keys [codec error]} (cid/parse-cid block-cid)
+         now (now-seconds)
+         origin-result (content-policy/content-origins
+                        records app-id publisher-did now)
+         origins (:origins origin-result)]
+     (cond
+       error
+       (js/Promise.resolve {:decision :refuse :error :invalid-cid})
+
+       (not (contains? supported-codecs codec))
+       (js/Promise.resolve {:decision :refuse :error :unsupported-cid-codec})
+
+       (not (and (integer? maximum-bytes)
+                 (<= 1 maximum-bytes maximum-block-bytes)))
+       (js/Promise.resolve {:decision :refuse :error :invalid-block-size-limit})
+
+       (not= :origins-ready (:decision origin-result))
+       (js/Promise.resolve {:decision :unavailable
+                            :error (or (:reason origin-result)
+                                       :accepted-content-origins-required)})
+
+       :else
+       (letfn [(try-origin [remaining failures]
+                 (if-let [origin (first remaining)]
+                   (let [now-before (now-seconds)]
+                     (if (or (not (nat-int? now-before))
+                             (>= now-before (:expires-at origin)))
+                       (try-origin (next remaining)
+                                   (conj failures {:origin-host (:host origin)
+                                                   :error :content-origin-expired}))
+                       (-> (fetch-from-origin! origin block-cid maximum-bytes)
+                           (.then
+                            (fn [result]
+                              (let [now-after (now-seconds)
+                                    still-live? (and (nat-int? now-after)
+                                                     (< now-after (:expires-at origin)))]
+                                (if (and (:bytes result) still-live?)
+                                  {:decision :verified
+                                   :cid block-cid
+                                   :bytes (:bytes result)
+                                   :origin-host (:origin-host result)
+                                   :failed-origins failures}
+                                  (try-origin
+                                   (next remaining)
+                                   (conj failures
+                                         {:origin-host (:host origin)
+                                          :error (or (:error result)
+                                                     :content-origin-expired)
+                                          :status (:status result)})))))))))
+                   (js/Promise.resolve
+                    {:decision :unavailable
+                     :error :all-origins-failed
+                     :cid block-cid
+                     :failed-origins failures})))]
+         (try-origin (seq origins) []))))))
+
+(defn- supported-block-cid? [block-cid]
+  (let [{:keys [codec error]} (cid/parse-cid block-cid)]
+    (and (not error) (contains? supported-codecs codec))))
+
+(defn- decoded-links [block-cid bytes]
+  (let [{:keys [codec error]} (cid/parse-cid block-cid)]
+    (if error
+      {:error :invalid-cid}
+      (try
+        (let [links (case codec
+                      :raw []
+                      :dag-cbor (ipld/links (ipld/decode bytes))
+                      :dag-pb (mapv :cid (:links (dag-pb/decode bytes)))
+                      nil)]
+          (cond
+            (nil? links) {:error :unsupported-cid-codec}
+            (not (every? supported-block-cid? links))
+            {:error :unsupported-linked-cid}
+            :else {:links (vec (distinct links))}))
+        (catch :default _ {:error :invalid-ipld-block})))))
+
+(defn- cached-or-fetch-block! [data-root block-cid origin-records app-id publisher-did]
+  (let [cached (content-store/read-verified-block data-root block-cid)]
+    (cond
+      (= :verified (:decision cached))
+      (js/Promise.resolve cached)
+
+      (and (= :unavailable (:decision cached))
+           (= :content-block-missing (:error cached)))
+      (fetch-verified-block! block-cid origin-records app-id publisher-did)
+
+      :else
+      (js/Promise.resolve cached))))
+
+(defn fetch-install-content!
+  "Fetch every block reachable from a prepared install plan and stage it.
+
+  The bounded walk verifies each block CID and IPLD link before storing the
+  bytes in the owner-only content store. It never materializes a bundle or
+  returns app-visible bytes."
+  [data-root prepared {:keys [origin-records app-id publisher-did]}]
+  (let [cids (:required-content-cids prepared)
+        unique-cids (when (vector? cids) (set cids))]
+    (cond
+      (not= :install-prepared (:decision prepared))
+      (js/Promise.resolve {:decision :refuse :error :install-not-prepared})
+
+      (not (and (vector? cids)
+                (seq cids)
+                (<= (count cids) maximum-install-content-blocks)
+                (= (count cids) (count unique-cids))))
+      (js/Promise.resolve {:decision :refuse
+                           :error :invalid-required-content-cids})
+
+      (not (every? supported-block-cid? cids))
+      (js/Promise.resolve {:decision :refuse
+                           :error :unsupported-required-content-cid})
+
+      (not (and (string? app-id) (not-empty app-id)
+                (= app-id (get-in prepared [:install-lock :app-id]))
+                (string? publisher-did) (not-empty publisher-did)))
+      (js/Promise.resolve {:decision :refuse :error :invalid-content-fetch-scope})
+
+      :else
+      (letfn [(walk [pending queued visited verified receipts total-bytes]
+                (if (empty? pending)
+                  (js/Promise.resolve
+                   {:decision :content-staged
+                    :verified-cids verified
+                    :storage-receipts receipts
+                    :block-count (count visited)
+                    :byte-count total-bytes})
+                  (let [block-cid (first pending)
+                        remaining (subvec pending 1)
+                        queued (disj queued block-cid)]
+                    (cond
+                      (contains? visited block-cid)
+                      (walk remaining queued visited verified receipts total-bytes)
+
+                      (>= (count visited) maximum-install-content-blocks)
+                      (js/Promise.resolve
+                       {:decision :refuse
+                        :error :install-content-block-limit
+                        :verified-cids verified
+                        :storage-receipts receipts})
+
+                      :else
+                      (-> (cached-or-fetch-block! data-root block-cid
+                                                  origin-records app-id publisher-did)
+                          (.then
+                           (fn [fetched]
+                             (if-not (= :verified (:decision fetched))
+                               {:decision :unavailable
+                                :error :required-content-fetch-failed
+                                :cid block-cid
+                                :verified-cids verified
+                                :storage-receipts receipts
+                                :fetch-result (dissoc fetched :bytes)}
+                               (let [block-bytes (:bytes fetched)
+                                     block-size (.-byteLength block-bytes)
+                                     next-total (+ total-bytes block-size)
+                                     link-result (decoded-links block-cid block-bytes)]
+                                 (cond
+                                   (> next-total maximum-install-content-bytes)
+                                   {:decision :refuse
+                                    :error :install-content-byte-limit
+                                    :verified-cids verified
+                                    :storage-receipts receipts}
+
+                                   (:error link-result)
+                                   {:decision :refuse
+                                    :error (:error link-result)
+                                    :cid block-cid
+                                    :verified-cids verified
+                                    :storage-receipts receipts}
+
+                                   :else
+                                   (let [next-visited (conj visited block-cid)
+                                         [next-pending next-queued]
+                                         (reduce
+                                          (fn [[acc seen] child-cid]
+                                            (if (or (contains? next-visited child-cid)
+                                                    (contains? seen child-cid))
+                                              [acc seen]
+                                              [(conj acc child-cid)
+                                               (conj seen child-cid)]))
+                                          [remaining queued]
+                                          (:links link-result))
+                                         discovered (+ (count next-visited)
+                                                       (count next-queued))]
+                                     (if (> discovered maximum-install-content-blocks)
+                                       {:decision :refuse
+                                        :error :install-content-block-limit
+                                        :verified-cids verified
+                                        :storage-receipts receipts}
+                                       (let [stored
+                                             (content-store/store-verified-block!
+                                              {:data-root data-root
+                                               :cid block-cid
+                                               :bytes block-bytes})]
+                                         (if (and (= :stored (:decision stored))
+                                                  (true? (:durable? stored))
+                                                  (= block-cid (:cid stored))
+                                                  (some? (:receipt stored)))
+                                           (walk next-pending next-queued next-visited
+                                                 (conj verified block-cid)
+                                                 (conj receipts stored)
+                                                 next-total)
+                                           {:decision :unavailable
+                                            :error :protected-content-store-failed
+                                            :cid block-cid
+                                            :verified-cids verified
+                                            :storage-receipts receipts}))))))))))))))]
+          (walk cids unique-cids #{} [] [] 0)))))

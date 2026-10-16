@@ -2,11 +2,14 @@
   "Fetch one immutable IPLD block from Awai-signed content origins.
 
   This host adapter never discovers a default gateway or falls back to a
-  Cloudflare service. It verifies the returned block bytes against the CID
-  before returning them. It does not traverse a UnixFS/IPLD graph, persist an
-  install, or pass bytes into app code."
+  Cloudflare service. It verifies the returned block bytes against the CID and
+  can stage a bounded IPLD graph in private host storage. It does not
+  materialize a bundle, persist an install, or pass bytes into app code."
   (:require [clojure.string :as str]
             [cloud.itonami.app.awai-content-policy :as content-policy]
+            [cloud.itonami.app.awai-content-store :as content-store]
+            [ipld.core :as ipld]
+            [ipld.dag-pb :as dag-pb]
             [kotoba.protocol.cid :as cid])
   (:import [java.io ByteArrayOutputStream]
            [java.net Proxy ProxySelector URI]
@@ -19,6 +22,10 @@
            [javax.net.ssl SSLContext SSLParameters TrustManager X509TrustManager]))
 
 (def maximum-block-bytes (* 16 1024 1024))
+(def maximum-install-content-blocks 4096)
+(def maximum-install-content-bytes (* 1024 1024 1024))
+(def ^:dynamic *now-seconds*
+  #(quot (System/currentTimeMillis) 1000))
 (def ^:private supported-codecs #{:raw :dag-pb :dag-cbor})
 (def ^:private accepted-content-types
   ["application/octet-stream"
@@ -73,14 +80,14 @@
   [records app-id publisher-did now]
   (content-policy/content-origins records app-id publisher-did now))
 
-(defn- read-bounded-body [input]
+(defn- read-bounded-body [input maximum-bytes]
   (with-open [body input]
     (let [output (ByteArrayOutputStream.)
           buffer (byte-array 8192)]
       (loop [total 0]
         ;; Read only one byte beyond the limit. This bounds chunked responses
         ;; even when Content-Length is absent or incorrect.
-        (let [limit (min (alength buffer) (inc (- maximum-block-bytes total)))
+        (let [limit (min (alength buffer) (inc (- maximum-bytes total)))
               count (.read body buffer 0 limit)]
           (cond
             (neg? count)
@@ -89,7 +96,7 @@
             (zero? count)
             (recur total)
 
-            (> (+ total count) maximum-block-bytes)
+            (> (+ total count) maximum-bytes)
             {:error :block-too-large}
 
             :else
@@ -110,7 +117,7 @@
   (URI/create (str (:origin origin)
                    "/ipfs/" block-cid "?format=raw")))
 
-(defn- fetch-from-origin [origin block-cid]
+(defn- fetch-from-origin [origin block-cid maximum-bytes]
   (try
     (let [request (-> (HttpRequest/newBuilder (raw-block-uri origin block-cid))
                       (.timeout (Duration/ofSeconds 30))
@@ -130,7 +137,7 @@
             {:error :unexpected-content-type})
 
         :else
-        (let [read-result (read-bounded-body (.body response))]
+        (let [read-result (read-bounded-body (.body response) maximum-bytes)]
           (if-let [bytes (:bytes read-result)]
             (let [digest (.digest (MessageDigest/getInstance "SHA-256") bytes)
                   digest-bytes (mapv #(bit-and 0xff %) digest)]
@@ -146,42 +153,215 @@
   verification. No origin is discovered from environment or Cloudflare config.
   The caller must keep returned bytes in protected host storage; they are not
   app-visible until a separate install decision succeeds."
-  [block-cid records app-id publisher-did now]
-  (let [{:keys [codec error]} (cid/parse-cid block-cid)
-        origin-result (content-origins records app-id publisher-did now)
-        origins (when (= :origins-ready (:decision origin-result))
-                  (:origins origin-result))]
+  ([block-cid records app-id publisher-did now]
+   (fetch-verified-block block-cid records app-id publisher-did now
+                         maximum-block-bytes))
+  ([block-cid records app-id publisher-did now maximum-bytes]
+   (let [{:keys [codec error]} (cid/parse-cid block-cid)
+         origin-result (content-origins records app-id publisher-did now)
+         origins (when (= :origins-ready (:decision origin-result))
+                   (:origins origin-result))]
+     (cond
+       error
+       {:decision :refuse :error :invalid-cid}
+
+       (not (contains? supported-codecs codec))
+       {:decision :refuse :error :unsupported-cid-codec}
+
+       (not (and (integer? maximum-bytes)
+                 (<= 1 maximum-bytes maximum-block-bytes)))
+       {:decision :refuse :error :invalid-block-size-limit}
+
+       (not (and (vector? origins)
+                 (<= content-policy/minimum-origin-count (count origins) 8)
+                 (every? #(and (map? %)
+                               (string? (:host %))
+                               (string? (:origin %))
+                               (string? (:spki-sha256 %)))
+                         origins)))
+       {:decision :unavailable :error :accepted-content-origins-required}
+
+       :else
+       (loop [remaining (seq origins) failures []]
+         (if-let [origin (first remaining)]
+           (let [live-before? (try
+                                (let [current (*now-seconds*)]
+                                  (and (nat-int? current)
+                                       (< current (:expires-at origin))))
+                                (catch Exception _ false))
+                 result (if live-before?
+                          (fetch-from-origin origin block-cid maximum-bytes)
+                          {:error :content-origin-expired})
+                 live-after? (try
+                               (let [current (*now-seconds*)]
+                                 (and (nat-int? current)
+                                      (< current (:expires-at origin))))
+                               (catch Exception _ false))]
+             (if (and (:bytes result) live-after?)
+               {:decision :verified
+                :cid block-cid
+                :bytes (:bytes result)
+                :origin-host (:origin-host result)
+                :failed-origins failures}
+               (recur (next remaining)
+                      (conj failures {:origin-host (:host origin)
+                                      :error (or (:error result)
+                                                 :content-origin-expired)
+                                      :status (:status result)}))))
+           {:decision :unavailable
+            :error :all-origins-failed
+            :cid block-cid
+            :failed-origins failures}))))))
+
+(defn- supported-block-cid? [block-cid]
+  (let [{:keys [codec error]} (cid/parse-cid block-cid)]
+    (and (not error) (contains? supported-codecs codec))))
+
+(defn- decoded-links [block-cid bytes]
+  (let [{:keys [codec error]} (cid/parse-cid block-cid)]
+    (if error
+      {:error :invalid-cid}
+      (try
+        (let [links (case codec
+                      :raw []
+                      :dag-cbor (ipld/links (ipld/decode bytes))
+                      :dag-pb (mapv :cid (:links (dag-pb/decode bytes)))
+                      nil)]
+          (cond
+            (nil? links)
+            {:error :unsupported-cid-codec}
+
+            (not (every? supported-block-cid? links))
+            {:error :unsupported-linked-cid}
+
+            :else
+            {:links (vec (distinct links))}))
+        (catch Exception _
+          {:error :invalid-ipld-block})))))
+
+(defn fetch-install-content!
+  "Fetch each required root and every reachable DAG-CBOR, UnixFS DAG-PB, or
+  raw block from a prepared install plan. The bounded walk stages verified
+  blocks in private host storage; it does not materialize UnixFS files, verify
+  manifest signatures, create an installation record, or expose app bytes. A
+  failure may leave verified orphan blocks cached."
+  [prepared {:keys [origin-records app-id publisher-did]}]
+  (let [cids (:required-content-cids prepared)
+        unique-cids (when (vector? cids) (set cids))]
     (cond
-      error
-      {:decision :refuse :error :invalid-cid}
+      (not= :install-prepared (:decision prepared))
+      {:decision :refuse :error :install-not-prepared}
 
-      (not (contains? supported-codecs codec))
-      {:decision :refuse :error :unsupported-cid-codec}
+      (not (and (vector? cids)
+                (seq cids)
+                (<= (count cids) maximum-install-content-blocks)
+                (= (count cids) (count unique-cids))))
+      {:decision :refuse :error :invalid-required-content-cids}
 
-      (not (and (vector? origins)
-                (<= content-policy/minimum-origin-count (count origins) 8)
-                (every? #(and (map? %)
-                              (string? (:host %))
-                              (string? (:origin %))
-                              (string? (:spki-sha256 %)))
-                        origins)))
-      {:decision :unavailable :error :accepted-content-origins-required}
+      (not (every? (fn [block-cid]
+                     (and (string? block-cid)
+                          (let [{:keys [codec error]} (cid/parse-cid block-cid)]
+                            (and (not error)
+                                 (contains? supported-codecs codec)))))
+                   cids))
+      {:decision :refuse :error :unsupported-required-content-cid}
+
+      (not (and (string? app-id) (not-empty app-id)
+                (= app-id (get-in prepared [:install-lock :app-id]))
+                (string? publisher-did) (not-empty publisher-did)))
+      {:decision :refuse :error :invalid-content-fetch-scope}
 
       :else
-      (loop [remaining (seq origins) failures []]
-        (if-let [origin (first remaining)]
-          (let [result (fetch-from-origin origin block-cid)]
-            (if (:bytes result)
-              {:decision :verified
-               :cid block-cid
-               :bytes (:bytes result)
-               :origin-host (:origin-host result)
-               :failed-origins failures}
-              (recur (next remaining)
-                     (conj failures {:origin-host (:host origin)
-                                     :error (:error result)
-                                     :status (:status result)}))))
-          {:decision :unavailable
-           :error :all-origins-failed
-           :cid block-cid
-           :failed-origins failures})))))
+      (loop [pending cids
+             queued unique-cids
+             visited #{}
+             verified []
+             receipts []
+             total-bytes 0]
+        (if (empty? pending)
+          {:decision :content-staged
+           :verified-cids verified
+           :storage-receipts receipts
+           :block-count (count visited)
+           :byte-count total-bytes}
+          (let [block-cid (first pending)
+                remaining (subvec pending 1)
+                queued (disj queued block-cid)]
+            (cond
+              (contains? visited block-cid)
+              (recur remaining queued visited verified receipts total-bytes)
+
+              (>= (count visited) maximum-install-content-blocks)
+              {:decision :refuse
+               :error :install-content-block-limit
+               :verified-cids verified
+               :storage-receipts receipts}
+
+              :else
+              (let [now (*now-seconds*)]
+                (if-not (nat-int? now)
+                  {:decision :unavailable
+                   :error :invalid-clock
+                   :verified-cids verified
+                   :storage-receipts receipts}
+                  (let [fetched (fetch-verified-block block-cid origin-records
+                                                     app-id publisher-did now)]
+                    (if-not (= :verified (:decision fetched))
+                      {:decision :unavailable
+                       :error :required-content-fetch-failed
+                       :cid block-cid
+                       :verified-cids verified
+                       :storage-receipts receipts
+                       :fetch-result (dissoc fetched :bytes)}
+                      (let [block-bytes (alength ^bytes (:bytes fetched))
+                            next-total (+ total-bytes block-bytes)
+                            link-result (decoded-links block-cid (:bytes fetched))]
+                        (cond
+                          (> next-total maximum-install-content-bytes)
+                          {:decision :refuse
+                           :error :install-content-byte-limit
+                           :verified-cids verified
+                           :storage-receipts receipts}
+
+                          (:error link-result)
+                          {:decision :refuse
+                           :error (:error link-result)
+                           :cid block-cid
+                           :verified-cids verified
+                           :storage-receipts receipts}
+
+                          :else
+                          (let [next-visited (conj visited block-cid)
+                                [next-pending next-queued]
+                                (reduce (fn [[acc seen] child-cid]
+                                          (if (or (contains? next-visited child-cid)
+                                                  (contains? seen child-cid))
+                                            [acc seen]
+                                            [(conj acc child-cid)
+                                             (conj seen child-cid)]))
+                                        [remaining queued]
+                                        (:links link-result))
+                                discovered (+ (count next-visited)
+                                              (count next-queued))]
+                            (if (> discovered maximum-install-content-blocks)
+                              {:decision :refuse
+                               :error :install-content-block-limit
+                               :verified-cids verified
+                               :storage-receipts receipts}
+                              (let [stored (content-store/store-verified-block!
+                                            {:cid block-cid
+                                             :bytes (:bytes fetched)})]
+                                (if (and (map? stored)
+                                         (= :stored (:decision stored))
+                                         (true? (:durable? stored))
+                                         (= block-cid (:cid stored))
+                                         (some? (:receipt stored)))
+                                  (recur next-pending next-queued next-visited
+                                         (conj verified block-cid)
+                                         (conj receipts (dissoc stored :bytes))
+                                         next-total)
+                                  {:decision :unavailable
+                                   :error :protected-content-store-failed
+                                   :cid block-cid
+                                   :verified-cids verified
+                                   :storage-receipts receipts})))))))))))))))))

@@ -13648,20 +13648,61 @@
       const candidates = awaiRegistryState.candidates || [];
       const statusLabels = {candidate:'候補', expired:'期限切れ', conflict:'履歴不整合',
         'binding-missing':'bindingなし', 'release-missing':'releaseなし'};
+      const installationLabels = {current:'このreleaseをインストール済み',
+        'update-available':'更新候補あり', 'not-installed':'未インストール',
+        'local-ahead':'ローカルの方が新しいrelease',
+        'sequence-conflict':'同一sequenceのrelease CID不一致',
+        unavailable:'ローカル状態を確認できません'};
       candidates.forEach((candidate) => {
         const domain = candidate.domain || 'domain 不明';
         const appId = candidate['app-id'] || 'App ID 不明';
         const status = statusLabels[candidate.decision] || '要確認';
+        const installationStatus = installationLabels[candidate['local-installation-status']] || '状態未確認';
         const details = `${appId} · channel ${candidate.channel || '不明'} · ${status}`;
         if (!matches(`${domain} ${details} ${candidate['release-cid'] || ''} ${candidate['manifest-cid'] || ''}`)) return;
         const card = make('article', 'market-card');
         const copy = make('div', 'market-copy');
+        const proofState = make('p', 'form-help', 'DNSSEC proof は未確認です。');
         copy.append(make('h3', null, domain),
           make('p', null, details),
           make('p', 'form-help', `release sequence ${candidate['release-sequence'] ?? '不明'} · release CID ${candidate['release-cid'] || '未解決'} · manifest CID ${candidate['manifest-cid'] || '未解決'}`),
-          make('p', 'form-help', 'Awai受理済み履歴からの候補です。DNSSEC proof、manifestとbundleのbytes、revocation確認は未完了のため、install・起動はまだできません。'),
+          make('p', 'form-help', `このItonami host: ${installationStatus}${candidate['installed-release-sequence'] ? ` · installed sequence ${candidate['installed-release-sequence']}` : ''}`),
+          make('p', 'form-help', 'Awai受理済み履歴からの候補です。DNSSEC proof を確認できます。manifestとbundleのbytes、revocation、sandboxは未完了のため、install・起動はまだできません。'),
+          proofState,
           make('p', 'form-help', `binding CID ${candidate['binding-cid'] || '不明'} · ${candidate.reason || 'chain確認済み'}`));
-        card.append(copy); grid.append(card);
+        const actions = make('div', 'market-actions');
+        const verify = make('button', 'tool-button', 'DNSSEC proof を検証');
+        verify.type = 'button';
+        verify.disabled = candidate.decision !== 'candidate';
+        verify.addEventListener('click', async () => {
+          verify.disabled = true;
+          proofState.textContent = 'DNSSEC proof を検証しています…';
+          try {
+            const response = await fetch('/api/bots/awai-app-domain-proof', {
+              method:'POST', headers:identityHeaders(), body:JSON.stringify({domain})
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data?.reason || 'DNSSEC proof を確認できませんでした。');
+            if (data.status === 'verified' && data['binding-match?']) {
+              const expiry = new Date(data['proof-expires-at'] * 1000).toLocaleTimeString();
+              proofState.textContent = `DNSSEC proof と Awai binding CID が一致しました（${expiry} まで）。Install には manifest、bundle、revocation、sandbox の確認が引き続き必要です。`;
+            } else {
+              const reasons = {
+                'dnssec-not-secure':'DNSSEC 署名付きの応答ではありません。ゾーン署名と親 DS が必要です。',
+                'dnssec-bogus-or-upstream-servfail':'DNSSEC chain が不正か上流が SERVFAIL を返しました。応答は採用していません。',
+                'dns-answer-not-exact':'応答が単一の TXT proof ではありません。CNAME と複数値は受け付けません。',
+                'dns-response-not-found':'DNS proof の TXT レコードが見つかりません。',
+                'dnssec-resolution-failed':'DNSSEC 検証に失敗しました。応答は採用していません。'
+              };
+              proofState.textContent = reasons[data.reason] || 'DNSSEC proof と Awai binding CID を確認できませんでした。';
+            }
+          } catch (error) {
+            proofState.textContent = error.message;
+          } finally {
+            verify.disabled = candidate.decision !== 'candidate';
+          }
+        });
+        actions.append(verify); card.append(copy, actions); grid.append(card);
       });
       if (!grid.children.length) grid.append(make('p', 'empty-state', '検索に一致するdomain候補がありません。'));
     };

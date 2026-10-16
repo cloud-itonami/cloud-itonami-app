@@ -1,0 +1,221 @@
+(ns cloud.itonami.app.awai-envelope-test
+  (:require [ed25519.core :as ed]
+            [ipld.core :as ipld]
+            [kotoba.bytes :as kbytes]
+            [kotoba.test :refer [deftest is]]
+            [kotoba.protocol.cid :as cid]
+            [multiformats.core :as mf]
+            [cloud.itonami.app.awai-envelope :as envelope]))
+
+(def registry-dna "bafyreihtmsbgoruyxye4ate3jaacwztkamyxkj25kjerg46hlg5hvzcwem")
+(def manifest-cid "bafkreifwintjn6lddprilx7xpbxrtorzkuxhjwhs7c4x3c4aippelcipnu")
+(def app-id "net.kotoba.murakumo")
+
+(defn- bytes-from-unsigned [values]
+  #?(:clj (byte-array (map unchecked-byte values))
+     :cljs (js/Uint8Array.from (clj->js values))))
+
+(defn- byte-count [value]
+  #?(:clj (alength value)
+     :cljs (.-length value)))
+
+(defn- bytes-hex [value]
+  (apply str (map (fn [b]
+                    (let [text (.toString (bit-and (int b) 0xff) 16)]
+                      (if (= 1 (count text)) (str "0" text) text)))
+                  (seq value))))
+
+(defn- bytes-join [& parts]
+  #?(:clj
+     (let [out (java.io.ByteArrayOutputStream.)]
+       (doseq [part parts]
+         (.write out ^bytes part 0 (alength ^bytes part)))
+       (.toByteArray out))
+     :cljs
+     (let [out (js/Uint8Array. (reduce + (map byte-count parts)))]
+       (loop [remaining parts offset 0]
+         (when-let [part (first remaining)]
+           (.set out part offset)
+           (recur (rest remaining) (+ offset (byte-count part)))))
+       out)))
+
+(defn- seed-bytes []
+  (bytes-from-unsigned (range 32)))
+
+(defn- flip-first-byte [value]
+  #?(:clj (let [out (aclone ^bytes value)]
+            (aset-byte out 0 (unchecked-byte (bit-xor 1 (bit-and 0xff (aget out 0)))))
+            out)
+     :cljs (let [out (.slice value)]
+             (aset out 0 (bit-xor 1 (aget out 0)))
+             out)))
+
+(defn- projected-body [type body]
+  (case type
+    "app/release"
+    (cond-> {:app-id (get body "app-id")
+             :manifest-cid manifest-cid
+             :publisher-did (get body "publisher-did")
+             :channel (get body "channel")
+             :sequence (get body "sequence")}
+      (contains? body "content-origin-cids")
+      (assoc :content-origin-cids (mapv ipld/link-cid (get body "content-origin-cids")))
+      (contains? body "previous-release-cid")
+      (assoc :previous-release-cid (or (some-> (get body "previous-release-cid") ipld/link-cid) "")))
+
+    "app/revoke"
+    (cond-> {:app-id (get body "app-id")
+             :publisher-did (get body "publisher-did")
+             :release-cid (ipld/link-cid (get body "release-cid"))
+             :sequence (get body "sequence")
+             :reason-code (get body "reason-code")
+             :issued-at (get body "issued-at")}
+      (contains? body "previous-revoke-cid")
+      (assoc :previous-revoke-cid
+             (or (some-> (get body "previous-revoke-cid") ipld/link-cid) "")))
+
+    "domain/bind"
+    (cond-> {:domain (get body "domain")
+             :app-id (get body "app-id")
+             :publisher-did (get body "publisher-did")
+             :channel (get body "channel")
+             :domain-owner-did (get body "domain-owner-did")
+             :sequence (get body "sequence")
+             :expires-at (get body "expires-at")}
+      (contains? body "previous-binding-cid")
+      (assoc :previous-binding-cid (or (some-> (get body "previous-binding-cid") ipld/link-cid) "")))
+
+    "content/origin"
+    {:app-id (get body "app-id")
+     :publisher-did (get body "publisher-did")
+     :operator-did (get body "operator-did")
+     :host (get body "host")
+     :spki-sha256 (bytes-hex (get body "spki-sha256"))
+     :expires-at (get body "expires-at")}))
+
+(defn- record-for [seed type body]
+  (let [did (ed/did-key-from-seed seed)
+        multikey (mf/base58btc-decode (subs did (count "did:key:z")))
+        agent (bytes-from-unsigned
+               (drop 2 (map #(bit-and (int %) 0xff) multikey)))
+        unsigned {"v" 1
+                  "dna" (ipld/link registry-dna)
+                  "agent" agent
+                  "seq" 0
+                  "prev" nil
+                  "ts" 1800000000
+                  "type" type
+                  "body" body}
+        dna-bytes (bytes-from-unsigned
+                   (cid/base32-decode (subs registry-dna 1)))
+        message (bytes-join (kbytes/utf8-bytes "awai/dna/entry/v1")
+                            dna-bytes
+                            (ipld/encode unsigned))
+        signature (ed/sign seed message)
+        bytes (ipld/encode (assoc unsigned "sig" signature))
+        projection-body (projected-body type body)]
+    {:did did
+     :envelope (assoc unsigned "sig" signature)
+     :record {:cid (ipld/cid bytes)
+              :type type
+              :sequence 0
+              :body projection-body
+              :envelope-hex (bytes-hex bytes)}}))
+
+(defn- release-body [did]
+  {"app-id" app-id
+   "manifest-cid" (ipld/link manifest-cid)
+   "publisher-did" did
+   "channel" "stable"
+   "sequence" 1})
+
+(deftest verifies-canonical-cid-signature-dna-and-signer-binding
+  (let [seed (seed-bytes)
+        did (ed/did-key-from-seed seed)
+        {:keys [record]} (record-for seed "app/release" (release-body did))
+        result (envelope/verify-record registry-dna record)]
+    (is (:ok? result))
+    (is (= did (:signer-did result)))))
+
+(deftest rejects-signed-envelope-with-a-different-projected-body
+  (let [seed (seed-bytes)
+        did (ed/did-key-from-seed seed)
+        {:keys [record]} (record-for seed "app/release" (release-body did))
+        record (assoc-in record [:body :channel] "beta")
+        result (envelope/verify-record registry-dna record)]
+    (is (false? (:ok? result)))
+    (is (= :projection-body-mismatch (:reason result)))))
+
+(deftest rejects-wrong-dna-and-validly-addressed-bad-signature
+  (let [seed (seed-bytes)
+        did (ed/did-key-from-seed seed)
+        {:keys [record envelope]} (record-for seed "app/release" (release-body did))
+        wrong-dna (envelope/verify-record manifest-cid record)
+        bad-signature (flip-first-byte (get envelope "sig"))
+        altered (ipld/encode (assoc envelope "sig" bad-signature))
+        altered-record (assoc record
+                              :cid (ipld/cid altered)
+                              :envelope-hex (bytes-hex altered))
+        invalid-signature (envelope/verify-record registry-dna altered-record)]
+    (is (= :wrong-registry-dna (:reason wrong-dna)))
+    (is (= :invalid-envelope-signature (:reason invalid-signature)))))
+
+(deftest rejects-a-valid-signature-claiming-another-publisher
+  (let [seed (seed-bytes)
+        did (ed/did-key-from-seed seed)
+        wrong-publisher "did:key:z6Mkwrongpublisher"
+        {:keys [record]} (record-for seed "app/release" (release-body wrong-publisher))
+        result (envelope/verify-record registry-dna record)]
+    (is (= :signer-identity-mismatch (:reason result)))))
+
+(deftest verifies-domain-owner-and-content-origin-envelope-variants
+  (let [seed (seed-bytes)
+        did (ed/did-key-from-seed seed)
+        binding-body {"domain" "murakumo.cloud"
+                      "app-id" app-id
+                      "publisher-did" did
+                      "channel" "stable"
+                      "domain-owner-did" did
+                      "sequence" 1
+                      "previous-binding-cid" nil
+                      "expires-at" 2000000000}
+        origin-body {"app-id" app-id
+                     "publisher-did" did
+                     "operator-did" did
+                     "host" "origin-a.example"
+                     "spki-sha256" (bytes-from-unsigned (repeat 32 1))
+                     "expires-at" 2000000000}
+        binding (record-for seed "domain/bind" binding-body)
+        origin (record-for seed "content/origin" origin-body)]
+    (is (:ok? (envelope/verify-record registry-dna (:record binding))))
+    (is (:ok? (envelope/verify-record registry-dna (:record origin))))))
+
+(deftest verifies-publisher-signed-release-revocation
+  (let [seed (seed-bytes)
+        did (ed/did-key-from-seed seed)
+        body {"app-id" app-id
+              "publisher-did" did
+              "release-cid" (ipld/link manifest-cid)
+              "sequence" 1
+              "previous-revoke-cid" nil
+              "reason-code" "security-review"
+              "issued-at" 1800000000}
+        {:keys [record]} (record-for seed "app/revoke" body)
+        wrong-record (:record (record-for seed "app/revoke"
+                                         (assoc body "publisher-did" "did:key:z1")))]
+    (is (:ok? (envelope/verify-record registry-dna record)))
+    (is (= :signer-identity-mismatch
+           (:reason (envelope/verify-record registry-dna wrong-record))))))
+
+(deftest rejects-revocation-issued-after-its-signed-envelope-time
+  (let [seed (seed-bytes)
+        did (ed/did-key-from-seed seed)
+        body {"app-id" app-id
+              "publisher-did" did
+              "release-cid" (ipld/link manifest-cid)
+              "sequence" 1
+              "reason-code" "security-review"
+              "issued-at" 1800000001}
+        {:keys [record]} (record-for seed "app/revoke" body)]
+    (is (= :revocation-time-after-envelope
+           (:reason (envelope/verify-record registry-dna record))))))

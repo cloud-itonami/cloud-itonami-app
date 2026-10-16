@@ -1,0 +1,84 @@
+(ns cloud.itonami.app.awai-install-bridge-test
+  "Protected scope and local block-read checks for the Itonami-to-Awai bridge."
+  (:require ["node:crypto" :as crypto]
+            ["node:fs" :as fs]
+            ["node:os" :as os]
+            ["node:path" :as path]
+            [ipld.core :as ipld]
+            [kotoba.test :refer [deftest is]]
+            [kotoba.protocol.install :as install]
+            [cloud.itonami.app.awai-apps :as apps]
+            [cloud.itonami.app.awai-install-bridge :as bridge]))
+
+(def app-id "net.kotoba.murakumo")
+(def cell-id "net.kotoba.murakumo.notes")
+(def release-cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4")
+(def manifest-cid "bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny")
+(def binding-cid "bafkreihbfo374yy4mz2w3sli2azqfw3ea73cnr3jm5gzqvub7wsh57uoxa")
+(def publisher-did "did:key:z6MkoPd1PVGGf5gTMGy4nZNrBMszzfaeaNmZfSzgAZZNhDWq")
+(def bundle-bytes (ipld/encode {"dna" "notes"}))
+(def bundle-cid (ipld/cid bundle-bytes))
+
+(defn- installation-record []
+  {:schema apps/installation-schema
+   :install-lock {:schema install/install-lock-schema
+                  :app-id app-id
+                  :version "1.0.0"
+                  :channel "stable"
+                  :publisher-did publisher-did
+                  :release-sequence 1
+                  :release-cid release-cid
+                  :manifest-cid manifest-cid
+                  :bundle-cid manifest-cid
+                  :cells [{:id cell-id :dna-cid bundle-cid}]
+                  :requested-caps []}
+   :origin {:domain "murakumo.cloud"
+            :binding-cid binding-cid
+            :binding-sequence 1
+            :binding-expires-at 2000000000
+            :dns-proof-checked-at 1800000000
+            :dns-proof-expires-at 1900000000}
+   :approved-caps []
+   :installed-at 1800000001})
+
+(defn- stage-result []
+  {:decision :content-staged
+   :verified-cids [bundle-cid]})
+
+(deftest bridge-requires-a-protected-record-and-exact-consented-cell
+  (let [installation-result {:decision :found
+                             :installation (installation-record)}]
+    (is (bridge/valid-stage-scope? installation-result cell-id bundle-cid
+                                   (stage-result)))
+    (is (not (bridge/valid-stage-scope? installation-result
+                                        "net.kotoba.murakumo.other"
+                                        bundle-cid (stage-result))))
+    (is (not (bridge/valid-stage-scope? installation-result cell-id
+                                        manifest-cid (stage-result))))
+    (is (not (bridge/valid-stage-scope? {:decision :missing}
+                                        cell-id bundle-cid (stage-result))))
+    (is (not (bridge/valid-stage-scope? installation-result cell-id bundle-cid
+                                        {:decision :unavailable
+                                         :verified-cids [bundle-cid]})))))
+
+(deftest bridge-reads-only-private-cid-matching-content-blocks
+  (let [raw-root (.mkdtempSync fs (.join path (.tmpdir os) "itonami-awai-bridge-"))
+        _ (.chmodSync fs raw-root 448)
+        root (.realpathSync fs raw-root)
+        filename (-> (crypto/createHash "sha256")
+                     (.update bundle-cid "utf8")
+                     (.digest "hex"))
+        target (.join path root filename)]
+    (try
+      (.writeFileSync fs target bundle-bytes #js {:mode 384})
+      (let [verified (bridge/read-verified-content-block root bundle-cid)]
+        (is (= :verified (:decision verified)))
+        (is (= bundle-cid (:cid verified)))
+        (is (= (vec (seq bundle-bytes))
+               (vec (seq (:bytes verified))))))
+      (.writeFileSync fs target (.encode (js/TextEncoder.) "tampered")
+                      #js {:mode 384})
+      (is (= :refuse (:decision
+                      (bridge/read-verified-content-block root bundle-cid))))
+      (finally
+        (.rmSync fs root #js {:recursive true :force true})))))

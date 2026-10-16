@@ -1,0 +1,540 @@
+(ns cloud.itonami.app.awai-install-bridge
+  "Owner-local bridge from Itonami's verified content store to an Awai node.
+
+  This adapter is intentionally not an HTTP route. Its caller must read the
+  protected installation record and invoke it only after the user has approved
+  the app install. It transfers only CID-verified raw/DAG-CBOR blocks; Awai
+  validates them again before storing or installing a DNA cell."
+  (:require ["node:crypto" :as crypto]
+            ["node:fs" :as fs]
+            ["node:path" :as path]
+            [clojure.string :as str]
+            [kotoba.protocol.cid :as cid]
+            [kotoba.protocol.vocab :as vocab]
+            [cloud.itonami.app.awai-apps :as apps]))
+
+(def maximum-block-bytes (* 16 1024 1024))
+(def maximum-transfer-blocks 4096)
+(def maximum-transfer-bytes (* 1024 1024 1024))
+(def maximum-cell-read-response-bytes (* 1024 1024))
+(def maximum-cell-entry-hex-chars (* 2 128 1024))
+(def cell-read-capability "awai.cell.read")
+(def cell-write-capability "awai.cell.write")
+(def supported-codecs #{:raw :dag-cbor})
+
+(defn- fail [error]
+  {:decision :unavailable :error error})
+
+(defn- owner-only? [stat]
+  (let [uid-reader (.-getuid js/process)]
+    (and (zero? (bit-and (.-mode stat) 63))
+         (or (nil? uid-reader) (= (.-uid stat) (.getuid js/process))))))
+
+(defn- safe-ancestors? [directory]
+  (loop [current (.resolve path directory)]
+    (let [stat (.lstatSync fs current)
+          parent (.dirname path current)]
+      (and (not (.isSymbolicLink stat))
+           (or (= current parent) (recur parent))))))
+
+(defn read-verified-content-block
+  "Read one owner-only Itonami content block and independently verify its CID.
+
+  `content-root` is the private `awai-apps/content` directory. The store's
+  filename is SHA-256(CID text); callers never receive a filesystem path."
+  [content-root block-cid]
+  (let [{:keys [codec error]} (when (string? block-cid)
+                                (cid/parse-cid block-cid))]
+    (cond
+      (or error (not (contains? supported-codecs codec)))
+      {:decision :refuse :error :unsupported-content-cid}
+
+      (not (and (string? content-root) (.isAbsolute path content-root)))
+      {:decision :refuse :error :absolute-content-store-required}
+
+      :else
+      (try
+        (let [root (.resolve path content-root)
+              root-stat (.lstatSync fs root)
+              filename (-> (crypto/createHash "sha256")
+                           (.update block-cid "utf8")
+                           (.digest "hex"))
+              target (.resolve path root filename)
+              target-stat (.lstatSync fs target)]
+          (cond
+            (not (and (safe-ancestors? root)
+                      (.isDirectory root-stat)
+                      (owner-only? root-stat)))
+            {:decision :refuse :error :unsafe-content-store}
+
+            (not= root (.dirname path target))
+            {:decision :refuse :error :unsafe-content-path}
+
+            (or (.isSymbolicLink target-stat)
+                (not (.isFile target-stat))
+                (not (owner-only? target-stat))
+                (> (.-size target-stat) maximum-block-bytes))
+            {:decision :refuse :error :unsafe-content-block}
+
+            :else
+            (let [bytes (.readFileSync fs target)
+                  digest (-> (crypto/createHash "sha256")
+                             (.update bytes)
+                             (.digest))]
+              (if (cid/digest-matches-cid? block-cid
+                                          (vec (array-seq digest)))
+                {:decision :verified :cid block-cid :bytes bytes}
+                {:decision :refuse :error :content-cid-mismatch}))))
+        (catch :default _
+          {:decision :unavailable :error :verified-content-unavailable})))))
+
+(defn valid-stage-scope?
+  "Require a protected, already-consented installation and its exact DNA cell."
+  [installation-result cell-id bundle-cid content-stage]
+  (let [record (:installation installation-result)
+        authorization (when (= :found (:decision installation-result))
+                        (apps/authorize-cell-install record cell-id bundle-cid))
+        cids (:verified-cids content-stage)]
+    (boolean
+     (and (= :found (:decision installation-result))
+          (empty? (apps/installation-problems record))
+          (= :authorized (:decision authorization))
+          (= :content-staged (:decision content-stage))
+          (vector? cids)
+          (<= 1 (count cids) maximum-transfer-blocks)
+          (= (count cids) (count (set cids)))
+          (every? string? cids)
+          (some #{bundle-cid} cids)))))
+
+(defn- loopback-api-url [value expected-path]
+  (try
+    (let [url (js/URL. value)
+          port (when-not (empty? (.-port url))
+                 (js/parseInt (.-port url) 10))]
+      (when (and (= "http:" (.-protocol url))
+                 (= "127.0.0.1" (.-hostname url))
+                 (number? port) (<= 1 port 65535)
+                 (= expected-path (.-pathname url))
+                 (empty? (.-username url))
+                 (empty? (.-password url))
+                 (empty? (.-search url))
+                 (empty? (.-hash url)))
+        url))
+    (catch :default _ nil)))
+
+(defn- loopback-stage-url [value]
+  (loopback-api-url value "/v2/stage-dna-block"))
+
+(defn- loopback-install-url [value]
+  (loopback-api-url value "/v2/install-dna"))
+
+(defn- loopback-cell-url [value]
+  (loopback-api-url value "/v2/cell-entries"))
+
+(defn- same-local-origin? [left right]
+  (and left right (= (.-origin left) (.-origin right))))
+
+(defn- read-local-token [token-file]
+  (try
+    (let [stat (.lstatSync fs token-file)
+          parent (.dirname path token-file)
+          parent-stat (.lstatSync fs parent)
+          raw (.readFileSync fs token-file "utf8")
+          token (str/trim raw)]
+      (when (and (not (.isSymbolicLink stat))
+                 (.isFile stat)
+                 (<= 64 (.-size stat) 128)
+                 (not= "win32" (.-platform js/process))
+                 (safe-ancestors? parent)
+                 (.isDirectory parent-stat)
+                 (owner-only? parent-stat)
+                 (owner-only? stat)
+                 (re-matches #"[0-9a-f]{64}" token)
+                 (re-matches #"[0-9a-f]{64}\n?" raw))
+        token))
+    (catch :default _ nil)))
+
+(defn local-install-token-ready?
+  "Report whether the configured owner-only token file is usable without
+  returning or logging its secret value."
+  [token-file]
+  (boolean (and (string? token-file)
+                (.isAbsolute path token-file)
+                (read-local-token token-file))))
+
+(defn- post-block! [fetch-fn url token {:keys [cid bytes]}]
+  (let [body (js/JSON.stringify
+              #js {:cid cid :bytes-base64 (.toString bytes "base64")})]
+    (.catch
+     (.then
+(fetch-fn (.-href url)
+           #js {:method "POST"
+                     :redirect "error"
+                     :headers #js {"accept" "application/json"
+                                   "content-type" "application/json"
+                                   "authorization" (str "Bearer " token)}
+                     :body body
+                     :signal (js/AbortSignal.timeout 20000)})
+      (fn [response]
+        (.then
+         (.text response)
+         (fn [text]
+           (when (> (count text) 4096)
+             (throw (js/Error. "invalid-awai-stage-response")))
+           (let [payload (js->clj (js/JSON.parse text)
+                                  :keywordize-keys true)]
+             (if (and (contains? #{200 201} (.-status response))
+                      (= "stored" (:decision payload))
+                      (= cid (:cid payload)))
+               {:decision :staged :cid cid
+                :idempotent? (= 200 (.-status response))}
+               {:decision (if (= 409 (.-status response)) :refuse
+                              :unavailable)
+                :error :awai-block-stage-failed}))))))
+     (fn [_] {:decision :unavailable
+              :error :awai-block-stage-unavailable}))))
+
+(defn- transfer-cids-loop [fetch-fn url token content-root remaining staged total-bytes]
+  (if (empty? remaining)
+    (js/Promise.resolve
+     {:decision :blocks-staged
+      :staged-cids staged
+      :block-count (count staged)
+      :byte-count total-bytes})
+    (let [block-cid (first remaining)
+          block (read-verified-content-block content-root block-cid)]
+      (if-not (= :verified (:decision block))
+        (js/Promise.resolve {:decision :unavailable
+                             :error (:error block)
+                             :staged-cids staged
+                             :failed-cid block-cid})
+        (if (> (+ total-bytes (.-length (:bytes block))) maximum-transfer-bytes)
+          (js/Promise.resolve {:decision :refuse
+                               :error :install-content-byte-limit
+                               :staged-cids staged
+                               :failed-cid block-cid})
+          (-> (post-block! fetch-fn url token block)
+            (.then
+             (fn [result]
+               (if (= :staged (:decision result))
+                 (transfer-cids-loop
+                  fetch-fn url token content-root (subvec remaining 1)
+                  (conj staged block-cid)
+                  (+ total-bytes (.-length (:bytes block))))
+                 {:decision (:decision result)
+                  :error (:error result)
+                  :staged-cids staged
+                  :failed-cid block-cid})))))))))
+
+(defn- install-dna! [fetch-fn url token {:keys [app-id release-cid cell-id bundle-cid]}]
+  (let [body (js/JSON.stringify
+              #js {:app-id app-id
+                   :release-cid release-cid
+                   :cell-id cell-id
+                   :bundle-cid bundle-cid})]
+    (-> (fetch-fn (.-href url)
+                  #js {:method "POST"
+                       :redirect "error"
+                       :headers #js {"accept" "application/json"
+                                     "content-type" "application/json"
+                                     "authorization" (str "Bearer " token)}
+                       :body body
+                       :signal (js/AbortSignal.timeout 20000)})
+        (.then
+         (fn [response]
+           (-> (.text response)
+               (.then
+                (fn [text]
+                  (when (> (count text) 4096)
+                    (throw (js/Error. "invalid-awai-install-response")))
+                  (let [payload (js->clj (js/JSON.parse text)
+                                         :keywordize-keys true)]
+                    (if (and (contains? #{200 201} (.-status response))
+                             (contains? #{"installed" "already-installed"}
+                                        (:decision payload))
+                             (= cell-id (:cell-id payload))
+                             (= bundle-cid (:bundle-cid payload)))
+                      {:decision (keyword (:decision payload))
+                       :app-id app-id
+                       :release-cid release-cid
+                       :cell-id cell-id
+                       :bundle-cid bundle-cid
+                       :validator-cid (:validator-cid payload)
+                       :verified-cids (:verified-cids payload)}
+                      {:decision (if (= 409 (.-status response)) :refuse
+                                     :unavailable)
+                       :error :awai-dna-install-failed})))))))
+        (.catch (fn [_] {:decision :unavailable
+                         :error :awai-dna-install-unavailable})))))
+
+(defn stage-authorized-dna-blocks!
+  "Transfer staged DNA blocks to the configured local Awai peer host.
+
+  The Itonami install store readback, cell bundle reference, and content-stage
+  receipt must all agree before this adapter reads bytes. Unsupported UnixFS
+  DAG-PB app-content blocks are left in Itonami's store; only raw and DAG-CBOR
+  blocks cross this DNA-install boundary. It invokes DNA installation only
+  after all required supported blocks have been durably staged in Awai."
+  [{:keys [installation-result cell-id bundle-cid content-stage
+           content-root endpoint install-endpoint token-file fetch-fn]}]
+  (let [url (loopback-stage-url endpoint)
+        install-url (loopback-install-url install-endpoint)
+        request! (or fetch-fn js/fetch)
+        token (when (and (string? token-file)
+                         (.isAbsolute path token-file))
+                (read-local-token token-file))]
+    (cond
+      (not (valid-stage-scope? installation-result cell-id bundle-cid content-stage))
+      (js/Promise.resolve {:decision :refuse :error :invalid-protected-stage-scope})
+
+      (nil? url)
+      (js/Promise.resolve {:decision :unavailable :error :invalid-local-awai-endpoint})
+
+      (nil? install-url)
+      (js/Promise.resolve {:decision :unavailable :error :invalid-local-awai-install-endpoint})
+
+      (not (same-local-origin? url install-url))
+      (js/Promise.resolve {:decision :refuse :error :local-awai-endpoint-mismatch})
+
+      (nil? token)
+      (js/Promise.resolve {:decision :unavailable :error :local-awai-token-unavailable})
+
+      (not (and (string? content-root) (.isAbsolute path content-root)))
+      (js/Promise.resolve {:decision :unavailable :error :content-store-unavailable})
+
+      :else
+      (let [cids (filterv (fn [block-cid]
+                            (contains? supported-codecs
+                                       (:codec (cid/parse-cid block-cid))))
+                          (:verified-cids content-stage))]
+        (if-not (some #{bundle-cid} cids)
+          (js/Promise.resolve {:decision :refuse :error :dna-bundle-not-staged})
+          (-> (transfer-cids-loop request! url token content-root cids [] 0)
+              (.then
+               (fn [result]
+                 (if (= :blocks-staged (:decision result))
+                   (let [scope {:app-id (get-in installation-result
+                                                [:installation :install-lock :app-id])
+                                :release-cid (get-in installation-result
+                                                     [:installation :install-lock :release-cid])
+                                :cell-id cell-id
+                                :bundle-cid bundle-cid}]
+                     (-> (install-dna! request! install-url token scope)
+                         (.then (fn [installed]
+                                  (if (contains? #{:installed :already-installed}
+                                                 (:decision installed))
+                                    (assoc installed
+                                           :staged-cids (:staged-cids result)
+                                           :block-count (:block-count result)
+                                           :byte-count (:byte-count result))
+                                    (assoc installed
+                                           :staged-cids (:staged-cids result)))))))
+                   result)))))))))
+
+(defn valid-cell-read-request?
+  "Validate the app-controlled cell read filter before it reaches the local peer."
+  [request]
+  (boolean
+   (and (map? request)
+        (contains? #{#{:cell-id :entry-type}
+                     #{:cell-id :entry-type :agent}
+                     #{:cell-id :entry-type :after}
+                     #{:cell-id :entry-type :limit}
+                     #{:cell-id :entry-type :agent :after}
+                     #{:cell-id :entry-type :agent :limit}
+                     #{:cell-id :entry-type :after :limit}
+                     #{:cell-id :entry-type :agent :after :limit}}
+                   (set (keys request)))
+        (string? (:cell-id request))
+        (vocab/reverse-dns-id? (:cell-id request))
+        (string? (:entry-type request))
+        (re-matches #"[a-z0-9][a-z0-9/-]{0,63}" (:entry-type request))
+        (or (not (contains? request :agent))
+            (and (string? (:agent request))
+                 (re-matches #"[0-9a-f]{64}" (:agent request))))
+        (or (not (contains? request :after))
+            (and (string? (:after request))
+                 (not (:error (cid/parse-cid (:after request))))))
+        (or (not (contains? request :limit))
+            (and (integer? (:limit request))
+                 (<= 1 (:limit request) 100))))))
+
+(defn valid-cell-write-request?
+  "Require one exact cell ID and one bounded lowercase signed-entry envelope."
+  [request]
+  (let [entry-hex (:entry-hex request)]
+    (boolean
+     (and (map? request)
+          (= #{:cell-id :entry-hex} (set (keys request)))
+          (string? (:cell-id request))
+          (vocab/reverse-dns-id? (:cell-id request))
+          (string? entry-hex)
+          (<= 2 (count entry-hex) maximum-cell-entry-hex-chars)
+          (even? (count entry-hex))
+          (re-matches #"[0-9a-f]+" entry-hex)))))
+
+(defn- bounded-json-response! [response maximum-bytes]
+  (-> (.text response)
+      (.then
+       (fn [body]
+         (when (> (count body) maximum-bytes)
+           (throw (js/Error. "cell-response-too-large")))
+         (js->clj (js/JSON.parse body) :keywordize-keys true)))))
+
+(defn- valid-entry-read-response? [cell-id entry-type body]
+  (let [entries (:entries body)
+        valid-entry?
+        (fn [entry]
+          (and (map? entry)
+               (= #{:cid :agent :sequence :previous-cid :timestamp :type :body}
+                  (set (keys entry)))
+               (string? (:cid entry))
+               (not (:error (cid/parse-cid (:cid entry))))
+               (string? (:agent entry))
+               (re-matches #"[0-9a-f]{64}" (:agent entry))
+               (nat-int? (:sequence entry))
+               (or (nil? (:previous-cid entry))
+                   (and (string? (:previous-cid entry))
+                        (not (:error (cid/parse-cid (:previous-cid entry))))))
+               (nat-int? (:timestamp entry))
+               (= entry-type (:type entry))
+               (map? (:body entry))))]
+    (and (map? body)
+         (= #{:schema :cell-id :entry-type :ordering :entries :next-cursor}
+            (set (keys body)))
+         (= "awai.cell.entries.read.v1" (:schema body))
+         (= cell-id (:cell-id body))
+         (= entry-type (:entry-type body))
+         (= "cid-lexical-pagination-only" (:ordering body))
+         (vector? entries)
+         (<= (count entries) 100)
+         (every? valid-entry? entries)
+         (or (nil? (:next-cursor body))
+             (and (string? (:next-cursor body))
+                  (not (:error (cid/parse-cid (:next-cursor body)))))))))
+
+(defn- read-cell-entries! [endpoint token fetch-fn request]
+  (let [url (loopback-cell-url endpoint)
+        cell-id (:cell-id request)
+        entry-type (:entry-type request)]
+    (if-not (and url (valid-cell-read-request? request))
+      (js/Promise.resolve {:decision :refuse :error :invalid-cell-read-request})
+      (let [params (.-searchParams url)
+            _ (.set params "cell-id" cell-id)
+            _ (.set params "entry-type" entry-type)
+            _ (when-let [agent (:agent request)] (.set params "agent" agent))
+            _ (when-let [after (:after request)] (.set params "after" after))
+            _ (when-let [limit (:limit request)] (.set params "limit" (str limit)))]
+        (-> (fetch-fn (.-href url)
+                      #js {:method "GET"
+                           :redirect "error"
+                           :headers #js {"accept" "application/json"
+                                         "authorization" (str "Bearer " token)}
+                           :signal (js/AbortSignal.timeout 20000)})
+            (.then
+             (fn [response]
+               (if (= 200 (.-status response))
+                 (-> (bounded-json-response! response maximum-cell-read-response-bytes)
+                     (.then
+                      (fn [body]
+                        (if (valid-entry-read-response? cell-id entry-type body)
+                          {:decision :read
+                           :cell-id cell-id
+                           :entry-type entry-type
+                           :entries (:entries body)
+                           :next-cursor (:next-cursor body)}
+                          {:decision :unavailable :error :invalid-cell-read-response}))))
+                 {:decision (if (<= 400 (.-status response) 499) :refuse :unavailable)
+                  :error :cell-read-failed})))
+            (.catch (fn [_]
+                      {:decision :unavailable :error :cell-read-unavailable})))))))
+
+(defn- valid-cell-submit-response? [cell-id body]
+  (and (map? body)
+       (= #{:schema :cell-id :cid :decision} (set (keys body)))
+       (= "awai.cell.entry.submit.v1" (:schema body))
+       (= cell-id (:cell-id body))
+       (string? (:cid body))
+       (not (:error (cid/parse-cid (:cid body))))
+       (contains? #{"accepted" "duplicate" "pending" "quarantined" "rejected" "dead"}
+                  (:decision body))))
+
+(defn- submit-cell-entry! [endpoint token fetch-fn request]
+  (let [url (loopback-cell-url endpoint)
+        cell-id (:cell-id request)]
+    (if-not (and url (valid-cell-write-request? request))
+      (js/Promise.resolve {:decision :refuse :error :invalid-cell-write-request})
+      (-> (fetch-fn (.-href url)
+                    #js {:method "POST"
+                         :redirect "error"
+                         :headers #js {"accept" "application/json"
+                                       "content-type" "application/json"
+                                       "authorization" (str "Bearer " token)}
+                         :body (js/JSON.stringify
+                                #js {:cell-id cell-id
+                                     :entry-hex (:entry-hex request)})
+                         :signal (js/AbortSignal.timeout 20000)})
+          (.then
+           (fn [response]
+             (-> (bounded-json-response! response 4096)
+                 (.then
+                  (fn [body]
+                    (if (valid-cell-submit-response? cell-id body)
+                      {:decision :submitted
+                       :cell-id cell-id
+                       :entry-cid (:cid body)
+                       :entry-decision (:decision body)}
+                      {:decision :unavailable :error :invalid-cell-submit-response}))))))
+          (.catch (fn [_]
+                    {:decision :indeterminate
+                     :error :cell-submit-outcome-unknown
+                     :retry-safe? false}))))))
+
+(defn- declared-app-cell? [record app-id release-cid cell-id]
+  (when-let [cell (some #(when (= cell-id (:id %)) %)
+                        (get-in record [:install-lock :cells]))]
+    (let [authorization (apps/authorize-cell-install
+                        record cell-id (:dna-cid cell))]
+      (and (= :authorized (:decision authorization))
+           (= app-id (:app-id authorization))
+           (= release-cid (:release-cid authorization))))))
+
+(defn dispatch-cell-operation!
+  "Dispatch one opaque-app read/write request after the host rechecks its local
+  install record, current capability grant, verified content, and declared cell.
+
+  The caller supplies the record read from Itonami's protected store. Neither
+  it nor the private Awai token is passed to the app-provided request."
+  [{:keys [installation runtime-facts capability request endpoint token-file fetch-fn]}]
+  (let [token (when (and (string? token-file) (.isAbsolute path token-file))
+                (read-local-token token-file))
+        request-fn (or fetch-fn js/fetch)
+        app-id (get-in installation [:install-lock :app-id])
+        release-cid (get-in installation [:install-lock :release-cid])
+        cell-scope? (fn [context]
+                      (declared-app-cell? installation app-id release-cid
+                                          (get-in context [:request :cell-id])))
+        adapters
+        {cell-read-capability
+         (fn [context]
+           (cond
+             (not (cell-scope? context))
+             {:decision :refuse :error :cell-not-declared-by-installation}
+
+             (nil? token)
+             {:decision :unavailable :error :local-awai-token-unavailable}
+
+             :else
+             (read-cell-entries! endpoint token request-fn (:request context))))
+         cell-write-capability
+         (fn [context]
+           (cond
+             (not (cell-scope? context))
+             {:decision :refuse :error :cell-not-declared-by-installation}
+
+             (nil? token)
+             {:decision :unavailable :error :local-awai-token-unavailable}
+
+             :else
+             (submit-cell-entry! endpoint token request-fn (:request context))))}]
+    (apps/dispatch-operation installation runtime-facts capability request adapters)))

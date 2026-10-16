@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+app_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+source_file="$app_dir/src/cloud/itonami/app/awai_dnssec_proof.c"
+output_file="$app_dir/target/awai-dnssec-proof"
+
+if ! command -v pkg-config >/dev/null 2>&1 ||
+   ! pkg-config --exists libunbound ldns; then
+  printf 'build-awai-dnssec-proof: libunbound and ldns development files are required\n' >&2
+  exit 127
+fi
+
+mkdir -p "$app_dir/target"
+link_flags="$(pkg-config --cflags --libs libunbound ldns)"
+# shellcheck disable=SC2086
+cc -std=c11 -O2 -Wall -Wextra -Werror "$source_file" -o "$output_file" $link_flags
+chmod 0755 "$output_file"
+printf '%s\n' "$output_file"
