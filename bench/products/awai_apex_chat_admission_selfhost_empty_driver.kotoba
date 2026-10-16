@@ -1,0 +1,5 @@
+;; Empty KEXE loader baseline for Awai Apex chat admission.
+(ns awai.apex.chat-admission-selfhost-empty-benchmark
+  (:export [main]))
+
+(defn main [] :i64 0)

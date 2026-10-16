@@ -166,6 +166,46 @@
     [:claim-exclusive :bool] [:name-is-service-owned :bool]
     [:previously-authorized :bool]]])
 
+(def current-ref-profile-record
+  [:record :awai-current-ref/profile
+   [[:profile-id :string] [:chain-id :string] [:genesis-hash :string]
+    [:validator-set-id :string] [:quorum-policy-id :string]]])
+
+(def current-ref-proof-record
+  [:record :awai-current-ref/proof
+   [[:trust :string] [:decision-verified :bool] [:profile-id :string]
+    [:chain-id :string] [:genesis-hash :string] [:validator-set-id :string]
+    [:quorum-policy-id :string] [:reference :string] [:head-cid :string]
+    [:challenge :string] [:current :bool] [:quorum-read-verified :bool]
+    [:current-read-proof-present :bool] [:finality-proof-verified :bool]
+    [:finalized-event-cid :string] [:finality-proof-present :bool]
+    [:observed-at :i64] [:expires-at :i64] [:signature-valid :bool]]])
+
+(def current-ref-request-record
+  [:record :awai-current-ref/request
+   [[:expected-ref :string] [:expected-head-cid :string]
+    [:expected-challenge :string] [:now-ms :i64]]])
+
+(def current-ref-profile
+  (oracle/record current-ref-profile-record
+                 ["awai-test-profile" "awai-test-chain" "test-genesis"
+                  "test-validator-set" "test-quorum-policy"]))
+
+(def current-ref-request
+  (oracle/record current-ref-request-record
+                 ["awai/domain/murakumo.cloud" "bafkrei-test-head"
+                  "test-challenge-123456" (oracle/i64 150)]))
+
+(defn- current-ref-proof
+  ([quorum-policy-id signature-valid? observed-at expires-at]
+   (oracle/record
+    current-ref-proof-record
+    ["amano-inga-verified-current-ref" true "awai-test-profile"
+     "awai-test-chain" "test-genesis" "test-validator-set"
+     quorum-policy-id "awai/domain/murakumo.cloud" "bafkrei-test-head"
+     "test-challenge-123456" true true true true "bafkrei-test-head" true
+     (oracle/i64 observed-at) (oracle/i64 expires-at) signature-valid?])))
+
 (defn- mail-facts [m]
   (oracle/record
    mail-facts-record
@@ -987,6 +1027,152 @@
     {:oracle :bot :export 'repetition-exhausted?
      :args [(oracle/record repetition-record [(oracle/i64 4) (oracle/i64 3)])]
      :expect true}
+
+    ;; ── Awai current-ref admission: all chain and quorum profile fields bind
+    {:oracle :awai-current-ref :export 'verified-current-ref?
+     :args [(current-ref-proof "test-quorum-policy" true 100 200)
+            current-ref-profile current-ref-request]
+     :expect true}
+    {:oracle :awai-current-ref :export 'verified-current-ref?
+     :args [(current-ref-proof "different-quorum-policy" true 100 200)
+            current-ref-profile current-ref-request]
+     :expect false}
+    {:oracle :awai-current-ref :export 'verified-current-ref?
+     :args [(current-ref-proof "test-quorum-policy" true 100 200)
+            current-ref-profile
+            (oracle/record current-ref-request-record
+                           ["awai/domain/murakumo.cloud" "bafkrei-test-head"
+                            "test-challenge-123456" (oracle/i64 200)])]
+     :expect false}
+    {:oracle :awai-current-ref :export 'verified-current-ref?
+     :args [(current-ref-proof "test-quorum-policy" false 100 200)
+            current-ref-profile current-ref-request]
+     :expect false}
+
+    ;; ── Product policy cores used by the external Awai app cohort
+    {:oracle :murakumo-bid-admission :export 'bid-admission-code
+     :args [(oracle/i64 127) (oracle/i64 950) (oracle/i64 1000)]
+     :expect 0 :read oracle/i64-value}
+    {:oracle :murakumo-bid-admission :export 'bid-admission-code
+     :args [(oracle/i64 63) (oracle/i64 950) (oracle/i64 1000)]
+     :expect 7 :read oracle/i64-value}
+    {:oracle :aozora-biscuit-authorization :export 'authorize-op-code
+     :args [(oracle/record
+             [:record :aozora/authorization-input
+              [[:repo-post :i64] [:repo-write :i64] [:account-bind :i64]
+               [:op-code :i64] [:repo-match :i64] [:collection-code :i64]]]
+             (mapv oracle/i64 [1 0 0 0 1 1]))]
+     :expect 0 :read oracle/i64-value}
+    {:oracle :aozora-biscuit-authorization :export 'authorize-op-code
+     :args [(oracle/record
+             [:record :aozora/authorization-input
+              [[:repo-post :i64] [:repo-write :i64] [:account-bind :i64]
+               [:op-code :i64] [:repo-match :i64] [:collection-code :i64]]]
+             (mapv oracle/i64 [1 0 0 0 1 2]))]
+     :expect 3 :read oracle/i64-value}
+    {:oracle :oppai-challenge-window :export 'challenge-window-code
+     :args [(oracle/i64 1) (oracle/i64 1000000) (oracle/i64 1060000)]
+     :expect 1 :read oracle/i64-value}
+    {:oracle :oppai-challenge-window :export 'challenge-window-code
+     :args [(oracle/i64 1) (oracle/i64 1000000) (oracle/i64 1060001)]
+     :expect 0 :read oracle/i64-value}
+    {:oracle :isekai-publish-admission :export 'publish-admission-code
+     :args [(oracle/i64 2)] :expect 0 :read oracle/i64-value}
+    {:oracle :isekai-publish-admission :export 'publish-admission-code
+     :args [(oracle/i64 1)] :expect 1 :read oracle/i64-value}
+    {:oracle :babiniku-proposal-governor :export 'review-turn-code
+     :args [(oracle/i64 0) (oracle/i64 5) (oracle/i64 4) (oracle/i64 0)]
+     :expect 0 :read oracle/i64-value}
+    {:oracle :babiniku-proposal-governor :export 'review-turn-code
+     :args [(oracle/i64 0) (oracle/i64 0) (oracle/i64 0) (oracle/i64 1)]
+     :expect 4 :read oracle/i64-value}
+    {:oracle :x402-transfer-preflight :export 'transfer-verdict-code
+     :args [(oracle/record
+             [:record :nexus/transfer-preflight-input
+              [[:principal-valid :i64] [:wallet-scope-valid :i64]
+               [:grant-active :i64] [:request-valid :i64]
+               [:recipient-allowed :i64] [:budget-available :i64]
+               [:amount :i64] [:per-transfer :i64] [:used :i64] [:daily :i64]]]
+             (mapv oracle/i64 [1 1 1 1 1 1 100 500 100 1000]))]
+     :expect 0 :read oracle/i64-value}
+    {:oracle :x402-transfer-preflight :export 'transfer-verdict-code
+     :args [(oracle/record
+             [:record :nexus/transfer-preflight-input
+              [[:principal-valid :i64] [:wallet-scope-valid :i64]
+               [:grant-active :i64] [:request-valid :i64]
+               [:recipient-allowed :i64] [:budget-available :i64]
+               [:amount :i64] [:per-transfer :i64] [:used :i64] [:daily :i64]]]
+             (mapv oracle/i64 [1 1 1 1 1 1 600 500 100 1000]))]
+     :expect 7 :read oracle/i64-value}
+    {:oracle :x402-transfer-preflight :export 'transfer-amount-limit-code
+     :args (mapv oracle/i64 [100 500 950 1000])
+     :expect 8 :read oracle/i64-value}
+    {:oracle :shinshi-video-black-frame :export 'black-frame-code
+     :args [(oracle/i64 1) 8.0] :expect 0 :read oracle/i64-value}
+    {:oracle :shinshi-video-black-frame :export 'black-frame-code
+     :args [(oracle/i64 1) 7.9] :expect 1 :read oracle/i64-value}
+    {:oracle :awai-network-chat-admission :export 'chat-admission-code
+     :args (mapv oracle/i64 [1 40 24000])
+     :expect 0 :read oracle/i64-value}
+    {:oracle :awai-network-chat-admission :export 'chat-admission-code
+     :args (mapv oracle/i64 [1 0 0])
+     :expect 2 :read oracle/i64-value}
+
+    ;; ── Shared Awai app admission; host facts enter through typed records
+    {:oracle :awai-app-admission :export 'resolve-admission-code
+     :args [(oracle/record
+             [:record :awai-app-admission/resolve
+              [[:dns-proof-fresh :bool] [:amano-state :i64]]]
+             [true (oracle/i64 2)])]
+     :expect 0 :read oracle/i64-value}
+    {:oracle :awai-app-admission :export 'resolve-admission-code
+     :args [(oracle/record
+             [:record :awai-app-admission/resolve
+              [[:dns-proof-fresh :bool] [:amano-state :i64]]]
+             [false (oracle/i64 2)])]
+     :expect 1 :read oracle/i64-value}
+    {:oracle :awai-app-admission :export 'finish-install-admission-code
+     :args [(oracle/record
+             [:record :awai-app-admission/finish-install
+              [[:prepared :bool] [:install-lock-valid :bool]
+               [:runtime-inputs-valid :bool] [:clock-valid :bool]
+               [:dns-proof-valid :bool] [:amano-state :i64]
+               [:content-complete :bool] [:capabilities-approved :bool]]]
+             [true true true true true (oracle/i64 2) true true])]
+     :expect 0 :read oracle/i64-value}
+    {:oracle :awai-app-admission :export 'finish-install-admission-code
+     :args [(oracle/record
+             [:record :awai-app-admission/finish-install
+              [[:prepared :bool] [:install-lock-valid :bool]
+               [:runtime-inputs-valid :bool] [:clock-valid :bool]
+               [:dns-proof-valid :bool] [:amano-state :i64]
+               [:content-complete :bool] [:capabilities-approved :bool]]]
+             [false true true true true (oracle/i64 2) true true])]
+     :expect 1 :read oracle/i64-value}
+
+    ;; ── Existing shared Kotoba exports added to the shipment index
+    {:oracle :vf-calibrate-core :export 'calibration-kind
+     :args [true true] :expect "rebased"}
+    {:oracle :connectors-core :export 'implier-of
+     :args ["Mail.Read"] :expect (oracle/option "Mail.ReadWrite")}
+    {:oracle :provider-retry-core :export 'output-budget-exhausted?
+     :args [(oracle/option "length") [[:option :i64] false]
+            [[:option :i64] false] false]
+     :expect true}
+    {:oracle :appearance-core :export 'mode-of
+     :args ["night"] :expect (oracle/option "dark")}
+    {:oracle :appearance-core :export 'next-of
+     :args ["light"] :expect "dark"}
+    {:oracle :appearance-core :export 'plane-cloud?
+     :args ["cloud"] :expect true}
+    {:oracle :vf-authority-core :export 'scope-admitted?
+     :args ["event" "append"] :expect true}
+    {:oracle :human-work-marketplace-core :export 'pick-brand-name
+     :args [(oracle/option nil)] :expect "Cloud Itonami"}
+    {:oracle :human-work-marketplace-core :export 'needs-escape?
+     :args [(oracle/option "<brand>")] :expect true}
+    {:oracle :awai-current-ref :export 'main :args [] :expect 0
+     :read oracle/i64-value}
 ]))
 
 (defn run-case

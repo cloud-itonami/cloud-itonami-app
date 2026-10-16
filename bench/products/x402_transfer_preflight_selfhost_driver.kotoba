@@ -1,0 +1,59 @@
+;; Mixed owner-scoped wallet-transfer preflight workload.
+(ns nexus.wallet.transfer-preflight-selfhost-benchmark
+  (:require [nexus.wallet.transfer-preflight-core :as policy])
+  (:schemas {:nexus/transfer-preflight-input
+             [:record :nexus/transfer-preflight-input
+              [[:principal-valid :i64]
+               [:wallet-scope-valid :i64]
+               [:grant-active :i64]
+               [:request-valid :i64]
+               [:recipient-allowed :i64]
+               [:budget-available :i64]
+               [:amount :i64]
+               [:per-transfer :i64]
+               [:used :i64]
+               [:daily :i64]]]})
+  (:export [main]))
+
+(defn- decision [case-code]
+  (cond
+    (= case-code 0) (policy/transfer-verdict-code
+                     (record-new [:ref :nexus/transfer-preflight-input] 1 1 1 1 1 1 100 500 100 1000))
+    (= case-code 1) (policy/transfer-verdict-code
+                     (record-new [:ref :nexus/transfer-preflight-input] 0 1 1 1 1 1 100 500 100 1000))
+    (= case-code 2) (policy/transfer-verdict-code
+                     (record-new [:ref :nexus/transfer-preflight-input] 1 0 1 1 1 1 100 500 100 1000))
+    (= case-code 3) (policy/transfer-verdict-code
+                     (record-new [:ref :nexus/transfer-preflight-input] 1 1 0 1 1 1 100 500 100 1000))
+    (= case-code 4) (policy/transfer-verdict-code
+                     (record-new [:ref :nexus/transfer-preflight-input] 1 1 1 0 1 1 100 500 100 1000))
+    (= case-code 5) (policy/transfer-verdict-code
+                     (record-new [:ref :nexus/transfer-preflight-input] 1 1 1 1 0 1 100 500 100 1000))
+    (= case-code 6) (policy/transfer-verdict-code
+                     (record-new [:ref :nexus/transfer-preflight-input] 1 1 1 1 1 0 100 500 100 1000))
+    (= case-code 7) (policy/transfer-verdict-code
+                     (record-new [:ref :nexus/transfer-preflight-input] 1 1 1 1 1 1 600 500 100 1000))
+    (= case-code 8) (policy/transfer-verdict-code
+                     (record-new [:ref :nexus/transfer-preflight-input] 1 1 1 1 1 1 100 500 950 1000))
+    :else (policy/transfer-verdict-code
+           (record-new [:ref :nexus/transfer-preflight-input] 1 0 0 0 1 1 100 500 100 1000))))
+
+(defn main [] :i64
+  (let [cases-ok?
+        (and (= 0 (decision 0))
+             (= 1 (decision 1))
+             (= 2 (decision 2))
+             (= 3 (decision 3))
+             (= 4 (decision 4))
+             (= 5 (decision 5))
+             (= 6 (decision 6))
+             (= 7 (decision 7))
+             (= 8 (decision 8))
+             (= 2 (decision 9)))
+        accepted
+        (loop [i 0 count 0]
+          (if (< i 1000000)
+            (recur (+ i 1)
+                   (+ count (if (= 0 (decision (mod i 10))) 1 0)))
+            count))]
+    (if (and cases-ok? (= accepted 100000)) accepted -1)))

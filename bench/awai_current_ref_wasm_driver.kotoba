@@ -1,0 +1,64 @@
+;; Fixed workload wrapper for timing the production admission core in Amu's
+;; compiled browser-Wasm target. This fixture is benchmark-only; it contains
+;; no production chain values.
+(ns awai.current-ref-benchmark
+  (:require [cloud.itonami.app.awai-current-ref-core :as admission])
+  (:schemas {:awai-current-ref/profile
+             [:record :awai-current-ref/profile
+              [[:profile-id :string] [:chain-id :string]
+               [:genesis-hash :string] [:validator-set-id :string]
+               [:quorum-policy-id :string]]]
+             :awai-current-ref/proof
+             [:record :awai-current-ref/proof
+              [[:trust :string] [:decision-verified :bool]
+               [:profile-id :string] [:chain-id :string]
+               [:genesis-hash :string] [:validator-set-id :string]
+               [:quorum-policy-id :string] [:reference :string] [:head-cid :string]
+               [:challenge :string] [:current :bool]
+               [:quorum-read-verified :bool]
+               [:current-read-proof-present :bool]
+               [:finality-proof-verified :bool]
+               [:finalized-event-cid :string]
+               [:finality-proof-present :bool]
+               [:observed-at :i64] [:expires-at :i64]
+               [:signature-valid :bool]]]
+             :awai-current-ref/request
+             [:record :awai-current-ref/request
+              [[:expected-ref :string] [:expected-head-cid :string]
+               [:expected-challenge :string] [:now-ms :i64]]]})
+  (:export [main]))
+
+(defn main [] :i64
+  (let [profile
+        (record-new [:ref :awai-current-ref/profile]
+                    "awai-test-profile" "awai-test-chain" "test-genesis"
+                    "test-validator-set" "test-quorum-policy")
+        request
+        (record-new [:ref :awai-current-ref/request]
+                    "awai/domain/murakumo.cloud" "bafkrei-test-head"
+                    "test-challenge-123456" 150)
+        valid-proof
+        (record-new [:ref :awai-current-ref/proof]
+                    "amano-inga-verified-current-ref" true
+                    "awai-test-profile" "awai-test-chain" "test-genesis"
+                    "test-validator-set" "test-quorum-policy"
+                    "awai/domain/murakumo.cloud" "bafkrei-test-head"
+                    "test-challenge-123456" true true true true
+                    "bafkrei-test-head" true 100 200 true)
+        invalid-proof
+        (record-new [:ref :awai-current-ref/proof]
+                    "amano-inga-verified-current-ref" true
+                    "awai-test-profile" "awai-test-chain" "test-genesis"
+                    "test-validator-set" "other-quorum-policy"
+                    "awai/domain/murakumo.cloud" "bafkrei-test-head"
+                    "test-challenge-123456" true true true true
+                    "bafkrei-test-head" true 100 200 true)]
+    (loop [i 0 accepted 0 valid? true]
+      (if (< i 300)
+        (recur (+ i 1)
+               (+ accepted
+                  (if (admission/verified-current-ref?
+                       (if valid? valid-proof invalid-proof) profile request)
+                    1 0))
+               (not valid?))
+        accepted))))

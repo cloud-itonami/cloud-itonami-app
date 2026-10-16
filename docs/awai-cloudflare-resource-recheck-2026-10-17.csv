@@ -1,0 +1,10 @@
+read_window_end_utc,account,zones,dns_records,proxied_dns_records,worker_routes,worker_custom_domains,worker_scripts,pages_projects,tunnels,tunnels_healthy,tunnels_down,all_api_reads_succeeded,evidence_limit
+2026-10-16T15:18:46Z,cloud-kotoba,27,318,168,30,78,109,16,31,6,25,true,Cloudflare API configuration only; public HTTP and origin behavior not established
+2026-10-16T15:18:46Z,fund-mithril,3,43,23,6,23,36,0,0,0,0,true,Cloudflare API configuration only; public HTTP and origin behavior not established
+2026-10-16T15:18:46Z,com-junkawasaki,0,0,0,0,0,0,0,0,0,0,true,Cloudflare API configuration only; public HTTP and origin behavior not established
+2026-10-16T16:24:59Z,cloud-kotoba,27,318,168,30,78,109,16,31,6,25,true,Cloudflare API GET recheck; DNS target/content omitted; public HTTP and origin behavior not established
+2026-10-16T16:24:59Z,com-junkawasaki,0,0,0,0,0,0,0,0,0,0,true,Cloudflare API GET recheck; no resources returned
+2026-10-16T16:24:59Z,fund-mithril,3,43,23,6,23,36,0,0,0,0,true,Cloudflare API GET recheck; DNS target/content omitted; public HTTP and origin behavior not established
+"2026-10-16T17:43:46Z","cloud-kotoba","27","318","168","30","78","109","16","31","6","25","true","Cloudflare API GET recheck; DNS targets/content omitted; public HTTP and origin behavior not established"
+"2026-10-16T17:43:46Z","fund-mithril","3","43","23","6","23","36","0","0","0","0","true","Cloudflare API GET recheck; DNS targets/content omitted; public HTTP and origin behavior not established"
+"2026-10-16T17:43:46Z","com-junkawasaki","0","0","0","0","0","0","0","0","0","0","true","Cloudflare API GET recheck; DNS targets/content omitted; public HTTP and origin behavior not established"

@@ -55,6 +55,53 @@ test('requires matching TLS SNI and the exact public Host authority', () => {
   assert.equal(authorizeRequest(request({ hostHeader: 'ITONAMI.APP' }), config).ok, true);
 });
 
+test('routes only configured public-domain aliases and binds Origin to the SNI host', () => {
+  const aliases = { ...config, hosts: ['itonami.app', 'murakumo.cloud'] };
+  const aliasRequest = request({
+    hostHeader: 'murakumo.cloud',
+    servername: 'murakumo.cloud'
+  });
+  const authorization = authorizeRequest(aliasRequest, aliases);
+  assert.equal(authorization.ok, true);
+  assert.equal(authorization.origin, 'https://murakumo.cloud');
+
+  const plan = authorizeRequest(request({
+    hostHeader: 'murakumo.cloud',
+    servername: 'murakumo.cloud',
+    method: 'POST',
+    target: '/api/awai/install-plan?domain=murakumo.cloud',
+    headers: { origin: 'https://murakumo.cloud' }
+  }), aliases);
+  assert.equal(plan.ok, true);
+  assert.equal(plan.origin, 'https://murakumo.cloud');
+
+  assert.equal(authorizeRequest(request({
+    hostHeader: 'murakumo.cloud',
+    servername: 'itonami.app'
+  }), aliases).reason, 'host-mismatch');
+  assert.equal(authorizeRequest(request({
+    hostHeader: 'unknown.example',
+    servername: 'unknown.example'
+  }), aliases).reason, 'host-mismatch');
+  assert.equal(authorizeRequest(aliasRequest, {
+    ...aliases, hosts: ['itonami.app', 'murakumo.cloud', 'murakumo.cloud']
+  }).reason, 'host-mismatch');
+});
+
+test('refuses Cloudflare-managed hosts in the gateway and app-domain queries', () => {
+  assert.equal(authorizeRequest(request(), {
+    ...config, hosts: ['itonami.app', 'setup.workers.dev']
+  }).reason, 'host-mismatch');
+  assert.equal(authorizeRequest(request({
+    target: '/api/awai/domain-proof?domain=assets.pages.dev'
+  }), config).reason, 'one-canonical-domain-query-required');
+  assert.equal(authorizeRequest(request({
+    method: 'POST',
+    target: '/api/awai/install-plan?domain=api.cloudflare.com',
+    headers: { origin: 'https://itonami.app' }
+  }), config).reason, 'one-canonical-domain-query-required');
+});
+
 test('rejects ambiguous paths, queries, and non-canonical DNS names', () => {
   for (const target of [
     '//evil.example/',

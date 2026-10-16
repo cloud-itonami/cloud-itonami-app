@@ -1,0 +1,273 @@
+(ns cloud.itonami.app.awai-amano-node
+  "Node transport and trusted local profile loading for the Awai Amano adapter.
+
+  The profile is operator-owned trust configuration. This module constructs
+  the Inga verifiers from its validator keys, fetches signed reads and one
+  immutable finalized-prefix checkpoint, then delegates all proof decisions
+  to `awai-amano-adapter`. No chain identity or validator values are embedded."
+  (:require [kotoba.lang.edn :as edn]
+            [inga.consensus :as consensus]
+            [inga-node.seams :as seams]
+            [inga-node.store :as node-store]
+            [cloud.itonami.app.awai-amano-adapter :as adapter]
+            [clojure.string :as str]
+            ["node:crypto" :as crypto]
+            ["node:fs" :as fs]
+            ["node:path" :as path]))
+
+(def profile-schema "itonami.awai.amano-chain-profile.v1")
+(def maximum-profile-bytes (* 256 1024))
+(def maximum-current-read-bytes (* 1024 1024))
+(def maximum-prefix-bytes (* 8 1024 1024))
+(def request-timeout-ms 8000)
+(def maximum-witnesses 12)
+(def maximum-prefix-blocks 8192)
+
+(def ^:private profile-keys
+  #{:schema :profile-id :chain-id :genesis-hash :validator-set-id
+    :quorum-policy-id :genesis :witnesses :quorum :max-age-ms :max-blocks
+    :checkpoint-cid})
+
+(def ^:private witness-keys
+  #{:id :operator-did :public-key-hex :url})
+
+(def ^:private identity-keys
+  [:profile-id :chain-id :genesis-hash :validator-set-id :quorum-policy-id])
+
+(defn- bounded-text? [value limit]
+  (and (string? value)
+       (<= 1 (count value) limit)
+       (not (str/includes? value "\n"))
+       (not (str/includes? value "\r"))
+       (not (str/includes? value "\u0000"))))
+
+(defn- public-endpoint? [value]
+  (try
+    (let [url (js/URL. value)
+          hostname (.-hostname url)]
+      (and (= "https:" (.-protocol url))
+           (or (empty? (.-port url)) (= "443" (.-port url)))
+           (or (= "" (.-pathname url)) (= "/" (.-pathname url)))
+           (empty? (.-username url))
+           (empty? (.-password url))
+           (empty? (.-search url))
+           (empty? (.-hash url))
+           (re-matches #"(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+"
+                       hostname)
+           (not (re-matches #"[0-9.]+" hostname))
+           (not-any? #(str/ends-with? hostname %)
+                     [".localhost" ".local" ".internal" ".home.arpa"
+                      ".test" ".invalid" ".example" ".workers.dev"
+                      ".pages.dev"])))
+    (catch :default _ false)))
+
+(defn- valid-witnesses? [witnesses]
+  (and (vector? witnesses)
+       (<= 3 (count witnesses) maximum-witnesses)
+       (every? (fn [w]
+                 (and (map? w)
+                      (= witness-keys (set (keys w)))
+                      (bounded-text? (:id w) 128)
+                      (bounded-text? (:operator-did w) 256)
+                      (string? (:public-key-hex w))
+                      (boolean (re-matches #"[0-9a-f]{64}" (:public-key-hex w)))
+                      (public-endpoint? (:url w))))
+               witnesses)
+       (= (count witnesses) (count (set (map :id witnesses))))
+       (= (count witnesses) (count (set (map :operator-did witnesses))))
+       (= (count witnesses) (count (set (map :public-key-hex witnesses))))))
+
+(defn- profile-context [profile]
+  (let [witnesses (mapv :id (:witnesses profile))
+        pubkeys (into {} (map (juxt :id :public-key-hex) (:witnesses profile)))
+        verify-fn (seams/verify-fn pubkeys)
+        hash-fn seams/hash-fn
+        shared (merge (select-keys profile identity-keys)
+                      {:chain-id (:chain-id profile)
+                       :witnesses witnesses
+                       :quorum (:quorum profile)
+                       :verify-fn verify-fn})]
+    (assoc (select-keys profile identity-keys)
+           :checkpoint-cid (:checkpoint-cid profile)
+           :witness-endpoints (:witnesses profile)
+           :current-ref-read-context
+           (assoc shared :max-age-ms (:max-age-ms profile))
+           :finalized-prefix-context
+           (assoc shared
+                  :genesis (:genesis profile)
+                  :max-blocks (:max-blocks profile)
+                  :hash-fn hash-fn)
+           :commitment-context
+           (assoc shared
+                  :hash-fn hash-fn
+                  :decode-proposal node-store/decode-proposal))))
+
+(defn- valid-profile? [profile]
+  (and (map? profile)
+       (= profile-keys (set (keys profile)))
+       (= profile-schema (:schema profile))
+       (every? #(bounded-text? (get profile %) 256) identity-keys)
+       (valid-witnesses? (:witnesses profile))
+       (integer? (:quorum profile))
+       (= (:quorum profile) (consensus/quorum-size (count (:witnesses profile))))
+       (integer? (:max-age-ms profile))
+       (<= 1000 (:max-age-ms profile) 300000)
+       (integer? (:max-blocks profile))
+       (<= 4 (:max-blocks profile) maximum-prefix-blocks)
+       (string? (:checkpoint-cid profile))
+       (boolean (re-matches #"b[a-z2-7]{58}" (:checkpoint-cid profile)))
+       (map? (:genesis profile))
+       (= 0 (:inga.block/height (:genesis profile)))
+       (empty? (:inga.block/proposals (:genesis profile)))
+       (= (:genesis-hash profile) (seams/hash-fn (:genesis profile)))))
+
+(defn load-profile
+  "Load and validate the operator's Amano profile from a local, non-symlink
+  file owned by this user and not writable by group or other users. Returns
+  `{:decision :loaded :profile ...}` or a non-sensitive refusal reason."
+  [profile-path]
+  (try
+    (cond
+      (not (and (string? profile-path) (.isAbsolute path profile-path)))
+      {:decision :unavailable :error :profile-path-unset}
+
+      :else
+      (let [stat (.lstatSync fs profile-path)]
+        (if (or (.isSymbolicLink stat)
+                (not (.isFile stat))
+                (not= (.-uid stat) (.getuid js/process))
+                (pos? (bit-and (.-mode stat) 18))
+                (> (.-size stat) maximum-profile-bytes))
+          {:decision :unavailable :error :profile-file-not-trusted}
+          (let [profile (edn/read-string (.readFileSync fs profile-path "utf8"))]
+            (if (valid-profile? profile)
+              {:decision :loaded :profile (profile-context profile)}
+              {:decision :unavailable :error :invalid-chain-profile})))))
+    (catch :default _ {:decision :unavailable :error :profile-unreadable})))
+
+(defn- response-text! [response maximum-bytes]
+  (let [content-length (.get (.-headers response) "content-length")
+        declared-size (when content-length (js/Number content-length))]
+    (if (and declared-size (> declared-size maximum-bytes))
+      (js/Promise.resolve nil)
+      (let [reader (.getReader (.-body response))
+            decoder (js/TextDecoder.)
+            chunks (atom [])
+            total (atom 0)]
+        (letfn [(read-next []
+                  (-> (.read reader)
+                      (.then
+                       (fn [result]
+                         (if (.-done result)
+                           (let [bytes (js/Uint8Array. @total)]
+                             (loop [remaining @chunks offset 0]
+                               (when-let [chunk (first remaining)]
+                                 (.set bytes chunk offset)
+                                 (recur (rest remaining)
+                                        (+ offset (.-length chunk)))))
+                             (.decode decoder bytes))
+                           (let [chunk (.-value result)
+                                 size (+ @total (.-length chunk))]
+                             (when (> size maximum-bytes)
+                               (throw (js/Error. "response-too-large")))
+                             (swap! total + (.-length chunk))
+                             (swap! chunks conj chunk)
+                             (read-next)))))
+                      (.catch (fn [_]
+                                (-> (.cancel reader)
+                                    (.catch (fn [_] nil)))
+                                (js/Promise.resolve nil)))))]
+          (read-next))))))
+
+(defn- request-text! [url maximum-bytes]
+  (-> (js/fetch url #js {:method "GET"
+                         :headers #js {"accept" "application/json, application/edn"}
+                         :redirect "error"
+                         :signal (.timeout js/AbortSignal request-timeout-ms)})
+      (.then (fn [response]
+               (if (= 200 (.-status response))
+                 (response-text! response maximum-bytes)
+                 nil)))
+      (.catch (fn [_] nil))))
+
+(defn- endpoint-url [base path-value parameters]
+  (let [url (js/URL. base)]
+    (set! (.-pathname url) path-value)
+    (doseq [[k v] parameters]
+      (.set (.-searchParams url) k v))
+    (.-href url)))
+
+(defn- current-ref-response! [witness ref challenge]
+  (let [url (endpoint-url (:url witness) "/current-ref"
+                          [["ref" ref] ["challenge" challenge]])]
+    (-> (request-text! url maximum-current-read-bytes)
+        (.then (fn [body]
+                 (when (string? body)
+                   (try
+                     (js->clj (js/JSON.parse body) :keywordize-keys true)
+                     (catch :default _ nil))))))))
+
+(defn- current-ref-responses! [profile ref challenge]
+  (-> (js/Promise.all
+       (clj->js (map #(current-ref-response! % ref challenge)
+                     (:witness-endpoints profile))))
+      (.then (fn [responses]
+               (->> (array-seq responses) (filter map?) vec)))
+      (.catch (fn [_] []))))
+
+(defn- finalized-prefix! [profile]
+  (let [cid (:checkpoint-cid profile)]
+    (-> (js/Promise.all
+         (clj->js
+          (map (fn [witness]
+                 (let [url (endpoint-url (:url witness) "/finalized-prefix"
+                                         [["checkpoint" cid]])]
+                   (-> (request-text! url maximum-prefix-bytes)
+                       (.then (fn [body]
+                                (when (string? body)
+                                  (try (edn/read-string body)
+                                       (catch :default _ nil))))))))
+               (:witness-endpoints profile))))
+        (.then (fn [values]
+                 (first (filter #(and (map? %)
+                                      (map? (:checkpoint %))
+                                      (map? (:proof %)))
+                                (array-seq values)))))
+        (.catch (fn [_] nil)))))
+
+(defn current-ref-proofs!
+  "Collect and verify one shared challenge-bound proof for each requested ref.
+  `expected-heads` is `{ref head-cid}` from the already verified registry and
+  release manifest. Returns a verified proof map or an unavailable reason."
+  [profile expected-heads now-ms]
+  (let [challenge (.toString (.randomBytes crypto 32) "base64url")
+        refs (into (sorted-map) expected-heads)
+        read-promises (mapv (fn [[ref _]]
+                              (current-ref-responses! profile ref challenge))
+                            refs)]
+    (-> (js/Promise.all
+         (clj->js (conj read-promises (finalized-prefix! profile))))
+        (.then
+         (fn [results]
+           (let [values (vec (array-seq results))
+                 prefix-proof (peek values)
+                 read-results (pop values)
+                 proofs (into {}
+                              (map (fn [[[ref head-cid] responses]]
+                                     [ref (adapter/assemble-proof
+                                           profile ref challenge now-ms
+                                           responses prefix-proof)])
+                                   (map vector refs read-results)))]
+             (if (and prefix-proof
+                      (= (count refs) (count (filter map? (vals proofs))))
+                      (every? (fn [[ref head-cid]]
+                                (= head-cid (:head-cid (get proofs ref))))
+                              refs))
+               {:decision :verified
+                :profile profile
+                :challenge challenge
+                :checked-at-ms now-ms
+                :proofs proofs}
+               {:decision :unavailable :error :current-ref-proof-unavailable}))))
+        (.catch (fn [_]
+                  {:decision :unavailable :error :current-ref-proof-unavailable})))))

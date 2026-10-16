@@ -1,0 +1,25 @@
+{:format :kotoba.kir/v4,
+ :signature nil,
+ :functions
+ [{:name black-frame-code,
+   :params [measured mean-luma],
+   :result :i64,
+   :effects #{},
+   :body
+   (if
+    (let
+     [__kotoba_or_2 (if (= measured 1) false true)]
+     (if
+      __kotoba_or_2
+      __kotoba_or_2
+      (f64-lt mean-luma (f64-from-bits 4620693217682128896))))
+    1
+    0),
+   :param-types [:i64 :f64]}],
+ :oracle-value 0,
+ :schema-identities nil,
+ :exports [black-frame-code],
+ :schemas nil,
+ :effects #{},
+ :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
+ :entry nil}

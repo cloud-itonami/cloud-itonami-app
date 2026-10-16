@@ -21,6 +21,32 @@ app release does not silently change the public domain; the domain owner must
 sign a new binding and update its DNSSEC proof. This source change is not yet
 merged or requalified.
 
+The first product policy cores are indexed in
+[`product-policy-index.edn`](../resources/cloud/itonami/app/product-policy-index.edn),
+registered in `kotoba_oracle`, and compiled to shipped KIR artifacts under
+`resources/cloud/itonami/app/oracle/`. `product_policy/decision-code` is the
+shared typed call seam: it maps the canonical domain to its indexed core,
+converts scalar ABI values, constructs declared Kotoba records, and executes
+the exported decision. There is no host-side policy fallback. Aozora Biscuit
+authorization and x402 transfer preflight now take one typed record each,
+which brings their entry boundaries within the compiler's supported arity.
+The shared lifecycle's install-admission and Amano current-ref checks now use
+the same indexed `product_policy/call-policy` marshalling path. The Nbb server
+installs a bounded filesystem resource loader for the packaged index and KIR,
+which a runtime without a JVM classpath needs. The index remains source and
+benchmark provenance; it is not an app manifest, signed release, app ID, or
+domain binding.
+
+The standalone `clj -M:product-kir-gen` build emits those product KIR files
+without loading the full Node/server test graph. The earlier NBB generator path
+still hits a JVM-only Jackson import in `did.cljk`. AMU's adopted native
+selfhost build also accepted the updated Aozora and x402 cores for
+`aarch64-macos`. The eight product callsites are not yet routed through
+`product_policy/decision-code`; existing product worktrees still contain
+separate bootstrap-emitted WASM callsites, and AMU selfhost still cannot emit
+their browser/Worker target. These KIR and native build artifacts do not
+qualify app packaging, signed releases, or public deployment.
+
 The Awai `app.registry` DNA is a signed discovery and binding log replicated
 between validating peers. Its per-publisher predecessor chains are not a single
 globally ordered ledger and do not claim block finality. App state belongs in
@@ -235,8 +261,17 @@ independent origin operator. The portable policy is in
 [`awai_content_policy.cljc`](../src/cloud/itonami/app/awai_content_policy.cljc);
 it rejects known Cloudflare endpoint roots and suffixes, local-only hostnames,
 expired entries, scope mismatches, missing pins, and repeated hosts, pins, or
-operator identities. The policy does not resolve DNS, inspect CNAMEs or network
-ownership, or prove independent operators.
+operator identities. The same provider-host policy rejects Cloudflare service
+aliases in `domain/bind` records and persisted installation origins, so a
+signed app binding cannot use `workers.dev`, `pages.dev`, or the other known
+Cloudflare endpoint suffixes. The public gateway applies the same known-host
+block to its configured TLS host allowlist and domain-proof/install-plan
+queries. These hostname checks do not detect a custom-domain CNAME or proxy
+path; authoritative DNS/TLS and gateway readback must still prove each custom
+hostname reaches the independent serving nodes. The policy does not prove
+independent operators. On 2026-10-17, the gateway Node suite passed 18 tests;
+the focused Nbb app-binding and content-origin suites passed 20 tests and 78
+assertions, including Cloudflare-root and subdomain rejection cases.
 The transport disables ambient proxies and redirects, caps each block at 16
 MiB, and returns bytes only after the SHA-256 digest matches a CIDv1/raw,
 dag-pb, or dag-cbor CID. If one origin fails, it tries the others. Distinct
@@ -436,10 +471,10 @@ full launcher install flow.
 | Content | The active Node/WASM host exposes a loopback-only content-stage route that revalidates the registry candidate, DNS proof, manifest, signed origins, and each CID before local storage. A host-only reader resolves normal UnixFS directories; HAMT sharding is unsupported. No live content origin has passed through the route yet. | Prove the origins have independent operators, support production directory layouts, complete a release fetch with one origin offline, and connect verified blocks to consented installation and sandboxed entry serving. |
 | Local app host | The active Node/WASM host has loopback-only consent/install routes and a per-app `.localhost` static bundle origin. It rechecks installed content CIDs, serves assets from the verified bundle, and embeds the app in an opaque-origin iframe. Only capabilities approved in the protected install record are advertised; each cell operation is mediated by a `MessageChannel` and reauthorized by the host. A bridge-level real-peer smoke now passes, but the full launcher installation has not passed a live DNSSEC/candidate gate. | Qualify the full install flow against a signed pilot release and independent Awai nodes; complete updates and rollback; qualify revocation response and isolation against untrusted app code; and confirm every host effect stays within a declared, consented capability. |
 | App state | The registry DNA replicates over the experimental peer host. An Awai loopback integration test stages a five-block DNA bundle by CID, installs it through the HTTP API, persists its validator and descriptor, restores the cell, and replays its event log. Two independently Ed25519-signed chained notes are accepted by the real validator; a duplicate is idempotent, a broken signature is rejected, and both accepted notes read back through the bounded cursor API. A second two-process smoke now uses Itonami's adapter against the running Awai API to transfer the fixture bundle, install the cell, submit both signed notes, reject the bad signature, and read the accepted notes back. These are single-host fixture results; full launcher installation, independent-host convergence, migration receipts, and recovery after node loss remain unverified. | Connect the adapter to the full consented launcher installation path and prove signed read/write plus convergence across independent nodes, migration receipts, and recovery after node loss. |
-| Public serving | `deploy/awai-public-gateway` contains a Node HTTPS bootstrap gateway for `itonami.app`; it proxies only launcher HTML/JS, registry read, DNSSEC proof, and same-origin install-plan preview to the Itonami loopback host. The Awai worktree also contains `deploy/awai-peer-registry-gateway`, which exposes only the signed read-only registry route over HTTPS to a loopback Awai API. Its six policy tests and a disposable-certificate loopback HTTPS smoke pass, but no public host/certificate/DNS is provisioned. | Deploy three independent Awai peer gateways on direct-DNS hosts with independently issued TLS certificates; then implement signed host-to-app resolution, current multi-peer registry state, public app content delivery, and capability-mediated operations before any product hostname uses it. |
+| Public serving | `deploy/awai-public-gateway` contains a Node HTTPS bootstrap gateway for `itonami.app`; it proxies only launcher HTML/JS, registry read, DNSSEC proof, and same-origin install-plan preview to the Itonami loopback host. The gateway source accepts an explicit static hostname allowlist, checks each request's TLS SNI against `Host`, and requires the certificate SANs to cover every configured hostname. The launcher filters aliases to one exact Awai domain and offers a user-initiated link to that domain on the user's default loopback Itonami host; the local launcher independently reloads its registry and rejects malformed or duplicate domain queries. The 18 Node tests cover alias routing, TLS/Host policy, Cloudflare suffix rejection, plan preview, alias filtering, candidate gating, and local handoff. This host had no listener on `127.0.0.1:1338`, so browser navigation to a running local host has not been verified. A local HTTPS smoke with a disposable multi-SAN certificate for `itonami.app` and `murakumo.cloud` passed alias TLS/SNI, cross-host rejection, and same-origin plan forwarding against a fake upstream. A previous inventory note referred to `deploy/awai-peer-registry-gateway` in an Awai worktree, but that path is absent from this checkout and the currently registered `awai-app-foundation-next` and `awai-app-libp2p-sync` worktrees. The package is therefore not verifiable as present or deployable from the current source. No public peer gateway, hostname alias list, certificate, or DNS readback is provisioned. | Verify browser navigation to the local host, prove that the local candidate's signed binding matches the entered alias, deploy three independently operated Awai peer gateways on direct-DNS hosts, and qualify public certificate/DNS plus a complete consented install before any product hostname is considered migrated. |
 | Operations | Candidate registry records are visible in the authenticated app tab. | Add host health, publisher rotation, update consent, operation receipts, backup/restore, and a tested rollback path. |
 
-The current app-plane branch has follow-ups beyond merged PR #431: the app response CSP applies `sandbox allow-scripts` to direct document navigation, `domain/bind` pins an exact release CID, registry reads require a configured peer-checkpoint quorum, remote peer URLs require public-host HTTPS, and `deploy/awai-public-gateway` contains the launcher ingress package and systemd template. The focused Itonami app, registry, and sandbox suites passed 20 tests and 77 assertions; the Node checkpoint verifier passed 2 tests. The Awai `app-registry --host` gate passed all 16 gates, including two-process registry-checkpoint replication and the new peer-gateway route/header policy checks, after allowing loopback binds. The Itonami gateway passed `node --check`, all 9 Node tests, and a loopback TLS smoke with a disposable certificate and fake upstream covering launcher and plan preview, credential stripping, blocked install route, SNI mismatch, foreign Origin, and fixed CSP despite a permissive upstream policy. The separate Awai peer gateway passed syntax checking, six policy tests, and a disposable-certificate loopback HTTPS smoke for registry read, fixed upstream headers, SNI rejection, and write-route denial; no public endpoint has been read back. The JVM server bridge and whole repository suite remain unverified; a prior wider run stopped before tests at the unchanged `Exception` reference in `awai_manifest.cljc`. These are local/source checks only. No external certificate, host, DNS record, or runtime has been provisioned.
+The current app-plane source has follow-ups beyond merged PR #431: the app response CSP applies `sandbox allow-scripts` to direct document navigation, `domain/bind` pins an exact release CID, registry reads require a configured peer-checkpoint quorum, remote peer URLs require public-host HTTPS, and `deploy/awai-public-gateway` contains the launcher ingress package and systemd template. On 2026-10-17, the gateway Node suites passed 18 tests, including exact-domain local handoff, candidate gating, malformed-query fail-closed behavior, TLS/Host policy, plan preview, and refusal of Cloudflare-managed hosts. A local HTTPS smoke with a disposable multi-SAN certificate for `itonami.app` and `murakumo.cloud` previously passed alias TLS/SNI, cross-host rejection, and same-origin plan forwarding against a fake upstream. The Awai `app-registry --host` gate passed all 15 gates on the current source; the generated WASM artifact SHA-256 is `81932aa9f9b0ff109ffe20b5002728588ab817a85bce4b0e7f5bb8563f636f23`. G14 verified signed app-cell replication between two fixture processes on one host over loopback only. The prior claim of 16 gates and registry-checkpoint replication described a different intermediate source. The separate `deploy/awai-peer-registry-gateway` package is absent from the current checked-out worktrees; no public peer gateway, certificate, host, or DNS readback is provisioned. The Itonami JVM suite is unverified in this turn: `kbb -M:test` could not resolve its JVM classes, and `clojure -M:test` did not resolve the repository's `.cljk` test runner. These are local/source checks only; no public runtime has been provisioned.
 These are shared platform gates. A product migration starts only after one
 reference app passes them end to end and remains usable with the launcher and
 one serving node unavailable. Then each product supplies a small app-specific
@@ -493,3 +528,534 @@ discovery, production DNA, DNSSEC, public content delivery, and app execution
 remain unqualified. A prior wider Itonami run stopped before tests at the
 unchanged `Exception` reference in `awai_manifest.cljc`; the full repository
 suite remains unverified.
+
+## Shared Awai app admission core (2026-10-16)
+
+`src/cloud/itonami/app/awai_current_ref_core.kotoba` owns the pure decision
+that admits a challenge-bound current-ref proof. It binds the profile ID, chain
+ID, genesis hash, validator-set ID, and quorum-policy ID to the requested ref,
+head CID, challenge, proof freshness, and the host verifier result. The
+signature/finality verifier and registry read remain host capabilities.
+
+This is the shared foundation slice for the planned external-domain apps. It
+does not claim that the full Itonami app lifecycle is already Kotoba: DNS,
+content retrieval, registry traversal, local install storage, and UI/runtime
+dispatch still have host adapters, and each product app still needs a complete
+source-closure migration before it can be called Kotoba-native. The production
+Awai chain profile is not created; test profile strings are fixtures only. The
+quorum-policy ID must later resolve to the operator-authoritative policy and
+the verifier must authenticate its quorum evidence.
+
+`src/cloud/itonami/app/awai_amano_adapter.cljk` now binds the pinned Inga
+challenge-bound `/current-ref` verifier and committed-head membership verifier
+to the install policy's host port. It accepts only a quorum for the requested
+ref, head, challenge, and freshness window, then checks the matching head
+record's commitment proof against Inga's complete finalized prefix, verified
+from the operator-trusted genesis with the three-chain rule. The caller must
+provide the response from the node's immutable
+`/finalized-prefix?checkpoint=<CID>` endpoint separately from current-ref
+replies. Prefix verification is bounded but O(history); a checkpoint source
+and refresh path are still needed. The Node host source now loads the operator
+profile named by `ITONAMI_AWAI_AMANO_PROFILE`, collects signed reads for the
+exact domain-binding and app-release refs, and passes the verified proofs into
+the shared resolve/install policy. It repeats the reads after content staging
+before persisting an install. Profile files must be regular, non-symlink files
+owned by the current user, at most 256 KiB, and not writable by group or other
+users. The transport accepts 3–12 public HTTPS witness roots and bounds current
+reads to 1 MiB and finalized prefixes to 8 MiB. The checkpoint CID is an
+operator-maintained profile value; automatic checkpoint discovery/refresh is
+not implemented. The production profile is not created, and this source has
+not been loaded against the full pinned dependency closure or deployed.
+
+The Amu adopted native seed completed the official three-generation native
+selfbuild on 2026-10-16. All three outputs had SHA-256
+`47fba216e1a65b892458216575bbb70be228d86f4b7a6d73ebae84230279f20b`; the
+source unity had SHA-256
+`496b42f2d9f0c9d66455847f9bb2d5507d8cfa760387365093bf73fd5d514e92`. The
+trusted C loader was used, with no JVM, Node, or Graal fallback. This establishes
+a selfhost-built compiler image; it does not establish a selfhosted app runtime
+or a production deployment.
+
+The native diagnostic below compiled this shared decision core and its driver
+with that compiler for `aarch64-macos`. The input used `--source-path --unpinned`,
+so this is not a reproducible pinned application closure. The driver alternated
+one million valid and quorum-policy-mismatch decisions. Seven paired rounds
+were measured; the native figure subtracts the median empty-loader process cost
+from the median decision-driver process cost, so per-decision native time is an
+approximation. All decision and baseline checksums passed. Host load averages
+were 32.034 / 92.834 / 100.851, making this a noisy diagnostic rather than a
+qualified performance result.
+
+| Metric | Result |
+|---|---:|
+| Amu selfhost native core | 236.56 ns/decision (adjusted median) |
+| Warmed JavaScript predicate | 106.04 ns/decision (median) |
+| Native / JavaScript | 2.23× |
+| Native driver process median | 249.405 ms / 1,000,000 decisions |
+| Empty-loader process median | 12.841 ms |
+| Rounds / warmup | 7 / 1 per executable path |
+| Host load average (1/5/15 min) | 32.034 / 92.834 / 100.851 |
+
+This isolated core timing excludes signature/finality verification, registry
+access, network and content retrieval, record conversion at the production
+host boundary, and the full app lifecycle. It must not be read as a full-app
+throughput result or as a production cutover qualification.
+
+### Diagnostic benchmark
+
+`bench/awai_current_ref_benchmark.cljk` compares the prior host-side map
+predicate with the new KIR decision core. Both alternate valid and
+quorum-policy-mismatch inputs. The KIR measurement includes host-to-record
+conversion and KIR interpreter execution. It excludes registry access,
+signature verification cost, network/content retrieval, and the full app.
+
+Two small KIR runs on 2026-10-16 used 300 calls per round, three rounds, and
+60 warmup calls per implementation. The runner was KBB SCI on Node; the KIR
+was generated by the repository's pinned JVM generator. Observed results:
+
+| Run | Host predicate | KIR via SCI | KIR / host | Host load average (1/5/15 min) |
+|---|---:|---:|---:|---:|
+| 1 | 4.59 µs/op | 5.43 ms/op | 1,182× | 22.59 / 28.93 / 46.75 |
+| 2 | 8.73 µs/op | 7.80 ms/op | 893× | 25.26 / 28.86 / 44.88 |
+
+The separate compiled-Wasm harness uses
+`bench/awai_current_ref_wasm_driver.kotoba` to call the same admission core
+inside a 300-decision loop. Amu's Node bootstrap compiled it for
+`wasm32-browser`; the Amu browser host supplied its `kotoba:typed` imports.
+That benchmark used seven alternating rounds and two warmups. A benchmark-only
+fuel budget of 1,000,000 was needed for the 300-decision call; it is not a
+production setting. The host comparison for this harness is a direct JavaScript
+predicate, so these figures are not directly comparable to the SCI table.
+
+| Run | JavaScript predicate | Amu Wasm via browser host | Wasm / JS | Host load average (1/5/15 min) |
+|---|---:|---:|---:|---:|
+| 1 | 0.312 µs/decision | 331.01 µs/decision | 1,060× | 33.08 / 30.48 / 46.19 |
+| 2 | 0.319 µs/decision | 306.58 µs/decision | 961× | 33.07 / 30.56 / 46.03 |
+
+The compiled-Wasm harness and output are a separate bootstrap diagnostic, not
+production-qualified: the compile used `--unpinned` source-path resolution and
+the Amu Node bootstrap, not the selfhost compiler. The artifact SHA-256 is
+`e0e6d569ad82e49df731b74e0e08ce9389e0cfb6cf4a6e85c61c2f7acaf1b984`; the
+5,413-byte Wasm and its Amu provenance/publication sidecars are in
+`/Users/junkawasaki/github/workspaces/codex/itonami-app-plane-bench-20261016/`.
+Both benchmark paths use fixture values and omit signature verification,
+registry/network/content I/O, and the full app lifecycle. The results show
+substantial interpreter and host-ABI overhead; they do not support a native
+performance claim or a production cutover.
+
+## Shared app resolve/install admission in Kotoba (2026-10-16)
+
+`src/cloud/itonami/app/awai_app_admission_core.kotoba` now owns the shared
+admission precedence for external Awai apps. `awai_apps.cljc` converts the
+verified host-port results into bounded facts and calls this core for both
+`resolve-domain` and `finish-install`. DNSSEC validation, Amano signatures and
+quorum verification, registry reads, content CID checks, protected storage,
+capability consent, and the resulting error/detail maps remain host duties.
+All product apps can use this common rule. Product-specific Kotoba slices
+cover Murakumo compute-bid admission, Isekai publish-tier, Aozora Biscuit
+operation, Babiniku proposal-governor, x402 transfer limits, Shinshi video
+black-frame threshold, Oppai challenge-window, and Awai Network chat
+admission. Seven existing product source functions now call their decision
+cores. These changes are still outside the shared host lifecycle and signed
+app releases; the full product source closures are not yet migrated. The x402
+slice does not authorize signing.
+
+The KIR artifact was generated through the repository's compatibility
+generator. The source was also compiled by the adopted Amu native selfhost
+seed, whose compiler pin was verified. The selfhost build used a trusted C
+loader, and compiler execution had no JVM, Node, or Graal fallback. The native
+source closure was passed with `--source-path --unpinned`; it is not a pinned
+app build or a production runtime.
+
+The KIR diagnostic checked 11 finish-install cases and five resolve-domain
+cases before timing. It then compared 300 alternating admitted and
+capability-refused finish-install decisions over seven alternating rounds,
+with two warmups per implementation. The direct host predicate omits record
+construction; the KIR path includes record conversion and KIR interpretation.
+
+| Metric | Result |
+|---|---:|
+| Host predicate median | 2.844 µs/decision |
+| Kotoba KIR median | 2.163 ms/decision |
+| KIR / host | 760.5× |
+| Host load average (1/5/15 min) | 104.20 / 111.41 / 120.13 |
+
+The separate native diagnostic ran one million alternating admitted and
+capability-refused decisions per sample over seven alternating rounds, with
+one warmup per executable path. It subtracts the median empty-loader process
+time from the native driver's median wall time. The JavaScript reference runs
+in-process, so the comparison and loader subtraction are approximate.
+
+| Metric | Result |
+|---|---:|
+| Amu selfhost native core, adjusted median | 410.0 ns/decision |
+| Native driver process median | 448.743 ms / 1,000,000 decisions |
+| Empty-loader process median | 38.744 ms |
+| JavaScript reference median | 12.174 ns/decision |
+| Native / JavaScript | 33.68× |
+| Host load average; logical CPUs | 120.80 / 111.92 / 119.09; 10 |
+
+Both benchmark runs were heavily loaded and are diagnostic only. They show
+that the current KIR interpreter path is costly and that this native microbench
+did not beat its JavaScript predicate. Neither is a full-app performance
+result. Both use fixtures and exclude signature verification, registry and
+network I/O, content transfer, UI execution, and the complete product app.
+The selfhost compiler, build commands, native images, and command logs are
+preserved under
+`/Users/junkawasaki/github/workspaces/codex/itonami-app-admission-selfhostbench-20261016-unsandboxed/`.
+
+## External product endpoint migration catalog (2026-10-17)
+
+[awai-app-public-endpoint-migration-2026-10-17.csv](awai-app-public-endpoint-migration-2026-10-17.csv)
+tracks the corrected 523-row Cloudflare runtime snapshot, all 2,581 Pages
+production deployment candidates, all 361 DNS control-plane records, one source/provider
+mismatch, two root-only readbacks, and eight active zones with no configured
+DNS records. DNS metadata records are separate from HTTP endpoints; record
+contents and targets are omitted. The eight zone-only rows remain pending
+external delegation and retention review. Of the 3,476 catalog rows, 3,104
+are provider endpoint or deployment candidates; API presence alone does not
+establish public reachability.
+The sanitized DNS source snapshot is
+[`awai-cloudflare-dns-hostnames-2026-10-17.csv`](awai-cloudflare-dns-hostnames-2026-10-17.csv).
+The endpoint source is
+[`awai-cloudflare-runtime-endpoints-2026-10-17.csv`](awai-cloudflare-runtime-endpoints-2026-10-17.csv),
+and the full 145-script Workers.dev settings read is
+[`awai-cloudflare-workers-dev-recheck-2026-10-17.csv`](awai-cloudflare-workers-dev-recheck-2026-10-17.csv).
+
+The service map resolves 84 of 174 service names from canonical Wrangler
+configs or pinned canonical GitHub config snapshots. Another 13 have only a
+product-owner hint, 5 are repository-name candidates, 6 have ambiguous config
+matches, and 66 need owner review. The
+33-domain summary separates ten product-cohort domains, 13 other named
+domains, two platform hostname families, and eight zone-only review domains.
+Service-owner statuses do not assign an app ID or release. The files are
+generated by scripts/generate_awai_app_migration_catalog.py from the checked-in
+runtime snapshot, Pages deployment list, root readback, and zone recheck, and
+by scripts/generate_awai_service_ownership_map.py and
+scripts/generate_awai_app_domain_ownership_summary.py. Cloudflare configuration
+does not establish public reachability.
+
+The [`awai-app-service-ownership-2026-10-17.csv`](awai-app-service-ownership-2026-10-17.csv)
+contains the service-level source evidence. The
+[`awai-app-domain-ownership-summary-2026-10-17.csv`](awai-app-domain-ownership-summary-2026-10-17.csv)
+groups that evidence by root domain. The remaining 13 non-cohort domains need
+an owner decision and product/service contract before they can receive an
+Awai app identity or domain binding; platform hostnames need an explicit
+keep-as-alias or retire decision after their owning apps are identified.
+
+| Product domain | Source repository | Current Kotoba / Amu state |
+|---|---|---|
+| `itonami.app`, `itonami.cloud` | `network-awai/cloud-itonami` | Shared resolve/install admission core is wired in the local app-plane worktree; it is not merged or in a signed release. Product application closures and the production Awai chain profile remain incomplete. |
+| `murakumo.cloud` | `network-awai/cloud-murakumo` | Local pilot branch based on `origin/main` at `52fd611ee16a3794692f0548353630d0c8a1014f` routes `eligible-bid?` through the exact-source Kotoba core on the CLJS path; the pinned AMU bootstrap WASM artifact builds with zero imports. The 2026-10-16 AMU native selfhost benchmark matches the source; no comparable repeat was taken on 2026-10-17 under heavy host load. Worker bundle build, signed release, and domain binding remain unverified. App ID `net.kotoba.murakumo` is evidenced. |
+| `aozora.app` | `network-awai/app-aozora-engine` | Local uncommitted PDS `authorize-op` change calls an AMU `wasm32-browser` module after host Biscuit verification; Worker build, app bundle, release, and domain binding are unverified. |
+| `oppai.fans` | `network-awai/fans-oppai` | Local uncommitted `challenge-valid?` change calls an AMU `wasm32-browser` core for bounded timestamps and keeps the host fallback outside that range; app build and release are unverified. Nonce consumption, consent, and face-data handling stay host-owned. |
+| `isekai.network` | `network-awai/network-isekai` | Local uncommitted `account-tier.mjs` maps host tier data to an AMU `wasm32-browser` admission core; Pages Function build, signed app bundle, and release binding are unverified. |
+| `x402.nexus` | `network-awai/nexus-x402` | Local uncommitted `transfer-verdict` change calls an AMU `wasm32-browser` core for amount limits after host validation; app build and release are unverified. It does not authorize signing; owner-scoped storage and atomic budget/nonce reservation remain host capabilities. |
+| `shinshi.club` | `network-awai/club-shinshi-app` | Local `video_black_frame_core.kotoba` is wired into the portable CLJS `black-frame?` path through a bootstrap WASM module. The offline `video-drain` SCI path still uses its host fallback, and this is not a public service callsite. Publication, app bundle, and release behavior are unverified. |
+| `babiniku.net` | `network-awai/net-babiniku` | Local uncommitted `review-turn` change calls an AMU `wasm32-browser` core after host checks; app bundle build and release are unverified. Generation asset storage and preview-only broadcast persistence still need a host-port migration. |
+| `awai.network` | `network-awai/network-awai-apex` | Local uncommitted `sanitize-chat` change calls an AMU `wasm32-browser` admission core after host message counting; Worker build and signed release are unverified. Image/video generation, streaming, and Murakumo capabilities still need app-host adapters. |
+
+
+### Product WASM and shared KIR ABI boundary
+
+The product-specific browser wrappers and the shared Itonami policy index are
+separate artifacts today. The local Aozora, Shinshi, and x402 product
+worktrees still use their measured bootstrap-WASM source variants; the shared
+policy sources have since moved to record inputs for Aozora/x402 and an `f64`
+threshold input for Shinshi. Their decision-kernel semantics are related, but
+the source hashes and ABIs are not identical, so the shared-core benchmark rows
+do not claim to time the current product wrapper binaries. An Aozora probe of
+the shared record-input source compiled to a WASM module with 46
+`kotoba:typed` imports, while the product compatibility wrapper instantiates a
+zero-import module. It cannot be swapped in as a drop-in artifact. The intended
+convergence point is the shared Itonami Kotoba/KIR call seam, or a separately
+qualified typed-WASM host, before removing the product compatibility paths.
+
+### Product policy KIR packaging and local readback (2026-10-17)
+
+The KIR generator packages product decision cores and shared Awai install
+admission as entryless libraries. Benchmark-only `main` exports stay in the
+AMU native benchmark source closure and are omitted from the runtime export
+surface. The source files and their AMU benchmark hashes are unchanged.
+
+The shared policy table now has cases for all published decision exports in
+the 34 shipped cores. `kbb --backend sci --classpath src:test
+test/oracle_cases_nbb.cljk` passed 290 cases with no uncovered exports. The
+focused `kbb --backend sci --classpath src:test
+test/awai_app_plane_nbb.cljk` runner installs the packaged-resource loader and
+passed 20 resolver/content tests with 78 assertions. The local public gateway
+and launcher suites passed 18 Node tests. These checks cover local policy
+artifacts and route decisions; they do not establish signed releases, Awai
+production-chain finality, public DNS/TLS, migrated service state, or live
+domain behavior.
+
+
+These product source changes are local working-tree WIP in separate repositories; they have not changed canonical `main`, signed app releases, live routes, or DNS. The native AMU selfhost benchmarks qualify native decision-core builds only; browser modules use the separate bootstrap compiler path described below.
+
+On 2026-10-17, all eight product Kotoba decision-core files were present in their product worktrees; each SHA-256 matches its source-matched AMU native selfhost benchmark input from 2026-10-16. Their eight benchmark drivers plus the shared install-admission core are recorded in [`awai-product-kotoba-selfhost-native-recheck-2026-10-16.md`](benchmarks/awai-product-kotoba-selfhost-native-recheck-2026-10-16.md). Seven product callsites use AMU bootstrap-emitted WASM wrappers with per-project build scripts; Shinshi's core remains an offline workflow helper, not a public service callsite. The measurement covers native decision kernels only. It does not qualify the WASM outputs, integrated product builds, or full app behavior.
+
+`app_key` in the CSV is a product-family label, not a published Awai app ID.
+`product_source_repository_hint` is a product-level lead, not proof that every
+Worker/route in that domain is built from that repository. `mapping_basis`
+states whether the row followed an exact hostname, an explicit Pages/service
+mapping, or remains unmapped.
+Only `net.kotoba.murakumo` currently has an evidenced app ID in this work.
+No app IDs, release CIDs, domain bindings, validator profile, DNSSEC DS
+records, or production deployments were created by this catalog pass.
+
+## Selfhost decision-core benchmarks
+
+An initial same-day measurement covered the shared app install gate,
+current-ref acceptance core, Murakumo bid gate, Isekai publish-tier gate,
+Aozora Biscuit operation gate, Babiniku proposal governor, x402 wallet
+preflight, Shinshi's black-frame gate, Oppai's challenge window, and Awai
+Network chat admission. A source-matched recheck of the shared install gate
+and all eight product cores appears below and supersedes the earlier product
+numbers for the current performance comparison.
+The initial product-core results and target qualification are summarized in
+[`awai-product-kotoba-selfhost-native-2026-10-16.md`](benchmarks/awai-product-kotoba-selfhost-native-2026-10-16.md).
+The initial product measurements used source-matched native builds. Each
+product core used one million decisions, seven alternating rounds, one warmup
+per executable path, and an empty-loader-adjusted native median. Current-ref
+reused its existing native artifact. No production deployment was part of
+these measurements. The host was heavily loaded; the initial raw medians and
+load averages are in the linked refresh output.
+
+| Decision core | Amu selfhost median | JavaScript median | Native / JS | Integration state |
+|---|---:|---:|---:|---|
+| App install admission | 51.49 ns/decision | 8.62 ns/decision | 5.97× | Called by shared resolve/install host lifecycle; fresh diagnostic load average 14.23 |
+| Awai current-ref acceptance | 1,402.46 ns/decision | 816.06 ns/decision | 1.72× | Historical initial core measurement, not part of the later source-matched nine-kernel recheck; production chain profile and quorum authority absent |
+| Murakumo bid admission | 16.84 ns/decision | 10.05 ns/decision | 1.675× | Native diagnostic; production quote selector calls the separately measured WASM adapter |
+| Isekai publish-tier admission | 7.08 ns/decision | 2.86 ns/decision | 2.471× | `account-tier.mjs` calls the WASM source module; Pages build unverified |
+| Aozora Biscuit operation authorization | 48.24 ns/decision | 45.79 ns/decision | 1.053× | Native diagnostic; PDS source calls a separately measured WASM closure |
+| Babiniku proposal governor | 33.97 ns/decision | 19.62 ns/decision | 1.732× | Native diagnostic; `review-turn` calls the separately measured WASM adapter |
+| x402 wallet transfer preflight | 34.09 ns/decision | 30.82 ns/decision | 1.106× | Native diagnostic; `transfer-verdict` calls a WASM amount gate; no signature authority |
+| Shinshi black-frame threshold | 21.25 ns/decision | 15.04 ns/decision | 1.413× | Shared CLJS helper calls the bootstrap Kotoba WASM module; offline `video-drain` SCI path uses its host fallback; no public service callsite |
+| Oppai enrollment challenge window | 16.46 ns/decision | 21.69 ns/decision | 0.759× | Native diagnostic; `challenge-valid?` calls the WASM adapter for bounded timestamps |
+| Awai Network chat admission | 20.27 ns/decision | 16.19 ns/decision | 1.252× | `sanitize-chat` source calls the WASM module; Worker build unverified |
+
+| Decision core | Host load average (1/5/15 min) | Driver median | Empty-loader median |
+|---|---|---:|---:|
+| App install admission | 14.23 / 11.53 / 16.41 | 69.78 ms / 1M | 18.29 ms |
+| Awai current-ref acceptance | 51.31 / 34.98 / 48.24 | 1,436.56 ms / 1M | 34.10 ms |
+| Murakumo bid admission | 46.72 / 57.52 / 49.05 | 47.92 ms / 1M | 31.08 ms |
+| Isekai publish-tier admission | 44.18 / 56.82 / 48.85 | 41.41 ms / 1M | 34.34 ms |
+| Aozora Biscuit operation authorization | 44.18 / 56.82 / 48.85 | 79.32 ms / 1M | 31.08 ms |
+| Babiniku proposal governor | 44.18 / 56.82 / 48.85 | 65.99 ms / 1M | 32.01 ms |
+| x402 wallet transfer preflight | 44.18 / 56.82 / 48.85 | 62.56 ms / 1M | 28.47 ms |
+| Shinshi black-frame threshold | 42.00 / 56.16 / 48.67 | 52.50 ms / 1M | 31.25 ms |
+| Oppai enrollment challenge window | 42.00 / 56.16 / 48.67 | 56.26 ms / 1M | 39.80 ms |
+| Awai Network chat admission | 42.00 / 56.16 / 48.67 | 52.51 ms / 1M | 32.24 ms |
+
+Each driver alternated one million admitted/refused decisions over seven
+rounds with one warmup. Native time is an approximate process-wall-time median
+minus an empty KEXE-loader median; JavaScript runs in process. The initial
+product batch had high load across all eight samples; the shared app-admission
+refresh also ran under high load (14.23 / 11.53 / 16.41 on the 10-core host).
+In the first product run, only Oppai's native core was faster than its direct
+JavaScript reference. These measurements do not support a general native
+performance claim. The microbenchmarks exclude
+full request conversion, signatures, registry and peer reads, provider
+selection/sorting, content I/O, and the full app lifecycle. The numbers are not
+directly comparable across rows. The benchmark sources are in `bench/`; the
+first aggregate stdout is in
+[`awai-product-kotoba-selfhost-native-refresh-2026-10-16.txt`](benchmarks/awai-product-kotoba-selfhost-native-refresh-2026-10-16.txt).
+
+The x402 initial native row was refreshed after adding the separate four-argument
+`transfer-amount-limit-code` export; its full `transfer-verdict-code` decision
+body remains unchanged. The benchmark used the current source closure and the
+adopted AMU native selfhost compiler with verified pins. Its source-path
+closure was `--unpinned`, so the result remains diagnostic rather than a pinned
+application build.
+
+### Source-matched selfhost recheck
+
+On 2026-10-16, the eight product decision cores and shared install-admission
+core were rerun from native images whose recorded Kotoba source closures match
+the current feature worktrees. Each harness executed one million decisions per
+sample over seven alternating rounds, with one warmup per executable path. The
+native median subtracts the empty KEXE-loader median; JavaScript ran warmed in
+process. The host had 10 logical CPUs. Load was lower than in the first run but
+remained elevated at 6.24–6.43 / 8.38–8.46 / 12.36–12.41 (1/5/15 minute
+averages).
+
+| Decision core | AMU selfhost native | JavaScript reference | Native / JS |
+|---|---:|---:|---:|
+| Murakumo bid admission | 4.55 ns/decision | 3.55 ns/decision | 1.283× |
+| Aozora Biscuit authorization | 15.67 ns/decision | 14.35 ns/decision | 1.092× |
+| Isekai publish-tier admission | 2.65 ns/decision | 1.11 ns/decision | 2.393× |
+| Babiniku proposal governor | 9.83 ns/decision | 5.87 ns/decision | 1.674× |
+| x402 transfer preflight | 10.90 ns/decision | 10.50 ns/decision | 1.038× |
+| Shinshi black-frame threshold | 6.19 ns/decision | 4.75 ns/decision | 1.303× |
+| Oppai challenge window | 7.23 ns/decision | 6.51 ns/decision | 1.111× |
+| Awai Network chat admission | 7.75 ns/decision | 5.01 ns/decision | 1.545× |
+| Shared Itonami install admission | 28.13 ns/decision | 4.61 ns/decision | 6.102× |
+
+The native path was slower in all nine rows in this lower-load recheck. A
+second run completed all nine harnesses under very high host load and produced
+materially different ratios; treat that run as a harness-completion check, not
+a performance comparison. Both runs measure small decision kernels, not
+application latency or deployment performance. See the benchmark report's
+high-load repeat section for its results.
+The build reports verified the adopted AMU seed pins and exact source hashes;
+their source-path closures remain `--unpinned`. Full raw outputs and source
+hashes are in
+[`awai-product-kotoba-selfhost-native-recheck-2026-10-16.txt`](benchmarks/awai-product-kotoba-selfhost-native-recheck-2026-10-16.txt),
+with the machine-readable run record at
+`/Users/junkawasaki/github/workspaces/codex/itonami-app-plane-next-kotoba-selfhost-refresh-20261016/results.json`.
+
+## AMU JavaScript artifact comparison
+
+| Core | AMU JS artifact | Direct JS | Artifact / reference | Status |
+|---|---:|---:|---:|---|
+| Murakumo bid admission | 494.93 ns/decision | 11.86 ns/decision | 41.72× | Comparison only; current source calls the WASM target |
+| Aozora Biscuit authorization | 1,413.28 ns/decision | 32.87 ns/decision | 42.99× | Comparison only; current source calls the WASM target |
+
+These JS-backend measurements used one million mixed decisions, seven rounds,
+and production-style guest rotation. They are retained as a compiler-path
+comparison; the source callsites now use the portable WASM output below.
+
+## AMU portable WASM decision cores
+
+The eight product Kotoba cores were emitted as `wasm32-browser-kotoba-v1`
+modules with `--jvm-free`, fuel 10,000,000, and no imports. With x402's
+additional source-specific amount-gate export, the current modules total
+4,605 bytes. The benchmark converts host Number inputs to WASM i64 BigInts and
+rotates a guest every 10,000 calls. Most cores use one million alternating
+allow/refuse decisions over seven rounds with one warmup; the updated x402
+full-core run uses ten ordered outcomes. The initial shared run's host load was
+28.83 / 31.79 / 32.09; the x402 remeasurement load was 32.41 / 30.85 / 33.84,
+both on 10 logical CPUs.
+
+| Product core | WASM bytes | WASM ns/decision | JS ns/decision | WASM / JS | Source integration |
+|---|---:|---:|---:|---:|---|
+| Murakumo bid admission | 531 | 173.42 | 36.24 | 4.79× | `eligible-bid?` calls wrapper; Worker build unverified |
+| Aozora Biscuit core | 970 | 247.13 | 45.93 | 5.38× | Standalone core; PDS closure measured separately |
+| Babiniku proposal governor | 549 | 184.92 | 37.73 | 4.90× | `review-turn` calls wrapper; app build unverified |
+| x402 transfer preflight | 812 | 782.69 | 94.15 | 8.31× | `transfer-verdict` calls the four-argument amount gate; app build unverified |
+| Shinshi black-frame threshold | 401 | 145.74 | 33.75 | 4.32× | Shared CLJS helper calls wrapper; offline SCI path uses host fallback; no public service callsite |
+| Oppai challenge window | 503 | 153.38 | 34.38 | 4.46× | `challenge-valid?` calls wrapper for bounded timestamps; app build unverified |
+| Isekai publish-tier admission | 393 | 104.19 | 26.91 | 3.87× | `account-tier.mjs` calls wrapper; Pages build unverified |
+| Awai Network chat admission | 446 | 152.81 | 33.29 | 4.59× | `sanitize-chat` source calls wrapper; Worker build unverified |
+| Aozora PDS closure | 1,036 | 343.45 | 28.00 | 12.26× | PDS source calls wrapper; Worker build unverified |
+
+For these core-only kernels, WASM is slower than direct JavaScript, with
+absolute times of 104–783 ns per decision. The x402 full-preflight run used ten
+ordered outcomes; the other rows used their listed mixed vectors. These are
+normalized-input microbenchmarks, not full request measurements. They exclude signatures,
+parsing, storage, network, app resolution, and chain consensus. The portable
+WASM target uses the JVM-free AMU backend and is separate from the native
+`aarch64-macos` selfhost diagnostics above. A default-fuel probe trapped after
+512 calls; the measured modules fix finite fuel at 10,000,000 and rotate guests
+every 10,000 decisions. The initial core outputs and harness are in
+`/Users/junkawasaki/github/workspaces/codex/awai-wasm-probe-20261016/`; the
+current x402 full-core and amount-gate outputs are in
+`network-awai/nexus-x402/bench/x402_transfer_preflight_wasm_result_2026-10-16.txt`.
+The summary is in `docs/benchmarks/awai-product-kotoba-wasm-2026-10-16.md`.
+
+### Source-adapter measurements
+
+After wiring the generated wrappers into Babiniku, x402, and Oppai, separate
+benchmarks measured their source-boundary adapters. They include host-side
+normalization relevant to each gate, Number-to-i64 BigInt conversion, guest
+rotation every 10,000 calls, and result conversion. These remain
+microbenchmarks of normalized facts; they exclude each full service request.
+
+| Source adapter | WASM ns/decision | Direct JavaScript ns/decision | WASM / JS | Measurement scope |
+|---|---:|---:|---:|---|
+| Babiniku `review-turn` decision | 168.34 | 10.36 | 16.24× | Eight mixed cases; host blocked-term search excluded |
+| x402 transfer amount gate | 229.19 | 12.10 | 18.94× | Four amount cases after host authorization and request validation |
+| Oppai challenge window | 109.92 | 22.73 | 4.84× | Eight boundary cases; host fallback retained outside WASM timestamp range |
+
+These adapter results are slower than direct JavaScript because of the i64
+BigInt call boundary. Absolute cost is 0.11–0.23 microseconds per call. Raw
+results and harnesses are in each feature worktree's `bench/` directory.
+
+## Kotoba static-module build check
+
+On 2026-10-16, AMU emitted `js-kotoba-v1` modules for the eight product policy
+slices plus the two shared app lifecycle cores. The build used
+`bin/amu compile --target js --jvm-free --unpinned` from AMU checkout
+`c3b1ef6a01ca5f0dd2357c89b92f6aef65b0479e`; this is the NBB-hosted JavaScript
+backend, not the adopted native selfhost compiler measured above. The eight
+single-export product modules loaded in Node and returned their expected
+admit/refuse vectors. The shared resolve/install and current-ref modules
+compiled successfully but were not exercised through the product vector
+smoke. Compiler manifest/provenance files and emitted modules are preserved in
+`/Users/junkawasaki/github/workspaces/codex/awai-kotoba-js-bundle-20261016/`;
+the ten generated modules total 720,549 bytes, including each module's JS
+guest runtime.
+
+## AMU native selfhost target boundary
+
+On 2026-10-16, the adopted AMU native selfhost compiler was invoked on the
+shared app-admission Kotoba source with `--target wasm32-browser`. It returned
+`E2 unsupported target (only aarch64-macos)`. The selfhost compiler used for
+the native decision-core benchmarks therefore cannot emit the portable browser
+modules used by the product callsites. Those wrappers come from the separate
+JVM-free AMU/NBB bootstrap compilation path recorded above. The native
+selfhost measurements are valid source-level diagnostics for the native
+target; they do not establish a selfhost-built browser artifact or a deployed
+selfhost app runtime.
+
+## Pinned app-plane server build and local smoke (2026-10-16)
+
+The local server guest was emitted with
+`AMU=/Users/junkawasaki/github/wt/codex/awai-foundation-amu-8435/bin/amu`
+and `KOTOBA_EMITTER=amu` using AMU commit
+`8435eafb7dada2d3a85cee2c278ca6d38deb7588` and Kotoba language pin
+`bfe618b3a3844d5563a943d63bdefcdc535af98c`. The resulting
+`target/amu/server_main.wasm` is 3,432 bytes with SHA-256
+`37cec21624af2ed4da24d9225b62efddc5c5c16faa5ff6b02fcb5f95ce7c5efa`;
+the paired `browser-host.mjs` is 151 KiB with SHA-256
+`a36fc69c83d248f24719b0365c22bb57533c680b4ab8e6073d85adc33081009a`. This
+is the AMU bootstrap `wasm32` build path, not a browser module emitted by the
+adopted native selfhost compiler.
+
+After adding the matching pinned `osaho` runtime dependency to `nbb.edn` and
+fixing the current-ref response-size constant reference, the Node host ran on
+`127.0.0.1:1338` with an isolated scratch data directory. Direct HTTP readback
+returned 200 for `/health`, `/`, and `/awai-launcher.js`. The local
+`/api/awai/app-registry` returned 503 `{"status":"unavailable","reason":"unconfigured"}`;
+the production Awai chain profile remains uncreated as confirmed by the user.
+The host was stopped after the smoke check. No external DNS or deployment changed, and
+the browser handoff itself has not been exercised in a browser.
+
+The native selfhost performance evidence remains the diagnostic decision-core
+benchmark linked above. It measures the app-install gate and product policy
+cores, not HTTP latency, full app lifecycle, chain consensus, or deployed
+performance.
+
+This establishes portable static-module build paths the Itonami bundle reader
+can serve (`.mjs` and `.wasm` are supported content types). The source callsites
+listed above now import local WASM wrappers, but their Worker/Pages builds remain
+unverified. The modules are not part of signed app bundles; product source
+closures, release records, domain bindings, and the production chain profile
+remain outstanding.
+
+The Isekai source slice and its benchmark/build record are in the separate
+`network-awai/network-isekai` worktree; `account-tier.mjs` calls the module,
+but no Pages build or Awai app release is verified. Aozora's PDS source imports
+its generated WASM wrapper, but the Worker build is unverified. Murakumo's
+quote selector calls its generated wrapper, but the Worker build is
+unverified. Babiniku's `review-turn` and x402's `transfer-verdict` source
+functions call their respective Kotoba cores; their app builds and Awai
+releases are unverified. Oppai's `challenge-valid?` calls its Kotoba core for
+bounded timestamps while retaining the original fallback; its app build and
+Awai release are unverified. Awai Network's `sanitize-chat` source calls its
+generated wrapper, but its Worker build and app release are unverified.
+Shinshi's offline `tools/video-drain.cljk` publication workflow calls
+`video_publish/black-frame?`, now backed by the portable Kotoba module for
+finite, safely representable CLJS values. The original predicate remains the
+fallback for unusual values and the CLJ compatibility branch.
+
+The app-plane source contains a shared Kotoba admission slice compiled to KIR
+by the compatibility generator and called by the host lifecycle. AMU native
+selfhost compilation is evidenced by the separate decision-core benchmarks;
+the adopted selfhost compiler currently accepts only `aarch64-macos`. The
+eight product decision functions, including Shinshi's video-drain threshold,
+are now source-wired through portable wrappers emitted by the JVM-free AMU
+bootstrap path. Their Worker/Pages builds and Awai releases remain unverified.
+The broader product source closures are not yet refactored to Kotoba/AMU. The
+171 other named-domain rows and 105 platform-hostname rows still need service
+ownership review; the catalog does not treat them as unrelated or migrated.

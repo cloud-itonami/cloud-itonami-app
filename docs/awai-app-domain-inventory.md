@@ -1,8 +1,10 @@
 # Awai app domain inventory and migration gates
 
-Snapshot date: 2026-10-16 (latest read-only account and Registrar API refresh:
-2026-10-16; expanded host inventory read window completed by
-2026-10-16T07:26:38Z; focused DNS/zone snapshot: 2026-10-16T07:00:48Z).
+Current runtime endpoint inventory: 2026-10-17 JST. Connected account, zone,
+and Registrar API state was rechecked through 2026-10-16T17:43:46Z. The
+per-script Workers.dev settings and normalized endpoint hostnames were last
+read earlier that day. Public root HTTP/DNS readback remains the separate,
+method-specific observation below.
 This is a read-only inventory from the connected
 Cloudflare accounts API: zones, DNS records, Worker custom domains/routes and
 `workers.dev` settings, Pages projects/domains/previews, Tunnel hostnames, and
@@ -17,6 +19,387 @@ was refreshed again on
 on 2026-10-16 JST. Direct UDP DNS queries remain blocked in this environment;
 the linked resolver responses are recursive observations, not direct queries
 to the authoritative servers.
+
+## Connected-zone configuration recheck (2026-10-17 JST)
+
+A read-only API pass ending at 2026-10-16T15:18:46Z covered zones, DNS,
+Worker domains/routes/scripts, Pages projects, and Tunnels across all three
+connected accounts. It found 30 active zones, 361 DNS records (191 proxied),
+36 Worker routes, 101 Worker custom domains, 145 Worker scripts, 16 Pages
+projects, and 31 Tunnels (6 healthy, 25 down); DNSSEC is disabled on all 30
+zones. Per-account counts are in
+[awai-cloudflare-resource-recheck-2026-10-17.csv](awai-cloudflare-resource-recheck-2026-10-17.csv),
+and per-zone DNS/DNSSEC counts are in
+[awai-cloudflare-zone-recheck-2026-10-17.csv](awai-cloudflare-zone-recheck-2026-10-17.csv).
+These are configuration reads only; they do not establish registrar
+delegation, external authoritative DNS, recursive resolution, origin health,
+or public HTTP behavior.
+
+### Fresh API readback (2026-10-17 JST)
+
+A second read-only read completed at `2026-10-16T16:24:59Z` across the same
+three connected accounts. It returned 30 zones, 361 DNS records (191
+proxied), 36 Worker routes, 101 Worker custom domains, 145 Worker scripts,
+16 Pages projects, and 31 Tunnels (6 healthy, 25 down). Every request for the
+listed surfaces succeeded. The 361 DNS records exactly match the prior
+sanitized snapshot by account, zone, hostname, record type, and proxy state;
+there were no additions or removals. Per-account counts are appended to
+[`awai-cloudflare-resource-recheck-2026-10-17.csv`](awai-cloudflare-resource-recheck-2026-10-17.csv),
+and the DNS comparison result is in
+[`awai-cloudflare-dns-multiset-recheck-2026-10-17.csv`](awai-cloudflare-dns-multiset-recheck-2026-10-17.csv).
+This API pass did not inspect DNS record contents or tunnel origin URLs and
+does not prove live authoritative DNS, public HTTP behavior, app health, or
+independent origin operation.
+
+### Full connected-account surface re-read (2026-10-17 JST)
+
+A read-only re-read completed at `2026-10-16T18:52:37Z` across all three
+connected Cloudflare accounts. It returned 30 zones, 361 DNS records (191
+proxied), 36 Worker routes, 101 Worker custom domains, 145 Workers.dev
+settings (72 enabled, 68 preview-enabled), 16 Pages projects with 23 project
+domains, 161 Pages preview host aliases across 108 deployment objects, and 31
+Tunnel objects (6 healthy, 25 down). There were no API read errors.
+
+SHA-256 hashes of the normalized row identities match the saved snapshot
+exactly for zones, DNS hostname/type/proxy state, Worker routes, Worker custom
+domains, Workers.dev settings, Pages project domains, and Pages preview host
+aliases. Tunnel name/status/config-source rows were captured with a hash, but
+the earlier snapshot has no corresponding full tunnel-object identity set, so
+only its 31/6/25 count/status totals can be compared. The current per-surface
+hashes and evidence limits are recorded in
+[`awai-cloudflare-surface-fingerprint-recheck-2026-10-17.csv`](awai-cloudflare-surface-fingerprint-recheck-2026-10-17.csv).
+The tunnel ingress catalog still combines provider configuration with
+local-connector source evidence; this API reread did not prove origin
+health or independent service operation.
+
+### Targeted entry-zone and registrar recheck (2026-10-17 JST)
+
+A fresh read-only check of `itonami.app`, `itonami.cloud`, and `murakumo.cloud`
+found all three Cloudflare zones active and all three Cloudflare DNSSEC states
+disabled. Their registrar records are active with transfer lock and automatic
+renewal enabled. `itonami.app` has 16 DNS records, including a proxied wildcard
+AAAA record, but no apex record; the current root therefore has no Cloudflare
+DNS answer, while wildcard subdomains remain Cloudflare-proxied. `itonami.cloud`
+has 32 records, including proxied app/service hosts and separate mail records.
+`murakumo.cloud` has 28 records, with application AAAA hosts and the four
+Tunnel CNAMEs proxied; mail and verification records remain separate. Record
+values were not saved here. This confirms current account configuration only;
+it does not prove registrar nameserver delegation, public resolution, origin
+identity, or service health. Preserve this distinction before assigning an
+independent gateway or changing any public record.
+
+### Per-domain live configuration refresh (2026-10-17 JST)
+
+A read-only refresh at `2026-10-16T20:27:06Z` enumerated both zone pages and
+re-read all ten first-cohort zones, DNSSEC settings, DNS record sets, and Worker
+routes. The aggregate remained 10 active zones, 126 DNS records (55 proxied),
+15 Worker routes, and DNSSEC disabled on all ten. The per-zone values match
+the earlier saved 2026-10-17 counts. Exact sanitized rows are in
+[`awai-app-first-cohort-live-config-recheck-2026-10-17.csv`](awai-app-first-cohort-live-config-recheck-2026-10-17.csv).
+
+At `2026-10-16T20:27:39Z`, individual Registrar `GET` requests succeeded for
+all ten domains. All ten report Cloudflare as current registrar and `locked`
+as true. `oppai.fans` is the exception in registry status: it reports both
+`servertransferprohibited` and `clienttransferprohibited`; the other nine
+report `clienttransferprohibited`. This makes `oppai.fans` a registrar-eligibility
+review before any transfer can be scheduled. Its zero DNS records and zero
+Worker routes also remain an app-publication gap, not an instruction to create
+records during this inventory. The individual endpoint did not return
+auto-renew state; retain the prior aggregate registrar read for that field.
+The aggregate Registrar list endpoint returned an empty result array with
+`total_count=26`, so these ten rows use the successful per-domain reads rather
+than treating that inconsistent list response as zero registrations.
+
+A hostname/type-only DNS read at `2026-10-16T20:29:31Z` found apex web
+records on eight domains. `itonami.app` has no apex record and only a proxied
+wildcard AAAA among its address records; `oppai.fans` has no records at all.
+The other eight have an apex A/AAAA or proxied CNAME record. The same read
+confirmed these two exceptions while withholding all record values; row-level
+apex and wildcard RR shapes are in the linked CSV.
+
+These reads are still Cloudflare control-plane state. They do not confirm
+parent delegation, successful public transfer eligibility, independent DNSSEC,
+gateway reachability, or application health.
+
+### Current first-cohort route and DNSSEC confirmation (2026-10-17 JST)
+
+A targeted Cloudflare API read at approximately `2026-10-16T21:32Z` confirmed
+the same ten first-cohort zones remain active under the `cloud-kotoba` account
+and list `everton.ns.cloudflare.com` and `vivienne.ns.cloudflare.com` as their
+configured nameservers. DNSSEC is disabled on all ten zones. The read counted
+126 DNS records, 15 Worker routes, 41 enabled Worker custom domains, and four
+Pages custom-domain associations. The per-domain snapshot, including the
+provider API evidence limit, is in
+[`awai-cloudflare-first-cohort-domain-route-readback-2026-10-17.csv`](awai-cloudflare-first-cohort-domain-route-readback-2026-10-17.csv).
+
+This confirms the migration source still has Cloudflare DNS/runtime
+dependencies; it does not prove what nameservers the parent registry
+currently delegates to or whether each origin is publicly reachable. In
+particular, `oppai.fans` is an active Cloudflare zone with zero DNS records,
+Worker routes, Worker custom domains, and Pages domains. Its publication
+state must be resolved before assigning an Awai binding. None of these reads
+changed DNS or provider configuration.
+
+### Connected Registrar per-domain status refresh (2026-10-17 JST)
+
+The aggregate Registrar list endpoint returned an empty result array despite
+`total_count=26`, so the 29 names from the previous snapshot were checked by
+individual `GET /accounts/{account_id}/registrar/domains/{domain_name}` calls
+at `2026-10-16T20:31:40Z`. All 29 returned HTTP 200; all report Cloudflare as
+current registrar and `locked=true`. Twenty-seven have
+`clienttransferprohibited`; `oppai.fans` and `mythril.build` also have
+`servertransferprohibited`. The complete status snapshot is
+[`awai-cloudflare-registrar-status-recheck-2026-10-17.csv`](awai-cloudflare-registrar-status-recheck-2026-10-17.csv).
+The auto-renew values remain from the earlier list response, because the
+individual endpoint does not return that field. Both registry-blocked domains
+need registrar/registry eligibility review before transfer planning; `oppai.fans`
+also has no configured DNS records or Worker routes, and `mythril.build` is a
+zero-record zone retention review.
+
+## Current public endpoint reconciliation (2026-10-17 JST)
+
+The current normalized endpoint snapshot is
+[`awai-cloudflare-runtime-endpoints-2026-10-17.csv`](awai-cloudflare-runtime-endpoints-2026-10-17.csv).
+Read-only API comparisons matched all 101 Worker custom domains, 36 Worker
+routes, 23 Pages project hostnames, 161 Pages preview deployment/alias
+hostnames, and 62 Tunnel hostname/path ingress rules in the earlier snapshot.
+There were no additions, removals, or state changes in those surfaces.
+
+The per-script Workers.dev settings read started at 2026-10-16T15:40:53Z and
+covered all 145 scripts, resolving
+an earlier inventory overcount: 72 scripts currently have an enabled stable
+Workers.dev hostname, 73 have it disabled, and 68 have version-preview URLs
+enabled. All 68 preview-enabled scripts are among the 72 enabled hosts; four
+enabled hosts have previews disabled, while the 73 disabled hosts also have
+previews disabled. The current runtime CSV includes 72 stable hosts and 68
+preview URL patterns. All 145 individual setting results are retained in
+[`awai-cloudflare-workers-dev-recheck-2026-10-17.csv`](awai-cloudflare-workers-dev-recheck-2026-10-17.csv).
+Cloudflare documents preview URLs as
+`<PREVIEW>-<WORKER_NAME>.<SUBDOMAIN>.workers.dev` in its
+[version URL guide](https://developers.cloudflare.com/workers/versions-and-deployments/version-urls/).
+
+A separate web retrieval on 2026-10-17 returned homepage content for
+`murakumo.cloud`, `aozora.app`, `isekai.network`, and `itonami.cloud`. It did
+not return page content for `oppai.fans`, `itonami.app`, `x402.nexus`,
+`shinshi.club`, `babiniku.net`, or `awai.network`; those tool errors do not
+establish DNS or HTTP unavailability. The dated readback records this limited
+evidence for all ten roots in
+[`awai-app-public-root-web-readback-2026-10-17.csv`](awai-app-public-root-web-readback-2026-10-17.csv).
+Raw HTTP status, recursive DNS, JavaScript/API behavior, and origin identity
+still need a direct network probe.
+
+A hidden direct-browser probe then rendered `x402.nexus`, `shinshi.club`,
+`babiniku.net`, and `awai.network`. It returned `net::ERR_NAME_NOT_RESOLVED`
+for `oppai.fans` and `itonami.app`; this is browser-resolver evidence of current
+user-facing DNS failure, not an authoritative global DNS proof. The combined
+probes therefore returned homepage content for eight roots and could not
+resolve two. The dated method-specific evidence is in
+[`awai-app-public-root-browser-probe-2026-10-17.csv`](awai-app-public-root-browser-probe-2026-10-17.csv).
+
+The 62 Tunnel rows include 14 path-conditioned rules; 30 catch-all ingress
+rules have no public hostname and are not in the endpoint list. Tunnel origin
+service URLs were not copied into the public inventory. These API reads
+establish configured routes and flags, not DNS delegation, external HTTP
+reachability, application health, or independent origin operation.
+
+A fresh read-only DNS Records API snapshot at 2026-10-16T15:45:07Z contains all
+361 records across 21 of the 30 zones, including 191 proxied records and 292
+unique hostnames. Its zone/hostname/type/proxy multiset exactly matches the
+2026-10-16 snapshot. The migration catalog carries one `dns-record` row per
+record so mail, verification, and application DNS are accounted for separately
+from serving endpoints. The sanitized current snapshot is
+[`awai-cloudflare-dns-hostnames-2026-10-17.csv`](awai-cloudflare-dns-hostnames-2026-10-17.csv);
+it omits record contents and target addresses.
+
+Nine zones currently have zero configured DNS records. oppai.fans is already
+included in the first product cohort because its source declares the app.
+Eight other zones are explicit external-delegation and retention reviews:
+etzhadaat.org, gftd.cloud, kotoba.digital, kotoba-labs.com, nubatama.net,
+yatalake.com, mithril.love, and mythril.build. Their zero-record Cloudflare
+zones do not prove that no external DNS or public service exists; each remains
+unresolved until delegation and public reachability are checked.
+
+The latest generated endpoint migration catalog has 3,476 rows: 523 runtime
+provider rows, 361 DNS control-plane rows, 2,581 Pages production deployment
+candidates, one source/provider mismatch, two root readbacks without exact
+provider attachments, and eight zero-record zone review rows. DNS rows preserve
+record type and proxy state while omitting contents and targets; they are not
+HTTP endpoints. Its 33 domain groups include ten product
+domains, 13 other named domains, two platform hostname families, and the
+eight zone-only reviews. All 2,581 Pages deployment candidates remain
+external_http_reachability=unverified.
+
+The companion
+[`awai-cloudflare-dns-dependency-classification-2026-10-17.csv`](awai-cloudflare-dns-dependency-classification-2026-10-17.csv)
+classifies all 361 DNS records by role and provider hint without retaining
+record contents, IP addresses, or DNS targets. Every `record_content` value is
+`withheld`. The role counts are 115 proxied web addresses, 8 direct addresses,
+78 hostname aliases, 52 mail-routing records, 25 DKIM keys, 24 DMARC policies,
+22 sender policies, 15 content-addressing proofs, 7 domain-verification
+records, 5 certificate-authority policies, 1 service-domain verification, and
+9 unclassified TXT values. Provider hints are inferred from record metadata;
+they do not prove which provider currently serves a hostname.
+
+## Earlier account-wide API reconciliation (2026-10-16)
+
+A second read-only pass checked all three connected Cloudflare accounts, all 30
+zones, every Worker script subdomain setting, all Pages projects and deployment
+metadata, and all 31 Tunnel configurations. The current account-wide counts are
+30 zones, 361 DNS records, 36 Worker routes, 101 Worker custom domains, 145
+Worker scripts, 16 Pages projects, and 31 Tunnels. DNSSEC is disabled on all 30
+zones; a fresh DNSSEC API read returned successfully for all 30, including all
+ten active initial-cohort zones. Every Tunnel configuration request succeeded;
+the API reports 6 healthy and 25 down. These are provider configuration and
+edge-state observations, not proof of origin health or public HTTP behavior.
+
+All 145 Worker script subdomain settings returned successfully: `workers.dev`
+is enabled for 72 scripts and disabled for 73; preview URLs are enabled for 68
+and disabled for 77. The 2026-10-16 endpoint snapshot retained all 145 script
+settings as rows; the current 2026-10-17 runtime snapshot lists enabled public
+hostnames and separate preview URL patterns, while the per-script audit CSV
+retains all 145 settings. Pages reports 108 preview deployment records
+and 2,581 production deployment records across its 16 projects (production
+counts refreshed at 2026-10-16T13:43:40.794Z; URL pagination completed by
+2026-10-16T13:49:38Z). The runtime
+CSV has 161 preview URL rows covering 108 deployment IDs; the extra 53 rows
+are named aliases attached to those deployments. A paginated read of all 16
+projects matched the full 161-hostname set in the CSV. Its 23 production rows
+record project hostnames and custom-domain attachments, not the 2,581
+production deployment-history URLs. These API records do not prove that every
+old deployment URL remains publicly reachable. The DNS and Worker-route CSV
+row counts match this API pass.
+
+The companion
+[`awai-pages-production-deployment-urls-2026-10-16.csv`](awai-pages-production-deployment-urls-2026-10-16.csv)
+records all 2,581 production deployment-specific `pages.dev` URLs from the
+same API read: 2,581 unique deployment IDs and URLs across 15 projects (the
+sixteenth project had no production deployment records). The CSV includes the
+provider stage status and creation time (2,567 success, 13 failure, 1 active).
+`external_http_reachability` is
+`unverified` on every row: API presence is not evidence that an old deployment
+URL still resolves or is publicly reachable. This is a candidate exposure
+inventory kept separate from the 2026-10-16 528-row historical runtime snapshot
+and the current 2026-10-17 endpoint CSV.
+
+The current service ownership map covers 174 service names across 523 runtime
+endpoints. A unique canonical Wrangler-name match identifies the service source
+repository; product-family hints remain separate because one product can
+contain services from several repositories. The current map has 84 source
+matches, including pinned GitHub config snapshots, 13 product-owner hints
+without a Wrangler match, 5 repository-name candidates, 6 ambiguous config
+matches, and 66 owner-review items. Wrangler files with per-service suffixes
+(for example, `wrangler.generation.jsonc`) are included. This maps source
+ownership evidence; it does not by itself prove
+release provenance, classify every subdomain as a product app, or establish a
+migration receipt.
+The 2026-10-17 source scan recognizes per-service Wrangler filenames as well
+as the unsuffixed default file. It found exact configuration matches for 13
+services that the previous filename filter missed: five Murakumo services,
+Itonami bots, Marketplace listing, five Mithril services, and Torihiki
+validator-v3. The refreshed ownership CSV records each configuration path;
+these matches identify source repositories, not app publishers or release
+authority.
+The 2026-10-16 migration snapshot carried these owner states across 25
+root domains and 3,112 catalog rows. The first 2026-10-17 generated version
+added eight active zero-record zones; its 3,120-row total was corrected after
+the per-script Workers.dev reconciliation. The current catalog has 33 domain
+groups and 3,476 rows, including 361 DNS metadata rows. Each group has a
+migration stage and next action; empty zones use a separate
+registrar-delegation and retention gate. The
+production rows are joined to their Pages project owner and known product
+domain where evidence supports that mapping; 27 remain classified under
+`pages.dev` for owner/domain review. All 2,581 carry
+`external_http_reachability=unverified`. This incorporates provider-listed
+production history without treating it as confirmed live traffic. Exact
+attached root rows now carry the direct HTTPS readback: eight returned HTTP
+200 through Cloudflare anycast; the `itonami.app` and `oppai.fans` roots have
+DNS NODATA and no HTTPS resolution. This does not establish independent
+origin reachability. The 2026-10-17 stage counts are 10 foundation/product
+qualification domains, 8 external-delegation and retention reviews, 9
+owner/boundary reviews, 4 app-identity/service reviews, and 2 platform-alias
+decisions. For the first product cohort, seven public
+service callsites use portable AMU WASM wrappers in local uncommitted product
+worktrees; none is merged or released. Shinshi's measured Kotoba threshold is
+wired only into the offline video-drain workflow, not a public app runtime.
+Native AMU selfhost microbenchmarks cover eight product cores plus the
+shared install gate, but the adopted selfhost compiler accepts only
+`aarch64-macos`; browser/Worker WASM artifacts come from the separate
+JVM-free bootstrap path. The latest source-matched recheck found native slower
+than the warmed JavaScript reference in all nine diagnostic kernels; details
+and target limits are in
+[`awai-product-kotoba-selfhost-native-recheck-2026-10-16.md`](benchmarks/awai-product-kotoba-selfhost-native-recheck-2026-10-16.md).
+
+No DNS, Worker, Pages, Tunnel, registrar, or deployment settings were changed.
+No external domain has been switched. The production Awai/Amano chain profile
+remains uncreated, so signed production app releases and domain bindings cannot
+yet be established.
+
+## Focused public-cohort API recheck (2026-10-16T13:28:10Z)
+
+The Cloudflare API was read again for all ten initial migration domains. All
+ten zones are active and DNSSEC is disabled. Their Registrar registration
+lookups are active and `locked: true`. Account-wide totals rechecked in the
+same pass were 27 zones, 78 Worker custom domains, 109 Worker scripts, and 31
+Tunnels in `cloud-kotoba`; `fund-mithril` has 3 zones, 23 Worker custom
+domains, 36 scripts, and no Tunnels. `cloud-kotoba` still has 16 Pages
+projects. These were GET-only reads.
+
+| Domain | DNS records / proxied | Worker custom domains | Worker routes | Pages custom-domain mapping |
+|---|---:|---:|---:|---|
+| `murakumo.cloud` | 28 / 18 | 14 | 10 | — |
+| `aozora.app` | 12 / 7 | 7 | 0 | — |
+| `oppai.fans` | 0 / 0 | 0 | 0 | — |
+| `isekai.network` | 6 / 1 | 0 | 0 | `network-isekai` active |
+| `itonami.cloud` | 32 / 20 | 15 | 4 | `cloud-itonami` active |
+| `x402.nexus` | 7 / 2 | 1 | 0 | — |
+| `shinshi.club` | 10 / 2 | 1 | 0 | — |
+| `babiniku.net` | 6 / 1 | 0 | 0 | `net-babiniku` active |
+| `awai.network` | 9 / 2 | 2 | 0 | — |
+| `itonami.app` | 16 / 2 | 1 | 1 | — |
+
+Worker custom-domain counts include the apex and service subdomains. The
+nonzero route sets are ten `murakumo.cloud` paths, four `itonami.cloud` paths,
+and `kaisya.itonami.app/*`. Pages also reports `cloud-itonami.itonami.cloud`
+and `itonami.cloud` active on `cloud-itonami`. `oppai.fans` still has an active
+zone and locked registration but no DNS records, Worker custom domain, or Pages
+custom domain. `itonami.app` still has a proxied `*.itonami.app` AAAA record;
+the listed Worker custom domain is `arb.ossekai.itonami.app`. The independent
+public app gateway remains unconnected in the local Itonami host. No DNS,
+Worker, Pages, Tunnel, Registrar, or deployment setting changed during this
+recheck.
+
+## Earlier read-only public-surface refresh (2026-10-16T10:04:45Z)
+
+The Cloudflare API was re-read for all ten migration-cohort zones. All ten
+remain active with DNSSEC disabled; their DNS record counts are unchanged from
+the table below. The connected Registrar API lists all ten as Cloudflare
+registrations with `locked: true` and empty DS-record sets. The account still
+has 27 active `cloud-kotoba` zones, 78 Worker custom domains, 16 Pages
+projects, and 31 non-deleted Tunnels (6 healthy, 25 down). No DNS, Registrar,
+Worker, Pages, or Tunnel setting was changed.
+
+The exact Worker-domain read still shows production custom domains for
+`murakumo.cloud` and `www.murakumo.cloud` → `murakumo-cloud`, `aozora.app` →
+`app-aozora-spa`, `x402.nexus` → `nexus-x402`, `shinshi.club` →
+`magatama-sh1n5h1x`, and `awai.network` → `network-awai-apex`. Pages project
+records still assign `babiniku.net` to `net-babiniku`, `isekai.network` to
+`network-isekai`, and `itonami.cloud` to `cloud-itonami`. `oppai.fans` has no
+DNS records or Worker/Pages custom domain in the connected account. These are
+provider mappings, not proof that Cloudflare is the only public origin.
+
+A public-page reader returned crawl content for `murakumo.cloud`,
+`aozora.app`, `isekai.network`, and `itonami.cloud`. It could not retrieve
+`itonami.app`, `oppai.fans`, `x402.nexus`, `shinshi.club`, or `babiniku.net`.
+Those reader failures do not establish that the domains are down. The reader
+does not expose a trustworthy HTTP status, response headers, direct DNS
+answers, or origin identity; independent public-client checks are still
+required.
+
+The refreshed state leaves two independent blockers before any public
+cutover: there is no authoritative production Awai/Amano app-chain profile,
+and the cohort registrations remain locked at Cloudflare with no signed DNSSEC
+delegation. The local app host and selfhost benchmark do not change either
+condition. No product-domain release or binding has been published.
 
 ## Common target
 
@@ -90,17 +473,20 @@ no parent DS. Independently, the active install-scope resolver now requires a
 host-owned Amano proof verifier. The shared Inga source now contains a
 challenge-bound current-ref quorum reader, and the isolated Inga-node source
 adds a signed `GET /current-ref` response from a node's local committed
-projection. Inga PR #30 passes 8 tests / 29 assertions; Inga-node PR #14
-passes the full node suite at 54 tests / 224 assertions (the focused endpoint
-suite also passed 15 tests / 78 assertions). Both remain draft PRs, not merged
-to `main`, and are not yet wired into Itonami: the
-install-scope route still supplies neither current-ref proofs nor a verifier,
-so it returns `amano-current-ref-proof-unavailable` before content retrieval
-even after DNSSEC is enabled. The lifecycle contract now keeps DNS freshness in
-seconds and Amano current-ref freshness in milliseconds; its focused app suite
-passes 14 tests / 39 assertions under Nbb. The node response is one witness
-observation, not quorum or exact-event finality evidence. `finish-install`
-repeats the verifier check before writing an install lock. Production content
+projection. Inga PR #30 merged to `main` as
+`cb87cdb38d73e24e9ec0c454360c3fa80a323cc5` with 8 tests / 29 assertions;
+Inga-node PR #14 merged as `125d80e062f3aee80c730fe24d170fb3fc55f775` with
+54 tests / 224 assertions, including the focused endpoint suite at 15 tests /
+78 assertions. The current worktree now contains an Inga-backed profile loader
+and bounded multi-witness transport wired into install-scope resolution; it
+requests the exact domain-binding and app-release refs, verifies signed quorum
+reads and three-chain event finality, then repeats proof collection after
+content staging before writing an install lock. This source has not been loaded
+against its full pinned dependency closure or deployed. The lifecycle contract
+keeps DNS freshness in seconds and Amano current-ref freshness in milliseconds;
+the prior focused app suite passed 14 tests / 39 assertions under Nbb. A node
+response alone is one witness observation, not quorum or exact-event finality
+evidence. Production content
 delivery, TLS serving, sandbox qualification, updates, and capability-mediated
 effects are not deployed or qualified. The registry reader fails closed and
 has no public or Cloudflare fallback.
@@ -118,26 +504,36 @@ receipts.
 
 The common host is assembled from merged protocol and Itonami runtime slices,
 with the Awai registry integration and production serving still outstanding.
-The merged source is not a deployed runtime. Current PR and CI metadata was
-refreshed on 2026-10-16.
+The merged source is not a deployed runtime. GitHub metadata was read back on
+2026-10-16 after the draft follow-up PRs had been closed without merging.
 
 | Foundation layer | Current source and review state | Evidence available | Remaining qualification |
 |---|---|---|---|
-| Itonami app host | [`cloud-itonami-app#431`](https://github.com/cloud-itonami/cloud-itonami-app/pull/431) merged on 2026-10-16 as `e708d000e6ff634a9368fbb3a832867db1d7e6fe`. Its common-foundation follow-up is [PR #432](https://github.com/cloud-itonami/cloud-itonami-app/pull/432), still open as a draft. CI and branch-scan evidence below refer to the pre-documentation-refresh head `2a3c45c3`. | Focused app lifecycle suite: 14 tests / 39 assertions passed under Nbb. A branch-range Gitleaks scan at head `2a3c45c3` covered all eight PR commits and found no leaks. CI run 763 passed `amu-jvm-free-emit`, `awai-public-gateway`, and `windows-launch-smoke`; the repository-wide `secret-scan` failed. Run 762 reported seven history findings across 1,233 commits. | The current-ref host verifier is not connected to the install route. The broader JVM suite remains unverified. The historical secret findings need separate triage; they are outside the PR's branch range. |
-| Bootstrap HTTPS ingress | [`deploy/awai-public-gateway`](deploy/awai-public-gateway), included in PR #432 | The gateway CI syntax check and all nine policy tests pass. A local HTTPS smoke with a disposable certificate and fake upstream passed launcher and plan preview, credential stripping, blocked install route, wrong SNI, foreign Origin, and fixed CSP despite a permissive upstream CSP. | Direct public DNS, production certificate, independent host operations, registry freshness, and external readback remain unverified. This bootstrap gateway does not yet route or execute product apps. |
-| Awai registry and peer host | [`network-awai-apex#19`](https://github.com/network-awai/network-awai-apex/pull/19), open draft at head `95b7ae601e1665836e725f1e577e670930150be7`. | All 16 `app-registry --host` gates passed, including 32 vectors on three targets (96/96), peer-checkpoint replication, and G15. The peer gateway has six policy tests and a disposable-certificate loopback HTTPS smoke. Current Wasm SHA-256: `15692fa9f19cc322d8ee8b7294f822234db0794f25bcc9c1654da4310f2f2610`. | The PR remains draft and unmerged. G14 uses two processes on one host over loopback; independent operators, public peer discovery, NAT traversal, production DNA, and node-loss recovery remain unqualified. The HTTPS gateway has no public host, certificate, or DNS readback. |
-| Amano lifecycle refs | Inga adds `current-ref-read/v1` in [draft PR #30](https://github.com/kotoba-lang/inga/pull/30), rebased as `021a4bb` on current `main`; its suite passes 8 tests / 29 assertions. Inga-node adds `GET /current-ref` in [draft PR #14](https://github.com/kotoba-lang/inga-node/pull/14) for one node-signed committed projection; its full node suite passes 54 tests / 224 assertions, including the focused endpoint suite (15 tests / 78 assertions). Itonami's focused lifecycle suite passes 14 tests / 39 assertions under Nbb and keeps DNS freshness in seconds separate from the millisecond current-ref clock. A host-owned `verify-amano-ref` verifier is still required at resolution and install time to cover exact refs, chain-profile identity, challenge, quorum-read/finality facts, and freshness. | The endpoint rejects malformed or duplicate query parameters and will not report a head unless its stored commitment proof is present. An earlier same-day read-only probe reached w4 and found no Murakumo domain/app heads. A fresh read-only check from this host could not connect to local Tailscale and reached 0/4 witness health endpoints. | The user confirmed on 2026-10-16 that the authoritative production app chain profile has not been created. Until its chain ID, genesis hash, validator set, and quorum are published, the Inga pieces remain unintegrated; no multi-witness response collection, exact-event finality adapter, reachable current-ref API, or verified production chain profile is connected. The fresh reachability failure describes this host's access only; it does not establish that remote witness processes are down. No app-domain binding or release is established on this chain. |
+| Itonami app host | [`cloud-itonami-app#431`](https://github.com/cloud-itonami/cloud-itonami-app/pull/431) merged on 2026-10-16 as `e708d000e6ff634a9368fbb3a832867db1d7e6fe`. Common-foundation follow-up [PR #432](https://github.com/cloud-itonami/cloud-itonami-app/pull/432) is **closed, unmerged, and still marked draft**. Its remote head is `f4f30f33fdb7bba8a943d5408405740891ce70d5`; this checkout has additional uncommitted source, inventory, and benchmark changes. CI and branch-scan evidence below refer to the earlier head `2a3c45c3`. | Focused app lifecycle suite: 14 tests / 39 assertions passed under Nbb. On 2026-10-16 the current host source dependency-loaded and served `/health`, `/`, and `/awai-launcher.js` with HTTP 200 on loopback; `/api/awai/app-registry` returned 503 `unconfigured`. A branch-range Gitleaks scan at head `2a3c45c3` covered all eight PR commits and found no leaks. CI run 763 passed `amu-jvm-free-emit`, `awai-public-gateway`, and `windows-launch-smoke`; the repository-wide `secret-scan` failed. Run 762 reported seven history findings across 1,233 commits. | Current-ref transport is source-wired, but a production chain profile is uncreated and peer quorum verification was not exercised. The broader JVM suite remains unverified. The historical secret findings need separate triage; they are outside the PR's branch range. |
+| Bootstrap HTTPS ingress | [`deploy/awai-public-gateway`](deploy/awai-public-gateway), included in closed-unmerged PR #432; this checkout adds explicit hostname allowlisting and alias-focused launch behavior. | `npm test` passes 18 Node tests, including Cloudflare-host rejection. A local HTTPS smoke with a disposable SAN certificate for `itonami.app` and `murakumo.cloud` passed alias SNI, cross-host rejection, and same-origin install-plan forwarding against a fake upstream. The gateway exposes only launcher, registry read, DNS proof, and plan preview. | Direct public DNS, a public certificate, independent host operations, registry freshness, and external readback remain unverified. Public app content delivery and capability operations are not implemented at the gateway. |
+| Awai registry and peer host | [`network-awai-apex#19`](https://github.com/network-awai/network-awai-apex/pull/19), **closed, unmerged, and still marked draft** at head `95b7ae601e1665836e725f1e577e670930150be7`. | All 16 `app-registry --host` gates passed, including 32 vectors on three targets (96/96), peer-checkpoint replication, and G15. The peer gateway has six policy tests and a disposable-certificate loopback HTTPS smoke. Current Wasm SHA-256: `15692fa9f19cc322d8ee8b7294f822234db0794f25bcc9c1654da4310f2f2610`. | G14 uses two processes on one host over loopback; independent operators, public peer discovery, NAT traversal, production DNA, and node-loss recovery remain unqualified. The HTTPS gateway has no public host, certificate, or DNS readback. |
+| Amano lifecycle refs | Inga [PR #30](https://github.com/kotoba-lang/inga/pull/30) merged to `main` as `cb87cdb38d73e24e9ec0c454360c3fa80a323cc5`; its challenge-bound current-ref quorum reader passes 8 tests / 29 assertions. Inga-node [PR #14](https://github.com/kotoba-lang/inga-node/pull/14) merged as `125d80e062f3aee80c730fe24d170fb3fc55f775`; `GET /current-ref` returns one node-signed committed projection and its full suite passes 54 tests / 224 assertions, including 15 tests / 78 focused endpoint assertions. The node also serves an immutable finalized-prefix checkpoint when the caller supplies its CID. Itonami's current worktree adds the profile loader, transport, and route connection for signed quorum reads, commitment membership, and the complete three-chain prefix from trusted genesis; the source now dependency-loads in the local Node host. | The endpoint rejects malformed or duplicate query parameters and will not report a head unless its stored commitment proof is present. The local app-registry route returns 503 `unconfigured`, so signed quorum and finalized-prefix verification were not exercised. An earlier same-day read-only probe reached w4 and found no Murakumo domain/app heads. A fresh read-only check from this host could not connect to local Tailscale and reached 0/4 witness health endpoints. | The user confirmed on 2026-10-16 that the authoritative production app chain profile has not been created. The host accepts a profile via `ITONAMI_AWAI_AMANO_PROFILE` and performs bounded multi-witness reads, but checkpoint-CID discovery/refresh, reachable witness APIs, and a verified production chain profile remain outstanding. The fresh reachability failure describes this host's access only; it does not establish that remote witness processes are down. No app-domain binding or release is established on this chain. |
 | App-to-cell capability contract | [`kotoba-protocol#16`](https://github.com/kotoba-lang/kotoba-protocol/pull/16), merged on 2026-10-16 as `3aadfbcb31c4e995276993af9c0d80520b33c1b8` | The focused `protocol_test` namespace passed 96 tests and 576 assertions; direct local checks confirmed read remains grantable and write is denied without a trusted label. | The full portable suite remains unverified because unchanged `credential_test.cljk` fails on both the merged-base predecessor and the earlier PR head. No public runtime uses this contract yet. |
 
 The Itonami host consumes the merged protocol contract and Awai registry
 projection. Awai integration follow-ups, independent peer operations,
 production signed releases and content origins, public DNSSEC and TLS, and
 external readback remain outstanding before `itonami.app` can serve as the
-common public bootstrap. PR #432 contains the current source follow-up but is
-still draft; the gateway has no production host or certificate. No migration
+common public bootstrap. PR #432 is closed without merging; its gateway has no
+production host or certificate. The source follow-up and product Kotoba/AMU
+changes remain in local worktrees and are not merged or deployed. No migration
 cohort hostname has an accepted Awai domain binding, and no public domain has
 been switched to this runtime. `murakumo.cloud` stays the first product pilot
 after these shared gates pass.
+
+The 2026-10-17 Kotoba/AMU refresh confirms the eight product decision cores
+and shared install-admission core from source-matched native benchmarks. The
+native selfhost target is currently `aarch64-macos`; seven product callsites
+still use bootstrap-emitted WASM wrappers, so this does not qualify complete
+product builds or production deployment. The current-ref core also rebuilds
+with AMU selfhost, but its fresh timing run was host-contended and is excluded
+from the usable comparison. See
+[`awai-kotoba-amu-selfhost-refresh-2026-10-17.md`](benchmarks/awai-kotoba-amu-selfhost-refresh-2026-10-17.md).
 
 ## Chain endpoint read-only reachability check (2026-10-16)
 
@@ -176,7 +572,7 @@ requires global ordering must name and verify that service separately.
 ### Fresh account API readback (2026-10-16)
 
 Read-only API queries currently return 27 active zones, 109 Worker scripts, 78
-Worker custom domains, 16 Pages projects, 30 route patterns, 30 Tunnels, and
+Worker custom domains, 16 Pages projects, 30 route patterns, 31 Tunnels, and
 26 Registrar registrations in `cloud-kotoba`; `fund-mithril` has 3 active
 zones, 36 Worker scripts, 23 Worker custom domains, 6 route patterns, and 3
 Registrar registrations; `com-junkawasaki` has no zones, Workers, Pages
@@ -187,7 +583,7 @@ registrar delegations or public origins.
 
 All 27 `cloud-kotoba` zones below were individually rechecked and returned
 `status: disabled` from their Cloudflare `/dnssec` API endpoint. The ten
-migration cohort zones were individually rechecked at 07:00 UTC.
+migration cohort zones were individually rechecked at 10:04:45 UTC.
 Consequently the proposed `_itonami-app.<domain>` DNSSEC proof cannot be
 qualified against any of them in the current configuration. Every zone also
 needs registrar/parent DS and independent authoritative-resolver readback; the
@@ -198,7 +594,7 @@ descriptions remain subject to independent DNS/HTTP readback.
 | Zone | DNS records | Worker custom domains | Worker routes | Pages custom domains | Cloudflare DNSSEC |
 |---|---:|---:|---:|---:|---|
 | `itonami.app` | 16 | 1 | 1 | 0 | disabled |
-| `murakumo.cloud` | 27 | 14 | 10 | 0 | disabled |
+| `murakumo.cloud` | 28 | 14 | 10 | 0 | disabled |
 | `aozora.app` | 12 | 7 | 0 | 0 | disabled |
 | `oppai.fans` | 0 | 0 | 0 | 0 | disabled |
 | `isekai.network` | 6 | 0 | 0 | 1 | disabled |
@@ -208,15 +604,16 @@ descriptions remain subject to independent DNS/HTTP readback.
 | `babiniku.net` | 6 | 0 | 0 | 1 | disabled |
 | `awai.network` | 9 | 2 | 0 | 0 | disabled |
 
-The focused zone/DNS/Worker/Pages read at `2026-10-16T07:00:48Z` also
-confirmed the current serving-resource mapping below. DNS record counts include
-mail records; this is provider configuration evidence, not public HTTP or mail
-flow verification.
+The focused zone/DNS/Worker/Pages read at `2026-10-16T07:00:48Z`, followed by
+the `kekkai-control` Tunnel ingress read completed at `2026-10-16T07:32:15Z`,
+confirmed the serving-resource mapping below. DNS record counts include mail
+records; this is provider configuration evidence, not public HTTP or mail-flow
+verification.
 
 | Zone | Current serving resources and unresolved route state |
 |---|---|
 | `itonami.app` | Worker `ossekai-arb-intake` at `arb.ossekai.itonami.app`; route `kaisya.itonami.app/*`; proxied wildcard; 13 `_dnslink` TXT records. No apex A/AAAA record. |
-| `murakumo.cloud` | 14 Worker custom domains and 10 Worker routes; `gateway`/`infer` use healthy `comfyui-gad` Tunnel; `origin-generation` uses a down Tunnel. Three CNAMEs target Tunnel hosts. |
+| `murakumo.cloud` | 14 Worker custom domains and 10 Worker routes; `gateway`/`infer` use healthy `comfyui-gad` Tunnel; `origin-generation` uses a down Tunnel. Three CNAMEs target Tunnel hosts. `kekkai-control.murakumo.cloud` is a proxied CNAME for the healthy `kekkai-control-plane` Tunnel, which routes heartbeat and signed netmap paths to local services. Public HTTP behavior and Access enforcement were not verified. |
 | `aozora.app` | Workers: apex SPA, `appview`, `auth`, `live`, `pds`, `shinshi`, and `magatama`; the last two share `app-aozora-pds`. Seven proxied AAAA records and separate mail records. |
 | `oppai.fans` | Active zone but zero DNS records, Worker custom domains/routes, or Pages custom domains. Source still declares a Worker app, so source/provider drift remains unresolved. |
 | `isekai.network` | Pages project `network-isekai` serves the custom domain; one CNAME targets its `pages.dev` hostname. |
@@ -236,7 +633,7 @@ below therefore remain part of the migration inventory. The per-script
 |---|---|---|
 | `itonami.app` | Proxied wildcard `*.itonami.app`; direct A record and Worker route `kaisya.itonami.app/*`; Worker custom domain `arb.ossekai.itonami.app`. | 13 `_dnslink` hostnames: `animator`, `bim`, `cad`, `daw`, `genko`, `inkan`, `kaisya`, `modeler`, `nle`, `rirekisho`, `sculpt`, `shirohan`, and `tsukuru`. These records point to IPFS/IPNS CIDs but are not Awai `domain/bind` records. The wildcard currently terminates through Cloudflare. This is the common launcher domain, so its own bootstrap path must leave Cloudflare before other domains can rely on it. |
 | `itonami.cloud` | Pages project `cloud-itonami` serves `itonami.cloud` and `cloud-itonami.itonami.cloud`; 15 Worker domains include `app`, `auth`, `agent`, `bots`, `dougaka`, `hanmoto`, `hooks`, `kenbun`, `kouryaku`, `local`, `mangaka`, `mcp`, `office`, `relay`, and `treasury`. `local` maps to `itonami-client-static`. Four Worker routes cover app auth, bot status, and the EthGlobal demo. `gateway.itonami.cloud` points at a down Cloudflare Tunnel. The same down tunnel config also names `mcp.itonami.cloud`, while an enabled Worker custom domain serves `mcp.itonami.cloud`; reconcile this dual configuration. `*.ipfs.itonami.cloud` and `*.ipns.itonami.cloud` proxy the IPFS/IPNS gateway. | The apex is also the WebAuthn RP ID. Preserve sign-in, existing sessions during transition, host-only cookies, and mail records. Moving to `itonami.app` changes the origin and does not transfer a raw WebAuthn credential. |
-| `murakumo.cloud` | 14 Worker domains include the apex and `www`, plus `api`, `console`, `factoring`, `generation`, `ipfs-pilot`, `local`, `meter`, `operator`, `setup`, `status`, `toshokan`, and `web`. `local` maps to `murakumo-client-static`; `ipfs-pilot` is served by `murakumo-ipfs-gateway-pilot`; its `_dnslink` TXT points to IPNS name `k51qzi5uqu5dlux8z4nuviwt8ww812ujkb4v1sxm91d630bjrbhsjeftp7t2iu`. Ten Worker routes cover node registration, Commons/legal content, LLM documents, and ads/MCP. `gateway` and `infer` point to the healthy `comfyui-gad` Tunnel; `origin-generation` points to a down Tunnel whose ingress config does not include that hostname. | The live app provides chat, inference and generation, alongside device registration, content, status, and advertising APIs. This is the selected first migration domain. Replace each hostname and route only after its service contract and independent-node read/write behavior are evidenced. Preserve mail records. |
+| `murakumo.cloud` | 14 Worker domains include the apex and `www`, plus `api`, `console`, `factoring`, `generation`, `ipfs-pilot`, `local`, `meter`, `operator`, `setup`, `status`, `toshokan`, and `web`. `local` maps to `murakumo-client-static`; `ipfs-pilot` is served by `murakumo-ipfs-gateway-pilot`; its `_dnslink` TXT points to IPNS name `k51qzi5uqu5dlux8z4nuviwt8ww812ujkb4v1sxm91d630bjrbhsjeftp7t2iu`. Ten Worker routes cover node registration, Commons/legal content, LLM documents, and ads/MCP. `gateway` and `infer` point to the healthy `comfyui-gad` Tunnel; `origin-generation` points to a down Tunnel whose ingress config does not include that hostname. The separate healthy `kekkai-control-plane` Tunnel has `kekkai-control.murakumo.cloud` ingress patterns for `/v1/nodes/<id>/heartbeat` and `/v1/nodes/<id>/netmap`, backed by local ports 17892 and 17893. Its public HTTP and Access behavior were not verified. | The live app provides chat, inference and generation, alongside device registration, content, status, and advertising APIs. This is the selected first migration domain. Replace each hostname and route only after its service contract and independent-node read/write behavior are evidenced. Preserve mail records. |
 | `aozora.app` | Worker domains: apex, `appview`, `auth`, `live`, `magatama`, `pds`, and `shinshi`. | Preserve AT Protocol PDS, AppView, auth, and live service behavior independently. Preserve mail records. |
 | `isekai.network` | Pages project `network-isekai` (`network-isekai.pages.dev`, production branch `main`). | Preserve mail records. |
 | `babiniku.net` | Pages project `net-babiniku` (`net-babiniku.pages.dev`, production branch `main`). | Preserve mail records. Current Pages production config binds R2 `GENERATED_ASSETS`; `BROADCAST_DB` is present in the preview config only, so its production ownership/use needs a source-level reconciliation. |
@@ -306,42 +703,19 @@ the generation app still needs its own signed app identity and release.
 
 ## Cloudflare-owned public endpoints and state dependencies
 
-The `cloud-kotoba` Workers account has the `04-feasts-minded.workers.dev`
-subdomain. The latest 2026-10-16 API refresh lists 109 Worker scripts and 78
-Worker custom domains. The earlier same-day per-script subdomain settings read
-covered 107 scripts: 45 had
-their `workers.dev` hostname enabled, and 43 of those also allow preview URLs.
-These hostnames remain public Cloudflare runtime surfaces even when a custom
-domain is moved. The earlier enabled-script read included the following account
-routes; entries outside the product cohort still need an owner/scope decision:
-
-`aiueos-updates`, `app-aozora-appview`, `app-aozora-auth`, `app-aozora-live`,
-`app-aozora-pds`, `app-aozora-spa`, `app-otent`,
-`cloud-itonami-app-classifieds-production`, `cloud-itonami-app-edge`,
-`cloud-itonami-domain-reverify`, `cloud-itonami-mail-inbound`,
-`cloud-itonami-marketplace-buyer`, `cloud-itonami-marketplace-crossborder`,
-`cloud-itonami-marketplace-fulfillment`, `cloud-itonami-marketplace-listing`,
-`cloud-itonami-marketplace-onboarding`, `cloud-itonami-marketplace-order`,
-`cloud-itonami-marketplace-returns`, `cloud-itonami-marketplace-settlement`,
-`cloud-itonami-tsukuru`, `cloud-itonami-workspace-outbox`, `engi-node`,
-`gleif-lei-datasource`, `goriketsu-proxy`, `inga-replica-testnet`,
-`itonami-pricing-resident`, `kaigi`, `kenbun`,
-`kotoba-cloud-cljk-preview`, `kotoba-cloud-pages-candidate`,
-`kotoba-foundation-commons`, `kotoba-worker-demo`, `kura-conformance`,
-`mangaka-reader`, `murakumo-setup`, `ossekai-arb-intake`, `saisei-worker`,
-`shinshi-cljc`, `social-rooms`, `spirit-in-physics-api`,
-`spirit-in-physics-researcher`, `spirit-in-physics-web`, `tomoshibi-mail`,
-`torihiki-node`, and `torihiki-validator-v3`.
-
-Only `kotoba-cloud-cljk-preview` and `kotoba-cloud-pages-candidate` have
-preview URLs disabled; the other 43 allow previews. The `oppai-fans` script
-exists but has both its `workers.dev` hostname and previews disabled. Cloudflare's
-documented hostname format is
-`<worker>.<account-subdomain>.workers.dev`; disabling that route alone also
-does not disable all version/deployment URLs. Preview and deployment URLs need
-their own inventory and public readback before retirement. See the official
+The account-level `04-feasts-minded.workers.dev` suffix is used by
+`cloud-kotoba`; `fund-mithril` uses `cloud-kotoba.workers.dev`. The 10/17
+settings read covers all 145 scripts: 44 of 109 `cloud-kotoba` scripts and 28
+of 36 `fund-mithril` scripts have stable `workers.dev` hosts. Preview URLs are
+enabled for 42 and 26 scripts in those accounts, respectively. The 72 stable
+hosts and 68 preview URL patterns are listed separately in the current runtime
+snapshot; the companion settings CSV records all enabled and disabled scripts.
+These names remain Cloudflare runtime surfaces even after a custom domain is
+moved, and services outside the product cohort still need an owner/scope
+decision. The `oppai-fans` script has both its stable `workers.dev` host and
+preview URLs disabled. See the official
 [Workers.dev routing documentation](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/)
-and [Preview URL documentation](https://developers.cloudflare.com/workers/previews/).
+and [version URL guide](https://developers.cloudflare.com/workers/versions-and-deployments/version-urls/).
 
 Cloudflare Pages also keeps each project's `pages.dev` hostname in addition to
 custom domains. The Itonami/Awai-related projects are `cloud-itonami`,
@@ -484,10 +858,13 @@ retire decision with the product owner:
 | `kotoba.cloud` | The `cloud-itonami` Pages project also serves `bots.kotoba.cloud`; Worker domains expose `app`, `apps`, `auth`, `blog`, `console`, `data`, `docs`, `graph`, `knowledge`, `kyber`, `storage`, `support`, `twin`, `www`, and `yabai`. | Resolve service ownership and shared-auth/KMS dependencies; preserve them or explicitly retire them with public readback. |
 | `gftd.ai` / Pages | `gorigori-ketsu-dasshu.gftd.ai` points to the `gorigori-ketsu-dasshu` Pages project and its `pages.dev` hostname. | Product classification is not yet established. |
 
-The 2026-10-16 Tunnel configuration read covered all 30 tunnels. It reports
+The 2026-10-16 Tunnel configuration read covered all 31 tunnels. It reports
 `comfyui-gad` healthy for `gateway.murakumo.cloud` and `infer.murakumo.cloud`,
-and `gftd-llm` healthy for `ollama.gftd.ai`, `llm.gftd.ai`, `relay.gftd.ai`,
-`murakumo-voice.gftd.ai`, and `gateway.gftd.ai`. `itonami-5820` is down but
+`gftd-llm` healthy for `ollama.gftd.ai`, `llm.gftd.ai`, `relay.gftd.ai`,
+`murakumo-voice.gftd.ai`, and `gateway.gftd.ai`, and `kekkai-control-plane`
+healthy for the heartbeat and netmap path patterns at
+`kekkai-control.murakumo.cloud`. The latter is Tunnel configuration status;
+public HTTP response and Access enforcement were not checked. `itonami-5820` is down but
 still names `gateway.itonami.cloud`, `mcp.itonami.cloud`,
 `itonami-mcp.etzhayyim.com`, `mcp.itonami.cloud.etzhayyim.com`, and
 `itonami-5820.etzhayyim.com`; the last hostname is a nested alternate domain
@@ -500,7 +877,7 @@ The `etzhayyim.com` DNS zone still has proxied CNAMEs for
 `agent-origin.itonami.cloud.etzhayyim.com`,
 `isic-5820.itonami.cloud.etzhayyim.com`, and
 `origin-generation.murakumo.cloud.etzhayyim.com`, but none appears in the
-30 current Tunnel ingress configurations. Preserve these as unresolved DNS
+31 current Tunnel configurations. Preserve these as unresolved DNS
 routes until the target origin is identified. The `mcp.itonami.cloud` hostname
 also appears both as an enabled Worker custom domain and in the down
 `itonami-5820` Tunnel configuration.
@@ -902,6 +1279,54 @@ all externally published Itonami/Awai services have been found; registrar,
 public DNS, mail, non-Cloudflare origins, and the other zones remain to be
 reconciled.
 
+## Murakumo pilot current readback (2026-10-16)
+
+A fresh read-only API check confirms `murakumo.cloud` is still an active
+Cloudflare zone on Cloudflare nameservers. It has 28 DNS records: 14 proxied
+AAAA records, four proxied Tunnel CNAMEs, three MX records, and seven TXT
+records. The TXT set includes the `_dnslink.ipfs-pilot` record and mail
+authentication records. The account also has 14 enabled production Worker
+custom domains and 10 Worker routes for this zone. These records are separate
+service surfaces; an apex app alias cannot replace the whole zone safely.
+
+The four Tunnel CNAME hosts are `gateway`, `infer`, `kekkai-control`, and
+`origin-generation`. The 14 Worker-domain hosts are the apex, `www`, `api`,
+`console`, `factoring`, `generation`, `ipfs-pilot`, `local`, `meter`,
+`operator`, `setup`, `status`, `toshokan`, and `web`. Ten path routes cover
+device-link registration, Commons and legal-node content, three LLM documents,
+and four advertising/MCP paths. The apex and `www` currently map to
+`murakumo-cloud`; the root page reader returned the live Murakumo chat UI on
+this check. That read confirms page content only, not HTTP status, TLS
+identity, API behavior, or the underlying origin. The local `dig` query could
+not bind a DNS socket in this environment, so public parent delegation and
+direct A/AAAA answers remain unverified.
+
+The first safe stage is a dedicated direct-host pilot with independent DNS and
+TLS, followed by comparison of the existing chat UI and its write paths. Keep
+the current apex, `www`, API, operator, generation, IPFS, Tunnel, route, and
+mail surfaces in service until their replacements pass per-host read/write,
+authorization, and rollback checks. The common launcher now gives a public
+candidate a domain-scoped link to the user's local Itonami host; local
+installation independently reads its Awai peer and requires its own chain
+profile. The handoff tests are local DOM/query tests only: this workspace had
+no listener on `127.0.0.1:1338` and the loopback request was refused, so browser
+navigation to a running local host remains unverified. The production profile,
+public gateway host, certificate, and DNS are still absent. No provider
+settings changed during the readback.
+
+## Murakumo Tunnel and DNSSEC recheck (2026-10-17 JST)
+
+A read-only API pass ending at `2026-10-16T16:24:59Z` read the current
+`murakumo.cloud` DNSSEC status and each of its four CNAME-referenced Tunnel
+configurations without retaining DNS targets or Tunnel service URLs. DNSSEC
+remains disabled. `gateway` and `infer` match ingress on healthy
+`comfyui-gad`; `kekkai-control` matches the two heartbeat/netmap routes on
+healthy `kekkai-control-plane`. `origin-generation` references the down
+`yukkuri-gemma-gad` Tunnel, whose current ingress has no matching hostname.
+This is an unresolved alias/service-owner state, not proof of external HTTP
+failure. Sanitized row evidence is in
+[`awai-murakumo-tunnel-dnssec-recheck-2026-10-17.csv`](awai-murakumo-tunnel-dnssec-recheck-2026-10-17.csv).
+
 ## Focused Worker public-route refresh (2026-10-16T03:18:34Z)
 
 A fresh read-only Cloudflare API pass correlated app-named custom domains,
@@ -947,12 +1372,12 @@ portability snapshot records transfer locks on the cohort, so unlock/transfer
 eligibility must be re-read at execution time. No registrar, nameserver, DNSSEC,
 or domain setting was changed in this audit.
 
-### Registrar registration snapshot (2026-10-16)
+### Registrar registration snapshot (2026-10-17 JST)
 
-A read-only `GET /accounts/{account_id}/registrar/registrations` refresh in
-`cloud-kotoba` returned all ten initial migration domains as `active`, with
+A read-only Cloudflare API refresh at 2026-10-16T15:56:27Z returned all ten
+initial migration domains as `active`, with
 `auto_renew=true`, `locked=true`, and `privacy_mode=redaction`. Their current
-registration expirations are:
+registration expirations by UTC date are:
 
 | Domain | Expires (UTC) |
 |---|---|
@@ -971,6 +1396,11 @@ The expiration dates identify planning windows only; they do not authorize a
 transfer or guarantee transfer eligibility. Keep auto-renew enabled until a
 receiving registrar confirms the registration and renewal state. No transfer or
 unlock operation was attempted.
+The same read found all ten Cloudflare zones `active` with DNSSEC `disabled`.
+Exact expiration timestamps and registrar/DNSSEC states are preserved in the
+[sanitized recheck CSV](awai-app-registrar-recheck-2026-10-17.csv). A transfer
+to an independent registrar remains necessary before the selected direct-DNS,
+DNSSEC-signed gateway route can replace Cloudflare nameservers.
 
 ## Account-wide public hostname and deployment refresh (2026-10-16)
 
@@ -981,17 +1411,19 @@ contain environment bindings.
 
 | Account | Active zones | Worker scripts | Worker custom domains | Zone routes | `workers.dev` / previews | Pages projects / preview deployments | Tunnels |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `cloud-kotoba` | 27 | 109 | 78 | 30 | 45 / 43 | 16 / 108 | 30 |
+| `cloud-kotoba` | 27 | 109 | 78 | 30 | 44 / 42 | 16 / 108 | 31 |
 | `fund-mithril` | 3 | 36 | 23 | 6 | 28 / 26 | 0 / 0 | 0 |
 | `com-junkawasaki` | 0 | 0 | 0 | 0 | 0 / 0 | 0 / 0 | 0 |
-| **Total** | **30** | **145** | **101** | **36** | **73 / 69** | **16 / 108** | **30** |
+| **Total** | **30** | **145** | **101** | **36** | **72 / 68** | **16 / 108** | **31** |
 
-The 30 `cloud-kotoba` tunnels have 5 healthy and 25 down statuses, with 60
-configured ingress rules. The ingress count includes repeated hostnames for
-separate rules. Down tunnels remain in the inventory while their DNS or ingress
-names exist.
+The 31 `cloud-kotoba` tunnels have 6 healthy and 25 down statuses, with 92
+configured ingress entries: 62 hostname/path rules and 30 catch-all rules.
+The count includes repeated hostnames for separate rules. The normalized public
+runtime CSV records the 62 hostname/path entries; the 30 catch-all rules have
+no public hostname and are omitted. Down tunnels remain in the inventory while
+their DNS or ingress names exist.
 
-The active zones contain 358 DNS records across 21 zones, with 289 unique
+The active zones contain 361 DNS records across 21 zones, with 292 unique
 record hostnames. The other nine active zones have no DNS records:
 `etzhadaat.org`, `gftd.cloud`, `kotoba.digital`, `kotoba-labs.com`,
 `nubatama.net`, `oppai.fans`, `yatalake.com`, `mithril.love`, and
@@ -1003,14 +1435,21 @@ prove that each name currently resolves from public DNS.
 
 The companion
 [`awai-cloudflare-runtime-endpoints-2026-10-16.csv`](awai-cloudflare-runtime-endpoints-2026-10-16.csv)
-is the preceding export and contains 522 normalized rows: 99 Worker custom domains, 36 Worker route
-patterns, 143 `workers.dev` script states, 23 Pages production hostnames, 161
-Pages preview URLs and aliases, and 60 Tunnel ingress rules. The `workers.dev`
-rows include disabled scripts to show the full checked set. These rows record
-provider configuration and deployment presence; they do not prove external
-HTTP access or identify an app owner for every service. The latest domain
-readback increased the account-wide Worker totals by two scripts and two
-custom domains; the expanded mapping below is the current hostname read.
+is the 528-row historical snapshot: 101 Worker custom domains, 36 Worker
+route patterns, 145 Worker script settings, 23 Pages production hostnames,
+161 Pages preview URLs and aliases, and 62 hostname/path Tunnel ingress rules.
+It included disabled Worker subdomain settings as if they were public hosts.
+The corrected current snapshot is
+[`awai-cloudflare-runtime-endpoints-2026-10-17.csv`](awai-cloudflare-runtime-endpoints-2026-10-17.csv):
+72 enabled `workers.dev` hosts plus 68 separately represented preview URL
+patterns. All 145 settings and the enabled/preview flags are in
+[`awai-cloudflare-workers-dev-recheck-2026-10-17.csv`](awai-cloudflare-workers-dev-recheck-2026-10-17.csv).
+Provider configuration and deployment presence do not prove external HTTP
+access or identify an app owner for every service. The current read also
+includes `itonami-client-static`, `murakumo-client-static`, and the active
+`local.itonami.cloud` and `local.murakumo.cloud` custom domains. The two
+`local.*` custom domains remain public runtime surfaces even though their
+`workers.dev` names are disabled.
 
 The current Pages preview API returned 108 deployment records across all 16
 projects. Each record exposes a hash-based `pages.dev` URL and may also include
@@ -1066,7 +1505,7 @@ or runtime setting was changed in this refresh.
 ## Expanded account-wide public-host inventory (2026-10-16)
 
 The latest read-only account pass returned 109 Worker scripts, 78 Worker
-custom domains, 30 Worker route patterns, 16 Pages projects, and 30 Tunnels in
+custom domains, 30 Worker route patterns, 16 Pages projects, and 31 Tunnels in
 `cloud-kotoba`; `fund-mithril` returned 36 Worker scripts, 23 Worker custom
 domains, six routes, and no Pages projects or Tunnels. The exact custom-domain
 read confirmed the two hosts absent from the earlier CSV: `local.itonami.cloud`
@@ -1101,7 +1540,7 @@ app binding.
 | `kotoba-lang.org` | 11 | 2: apex and `www` → `kotoba-lang-org` | 0 | 0 |
 | `kotobase.net` | 23 | 1: `wiki` → `app-hyakka` | 0 | 0 |
 | `manimani.cloud` | 1 | 1: apex → `cloud-manimani` | 0 | 0 |
-| `murakumo.cloud` | 27 | 14: apex and `www` → `murakumo-cloud`; `api` → `local-murakumo`; `console` and `operator` → `murakumo-operator`; `factoring` → `cloud-itonami-isic-6493-factoring`; `generation` → `murakumo-generation-proxy`; `ipfs-pilot` → `murakumo-ipfs-gateway-pilot`; `local` → `murakumo-client-static`; `meter` → `murakumo-meter`; `setup` → `murakumo-setup`; `status` → `murakumo-status`; `toshokan` → `murakumo-toshokan`; `web` → `murakumo-web` | 10 | 0 |
+| `murakumo.cloud` | 28 | 14: apex and `www` → `murakumo-cloud`; `api` → `local-murakumo`; `console` and `operator` → `murakumo-operator`; `factoring` → `cloud-itonami-isic-6493-factoring`; `generation` → `murakumo-generation-proxy`; `ipfs-pilot` → `murakumo-ipfs-gateway-pilot`; `local` → `murakumo-client-static`; `meter` → `murakumo-meter`; `setup` → `murakumo-setup`; `status` → `murakumo-status`; `toshokan` → `murakumo-toshokan`; `web` → `murakumo-web`. A separate healthy `kekkai-control-plane` Tunnel serves heartbeat and netmap path patterns at `kekkai-control.murakumo.cloud`; public HTTP and Access behavior remain unverified. | 10 | 0 |
 | `nubatama.net` | 0 | 0 | 0 | 0 |
 | `oppai.fans` | 0 | 0 | 0 | 0 |
 | `shinshi.club` | 10 | 1: apex → `magatama-sh1n5h1x`; DNS has a `www` host, with no corresponding Worker custom domain | 0 | 0 |
@@ -1185,3 +1624,159 @@ are `etzhadaat.org`, `gftd.cloud`, `kotoba.digital`, `kotoba-labs.com`,
 `mythril.build` zones were previously observed in the Fund-Mithril account.
 Account records, registrar records, parent DNS, and public service behavior
 must be reconciled before any empty zone is retired.
+
+The latest Itonami/Awai migration catalog has 3,476 rows across 33 domain
+groups, including 523 runtime endpoints, 361 DNS metadata rows, 2,581 Pages
+deployment candidates, and 11 review rows: two root-only readbacks, one
+source/provider mismatch, and eight zone-only reviews.
+DNS rows are control-plane records, not HTTP endpoints; their contents and
+targets are omitted. The catalog is in
+[`awai-app-public-endpoint-migration-2026-10-17.csv`](awai-app-public-endpoint-migration-2026-10-17.csv).
+It also records the source-declared but currently unrouted `oppai.fans` app.
+The generated ownership map and 33-domain summary are in
+[`awai-app-service-ownership-2026-10-17.csv`](awai-app-service-ownership-2026-10-17.csv)
+and [`awai-app-domain-ownership-summary-2026-10-17.csv`](awai-app-domain-ownership-summary-2026-10-17.csv).
+The summary now separates runtime endpoints, Pages deployment candidates,
+DNS records, and migration review rows for each domain. Its service counts
+include provider-exposed services; root readbacks and source-declared/no-route
+entries remain migration evidence rather than being counted as live services.
+The readable queue for all 33 groups is in
+[`migrations/awai-public-service-migration-roadmap-2026-10-17.md`](migrations/awai-public-service-migration-roadmap-2026-10-17.md).
+The selected first
+pilot, `murakumo.cloud`, currently has 30 runtime endpoint rows, 28 DNS record
+rows, and 18 distinct services in the catalog; it is a multi-service migration,
+not an apex-only website change.
+The service-by-service scope, DNS dependencies, and staged proof plan are in
+[`migrations/murakumo-cloud-first-cohort.md`](migrations/murakumo-cloud-first-cohort.md).
+They separate 84 canonical source matches from 13 product-owner hints, 5
+repository-name candidates, 6 ambiguous config matches, and 66 owner-review
+items. Service-source matches do not establish product app identities, signed
+releases, or domain bindings.
+
+### Read-only account refresh and orphan Worker domains (2026-10-16)
+
+A complete API read confirmed 27 active zones, 109 Worker scripts, 78 Worker
+custom domains, 318 DNS records (168 proxied), 30 routes, 16 Pages projects,
+and eight Pages custom-domain mappings in `cloud-kotoba`. `fund-mithril` has
+three active zones, 36 Worker scripts, 23 Worker custom domains, 43 DNS
+records (23 proxied), and six routes; it has no Pages projects. Across both
+accounts that is 30 active zones, 145 Worker scripts, 101 Worker custom
+domains, 361 DNS records, and 36 routes. The earlier partial zone listing was
+incomplete; the full read agrees with the 27-zone count above.
+
+The Pages project list and every project's custom-domain list were read again.
+All 16 projects are present and there are eight mappings total: seven active
+(`babiniku.net`, `isekai.network`, `itonami.cloud`,
+`cloud-itonami.itonami.cloud`, `bots.kotoba.cloud`,
+`comics.spirit-in-physics.org`, and `gorigori-ketsu-dasshu.gftd.ai`) plus the
+deactivated `cyber-drill.gftd.ai`. The earlier count of seven attachments
+referred to active mappings.
+
+Nine active zones have no DNS records, Worker routes, Worker custom domains,
+or Pages custom-domain mappings. The three enabled `spirit-in-physics.com`
+Worker-domain objects have no matching Cloudflare zone object (exact-name
+lookup returned no zone and their stored zone ID was invalid), and no Pages
+mapping. These are provider configuration findings only: external delegation
+and HTTP reachability remain unverified. The row-level evidence is in
+[`awai-cloudflare-empty-zones-and-orphan-worker-domains-2026-10-16.csv`](awai-cloudflare-empty-zones-and-orphan-worker-domains-2026-10-16.csv).
+No Cloudflare setting, DNS record, or route was changed during this refresh.
+
+### First-cohort public root and attachment refresh (2026-10-16)
+
+Read-only Cloudflare API calls refreshed DNS records, DNSSEC state, Worker
+custom domains, and Worker routes for the ten first-cohort zones. DNSSEC is
+disabled for all ten. I also issued body-discarding HTTPS GETs to each apex.
+Eight returned HTTP 200 through `2606:4700::` Cloudflare anycast addresses;
+that proves the current public request reaches Cloudflare, not which origin
+serves it. `itonami.app` and `oppai.fans` did not resolve for HTTPS.
+
+Google Public DNS-over-HTTPS independently returned no A or AAAA answers for
+the `itonami.app` and `oppai.fans` apexes. Both return Cloudflare NS records
+and no DS answer. Cloudflare's zone API shows 16 DNS records on `itonami.app`
+but none at the apex; its one Worker custom domain is
+`arb.ossekai.itonami.app`, with a separate `kaisya.itonami.app/*` route.
+`oppai.fans` has zero DNS records, Worker custom domains, Worker routes, or
+Pages mappings. Its source-declared app remains unrouted. Row-level root
+readback is in
+[`awai-app-public-root-readback-2026-10-16.csv`](awai-app-public-root-readback-2026-10-16.csv).
+
+This confirms that `itonami.app` is not currently reachable as the common
+public launcher origin, and `oppai.fans` is not currently a public service.
+The public roots that do return 200 still rely on Cloudflare edge delivery.
+No origin cutover or DNS change was made.
+
+### Latest Cloudflare and Registrar API recheck (2026-10-16T17:43:46Z)
+
+A read-only pass across all three connected accounts completed successfully. It returned 30 active zones, 361 DNS records (191 proxied), 36 Worker routes, 101 Worker custom domains, 145 Worker scripts, 16 Pages projects with 8 custom-domain mappings, and 31 Tunnels (6 healthy and 25 down). DNSSEC was disabled on all 30 zones. Per-account counts are appended to [the resource recheck CSV](awai-cloudflare-resource-recheck-2026-10-17.csv); per-zone counts and DNSSEC state are appended to [the zone recheck CSV](awai-cloudflare-zone-recheck-2026-10-17.csv).
+
+The Registrar API returned 29 active, locked registrations. 24 have auto-renew enabled; five are disabled: nubatama.net, manimani.cloud, kotoba.digital, yatalake.com, kotoba-labs.com. All ten current product/platform domains in the targeted set are active, locked, and set to auto-renew. Row-level records are in [the new 29-domain registrar snapshot](awai-cloudflare-registrar-recheck-2026-10-17.csv); the ten target-domain rows are also appended to [the targeted registrar recheck](awai-app-registrar-recheck-2026-10-17.csv).
+
+This confirms Cloudflare configuration only. It does not establish parent delegation, public DNS answers, origin health, or registrar-transfer eligibility. No Cloudflare or registrar setting was changed.
+
+### Live full-surface identity recheck (2026-10-17 JST)
+
+A read-only refresh across the same three connected accounts completed at
+`2026-10-16T19:20:50Z`, with no API read errors. Exact normalized row-identity
+sets matched the saved inventories for all nine rechecked surfaces: 30 zones,
+361 DNS records, 36 Worker routes, 101 Worker custom domains, 145
+Workers.dev settings, 23 Pages project hostnames, 161 Pages preview aliases,
+2,581 Pages production-deployment candidates, and 62 Tunnel host/path ingress
+rules. The per-surface SHA-256 identities and comparison baselines are in
+[`awai-cloudflare-live-fingerprint-recheck-2026-10-17.csv`](awai-cloudflare-live-fingerprint-recheck-2026-10-17.csv).
+
+This is provider configuration and inventory parity evidence. It does not
+prove that requests depend on or avoid Cloudflare, that configured origins are
+healthy, or that public services can operate independently. No DNS, runtime,
+or registrar setting changed in this read-only recheck.
+
+### Fresh cross-account resource readback (2026-10-17 JST)
+
+A read-only API pass at `2026-10-16T19:51:05Z` rechecked the identity sets for
+zones, DNS record host/type/proxy state, Worker routes, Worker custom domains,
+Workers.dev settings, Pages hostnames, and Tunnel objects. All seven SHA-256
+sets exactly match the `2026-10-16T18:52:37Z` inventory. The current account
+distribution is 27 zones / 318 DNS records / 30 routes / 78 Worker domains /
+109 Workers.dev settings / 23 Pages hostnames / 31 Tunnels in `cloud-kotoba`,
+and 3 / 43 / 6 / 23 / 36 / 0 / 0 in `fund-mithril`; the same queried surfaces
+returned zero rows for `com-junkawasaki`. See
+[`awai-cloudflare-live-inventory-recheck-2026-10-17.csv`](awai-cloudflare-live-inventory-recheck-2026-10-17.csv)
+and [`awai-cloudflare-account-resource-counts-2026-10-17.csv`](awai-cloudflare-account-resource-counts-2026-10-17.csv).
+Pages preview aliases, Pages production-deployment candidates, and Tunnel
+host/path ingress were not re-enumerated in this pass; their last full-set
+readback remains the `19:20:50Z` snapshot above.
+
+These are configuration identities. They establish neither public traffic
+behavior nor origin health, and no provider setting changed.
+
+### Recursive DNS readback for remaining named domain groups (2026-10-17 JST)
+
+Google Public DNS-over-HTTPS was queried for NS, A, and AAAA on all 31 named
+domains in the ownership summary. Thirty returned Cloudflare nameservers; 17
+also returned Cloudflare edge addresses at the apex. Eight
+zones with no configured records still return Cloudflare NS but no apex A or
+AAAA answer. `gftd.ai`, `kotobase.net`, and `yataverse.com` also have no apex
+address while subdomain services remain in the endpoint catalog.
+The product roots `itonami.app` and `oppai.fans` also have no apex A/AAAA answer;
+both remain delegated to Cloudflare nameservers. `spirit-in-physics.com`
+returned NXDOMAIN for all three query types despite its configured Worker
+custom-domain rows. No matching registration appears in the connected
+Cloudflare Registrar snapshot, so its external registration/delegation owner
+remains unresolved. `spirit-in-physics.org` resolves to Cloudflare edge addresses.
+The per-domain answers are in
+[`awai-app-public-root-dns-readback-2026-10-17.csv`](awai-app-public-root-dns-readback-2026-10-17.csv).
+
+These are recursive-resolver observations, not direct authoritative-server
+queries or HTTP health checks. The eight empty-zone domains remain delegation
+and retention reviews; the NXDOMAIN domain needs registrar and owner-state
+reconciliation before any redirect, retirement, or app binding decision.
+
+### Browser root readback for additional resolved domains (2026-10-17 JST)
+
+Direct hidden-browser reads returned homepage content for `etzhayyim.com`,
+`kotoba-lang.org`, `kotoba.cloud`, `kotoba.foundation`, `manimani.cloud`,
+`mithril.fund`, and `spirit-in-physics.org`. `kotobalabs.com` navigated to the
+`www.kotoba-lang.org` canonical host. `yaoi.dev` displayed an `internal error`
+body. Browser navigation did not expose raw HTTP status or origin identity;
+these observations classify visible content only. The expanded row-level
+readback is in
+[`awai-app-public-root-browser-probe-2026-10-17.csv`](awai-app-public-root-browser-probe-2026-10-17.csv).

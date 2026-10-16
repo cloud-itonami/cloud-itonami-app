@@ -1,0 +1,30 @@
+{:format :kotoba.kir/v3,
+ :signature nil,
+ :functions
+ [{:name chat-admission-code,
+   :params [messages-array message-count total-chars],
+   :result :i64,
+   :effects #{},
+   :body
+   (if
+    (if (= messages-array 1) false true)
+    1
+    (if
+     (<= message-count 0)
+     2
+     (if
+      (> message-count 40)
+      3
+      (if
+       (let
+        [__kotoba_or_2 (< total-chars 0)]
+        (if __kotoba_or_2 __kotoba_or_2 (> total-chars 24000)))
+       4
+       0))))}],
+ :oracle-value 0,
+ :schema-identities nil,
+ :exports [chat-admission-code],
+ :schemas nil,
+ :effects #{},
+ :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
+ :entry nil}

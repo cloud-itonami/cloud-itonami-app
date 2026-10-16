@@ -1,0 +1,5 @@
+;; Empty KEXE loader baseline for the Shinshi black-frame benchmark.
+(ns shinshi.video-black-frame-selfhost-empty-benchmark
+  (:export [main]))
+
+(defn main [] :i64 0)

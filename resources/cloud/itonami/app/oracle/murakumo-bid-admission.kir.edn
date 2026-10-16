@@ -1,0 +1,47 @@
+{:format :kotoba.kir/v3,
+ :signature nil,
+ :functions
+ [{:name bid-admission-code,
+   :params [policy-bits estimated-micros maximum-micros],
+   :result :i64,
+   :effects #{},
+   :body
+   (if
+    (let
+     [__kotoba_or_3 (< estimated-micros 0)]
+     (if
+      __kotoba_or_3
+      __kotoba_or_3
+      (let
+       [__kotoba_or_2 (< maximum-micros 0)]
+       (if
+        __kotoba_or_2
+        __kotoba_or_2
+        (= 0 (bit-and policy-bits 1))))))
+    1
+    (if
+     (= 0 (bit-and policy-bits 2))
+     2
+     (if
+      (= 0 (bit-and policy-bits 4))
+      3
+      (if
+       (= 0 (bit-and policy-bits 8))
+       4
+       (if
+        (= 0 (bit-and policy-bits 16))
+        5
+        (if
+         (= 0 (bit-and policy-bits 32))
+         6
+         (if
+          (= 0 (bit-and policy-bits 64))
+          7
+          (if (> estimated-micros maximum-micros) 8 0))))))))}],
+ :oracle-value 0,
+ :schema-identities nil,
+ :exports [bid-admission-code],
+ :schemas nil,
+ :effects #{},
+ :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
+ :entry nil}

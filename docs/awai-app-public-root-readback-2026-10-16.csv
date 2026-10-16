@@ -1,0 +1,11 @@
+domain,zone_dnssec,dns_records,proxied_dns_records,worker_custom_domains,worker_routes,pages_custom_domains,https_get_status,https_remote_ip,content_type,google_doh_note,evidence_limit
+itonami.app,disabled,16,2,1,1,,000,,,"A/AAAA NODATA; NS=everton.ns.cloudflare.com,vivienne.ns.cloudflare.com; no DS answer","No apex A/AAAA answer; HTTPS GET could not resolve; subdomain attachments do not prove apex reachability"
+murakumo.cloud,disabled,28,18,14,10,,200,2606:4700:3035::ac43:81e8,text/html,not-queried,"Public GET reached Cloudflare anycast; origin and app data path not established"
+aozora.app,disabled,12,7,7,0,,200,2606:4700:3032::6815:5765,text/html,not-queried,"Public GET reached Cloudflare anycast; origin and app data path not established"
+oppai.fans,disabled,0,0,0,0,,000,,,"A/AAAA NODATA; NS=vivienne.ns.cloudflare.com,everton.ns.cloudflare.com; no DS answer","Zone is active but empty; HTTPS GET could not resolve; source-declared service has no current public route"
+isekai.network,disabled,6,1,0,0,isekai.network,200,2606:4700:3030::6815:286c,text/html; charset=utf-8,not-queried,"Public GET reached Cloudflare anycast; origin and app data path not established"
+itonami.cloud,disabled,32,20,15,4,"itonami.cloud; cloud-itonami.itonami.cloud",200,2606:4700:3030::6815:5bd3,text/html; charset=utf-8,not-queried,"Public GET reached Cloudflare anycast; origin and app data path not established"
+x402.nexus,disabled,7,2,1,0,,200,2606:4700:3033::6815:2f1,application/json; charset=utf-8,not-queried,"Public GET reached Cloudflare anycast; origin and app data path not established"
+shinshi.club,disabled,10,2,1,0,,200,2606:4700:3036::6815:4731,text/html; charset=utf-8,not-queried,"Public GET reached Cloudflare anycast; origin and app data path not established"
+babiniku.net,disabled,6,1,0,0,babiniku.net,200,2606:4700:3037::6815:52f0,text/html; charset=utf-8,not-queried,"Public GET reached Cloudflare anycast; origin and app data path not established"
+awai.network,disabled,9,2,2,0,,200,2606:4700:3030::6815:aca,text/html,not-queried,"Public GET reached Cloudflare anycast; origin and app data path not established"

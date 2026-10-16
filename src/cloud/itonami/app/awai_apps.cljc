@@ -10,6 +10,8 @@
             [kotoba.protocol.cid :as cid]
             [kotoba.protocol.install :as install]
             [kotoba.protocol.vocab :as vocab]
+            [cloud.itonami.app.kotoba-oracle :as oracle]
+            [cloud.itonami.app.product-policy :as product-policy]
             [cloud.itonami.app.awai-content-policy :as content-policy]
             [cloud.itonami.app.awai-dnssec-policy :as dnssec-policy]))
 
@@ -45,7 +47,8 @@
       (conj {:field :install-lock :error :invalid-install-lock})
 
       (not (and (map? origin)
-                (install/canonical-domain? (:domain origin))))
+                (install/canonical-domain? (:domain origin))
+                (not (content-policy/cloudflare-host? (:domain origin)))))
       (conj {:field :origin :error :invalid-domain-origin})
 
       (not (cidv1? (:binding-cid origin)))
@@ -225,6 +228,7 @@
   (let [body (:body record)]
     (and (valid-registry-record? record "domain/bind")
          (install/canonical-domain? (:domain body))
+         (not (content-policy/cloudflare-host? (:domain body)))
          (vocab/reverse-dns-id? (:app-id body))
          (vocab/did-key? (:publisher-did body))
          (vocab/did-key? (:domain-owner-did body))
@@ -251,6 +255,7 @@
          (vocab/did-key? (:publisher-did body))
          (vocab/did-key? (:operator-did body))
          (install/canonical-domain? (:host body))
+         (not (content-policy/cloudflare-host? (:host body)))
          (string? (:spki-sha256 body))
          (re-matches #"[0-9a-f]{64}" (:spki-sha256 body))
          (nat-int? (:expires-at body)))))
@@ -552,44 +557,100 @@
           {:decision :refuse :error :invalid-release-manifest :problems problems}
           {:decision :verified :release descriptor})))))
 
+(def ^:private amano-profile-keys
+  [:profile-id :chain-id :genesis-hash :validator-set-id :quorum-policy-id])
+
+(defn- amano-state-code [state]
+  (case state
+    :unavailable 0
+    :invalid 1
+    :verified 2
+    -1))
+
+(defn- resolve-admission-code [dns-proof-fresh? amano-state]
+  (oracle/i64-value
+   (product-policy/call-policy
+    :awai-app-admission 'resolve-admission-code
+    [{:dns-proof-fresh (boolean dns-proof-fresh?)
+      :amano-state (amano-state-code amano-state)}])))
+
+(defn- finish-install-admission-code
+  [prepared? install-lock-valid? runtime-inputs-valid? clock-valid?
+   dns-proof-valid? amano-state content-complete? capabilities-approved?]
+  (oracle/i64-value
+   (product-policy/call-policy
+    :awai-app-admission 'finish-install-admission-code
+    [{:prepared (boolean prepared?)
+      :install-lock-valid (boolean install-lock-valid?)
+      :runtime-inputs-valid (boolean runtime-inputs-valid?)
+      :clock-valid (boolean clock-valid?)
+      :dns-proof-valid (boolean dns-proof-valid?)
+      :amano-state (amano-state-code amano-state)
+      :content-complete (boolean content-complete?)
+      :capabilities-approved (boolean capabilities-approved?)}])))
+
+(defn- safe-string [value]
+  (if (string? value) value ""))
+
+(defn- safe-i64 [value]
+  (if (and (nat-int? value) (oracle/fits-i64? value)) value -1))
+
+(defn- amano-profile-value [profile]
+  (into {} (map (fn [key] [key (safe-string (get profile key))]))
+        amano-profile-keys))
+
+(defn- amano-proof-value [proof signature-valid?]
+  {:trust (safe-string (:trust proof))
+   :decision-verified (= :verified (:decision proof))
+   :profile-id (safe-string (:profile-id proof))
+   :chain-id (safe-string (:chain-id proof))
+   :genesis-hash (safe-string (:genesis-hash proof))
+   :validator-set-id (safe-string (:validator-set-id proof))
+   :quorum-policy-id (safe-string (:quorum-policy-id proof))
+   :reference (safe-string (:ref proof))
+   :head-cid (safe-string (:head-cid proof))
+   :challenge (safe-string (:challenge proof))
+   :current (true? (:current? proof))
+   :quorum-read-verified (true? (:quorum-read-verified? proof))
+   :current-read-proof-present
+   (boolean (and (map? (:current-read-proof proof))
+                 (seq (:current-read-proof proof))))
+   :finality-proof-verified (true? (:finality-proof-verified? proof))
+   :finalized-event-cid (safe-string (:finalized-event-cid proof))
+   :finality-proof-present
+   (boolean (and (map? (:finality-proof proof))
+                 (seq (:finality-proof proof))))
+   :observed-at (safe-i64 (:observed-at proof))
+   :expires-at (safe-i64 (:expires-at proof))
+   :signature-valid (boolean signature-valid?)})
+
 (defn- verified-amano-current-ref?
   [verify-ref proof chain-profile ref head-cid challenge now-ms]
   (and (fn? verify-ref)
        (map? chain-profile)
-       (every? (fn [key]
-                 (let [value (get chain-profile key)]
-                   (and (string? value) (seq value))))
-               [:profile-id :chain-id :genesis-hash :validator-set-id])
        (map? proof)
-       (= "amano-inga-verified-current-ref" (:trust proof))
-       (= :verified (:decision proof))
-       (= (:profile-id chain-profile) (:profile-id proof))
-       (= (:chain-id chain-profile) (:chain-id proof))
-       (= (:genesis-hash chain-profile) (:genesis-hash proof))
-       (= (:validator-set-id chain-profile) (:validator-set-id proof))
-       (= ref (:ref proof))
-       (= head-cid (:head-cid proof))
-       (= challenge (:challenge proof))
-       (true? (:current? proof))
-       (true? (:quorum-read-verified? proof))
-       (map? (:current-read-proof proof))
-       (seq (:current-read-proof proof))
-       (true? (:finality-proof-verified? proof))
-       (= head-cid (:finalized-event-cid proof))
-       (map? (:finality-proof proof))
-       (seq (:finality-proof proof))
-       (nat-int? (:observed-at proof))
-       (nat-int? (:expires-at proof))
-       (<= (:observed-at proof) now-ms)
-       (< now-ms (:expires-at proof))
-       (try
-         (true? (verify-ref {:proof proof
-                             :chain-profile chain-profile
-                             :ref ref
-                             :head-cid head-cid
-                             :challenge challenge
-                             :now-ms now-ms}))
-         (catch #?(:clj Exception :cljs :default) _ false))))
+       (string? ref)
+       (string? head-cid)
+       (string? challenge)
+       (nat-int? now-ms)
+       (oracle/fits-i64? now-ms)
+       (let [signature-valid?
+             (try
+               (true? (verify-ref {:proof proof
+                                   :chain-profile chain-profile
+                                   :ref ref
+                                   :head-cid head-cid
+                                   :challenge challenge
+                                   :now-ms now-ms}))
+               (catch #?(:clj Exception :cljs :default) _ false))]
+         (true? (product-policy/call-policy
+                 :awai-current-ref 'verified-current-ref?
+                 [(amano-proof-value proof signature-valid?)
+                  (amano-profile-value chain-profile)
+                  {:expected-ref ref
+                   :expected-head-cid head-cid
+                   :expected-challenge challenge
+                   :now-ms now-ms}])))))
 
 (defn- amano-current-ref-proof-state
   [domain binding release ref-proofs challenge chain-profile now-ms verify-ref]
@@ -619,6 +680,28 @@
 
       :else :verified)))
 
+(defn- amano-proof-receipt [proof]
+  (when (map? proof)
+    (merge
+     (select-keys proof
+                  [:profile-id :chain-id :genesis-hash :validator-set-id
+                   :quorum-policy-id :ref :head-cid :challenge :observed-at
+                   :expires-at :finalized-event-cid])
+     (select-keys (:current-read-proof proof) [:head-seq])
+     (select-keys (get-in proof [:finality-proof :prefix :checkpoint])
+                  [:cid :finalized-height :block-count :tip-hash]))))
+
+(defn- compact-install-origin [origin ref-proofs]
+  (let [receipts (into (sorted-map)
+                       (keep (fn [[ref proof]]
+                               (when-let [receipt (amano-proof-receipt proof)]
+                                 [ref receipt])))
+                       ref-proofs)]
+    (-> origin
+        (dissoc :amano-ref-proofs :amano-challenge
+                :amano-ref-proofs-checked-at-ms)
+        (assoc :amano-proof-receipts receipts))))
+
 (defn resolve-domain
   "Resolve one hostname from already verified adapter facts and attach its
   install plan. The DNS adapter supplies a fresh DNSSEC-verified TXT proof. The
@@ -632,18 +715,15 @@
                   amano-chain-profile verify-amano-ref]}]
   (let [amano-state (amano-current-ref-proof-state
                      domain binding release amano-ref-proofs challenge
-                     amano-chain-profile amano-now-ms verify-amano-ref)]
-    (cond
-      (not (dnssec-policy/fresh-proof? domain txt-proof now))
-      {:decision :refuse :error :dnssec-proof-not-fresh-or-invalid}
-
-      (= :unavailable amano-state)
-      {:decision :refuse :error :amano-current-ref-proof-unavailable}
-
-      (= :invalid amano-state)
-      {:decision :refuse :error :invalid-amano-current-ref-proof}
-
-      :else
+                     amano-chain-profile amano-now-ms verify-amano-ref)
+        admission-code (resolve-admission-code
+                        (dnssec-policy/fresh-proof? domain txt-proof now)
+                        amano-state)]
+    (case admission-code
+      1 {:decision :refuse :error :dnssec-proof-not-fresh-or-invalid}
+      2 {:decision :refuse :error :amano-current-ref-proof-unavailable}
+      3 {:decision :refuse :error :invalid-amano-current-ref-proof}
+      0
       (let [resolved (install/resolve-entry domain binding txt-proof release now)
             resolved (cond-> resolved
                        (= :resolved (:decision resolved))
@@ -651,19 +731,22 @@
                               :dns-proof-expires-at (:expires-at txt-proof)
                               :dns-proof txt-proof
                               :resolved-at now
-                              :amano-chain-profile amano-chain-profile
+                              :amano-chain-profile
+                              (select-keys amano-chain-profile amano-profile-keys)
                               :amano-ref-proofs amano-ref-proofs
                               :amano-ref-proofs-checked-at-ms amano-now-ms
                               :amano-challenge challenge))]
         (if (= :resolved (:decision resolved))
           (assoc resolved :install-plan (prepare-install resolved))
-          resolved)))))
+          resolved))
+      {:decision :refuse :error :invalid-app-admission-result})))
 
 (defn finish-install
   "Produce a host installation record after content verification and the
   user's capability decision. The caller must write it atomically to protected
   local storage before invoking the app runtime."
   [prepared {:keys [verified-cids approved-caps host-supported now amano-now-ms
+                    amano-chain-profile amano-ref-proofs amano-challenge
                     verify-amano-ref]}]
   (let [lock (:install-lock prepared)
         verified (string-set verified-cids)
@@ -672,56 +755,55 @@
         required (install/required-content-cids lock)
         missing (when verified (into [] (remove verified) required))
         origin (:origin prepared)
+        current-ref-proofs (or amano-ref-proofs (:amano-ref-proofs origin))
+        current-challenge (or amano-challenge (:amano-challenge origin))
+        current-chain-profile (or amano-chain-profile
+                                  (:amano-chain-profile origin))
         amano-state (amano-current-ref-proof-state
                      (:domain origin)
                      {:entry-cid (:binding-cid origin)}
                      {:app-id (:app-id lock)
                       :channel (:channel lock)
                       :release-cid (:release-cid lock)}
-                     (:amano-ref-proofs origin)
-                     (:amano-challenge origin)
-                     (:amano-chain-profile origin)
+                     current-ref-proofs
+                     current-challenge
+                     current-chain-profile
                      amano-now-ms
                      verify-amano-ref)
-        requested (or (string-set (:requested-caps lock)) #{})]
-    (cond
-      (not= :install-prepared (:decision prepared))
-      {:decision :refuse :error :install-not-prepared}
-
-      (seq (install/install-lock-problems lock))
-      {:decision :refuse :error :invalid-install-lock}
-
-      (or (nil? verified) (nil? approved) (nil? supported))
-      {:decision :refuse :error :invalid-runtime-input}
-
-      (not (nat-int? now))
-      {:decision :refuse :error :invalid-clock}
-
-      (not (and (nat-int? (get-in prepared [:origin :dns-proof-expires-at]))
-                (< now (get-in prepared [:origin :dns-proof-expires-at]))
-                (= (get-in prepared [:origin :binding-cid])
-                   (get-in prepared [:dns-proof :binding-cid]))
-                (dnssec-policy/fresh-proof?
-                 (get-in prepared [:origin :domain])
-                 (:dns-proof prepared) now)))
-      {:decision :refuse :error :dnssec-proof-expired}
-
-      (= :unavailable amano-state)
-      {:decision :refuse :error :amano-current-ref-proof-unavailable}
-
-      (= :invalid amano-state)
-      {:decision :refuse :error :invalid-amano-current-ref-proof}
-
-      (seq missing)
-      {:decision :refuse :error :content-not-verified :missing-cids missing}
-
-      (not (every? requested approved))
-      {:decision :refuse :error :capability-not-requested}
-
-      :else
+        requested (or (string-set (:requested-caps lock)) #{})
+        dns-proof-valid?
+        (and (nat-int? (get-in prepared [:origin :dns-proof-expires-at]))
+             (nat-int? now)
+             (< now (get-in prepared [:origin :dns-proof-expires-at]))
+             (= (get-in prepared [:origin :binding-cid])
+                (get-in prepared [:dns-proof :binding-cid]))
+             (dnssec-policy/fresh-proof?
+              (get-in prepared [:origin :domain])
+              (:dns-proof prepared) now))
+        admission-code
+        (finish-install-admission-code
+         (= :install-prepared (:decision prepared))
+         (empty? (install/install-lock-problems lock))
+         (and (some? verified) (some? approved) (some? supported))
+         (nat-int? now)
+         dns-proof-valid?
+         amano-state
+         (empty? missing)
+         (every? requested approved))]
+    (case admission-code
+      1 {:decision :refuse :error :install-not-prepared}
+      2 {:decision :refuse :error :invalid-install-lock}
+      3 {:decision :refuse :error :invalid-runtime-input}
+      4 {:decision :refuse :error :invalid-clock}
+      5 {:decision :refuse :error :dnssec-proof-expired}
+      6 {:decision :refuse :error :amano-current-ref-proof-unavailable}
+      7 {:decision :refuse :error :invalid-amano-current-ref-proof}
+      8 {:decision :refuse :error :content-not-verified :missing-cids missing}
+      9 {:decision :refuse :error :capability-not-requested}
+      0
       (let [record {:schema installation-schema
                     :install-lock lock
-                    :origin (:origin prepared)
+                    :origin (compact-install-origin origin current-ref-proofs)
                     :approved-caps (vec (sort approved))
                     :installed-at now}]
         (if (seq (installation-problems record))
@@ -729,7 +811,8 @@
           {:decision :installed
            :installation record
            :effective-capabilities
-           (install/effective-capabilities lock approved supported)})))))
+           (install/effective-capabilities lock approved supported)}))
+      {:decision :refuse :error :invalid-app-admission-result})))
 
 (defn prepare-update
   "Plan an update for an installed app. The content adapter fetches and verifies

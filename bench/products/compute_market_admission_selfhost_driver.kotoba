@@ -1,0 +1,31 @@
+;; Native selfhost driver for the product's normalized bid-admission rule.
+(ns murakumo.compute-market-admission-selfhost-benchmark
+  (:require [cloud-murakumo.compute-market-admission :as admission])
+  (:export [main]))
+
+(defn main [] :i64
+  (let [valid-bits 127
+        confidential-refused-bits 63
+        precondition-ok?
+        (and (= 0 (admission/bid-admission-code valid-bits 950 1000))
+             (= 1 (admission/bid-admission-code 126 950 1000))
+             (= 2 (admission/bid-admission-code 125 950 1000))
+             (= 3 (admission/bid-admission-code 123 950 1000))
+             (= 4 (admission/bid-admission-code 119 950 1000))
+             (= 5 (admission/bid-admission-code 111 950 1000))
+             (= 6 (admission/bid-admission-code 95 950 1000))
+             (= 7 (admission/bid-admission-code confidential-refused-bits 950 1000))
+             (= 8 (admission/bid-admission-code valid-bits 1001 1000))
+             (= 1 (admission/bid-admission-code valid-bits -1 1000)))
+        admitted
+        (loop [i 0 admitted 0 valid? true]
+          (if (< i 1000000)
+            (recur (+ i 1)
+                   (+ admitted
+                      (if (= 0 (admission/bid-admission-code
+                                (if valid? valid-bits confidential-refused-bits)
+                                950 1000))
+                        1 0))
+                   (not valid?))
+            admitted))]
+    (if precondition-ok? admitted -1)))

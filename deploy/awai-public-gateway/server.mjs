@@ -56,6 +56,16 @@ function validDnsName(value) {
     && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label));
 }
 
+const cloudflareHostRoots = [
+  'workers.dev', 'pages.dev', 'r2.dev', 'cfargotunnel.com',
+  'cloudflare.com', 'cloudflare.net', 'cloudflare-dns.com'
+];
+
+function validIndependentHost(value) {
+  return validDnsName(value)
+    && !cloudflareHostRoots.some((root) => value === root || value.endsWith(`.${root}`));
+}
+
 function validPort(value) {
   return Number.isInteger(value) && value >= 1 && value <= 65535;
 }
@@ -79,6 +89,16 @@ function expectedAuthority(host, port) {
   return port === 443 ? new Set([host, `${host}:443`]) : new Set([`${host}:${port}`]);
 }
 
+function configuredHosts(config) {
+  const hosts = config.hosts ?? [config.host];
+  if (!Array.isArray(hosts) || hosts.length < 1 || hosts.length > 64
+      || new Set(hosts).size !== hosts.length
+      || !hosts.every((host) => validIndependentHost(host))) {
+    return null;
+  }
+  return new Set(hosts);
+}
+
 function hasBody(headers) {
   return headers['transfer-encoding'] !== undefined
     || (headers['content-length'] !== undefined && headers['content-length'] !== '0');
@@ -88,19 +108,24 @@ function parseDomainQuery(rawQuery) {
   const parameters = new URLSearchParams(rawQuery);
   const values = parameters.getAll('domain');
   if ([...parameters.keys()].length !== 1 || values.length !== 1
-      || !validDnsName(values[0])) {
+      || !validIndependentHost(values[0])) {
     return null;
   }
   return values[0];
 }
 
 export function authorizeRequest(request, config) {
-  const { host, port } = config;
-  if (!validDnsName(host) || !validPort(port)
+  const { port } = config;
+  const hosts = configuredHosts(config);
+  const servername = typeof request.servername === 'string'
+    ? request.servername.toLowerCase()
+    : '';
+  if (!hosts || !validIndependentHost(config.host) || !validPort(port)
+      || !hosts.has(config.host)
       || typeof request.servername !== 'string'
-      || request.servername.toLowerCase() !== host
+      || !hosts.has(servername)
       || typeof request.hostHeader !== 'string'
-      || !expectedAuthority(host, port).has(request.hostHeader.toLowerCase())) {
+      || !expectedAuthority(servername, port).has(request.hostHeader.toLowerCase())) {
     return failure(421, 'host-mismatch');
   }
 
@@ -126,7 +151,7 @@ export function authorizeRequest(request, config) {
   const route = routeTable.get(`${request.method} ${pathname}`);
   if (!route) return failure(404, 'route-not-public');
 
-  const origin = port === 443 ? `https://${host}` : `https://${host}:${port}`;
+  const origin = port === 443 ? `https://${servername}` : `https://${servername}:${port}`;
   if (headers.origin !== undefined && headers.origin !== origin) {
     return failure(403, 'origin-mismatch');
   }
@@ -287,13 +312,14 @@ function proxyToLoopback(request, route, config, origin, agent) {
 }
 
 export function createPublicGateway(config) {
-  if (!validDnsName(config.host) || !validPort(config.port)
+  const hosts = configuredHosts(config);
+  if (!validDnsName(config.host) || !hosts || !hosts.has(config.host) || !validPort(config.port)
       || !validPort(config.upstreamPort)
       || typeof config.bindAddress !== 'string' || !isIP(config.bindAddress)
       || !Buffer.isBuffer(config.cert) || !Buffer.isBuffer(config.key)) {
     throw new Error('invalid-gateway-configuration');
   }
-  assertCertificateForHost(config.cert, config.host);
+  for (const host of hosts) assertCertificateForHost(config.cert, host);
   const limiter = createRateLimiter();
   const upstreamAgent = new HttpAgent({ keepAlive: true, maxSockets: MAX_ACTIVE_REQUESTS });
   let activeRequests = 0;
@@ -357,7 +383,7 @@ export function createPublicGateway(config) {
   return {
     server,
     reloadCertificate(cert, key) {
-      assertCertificateForHost(cert, config.host);
+      for (const host of hosts) assertCertificateForHost(cert, host);
       server.setSecureContext({ cert, key, minVersion: 'TLSv1.2' });
     },
     close() {
@@ -377,13 +403,18 @@ function positiveInteger(value, fallback) {
 }
 
 function loadConfig(environment = process.env) {
-  const host = environment.ITONAMI_GATEWAY_HOST;
+  const hostList = environment.ITONAMI_GATEWAY_HOSTS === undefined
+    ? null
+    : environment.ITONAMI_GATEWAY_HOSTS.split(',').map((value) => value.trim());
+  const host = environment.ITONAMI_GATEWAY_HOST ?? hostList?.[0];
+  const hosts = hostList ?? [host];
   const bindAddress = environment.ITONAMI_GATEWAY_BIND ?? '127.0.0.1';
   const port = positiveInteger(environment.ITONAMI_GATEWAY_PORT, 8443);
   const upstreamPort = 1338;
   const certFile = environment.ITONAMI_GATEWAY_CERT;
   const keyFile = environment.ITONAMI_GATEWAY_KEY;
-  if (!validDnsName(host) || !port || !isIP(bindAddress)
+  if (!validDnsName(host) || !hosts.includes(host) || !configuredHosts({ host, hosts })
+      || !port || !isIP(bindAddress)
       || (environment.ITONAMI_GATEWAY_UPSTREAM_PORT !== undefined
         && environment.ITONAMI_GATEWAY_UPSTREAM_PORT !== String(upstreamPort))
       || !certFile || !keyFile) {
@@ -391,6 +422,7 @@ function loadConfig(environment = process.env) {
   }
   return {
     host,
+    hosts,
     bindAddress,
     port,
     upstreamPort,
@@ -405,7 +437,7 @@ async function main() {
   const config = loadConfig();
   const gateway = createPublicGateway(config);
   gateway.server.listen(config.port, config.bindAddress, () => {
-    process.stdout.write(`Itonami public launcher gateway listening on ${config.bindAddress}:${config.port} for ${config.host}\n`);
+    process.stdout.write(`Itonami public launcher gateway listening on ${config.bindAddress}:${config.port} for ${config.hosts.join(',')}\n`);
   });
   process.on('SIGHUP', () => {
     try {

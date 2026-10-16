@@ -1,0 +1,63 @@
+;; Pure numeric port of nexus.wallet.policy/transfer-verdict precedence.
+;; The host still verifies transport auth, loads owner-scoped wallet/grant and
+;; budget rows, parses request strings, normalizes recipients, and atomically
+;; reserves budget/nonce before any signing. This core only decides preflight.
+;;
+;; Six facts are host-computed booleans in the same order as the source policy:
+;; principal-valid, wallet-scope-valid, grant-active, request-valid,
+;; recipient-allowed, budget-available. Amount fields are base-unit integers.
+;; Results: 0 admitted-preflight, 1 unauthenticated, 2 wallet-scope,
+;; 3 grant-inactive, 4 invalid-transfer, 5 recipient-not-allowed,
+;; 6 budget-unavailable, 7 per-transfer-limit, 8 daily-limit.
+(ns nexus.wallet.transfer-preflight-core
+  (:schemas {:nexus/transfer-preflight-input
+             [:record :nexus/transfer-preflight-input
+              [[:principal-valid :i64]
+               [:wallet-scope-valid :i64]
+               [:grant-active :i64]
+               [:request-valid :i64]
+               [:recipient-allowed :i64]
+               [:budget-available :i64]
+               [:amount :i64]
+               [:per-transfer :i64]
+               [:used :i64]
+               [:daily :i64]]]})
+  (:export [transfer-verdict-code transfer-amount-limit-code main]))
+
+(defn- units-range? [value]
+  (and (>= value 0) (<= value 999999999999999)))
+
+(defn transfer-amount-limit-code
+  [amount :i64 per-transfer :i64 used :i64 daily :i64] :i64
+  (cond
+    (> amount per-transfer) 7
+    (> (+ used amount) daily) 8
+    :else 0))
+
+(defn transfer-verdict-code
+  [input [:ref :nexus/transfer-preflight-input]] :i64
+  (let [principal-valid (record-get [:ref :nexus/transfer-preflight-input] input :principal-valid)
+        wallet-scope-valid (record-get [:ref :nexus/transfer-preflight-input] input :wallet-scope-valid)
+        grant-active (record-get [:ref :nexus/transfer-preflight-input] input :grant-active)
+        request-valid (record-get [:ref :nexus/transfer-preflight-input] input :request-valid)
+        recipient-allowed (record-get [:ref :nexus/transfer-preflight-input] input :recipient-allowed)
+        budget-available (record-get [:ref :nexus/transfer-preflight-input] input :budget-available)
+        amount (record-get [:ref :nexus/transfer-preflight-input] input :amount)
+        per-transfer (record-get [:ref :nexus/transfer-preflight-input] input :per-transfer)
+        used (record-get [:ref :nexus/transfer-preflight-input] input :used)
+        daily (record-get [:ref :nexus/transfer-preflight-input] input :daily)]
+    (cond
+      (not= principal-valid 1) 1
+      (not= wallet-scope-valid 1) 2
+      (not= grant-active 1) 3
+      (or (not= request-valid 1)
+          (not (units-range? amount))
+          (= amount 0)) 4
+      (not= recipient-allowed 1) 5
+      (or (not= budget-available 1)
+          (not (units-range? per-transfer))
+          (not (units-range? used))
+          (not (units-range? daily))) 6
+      :else (transfer-amount-limit-code amount per-transfer used daily))))
+
+(defn main [] :i64 0)

@@ -1,0 +1,27 @@
+;; Boundary workload for Shinshi's measured black-frame refusal threshold.
+(ns shinshi.video-black-frame-selfhost-benchmark
+  (:require [shinshi.common.video-black-frame-core :as policy])
+  (:export [main]))
+
+(defn- decision [case-code]
+  (cond
+    (= case-code 0) (policy/black-frame-code 1 0.0)
+    (= case-code 1) (policy/black-frame-code 1 7.9)
+    (= case-code 2) (policy/black-frame-code 1 8.0)
+    (= case-code 3) (policy/black-frame-code 1 102.0)
+    :else (policy/black-frame-code 0 0.0)))
+
+(defn main [] :i64
+  (let [cases-ok?
+        (and (= 1 (policy/black-frame-code 1 0.0))
+             (= 1 (policy/black-frame-code 1 7.9))
+             (= 0 (policy/black-frame-code 1 8.0))
+             (= 0 (policy/black-frame-code 1 102.0))
+             (= 1 (policy/black-frame-code 0 0.0)))
+        kept
+        (loop [i 0 count 0]
+          (if (< i 1000000)
+            (recur (+ i 1)
+                   (+ count (if (= 0 (decision (mod i 5))) 1 0)))
+            count))]
+    (if (and cases-ok? (= kept 400000)) kept -1)))

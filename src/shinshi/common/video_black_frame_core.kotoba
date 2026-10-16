@@ -1,0 +1,12 @@
+;; Pure threshold port of shinshi.common.video-publish/black-frame?.
+;; The host owns frame sampling and marks missing or invalid measurements as
+;; unmeasured. Decision 1 means reject the clip; decision 0 means it passes
+;; this one visual-signal gate, not that it is approved for publication.
+(ns shinshi.common.video-black-frame-core
+  (:export [black-frame-code main]))
+
+(defn black-frame-code
+  [measured :i64 mean-luma :f64] :i64
+  (if (or (not= measured 1) (< mean-luma 8.0)) 1 0))
+
+(defn main [] :i64 0)

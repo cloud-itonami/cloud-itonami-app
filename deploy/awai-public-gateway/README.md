@@ -18,7 +18,21 @@ The gateway serves only the common launcher and its public discovery surface:
 The gateway does not expose `/health`, install-content, install, app-launch, or
 app-operation routes. It never forwards cookies, authorization, client Host,
 or forwarding headers. Its upstream address is fixed to IPv4 loopback and its
-route table is compiled into the program. Host and TLS SNI must match exactly.
+route table is compiled into the program. The canonical `itonami.app` host and
+any explicitly configured product-domain aliases share this route table; every
+request's Host must exactly match its TLS SNI, and each host must be in the
+configured allowlist. The single TLS certificate must contain a valid SAN for
+every configured host. The launcher filters the registry to the matching
+domain when a visitor enters through an alias.
+From a public host, each candidate also offers a user-initiated handoff to the
+local Itonami launcher at `http://127.0.0.1:1338/`, carrying only that exact
+canonical domain. The local launcher re-reads its configured Awai peer and
+filters to the requested binding; malformed or duplicate domain parameters
+fail closed. Install, content staging, capability consent, and app launch stay
+on the user's loopback host. The user must start that local host before using
+the link. It targets the default local port; installations using another port
+need a separately configured launcher. This handoff has local DOM and query
+tests, but it has not been exercised in a browser against a running local host.
 Requests, URLs, query parameters, response sizes, concurrency, and per-client
 rates are bounded. TLS certificate files are read from the host and can be
 reloaded with `SIGHUP`.
@@ -47,11 +61,19 @@ Required environment:
 
 ```text
 ITONAMI_GATEWAY_HOST=itonami.app
+# Leave ITONAMI_GATEWAY_HOSTS unset until an individual alias passes its migration gates.
 ITONAMI_GATEWAY_BIND=127.0.0.1
 ITONAMI_GATEWAY_PORT=8443
-ITONAMI_GATEWAY_CERT=/etc/itonami/tls/itonami.app.crt
-ITONAMI_GATEWAY_KEY=/etc/itonami/tls/itonami.app.key
+ITONAMI_GATEWAY_CERT=/etc/itonami/tls/itonami-public-san.crt
+ITONAMI_GATEWAY_KEY=/etc/itonami/tls/itonami-public-san.key
 ```
+
+When `ITONAMI_GATEWAY_HOSTS` is omitted, the gateway accepts only
+`ITONAMI_GATEWAY_HOST`. Add one hostname at a time after its product release,
+accepted Awai domain binding, DNSSEC proof, direct-DNS plan, complete path and
+subdomain inventory, and matching certificate have passed review. The static
+TLS/HTTP allowlist does not itself authorize an app or establish domain
+ownership.
 
 Production staging requires a host with direct public A/AAAA records and
 working inbound TCP 443. Obtain and renew the certificate using an independent

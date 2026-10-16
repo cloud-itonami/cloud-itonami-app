@@ -1,0 +1,11 @@
+observed_at_utc,domain,account,zone_status,zone_nameservers,dnssec_status,dns_records,worker_routes,enabled_worker_custom_domains,pages_custom_domains,evidence_limit
+2026-10-16T21:32Z,aozora.app,cloud-kotoba,active,everton.ns.cloudflare.com|vivienne.ns.cloudflare.com,disabled,12,0,7,0,Cloudflare control-plane API only; no parent-delegation or public-origin proof
+2026-10-16T21:32Z,awai.network,cloud-kotoba,active,everton.ns.cloudflare.com|vivienne.ns.cloudflare.com,disabled,9,0,2,0,Cloudflare control-plane API only; no parent-delegation or public-origin proof
+2026-10-16T21:32Z,babiniku.net,cloud-kotoba,active,everton.ns.cloudflare.com|vivienne.ns.cloudflare.com,disabled,6,0,0,1,Cloudflare control-plane API only; no parent-delegation or public-origin proof
+2026-10-16T21:32Z,isekai.network,cloud-kotoba,active,everton.ns.cloudflare.com|vivienne.ns.cloudflare.com,disabled,6,0,0,1,Cloudflare control-plane API only; no parent-delegation or public-origin proof
+2026-10-16T21:32Z,itonami.app,cloud-kotoba,active,everton.ns.cloudflare.com|vivienne.ns.cloudflare.com,disabled,16,1,1,0,Cloudflare control-plane API only; no parent-delegation or public-origin proof
+2026-10-16T21:32Z,itonami.cloud,cloud-kotoba,active,everton.ns.cloudflare.com|vivienne.ns.cloudflare.com,disabled,32,4,15,2,Cloudflare control-plane API only; no parent-delegation or public-origin proof
+2026-10-16T21:32Z,murakumo.cloud,cloud-kotoba,active,everton.ns.cloudflare.com|vivienne.ns.cloudflare.com,disabled,28,10,14,0,Cloudflare control-plane API only; no parent-delegation or public-origin proof
+2026-10-16T21:32Z,oppai.fans,cloud-kotoba,active,everton.ns.cloudflare.com|vivienne.ns.cloudflare.com,disabled,0,0,0,0,Cloudflare control-plane API only; empty zone does not establish public DNS or owner intent
+2026-10-16T21:32Z,shinshi.club,cloud-kotoba,active,everton.ns.cloudflare.com|vivienne.ns.cloudflare.com,disabled,10,0,1,0,Cloudflare control-plane API only; no parent-delegation or public-origin proof
+2026-10-16T21:32Z,x402.nexus,cloud-kotoba,active,everton.ns.cloudflare.com|vivienne.ns.cloudflare.com,disabled,7,0,1,0,Cloudflare control-plane API only; no parent-delegation or public-origin proof

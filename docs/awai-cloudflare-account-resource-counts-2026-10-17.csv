@@ -1,0 +1,4 @@
+observed_at_utc,account,zones,dns_records,worker_routes,worker_custom_domains,workers_dev_settings,pages_project_hostnames,tunnels
+2026-10-16T19:51:05.916Z,cloud-kotoba,27,318,30,78,109,23,31
+2026-10-16T19:51:05.916Z,com-junkawasaki,0,0,0,0,0,0,0
+2026-10-16T19:51:05.916Z,fund-mithril,3,43,6,23,36,0,0

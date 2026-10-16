@@ -1,0 +1,5 @@
+;; Empty Amu native entrypoint used to subtract the trusted KEXE loader cost.
+(ns awai.current-ref-selfhost-empty-benchmark
+  (:export [main]))
+
+(defn main [] :i64 0)

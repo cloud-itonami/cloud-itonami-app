@@ -1,0 +1,208 @@
+{:format :kotoba.kir/v4,
+ :signature nil,
+ :functions
+ [{:name binary-code?,
+   :params [value],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_or_2 (= value 0)]
+    (if __kotoba_or_2 __kotoba_or_2 (= value 1))),
+   :param-types [:i64]}
+  {:name repo-bound-op?,
+   :params [op-code],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_3 (if (= op-code 4) false true)]
+    (if
+     __kotoba_and_3
+     (let
+      [__kotoba_and_2 (if (= op-code 5) false true)]
+      (if __kotoba_and_2 (if (= op-code 6) false true) __kotoba_and_2))
+     __kotoba_and_3)),
+   :param-types [:i64]}
+  {:name operation-allowed?,
+   :params [repo-post repo-write account-bind op-code],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (= op-code 0)
+    (let
+     [__kotoba_or_2 (= repo-post 1)]
+     (if __kotoba_or_2 __kotoba_or_2 (= repo-write 1)))
+    (if
+     (let
+      [__kotoba_or_3 (= op-code 1)]
+      (if
+       __kotoba_or_3
+       __kotoba_or_3
+       (let
+        [__kotoba_or_2 (= op-code 2)]
+        (if __kotoba_or_2 __kotoba_or_2 (= op-code 3)))))
+     (= repo-write 1)
+     (if
+      (= op-code 4)
+      (let
+       [__kotoba_or_2 (= repo-post 1)]
+       (if __kotoba_or_2 __kotoba_or_2 (= repo-write 1)))
+      (if
+       (let
+        [__kotoba_or_2 (= op-code 5)]
+        (if __kotoba_or_2 __kotoba_or_2 (= op-code 6)))
+       (= account-bind 1)
+       false)))),
+   :param-types [:i64 :i64 :i64 :i64]}
+  {:name authorize-op-code,
+   :params [input],
+   :result :i64,
+   :effects #{},
+   :body
+   (let
+    [repo-post
+     (record-get
+      [:record
+       :aozora/authorization-input
+       [[:repo-post :i64]
+        [:repo-write :i64]
+        [:account-bind :i64]
+        [:op-code :i64]
+        [:repo-match :i64]
+        [:collection-code :i64]]]
+      input
+      :repo-post)
+     repo-write
+     (record-get
+      [:record
+       :aozora/authorization-input
+       [[:repo-post :i64]
+        [:repo-write :i64]
+        [:account-bind :i64]
+        [:op-code :i64]
+        [:repo-match :i64]
+        [:collection-code :i64]]]
+      input
+      :repo-write)
+     account-bind
+     (record-get
+      [:record
+       :aozora/authorization-input
+       [[:repo-post :i64]
+        [:repo-write :i64]
+        [:account-bind :i64]
+        [:op-code :i64]
+        [:repo-match :i64]
+        [:collection-code :i64]]]
+      input
+      :account-bind)
+     op-code
+     (record-get
+      [:record
+       :aozora/authorization-input
+       [[:repo-post :i64]
+        [:repo-write :i64]
+        [:account-bind :i64]
+        [:op-code :i64]
+        [:repo-match :i64]
+        [:collection-code :i64]]]
+      input
+      :op-code)
+     repo-match
+     (record-get
+      [:record
+       :aozora/authorization-input
+       [[:repo-post :i64]
+        [:repo-write :i64]
+        [:account-bind :i64]
+        [:op-code :i64]
+        [:repo-match :i64]
+        [:collection-code :i64]]]
+      input
+      :repo-match)
+     collection-code
+     (record-get
+      [:record
+       :aozora/authorization-input
+       [[:repo-post :i64]
+        [:repo-write :i64]
+        [:account-bind :i64]
+        [:op-code :i64]
+        [:repo-match :i64]
+        [:collection-code :i64]]]
+      input
+      :collection-code)]
+    (if
+     (let
+      [__kotoba_or_2 (< op-code 0)]
+      (if __kotoba_or_2 __kotoba_or_2 (> op-code 6)))
+     1
+     (if
+      (let
+       [__kotoba_or_4 (if (binary-code? repo-post) false true)]
+       (if
+        __kotoba_or_4
+        __kotoba_or_4
+        (let
+         [__kotoba_or_3 (if (binary-code? repo-write) false true)]
+         (if
+          __kotoba_or_3
+          __kotoba_or_3
+          (let
+           [__kotoba_or_2 (if (binary-code? account-bind) false true)]
+           (if
+            __kotoba_or_2
+            __kotoba_or_2
+            (if (binary-code? repo-match) false true)))))))
+      3
+      (if
+       (let
+        [__kotoba_and_2 (repo-bound-op? op-code)]
+        (if __kotoba_and_2 (= repo-match 0) __kotoba_and_2))
+       2
+       (if
+        (if
+         (operation-allowed? repo-post repo-write account-bind op-code)
+         false
+         true)
+        3
+        (if
+         (let
+          [__kotoba_and_4 (= op-code 0)]
+          (if
+           __kotoba_and_4
+           (let
+            [__kotoba_and_3 (= repo-post 1)]
+            (if
+             __kotoba_and_3
+             (let
+              [__kotoba_and_2 (= repo-write 0)]
+              (if
+               __kotoba_and_2
+               (if (= collection-code 1) false true)
+               __kotoba_and_2))
+             __kotoba_and_3))
+           __kotoba_and_4))
+         3
+         0)))))),
+   :param-types [[:ref :aozora/authorization-input]]}],
+ :oracle-value 0,
+ :schema-identities
+ #:aozora{:authorization-input
+          "a8e267b35bc2671fef0644163da40389dc729b75b848e80d80976170271a800c"},
+ :exports [authorize-op-code],
+ :schemas
+ #:aozora{:authorization-input
+          [:record
+           :aozora/authorization-input
+           [[:repo-post :i64]
+            [:repo-write :i64]
+            [:account-bind :i64]
+            [:op-code :i64]
+            [:repo-match :i64]
+            [:collection-code :i64]]]},
+ :effects #{},
+ :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
+ :entry nil}

@@ -19,9 +19,22 @@
    ".cloudflare.com" ".cloudflare.net" ".cloudflare-dns.com"
    ".localhost" ".localdomain" ".local" ".internal" ".test"])
 
+(defn cloudflare-host?
+  "Return true for known Cloudflare-operated hostnames.
+
+  This prevents signed app bindings and content-origin records from depending
+  on provider-owned aliases such as `workers.dev` or `pages.dev`. It does not
+  prove that a custom hostname is served directly; DNS and gateway readback
+  remain separate migration gates."
+  [host]
+  (boolean
+   (and (string? host)
+        (let [host (str/lower-case host)]
+          (or (contains? blocked-hosts host)
+              (some #(str/ends-with? host %) blocked-host-suffixes))))))
+
 (defn- blocked-origin-host? [host]
-  (or (contains? blocked-hosts host)
-      (some #(str/ends-with? host %) blocked-host-suffixes)))
+  (cloudflare-host? host))
 
 (defn- valid-host? [host]
   (and (string? host)

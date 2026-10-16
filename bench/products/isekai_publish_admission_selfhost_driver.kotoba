@@ -1,0 +1,23 @@
+;; Amu native selfhost benchmark driver for the Isekai publish-tier policy.
+(ns isekai.publish-admission-selfhost-benchmark
+  (:require [isekai.moderation.publish-admission-core :as policy])
+  (:export [main]))
+
+(defn main [] :i64
+  (let [cases-ok?
+        (and (= 1 (policy/publish-admission-code 0))
+             (= 1 (policy/publish-admission-code 1))
+             (= 0 (policy/publish-admission-code 2))
+             (= 0 (policy/publish-admission-code 3))
+             (= 1 (policy/publish-admission-code 99)))
+        accepted
+        (loop [i 0 allow? true count 0]
+          (if (< i 1000000)
+            (recur (+ i 1)
+                   (not allow?)
+                   (+ count
+                      (if (= 0 (policy/publish-admission-code
+                                (if allow? 2 1)))
+                        1 0)))
+            count))]
+    (if (and cases-ok? (= accepted 500000)) accepted -1)))

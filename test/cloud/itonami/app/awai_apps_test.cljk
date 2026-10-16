@@ -96,7 +96,8 @@
   {:profile-id "awai-apps-test-v1"
    :chain-id "awai-apps-test-chain-v1"
    :genesis-hash "genesis-test-hash"
-   :validator-set-id "validators-test-v1"})
+   :validator-set-id "validators-test-v1"
+   :quorum-policy-id "quorum-policy-test-v1"})
 
 (defn- current-ref-proof [ref head-cid challenge now-ms]
   {:trust "amano-inga-verified-current-ref"
@@ -105,6 +106,7 @@
    :chain-id (:chain-id app-chain-profile)
    :genesis-hash (:genesis-hash app-chain-profile)
    :validator-set-id (:validator-set-id app-chain-profile)
+   :quorum-policy-id (:quorum-policy-id app-chain-profile)
    :ref ref
    :head-cid head-cid
    :challenge challenge
@@ -199,6 +201,21 @@
         result (resolve-candidates registry)]
     (is (= :refuse (:decision result)))
     (is (= :invalid-registry-record (:error result)))))
+
+(deftest domain-binding-refuses-cloudflare-managed-aliases
+  (let [registry (assoc-in (snapshot (registered-origins) {})
+                           [:records 0 :body :domain]
+                           "setup.workers.dev")
+        result (resolve-candidates registry)]
+    (is (= :refuse (:decision result)))
+    (is (= :invalid-registry-record (:error result)))))
+
+(deftest persisted-installation-refuses-cloudflare-managed-domain
+  (let [record (assoc-in (installed-record [{:id cell-id :dna-cid cell-cid}])
+                         [:origin :domain]
+                         "setup.pages.dev")]
+    (is (= [{:field :origin :error :invalid-domain-origin}]
+           (apps/installation-problems record)))))
 
 (deftest publisher-revocation-removes-the-release-from-domain-candidates
   (let [release-cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
