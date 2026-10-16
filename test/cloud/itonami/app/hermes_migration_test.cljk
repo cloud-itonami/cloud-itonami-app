@@ -78,3 +78,58 @@
       (spit heartbeat "2")
       (is (= before (revision root))
           "nor must changing it"))))
+
+(deftest scoped-preview-selects-one-real-profile
+  (let [root (temp-dir)
+        preview (resolve 'cloud.itonami.app.hermes-migration/preview)]
+    (write! root "config.yaml" "provider: local\n")
+    (write! root "profiles/wiki-patent-crawl/config.yaml" "provider: local\n")
+    (write! root "profiles/unrelated/config.yaml" "provider: local\n")
+    (let [one (preview {:home root :profile-id "wiki-patent-crawl"})]
+      (is (= ["wiki-patent-crawl"] (mapv :id (:profiles one))))
+      (is (= "wiki-patent-crawl" (get-in one [:source :profile-id])))
+      (is (= 1 (get-in one [:summary :profiles])))
+      (is (= false (get-in one [:safety :copies-grants]))))
+    (doseq [id ["../unrelated" "" "missing-profile" 17]]
+      (is (try (preview {:home root :profile-id id}) false
+               (catch Exception _ true))))))
+
+(deftest scoped-source-lock-is-unaffected-by-other-profile-edits
+  (let [root (temp-dir)
+        preview (resolve 'cloud.itonami.app.hermes-migration/preview)]
+    (write! root "profiles/wiki-patent-crawl/config.yaml" "provider: local\n")
+    (write! root "profiles/unrelated/config.yaml" "provider: local\n")
+    (let [opts {:home root :profile-id "wiki-patent-crawl"}
+          before (get-in (preview opts) [:source :revision])]
+      (write! root "profiles/unrelated/config.yaml" "provider: changed\n")
+      (is (= before (get-in (preview opts) [:source :revision])))
+      (write! root "profiles/wiki-patent-crawl/config.yaml" "provider: changed\n")
+      (is (not= before (get-in (preview opts) [:source :revision]))))))
+
+(deftest identity-only-stage-does-not-export-credentials-persona-or-history
+  (let [root (temp-dir) data (temp-dir)
+        preview (resolve 'cloud.itonami.app.hermes-migration/preview)
+        stage (resolve 'cloud.itonami.app.hermes-migration/stage!)
+        provision (resolve 'cloud.itonami.app.hermes-migration/provision!)]
+    (write! root "profiles/wiki-patent-crawl/config.yaml" "provider: local\n")
+    (let [manifest (preview {:home root :profile-id "wiki-patent-crawl"})
+          staged (stage {:home root :data-dir data :manifest manifest :identity-only? true})]
+      (is (= "staged" (:status staged)))
+      (is (= "identity-only" (:import-mode staged)))
+      (is (= [[]] (mapv :artifacts (:profiles staged))))
+      (is (= false (get-in staged [:safety :copies-conversations])))
+      (is (try (provision {:manifest staged :carry-over-permissions true}) false
+               (catch Exception _ true))))))
+
+(deftest scoped-stage-never-inventories-unrelated-profile-content
+  (let [root (temp-dir) data (temp-dir)
+        preview (resolve 'cloud.itonami.app.hermes-migration/preview)
+        stage (resolve 'cloud.itonami.app.hermes-migration/stage!)
+        original @inventory calls (atom [])]
+    (write! root "profiles/wiki-patent-crawl/config.yaml" "provider: local\n")
+    (write! root "profiles/unrelated/config.yaml" "provider: local\n")
+    (let [m (preview {:home root :profile-id "wiki-patent-crawl"})]
+      (with-redefs-fn {inventory (fn [profile] (swap! calls conj (:id profile)) (original profile))}
+        #(stage {:home root :data-dir data :manifest m :identity-only? true}))
+      (is (seq @calls))
+      (is (every? #{"wiki-patent-crawl"} @calls)))))
