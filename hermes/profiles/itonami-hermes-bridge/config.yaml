@@ -73,8 +73,8 @@ gateway:
   multiplex_profiles: true
 _config_version: 46
 agent:
-  max_turns: 500
-  run_budget_seconds: 600
+  max_turns: 80
+  run_budget_seconds: 1200
 cron:
   bot_chat_delivery_timeout_seconds: 900
   max_parallel_jobs: 12
