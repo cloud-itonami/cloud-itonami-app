@@ -11,7 +11,7 @@ model:
   key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
   default: mishima
   max_tokens: 8192
-  context_length: 131072
+  context_length: 32768
 auxiliary:
   free_only: true
   vision:
