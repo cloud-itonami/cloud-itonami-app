@@ -1,0 +1,26 @@
+{
+  "jobs": [
+    {
+      "base_url": null,
+      "context_from": null,
+      "deliver": "local",
+      "enabled": true,
+      "enabled_toolsets": null,
+      "id": "aad486c789c6",
+      "model": null,
+      "name": "bridge-handoff-tick",
+      "no_agent": false,
+      "prompt": "itonami-hermes-bridge: SOUL.md を読んで 1 tick 実行せよ。/Users/junkawasaki/github/workspaces/itonami-hermes-bridge/handoff-hermes-equivalence-20261015/HANDOFF.md から未チェックで [owner] でない項目を 1 つだけ選び、/Users/junkawasaki/github/wt/itonami-hermes-bridge/<task> の worktree・branch bot/itonami-hermes-bridge/<task> で実装とテストをして PR を開き、HANDOFF.md にチェックと PR URL を付ける。propose only（merge・deploy・再起動・認証情報変更なし、推論は murakumo のみ）。3〜6 行で報告。対象項目が無ければ「残り 0（[owner] 待ちのみ）」と報告して終える。",
+      "provider": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "20 11 * * *",
+        "display": "20 11 * * *"
+      },
+      "script": null,
+      "skill": null,
+      "skills": [],
+      "workdir": "/Users/junkawasaki/github/cloud-itonami/cloud-itonami-app"
+    }
+  ]
+}
