@@ -72,6 +72,19 @@ nbb は既存資産の実行環境として残るが、新規 script host とし
   真実と一致）を確認して着地（kotoba-lang/kotoba 13ddc73f）。interpreter backend の
   string=? 欠落は記録済み。
 
+## Migration candidate ledger (2026-09-25 re-measured; earlier entries preserved below)
+
+- 2026-09-25 tick: local shell recovered (terminal output normal, fg). Re-verified
+  via local git: origin/main since 09-24 tick landed deps/stdlib surface only —
+  kbb_deps :git/sha legacy-sha (4ee2ce513) / newest-wins (40ff2ee1b) / npm-node-path
+  (6aa0df7af), ns-form+implicit stdlib doors (ca84a6edc), stdlib pprint (3c5cfaee3)
+  + error (39c7ee545), west-sibling :local/root (593c2e8be/21e059ba0), and
+  kotoba-migrate-all mechanical codemods (d8b2a52cb/3532636d0 — namespace tokens
+  only; the sole kbb_native.cljk diff is clojure.walk -> kotoba.lang.coll). No
+  new guest op (browse/proc/edn/wasm) in any commit. kotoba#597 confirmed OPEN
+  via GitHub API (updated 09-07). None of the 6 blockers lifted. Unblocked
+  candidate none - Ports this tick: 0.
+
 ## Migration candidate ledger (2026-09-24 re-measured; earlier entries preserved below)
 
 - 2026-09-24 tick: main landed kbb_deps :git/sha resolution + implicit kotoba
@@ -119,7 +132,8 @@ nbb は既存資産の実行環境として残るが、新規 script host とし
   **scope 内**の path なら parent dir を browse して entry の D flag を見る形で
   is-directory は表現可能（旧「型判定 op が無い」blocker は scope 内については解消）。
   残る blocker: `clojure -Spath` が返す classpath には ~/.m2 / ~/.gitlibs 等
-  checkout root 外の dir が含まれ、それらは wildcard 禁止の policy scope に入らない。
+  checkout root 外の dir が含まれ、それらは wildcard 禁止の policy scope に
+  入らない。
   original はそれらを dir filter に含むため、port は parity でなく挙動変更になる。
   blocked 維持（代替しない）
 - tender-debug.cljs — WebAssembly API

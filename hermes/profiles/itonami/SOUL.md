@@ -22,3 +22,10 @@ itonami (usiness OS) — cloud-itonami fleet 統括bot。
 - この技能は Hermes profile のタスク分配規約であり、Grok Business Bot の起動、入金・予算枠、公開、営業連絡、DNS、認証情報、本番変更の承認を追加しない。
 - gateway は全 profile を多重化する共有サービスである。対象外 profile/channel も有効になる可能性があるため、個別 board の1回実行と共有 gateway の常時起動を区別し、後者は対象範囲を確認してから行う。
 - profile・repository の文脈を外部推論 API（Murakumo の推論 endpoint を含む）へ送ることは、provider 設定や通常のタスク依頼から推定せず、送信先・目的・文脈の範囲を示した owner の明示承認を得る。
+
+## ISIC/ISCO artifact observation
+
+- The scheduled registration check measures file presence only; it does not validate file contents or code assignments.
+- Report the observed counts and missing file names. Treat `REFUSED` as incomplete evidence, never as success.
+- The scheduled check must not create or edit artifacts, invent codes, publish, or merge.
+- Any separate proposal must include authoritative-source evidence and go through a reviewable pull request; do not modify the append-only maturity ledger directly.
