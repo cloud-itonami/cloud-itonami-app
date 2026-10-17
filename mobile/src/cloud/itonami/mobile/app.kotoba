@@ -1,0 +1,1016 @@
+(ns cloud.itonami.mobile.app
+  "Amu/Kotoba mobile UI guest.
+
+  The guest owns screen state, transitions, and the rendered document. The
+  JavaScript host owns browser effects (fetch, storage, scroll, and DOM event
+  delivery) and passes their results back as bounded strings."
+  (:export [init view step]))
+
+;; JSON scanning. API bodies cross the host boundary as text; the guest reads
+;; only the fields this screen renders. Values are skipped structurally, so a
+;; comma or brace inside an actor's description cannot desynchronise the scan.
+(defn cp-width [cp :i64] :i64
+  (cond (< cp 128) 1 (< cp 2048) 2 (< cp 65536) 3 :else 4))
+
+(defn ws? [cp :i64] :bool
+  (or (= cp 32) (= cp 9) (= cp 10) (= cp 13)))
+
+(defn skip-ws [s :string i :i64 n :i64] :i64
+  (if (>= i n) i
+      (if (ws? (string-code-point-at s i))
+        (skip-ws s (+ i 1) n)
+        i)))
+
+(defn scan-string-end [s :string i :i64 n :i64] :i64
+  (if (>= i n) -1
+      (let [cp (string-code-point-at s i)]
+        (cond (= cp 34) i
+              (= cp 92) (scan-string-end s (+ i 2) n)
+              :else (scan-string-end s (+ i (cp-width cp)) n)))))
+
+(defn scan-balanced [s :string i :i64 n :i64 depth :i64] :i64
+  (if (>= i n) -1
+      (let [cp (string-code-point-at s i)]
+        (cond
+          (= cp 34) (let [e (scan-string-end s (+ i 1) n)]
+                      (if (< e 0) -1 (scan-balanced s (+ e 1) n depth)))
+          (or (= cp 123) (= cp 91)) (scan-balanced s (+ i 1) n (+ depth 1))
+          (or (= cp 125) (= cp 93)) (if (= depth 1) (+ i 1)
+                                       (scan-balanced s (+ i 1) n (- depth 1)))
+          :else (scan-balanced s (+ i (cp-width cp)) n depth)))))
+
+(defn scan-scalar-end [s :string i :i64 n :i64] :i64
+  (if (>= i n) i
+      (let [cp (string-code-point-at s i)]
+        (if (or (= cp 44) (= cp 125) (= cp 93) (ws? cp)) i
+            (scan-scalar-end s (+ i (cp-width cp)) n)))))
+
+(defn skip-value [s :string i :i64 n :i64] :i64
+  (if (>= i n) -1
+      (let [cp (string-code-point-at s i)]
+        (cond (= cp 34) (let [e (scan-string-end s (+ i 1) n)]
+                         (if (< e 0) -1 (+ e 1)))
+              (or (= cp 123) (= cp 91)) (scan-balanced s i n 0)
+              :else (scan-scalar-end s i n)))))
+
+(defn member-start [s :string key :string i :i64 n :i64] :i64
+  (let [a (skip-ws s i n)]
+    (if (or (>= a n) (not= (string-code-point-at s a) 34)) -1
+        (let [ke (scan-string-end s (+ a 1) n)]
+          (if (< ke 0) -1
+              (let [k (string-substring s (+ a 1) ke)
+                    colon (skip-ws s (+ ke 1) n)]
+                (if (or (>= colon n) (not= (string-code-point-at s colon) 58)) -1
+                    (let [v (skip-ws s (+ colon 1) n)]
+                      (if (>= v n) -1
+                          (if (string=? k key) v
+                              (let [e (skip-value s v n)
+                                    sep (skip-ws s e n)]
+                                (if (or (< e 0) (>= sep n)
+                                        (not= (string-code-point-at s sep) 44)) -1
+                                    (member-start s key (+ sep 1) n)))))))))))))
+
+(defn raw-field [s :string key :string] :string
+  (let [n (string-byte-length s)
+        start (member-start s key (skip-ws s 1 n) n)]
+    (if (< start 0) ""
+        (let [end (skip-value s start n)]
+          (if (< end 0) "" (string-substring s start end))))))
+
+(defn unescape-json-string [s :string i :i64 end :i64 acc :string] :string
+  (if (>= i end) acc
+      (let [cp (string-code-point-at s i)]
+        (if (= cp 92)
+          (if (>= (+ i 1) end) acc
+              (let [escaped (string-code-point-at s (+ i 1))
+                    piece (cond
+                            (= escaped 34) "\""
+                            (= escaped 92) "\\"
+                            (= escaped 47) "/"
+                            (= escaped 98) " "
+                            (= escaped 102) " "
+                            (= escaped 110) " "
+                            (= escaped 114) " "
+                            (= escaped 116) " "
+                            (= escaped 117) "�"
+                            :else (string-substring s (+ i 1) (+ i 2)))]
+                (unescape-json-string s (+ i (if (= escaped 117) 6 2)) end
+                                      (string-concat acc piece))))
+          (let [width (cp-width cp)]
+            (unescape-json-string s (+ i width) end
+                                  (string-concat acc (string-substring s i (+ i width)))))))))
+
+(defn json-field [s :string key :string] :string
+  (let [raw (raw-field s key)]
+    (if (or (= (string-byte-length raw) 0)
+            (not= (string-code-point-at raw 0) 34)) ""
+        (let [end (scan-string-end raw 1 (string-byte-length raw))]
+          (if (< end 0) "" (unescape-json-string raw 1 end ""))))))
+
+(defn array-items-from [s :string i :i64 n :i64 acc :document] :document
+  (let [a (skip-ws s i n)]
+    (if (or (>= a n) (= (string-code-point-at s a) 93)) acc
+        (let [e (skip-value s a n)]
+          (if (or (< e 0) (>= (document-count acc) 512)) acc
+              (let [next (skip-ws s e n)
+                    item (document-string (string-substring s a e))]
+                (if (or (>= next n) (= (string-code-point-at s next) 93))
+                  (document-vector-conj acc item)
+                  (if (= (string-code-point-at s next) 44)
+                    (array-items-from s (+ next 1) n (document-vector-conj acc item))
+                    acc))))))))
+
+(defn json-array-field [s :string key :string] :document
+  (let [raw (raw-field s key)
+        n (string-byte-length raw)]
+    (if (or (= n 0) (not= (string-code-point-at raw 0) 91))
+      (document-vector)
+      (array-items-from raw 1 n (document-vector)))))
+
+(defn digit [cp :i64] :i64
+  (if (or (< cp 48) (> cp 57)) -1 (- cp 48)))
+
+(defn decimal-from [s :string i :i64 n :i64 acc :i64] :i64
+  (if (>= i n) acc
+      (let [d (digit (string-code-point-at s i))]
+        (if (< d 0) -1 (decimal-from s (+ i 1) n (+ (* acc 10) d))))))
+
+(defn decimal [s :string] :i64
+  (if (= (string-byte-length s) 0) -1
+      (decimal-from s 0 (string-byte-length s) 0)))
+
+(defn actor [raw :string] :document
+  (let [authority (raw-field raw "authorityLibrary")
+        robotics (raw-field raw "robotics")
+        reference-only (raw-field raw "referenceOnly")]
+  (document-map
+   :repo (document-string (json-field raw "repo"))
+   :name (document-string (json-field raw "name"))
+   :role (document-string (json-field raw "role"))
+   :domain (document-string (json-field raw "domain"))
+   :governor (document-string (json-field raw "governor"))
+   :execution (document-string (json-field raw "execution"))
+   :status (document-string (json-field raw "status"))
+   :maturity (document-string (json-field raw "maturity"))
+   :isic-rev5 (document-string (json-field raw "isicRev5"))
+   :isic (document-string (json-field raw "isic"))
+   :iso3166 (document-string (json-field raw "iso3166"))
+   :isco-08 (document-string (json-field raw "isco08"))
+   :social-impact (document-string (array-string (json-array-field raw "socialImpact") 0 "" "、"))
+   :required-technologies (document-string (array-string (json-array-field raw "requiredTechnologies") 0 "" "、"))
+   :robotics (document-string (if (string=? robotics "true") "はい" (if (string=? robotics "false") "いいえ" "")))
+   :reference-only (document-string (if (string=? reference-only "true") "はい" (if (string=? reference-only "false") "いいえ" "")))
+   :endpoint (document-string (json-field raw "endpoint"))
+   :remote (document-string (json-field raw "remote"))
+   :path (document-string (json-field raw "path"))
+   :revision (document-string (json-field raw "revision"))
+   :authority-library (document-string (json-field authority "repoName"))
+   :raw (document-string raw))))
+
+(defn embedded-command-tables [] :string __COMMAND_TABLES__)
+
+(defn actors-from [raws :document i :i64 acc :document] :document
+  (let [n (document-count raws)]
+    (if (or (>= i n) (>= i 32)) acc
+        (let [raw (option-value-of [:option :document]
+                                   (document-vector-at raws i)
+                                   (document-string "{}"))]
+          (actors-from raws (+ i 1)
+                       (document-vector-conj acc
+                                             (actor (option-value-of [:option :string]
+                                                                     (document-string-value raw)
+                                                                     "{}"))))))))
+
+(defn dget [d :document k :keyword] :document
+  (option-value-of [:option :document] (document-get d k) (document-null)))
+
+(defn dstr [d :document] :string
+  (option-value-of [:option :string] (document-string-value d) ""))
+
+(defn dat [v :document i :i64] :document
+  (option-value-of [:option :document] (document-vector-at v i) (document-null)))
+
+(defn array-string [items :document i :i64 acc :string separator :string] :string
+  (let [n (document-count items)]
+    (if (>= i n) acc
+        (let [raw (option-value-of [:option :string]
+                                   (document-string-value (dat items i)) "")
+              value (if (and (> (string-byte-length raw) 1)
+                             (= (string-code-point-at raw 0) 34))
+                      (json-field (string-concat "{\"value\":" (string-concat raw "}")) "value")
+                      raw)]
+          (array-string items (+ i 1)
+                        (if (= i 0) value (string-concat acc (string-concat separator value)))
+                        separator)))))
+
+(defn el [tag :string attrs :document children :document] :document
+  (document-map :tag (document-string tag) :attrs attrs :children children))
+
+(defn leaf [tag :string attrs :document text :string] :document
+  (document-map :tag (document-string tag) :attrs attrs :text (document-string text)))
+
+(defn action-button [key :string text :string kind :string] :document
+  (leaf "button" (document-map :data-k (document-string key)
+                                :type (document-string "button")
+                                :class (document-string "dads-button")
+                                :data-type (document-string kind)
+                                :data-size (document-string "md")) text))
+
+(defn form-input [id :string label :string kind :string value :string placeholder :string target :string] :document
+  (el "div" (document-map :class (document-string "dads-form-control-label")
+                          :data-size (document-string "md"))
+      (document-vector
+       (leaf "label" (document-map :class (document-string "dads-form-control-label__label")
+                                   :for (document-string id)) label)
+       (el "div" (document-map :class (document-string "dads-input-text"))
+           (document-vector
+            (leaf "input" (document-map :data-k (document-string target)
+                                         :id (document-string id)
+                                         :type (document-string kind)
+                                         :class (document-string "dads-input-text__input")
+                                         :data-size (document-string "md")
+                                         :value (document-string value)
+                                         :placeholder (document-string placeholder)
+                                         :autocomplete (document-string "off")) ""))))))
+
+(defn detail-pair [label :string value :string] :document
+  (el "div" (document-map :class (document-string "dds-ext-stack"))
+      (document-vector
+       (leaf "dt" (document-map :class (document-string "dads-form-control-label__label")) label)
+       (leaf "dd" (document-map) value))))
+
+(defn detail-row [actor :document index :i64] :document
+  (cond
+    (= index 0) (document-vector (document-string "名前") (dget actor :name))
+    (= index 1) (document-vector (document-string "リポジトリ") (dget actor :repo))
+    (= index 2) (document-vector (document-string "役割") (document-string (role-label (dstr (dget actor :role)))))
+    (= index 3) (document-vector (document-string "領域") (dget actor :domain))
+    (= index 4) (document-vector (document-string "ガバナー") (dget actor :governor))
+    (= index 5) (document-vector (document-string "実行形態") (dget actor :execution))
+    (= index 6) (document-vector (document-string "公開状態") (dget actor :status))
+    (= index 7) (document-vector (document-string "成熟度") (dget actor :maturity))
+    (= index 8) (document-vector (document-string "ISIC Rev.5") (dget actor :isic-rev5))
+    (= index 9) (document-vector (document-string "ISIC") (dget actor :isic))
+    (= index 10) (document-vector (document-string "国・地域（ISO 3166）") (dget actor :iso3166))
+    (= index 11) (document-vector (document-string "職業（ISCO-08）") (dget actor :isco-08))
+    (= index 12) (document-vector (document-string "社会的インパクト") (dget actor :social-impact))
+    (= index 13) (document-vector (document-string "必要な技術") (dget actor :required-technologies))
+    (= index 14) (document-vector (document-string "ロボティクス") (dget actor :robotics))
+    (= index 15) (document-vector (document-string "参照のみ") (dget actor :reference-only))
+    (= index 16) (document-vector (document-string "エンドポイント") (dget actor :endpoint))
+    (= index 17) (document-vector (document-string "組織") (dget actor :remote))
+    (= index 18) (document-vector (document-string "パス") (dget actor :path))
+    (= index 19) (document-vector (document-string "リビジョン") (dget actor :revision))
+    (= index 20) (document-vector (document-string "準拠する目録") (dget actor :authority-library))
+    :else (document-vector)))
+
+(defn detail-rows [actor :document index :i64 acc :document] :document
+  (if (>= index 21) acc
+      (let [pair (detail-row actor index)
+            label (dstr (dat pair 0))
+            value (dstr (dat pair 1))]
+        (detail-rows actor (+ index 1)
+                     (if (= (string-byte-length value) 0) acc
+                         (document-vector-conj acc (detail-pair label value)))))))
+
+(defn role-label [role :string] :string
+  (cond
+    (string=? role "sector-agent") "産業（ISIC）"
+    (string=? role "occupation-agent") "職業（ISCO）"
+    (string=? role "jurisdiction-agent") "法域・国"
+    (string=? role "association-compliance-agent") "業界団体のコンプライアンス"
+    (string=? role "municipal-agent") "自治体の条例"
+    (string=? role "end-user-application") "アプリケーション"
+    (string=? role "legal-entity-keyed") "法人"
+    (string=? role "classification-agent") "分類"
+    (string=? role "continuous-orchestrator") "常駐オーケストレーター"
+    (string=? role "marketplace-service") "マーケットプレイス"
+    (string=? role "crowdfunding-service") "クラウドファンディング"
+    (string=? role "artificial-organism-actor") "人工生命"
+    (string=? role "agent-instruction-package") "エージェント指示パッケージ"
+    :else role))
+
+(defn actor-card [a :document i :i64] :document
+  (let [name (dstr (dget a :name))
+        repo (dstr (dget a :repo))
+        role (dstr (dget a :role))
+        domain (dstr (dget a :domain))
+        execution (dstr (dget a :execution))
+        status (dstr (dget a :status))
+        endpoint (dstr (dget a :endpoint))
+        key (string-concat "open-" (string-from-i64 i))]
+    (el "article" (document-map :class (document-string "dds-ext-card dds-ext-stack"))
+        (document-vector
+         (leaf "h2" (document-map) (if (= (string-byte-length name) 0) repo name))
+         (leaf "p" (document-map) repo)
+         (leaf "p" (document-map)
+               (string-concat
+                (string-concat
+                 (string-concat (role-label role)
+                                (if (= (string-byte-length domain) 0) ""
+                                    (string-concat " · " domain)))
+                 (if (= (string-byte-length execution) 0) ""
+                     (string-concat " · " execution)))
+                (if (= (string-byte-length status) 0) ""
+                    (string-concat " · " status))))
+         (leaf "p" (document-map) (if (= (string-byte-length endpoint) 0) "未デプロイ" endpoint))
+         (leaf "button" (document-map :data-k (document-string key)
+                                      :type (document-string "button")
+                                      :class (document-string "dads-button")
+                                      :data-type (document-string "outline")
+                                      :data-size (document-string "sm")
+                                      :aria-label (document-string (string-concat name " の詳細")))
+               "詳しく見る")))))
+
+(defn actor-cards [actors :document i :i64 n :i64 acc :document] :document
+  (if (>= i n) acc
+      (actor-cards actors (+ i 1) n
+                   (document-vector-conj acc (actor-card (dat actors i) i)))))
+
+(defn actor-detail [a :document] :document
+  (el "section" (document-map :class (document-string "dds-ext-stack"))
+      (document-vector
+       (action-button "back" "← 一覧に戻る" "outline")
+       (leaf "h1" (document-map) (if (= (string-byte-length (dstr (dget a :name))) 0)
+                                    (dstr (dget a :repo)) (dstr (dget a :name))))
+       (el "dl" (document-map :class (document-string "dds-ext-stack"))
+           (detail-rows a 0 (document-vector)))
+       (leaf "p" (document-map) "この内容は actor の blueprint が宣言しているものを、edge の目録からそのまま表示しています。")
+       (action-button "back" "← 一覧に戻る" "outline"))))
+
+(defn role-options [roles index :i64 acc :document] :document
+  (if (>= index (document-count roles)) acc
+      (let [role (dat roles index)
+            value (dstr (dget role :value))
+            count (dstr (dget role :count))
+            label (string-concat (role-label value)
+                                 (string-concat "（" (string-concat count "）")))]
+        (role-options roles (+ index 1)
+                      (document-vector-conj
+                       acc (leaf "option" (document-map :value (document-string value)) label))))))
+
+(defn role-select [state :document] :document
+  (let [roles (dget state :roles)
+        current (dstr (dget state :role))]
+    (if (= (document-count roles) 0) (leaf "span" (document-map) "")
+        (el "div" (document-map :class (document-string "dads-form-control-label")
+                                :data-size (document-string "md"))
+            (document-vector
+             (leaf "label" (document-map :class (document-string "dads-form-control-label__label")
+                                         :for (document-string "role")) "役割")
+             (el "div" (document-map :class (document-string "dads-select"))
+                 (document-vector
+                  (el "div" (document-map :class (document-string "dads-select__control"))
+                      (document-vector
+                       (el "select" (document-map :id (document-string "role")
+                                                  :data-k (document-string "role")
+                                                  :value (document-string (if (= current "") "all" current))
+                                                  :class (document-string "dads-select__select")
+                                                  :data-size (document-string "md"))
+                           (document-vector-conj
+                            (document-vector (leaf "option" (document-map :value (document-string "all")) "すべての役割"))
+                            (role-options roles 0 (document-vector))))
+                       (leaf "span" (document-map :class (document-string "dads-select__chevron")) ""))))))))))
+
+(defn matched-summary [state :document] :string
+  (let [matched (dstr (dget state :matched))
+        total (dstr (dget state :total))
+        applied-query (dstr (dget state :applied-query))
+        applied-role (dstr (dget state :applied-role))
+        query-clause (if (= applied-query "") "" (string-concat "条件: " applied-query))
+        role-clause (if (= applied-role "") ""
+                        (string-concat "役割: " (role-label applied-role)))
+        clauses (if (= query-clause "") role-clause
+                    (if (= role-clause "") query-clause
+                        (string-concat query-clause (string-concat " / " role-clause))))]
+    (cond
+      (= matched "") "まだ読み込んでいません。"
+      (= clauses "") (string-concat "全 " (string-concat matched " 件を表示しています。"))
+      (= total "") (string-concat matched (string-concat " 件が一致しました。" clauses))
+      :else (string-concat matched
+                           (string-concat " 件が一致しました（全 "
+                                          (string-concat total
+                                                         (string-concat " 件中）。" clauses)))))))
+
+(defn fleet-view [state :document] :document
+  (let [phase (dstr (dget state :phase))
+        query (dstr (dget state :query))
+        actors (dget state :actors)
+        selected (dget state :selected)
+        matched-count (decimal (dstr (dget state :matched)))
+        shown-count (decimal (dstr (dget state :shown)))
+        remaining (if (> matched-count shown-count) (- matched-count shown-count) 0)
+        n (document-count actors)]
+    (if (>= (decimal (dstr selected)) 0)
+      (actor-detail (dat actors (decimal (dstr selected))))
+      (el "section" (document-map :class (document-string "dds-ext-stack"))
+          (document-vector
+           (leaf "h1" (document-map) "営みフリート")
+           (leaf "p" (document-map) "cloud-itonami の actor 群を、blueprint が宣言している内容で引きます。")
+           (leaf "p" (document-map) "名前・領域・国コードなどで検索し、actor の宣言を確認できます。")
+           (form-input "q" "検索" "search" query "repo 名・領域・国コードなど" "query")
+           (role-select state)
+           (action-button "search" "検索" "solid-fill")
+           (if (= phase "loading")
+             (leaf "p" (document-map :role (document-string "status")) "フリートの目録を取得しています。")
+             (if (= phase "error")
+               (el "div" (document-map :role (document-string "alert")
+                                        :class (document-string "dads-notification-banner")
+                                        :data-type (document-string "error"))
+                   (document-vector
+                    (leaf "p" (document-map) "取得できませんでした")
+                    (leaf "p" (document-map) (dstr (dget state :error)))
+                    (action-button "retry" "再試行" "outline")))
+               (el "div" (document-map :class (document-string "dds-ext-stack"))
+                   (document-vector
+                    (leaf "p" (document-map) (matched-summary state))
+                    (actor-cards actors 0 n (document-vector))
+                    (if (> remaining 0)
+                      (leaf "p" (document-map) (string-concat "残り " (string-concat (string-from-i64 remaining) " 件は表示していません。条件を絞ってください。")))
+                      (leaf "span" (document-map) ""))
+                    (if (= n 0) (leaf "p" (document-map) "条件に一致する actor は見つかりませんでした。")
+                        (leaf "span" (document-map) "")))))))))))
+
+(defn about-view [] :document
+  (el "section" (document-map :class (document-string "dds-ext-stack"))
+      (document-vector
+       (leaf "h1" (document-map) "このアプリについて")
+       (leaf "p" (document-map) "Cloud Itonami は、cloud-itonami（営み）が公開している actor の目録をスマートフォンで引くためのアプリです。アカウントもサインインも要りません。")
+       (leaf "h2" (document-map) "できること")
+       (leaf "p" (document-map) "約 1,300 の actor を検索し、役割・領域・必要な技術・社会的インパクト・ISIC などの宣言を確認できます。コマンド画面ではデスクトップの itonami と同じコマンド表を引けます。")
+       (leaf "h2" (document-map) "データとプライバシー")
+       (leaf "p" (document-map) "フリート画面から送るのは検索条件だけです。コマンド画面の ingress と token はこの端末の中にだけ保存されます。")
+       (leaf "h2" (document-map) "運営とお問い合わせ")
+       (leaf "p" (document-map) "support@itonami.cloud")
+       (leaf "p" (document-map) "https://itonami.cloud/legal/privacy/")
+       (leaf "p" (document-map) "https://itonami.cloud/legal/terms/"))))
+
+(defn facet-from [raw :string] :document
+  (document-map :value (document-string (json-field raw "value"))
+                :count (document-string (json-field raw "count"))))
+
+(defn facets-from [raws :document i :i64 acc :document] :document
+  (if (or (>= i (document-count raws)) (>= i 32)) acc
+      (facets-from raws (+ i 1)
+                   (document-vector-conj
+                    acc (facet-from (option-value-of [:option :string]
+                                                     (document-string-value (dat raws i)) "{}"))))))
+
+(defn terminal-entry [kind :string value :string] :document
+  (document-map :kind (document-string kind) :text (document-string value)))
+
+(defn transcript-items [items :document i :i64 n :i64 acc :document] :document
+  (if (>= i n) acc
+      (transcript-items items (+ i 1) n
+                        (document-vector-conj acc
+                                             (transcript-entry-view (dat items i))))))
+
+(defn transcript-entry-view [entry :document] :document
+  (let [kind (dstr (dget entry :kind))
+        value (dstr (dget entry :text))
+        status (dstr (dget entry :status))]
+    (cond
+      (string=? kind "sent") (leaf "p" (document-map) (string-concat "❯ " value))
+      (string=? kind "answered") (el "article" (document-map :class (document-string "dds-ext-stack"))
+                                     (document-vector (leaf "p" (document-map) (string-concat "HTTP " status))
+                                                      (leaf "pre" (document-map) value)))
+      (string=? kind "failed") (el "article" (document-map :role (document-string "alert"))
+                                  (document-vector (leaf "h2" (document-map) "届きませんでした")
+                                                   (leaf "p" (document-map) value)
+                                                   (leaf "p" (document-map) "サーバからの応答はありません。")))
+      (string=? kind "refused") (el "article" (document-map :role (document-string "status"))
+                                   (document-vector (leaf "h2" (document-map) "組み立てられませんでした")
+                                                    (leaf "p" (document-map) value)
+                                                    (leaf "p" (document-map) "サーバには問い合わせていません。")))
+      (string=? kind "unavailable") (el "article" (document-map :role (document-string "status"))
+                                       (document-vector (leaf "h2" (document-map) "この画面では実行できません")
+                                                        (leaf "p" (document-map) value)
+                                                        (leaf "p" (document-map) "サーバには問い合わせていません。")))
+      :else (leaf "p" (document-map) value))))
+
+(defn terminal-submit-button [busy :string] :document
+  (let [attrs (document-map :data-k (document-string "terminal-submit")
+                            :type (document-string "button")
+                            :class (document-string "dads-button")
+                            :data-type (document-string "solid-fill")
+                            :data-size (document-string "md"))]
+    (leaf "button" (if (string=? busy "true")
+                      (document-assoc attrs :disabled (document-string "disabled")) attrs)
+          (if (string=? busy "true") "送信中…" "送信"))))
+
+(defn terminal-view [state :document] :document
+  (let [paired (dstr (dget state :paired))
+        base (dstr (dget state :base))
+        base-draft (dstr (dget state :base-draft))
+        token-draft (dstr (dget state :token-draft))
+        line (dstr (dget state :line))
+        transcript (dget state :transcript)
+        busy (dstr (dget state :busy))
+        count (document-count transcript)]
+    (el "section" (document-map :class (document-string "dds-ext-stack"))
+        (document-vector
+         (leaf "h1" (document-map) "itonami")
+         (leaf "p" (document-map) "デスクトップの itonami と同じコマンド表を、この画面から引きます。")
+         (leaf "p" (document-map) (string-concat "接続先: " base))
+         (if (string=? paired "true")
+           (leaf "p" (document-map) "この端末は対になっています。")
+           (el "section" (document-map :class (document-string "dds-ext-stack"))
+               (document-vector
+                (leaf "p" (document-map :role (document-string "status"))
+                      "この端末はまだ対になっていません。base と token の両方があるまで、コマンドは送られません。")
+                (form-input "pair-base" "ingress" "url" base-draft "https://agent.itonami.cloud" "base-draft")
+                (form-input "pair-token" "token" "password" token-draft "この端末のための token" "token-draft")
+                (action-button "pair-save" "保存" "solid-fill")
+                (leaf "p" (document-map) "token はこの端末の中に保存されます。サーバへ送信するのは、コマンドを実行したときだけです。"))))
+         (leaf "p" (document-map) "読み取りは GET のみです。画面が許可する書き込みは ingress の3つの会話用パステンプレートに限られます。現在の表で使えるのは bots task です。")
+         (if (= count 0) (leaf "p" (document-map) "コマンドを入力してください。例: bots list / commands bot")
+             (el "div" (document-map :class (document-string "dds-ext-stack"))
+                 (transcript-items transcript 0 count (document-vector))))
+         (form-input "cmd" "コマンド" "text" line "例: bots list" "terminal-line")
+         (terminal-submit-button busy)))))
+
+(defn view [state :document] :document
+  (let [pane (dstr (dget state :pane))
+        actors (dget state :actors)
+        selected (dget state :selected)
+        selected-index (decimal (dstr selected))]
+    (el "main" (document-map :class (document-string "dds-ext-container"))
+        (document-vector
+         (el "nav" (document-map :class (document-string "dds-ext-row"))
+             (document-vector
+              (leaf "button" (document-map :data-k (document-string "pane-fleet")
+                                           :type (document-string "button")
+                                           :class (document-string "dads-button")
+                                           :data-type (document-string (if (= pane "fleet") "solid-fill" "outline"))
+                                           :data-size (document-string "md")) "フリート")
+              (leaf "button" (document-map :data-k (document-string "pane-terminal")
+                                           :type (document-string "button")
+                                           :class (document-string "dads-button")
+                                           :data-type (document-string (if (= pane "terminal") "solid-fill" "outline"))
+                                           :data-size (document-string "md")) "コマンド")
+              (leaf "button" (document-map :data-k (document-string "pane-about")
+                                           :type (document-string "button")
+                                           :class (document-string "dads-button")
+                                           :data-type (document-string (if (= pane "about") "solid-fill" "outline"))
+                                           :data-size (document-string "md")) "情報")))
+         (cond
+           (= pane "about") (about-view)
+           (= pane "terminal") (terminal-view state)
+           (>= selected-index 0) (actor-detail (dat actors selected-index))
+           :else (fleet-view state))))))
+
+(defn init [] :document
+  (let [tables (embedded-command-tables)]
+  (document-map :routes (json-array-field tables "routes")
+                :aliases (json-array-field tables "aliases")
+                :host-side (json-array-field tables "hostSide")
+                :pane (document-string "fleet")
+                :phase (document-string "loading")
+                :query (document-string "")
+                :applied-query (document-string "")
+                :role (document-string "")
+                :applied-role (document-string "")
+                :roles (document-vector)
+                :matched (document-string "")
+                :total (document-string "")
+                :shown (document-string "")
+                :actors (document-vector)
+                :selected (document-string "-1")
+                :error (document-string "")
+                :base (document-string "https://agent.itonami.cloud")
+                :token (document-string "")
+                :base-draft (document-string "https://agent.itonami.cloud")
+                :token-draft (document-string "")
+                :paired (document-string "false")
+                :busy (document-string "false")
+                :line (document-string "")
+                :transcript (document-vector)
+                :effect (document-string "search")
+                :effect-id (document-i64 1))))
+
+(defn issue-effect [state :document name :string] :document
+  (let [current (option-value-of [:option :i64]
+                                 (document-i64-value (dget state :effect-id)) 0)]
+    (document-assoc
+     (document-assoc state :effect (document-string name))
+     :effect-id (document-i64 (+ current 1)))))
+
+(defn start-search [state :document] :document
+  (let [next (document-assoc
+              (document-assoc
+               (document-assoc
+                (document-assoc
+                 (document-assoc state :phase (document-string "loading"))
+                 :error (document-string ""))
+                :selected (document-string "-1"))
+               :applied-query (dget state :query))
+              :applied-role (dget state :role))]
+    (issue-effect next "search")))
+
+(defn keep-transcript [items :document i :i64 start :i64 count :i64 acc :document] :document
+  (if (>= i count) acc
+      (keep-transcript items (+ i 1) start count
+                       (if (< i start) acc (document-vector-conj acc (dat items i))))))
+
+(defn add-transcript [state :document entry :document] :document
+  (let [items (document-vector-conj (dget state :transcript) entry)
+        n (document-count items)
+        start (if (> n 200) (- n 200) 0)]
+    (document-assoc state :transcript (keep-transcript items 0 start n (document-vector)))))
+
+(defn host-count [raw :string key :string] :string
+  (let [value (raw-field raw key)]
+    (if (and (>= (string-byte-length value) 1)
+             (= (string-code-point-at value 0) 34))
+      (json-field raw key) value)))
+
+(defn json-string-value [raw :string] :string
+  (json-field (string-concat "{\"value\":" (string-concat raw "}")) "value"))
+
+(defn string-vector-from-json [raws :document i :i64 acc :document] :document
+  (if (>= i (document-count raws)) acc
+      (let [raw (dstr (dat raws i))]
+        (string-vector-from-json raws (+ i 1)
+                                 (document-vector-conj acc
+                                                       (document-string (json-string-value raw)))))))
+
+(defn split-line-from [line :string i :i64 n :i64 quoted :bool started :bool current :string acc :document] :document
+  (if (>= i n)
+    (if started (document-vector-conj acc (document-string current)) acc)
+    (let [cp (string-code-point-at line i)
+          width (cp-width cp)]
+      (cond
+        (= cp 34) (split-line-from line (+ i width) n (not quoted) true current acc)
+        (and (not quoted) (ws? cp))
+        (split-line-from line (+ i width) n quoted false ""
+                         (if started (document-vector-conj acc (document-string current)) acc))
+        :else (split-line-from line (+ i width) n quoted true
+                               (string-concat current (string-substring line i (+ i width))) acc)))))
+
+(defn split-line [line :string] :document
+  (split-line-from line 0 (string-byte-length line) false false "" (document-vector)))
+
+(defn starts-flag? [word :string] :bool
+  (and (>= (string-byte-length word) 2)
+       (string=? (string-substring word 0 2) "--")))
+
+(defn parse-arguments-from [words :document i :i64 positional :document flags :document] :document
+  (if (>= i (document-count words))
+    (document-map :positional positional :flags flags)
+    (let [word (dstr (dat words i))]
+      (if (starts-flag? word)
+        (let [name (string-substring word 2 (string-byte-length word))
+              next-index (+ i 1)
+              next-word (if (< next-index (document-count words)) (dstr (dat words next-index)) "")
+              has-value (and (not= next-word "") (not (starts-flag? next-word)))
+              flag (document-map :name (document-string name)
+                                 :value (document-string (if has-value next-word "true")))]
+          (parse-arguments-from words (if has-value (+ i 2) next-index) positional
+                                (document-vector-conj flags flag)))
+        (parse-arguments-from words (+ i 1)
+                              (document-vector-conj positional (document-string word)) flags)))))
+
+(defn join-strings [values :document i :i64 acc :string separator :string] :string
+  (if (>= i (document-count values)) acc
+      (let [value (dstr (dat values i))]
+        (join-strings values (+ i 1)
+                      (if (= i 0) value (string-concat acc (string-concat separator value)))
+                      separator))))
+
+(defn command-prefix? [whole :string prefix :string] :bool
+  (let [whole-size (string-byte-length whole)
+        prefix-size (string-byte-length prefix)]
+    (and (> prefix-size 0)
+         (>= whole-size prefix-size)
+         (string=? (string-substring whole 0 prefix-size) prefix)
+         (or (= whole-size prefix-size)
+             (= (string-code-point-at whole prefix-size) 32)))))
+
+(defn choose-command [entries :document i :i64 text :string best :string best-size :i64] :string
+  (if (>= i (document-count entries)) best
+      (let [raw (dstr (dat entries i))
+            name (json-field raw "commandName")
+            size (decimal (host-count raw "commandCount"))]
+        (choose-command entries (+ i 1) text
+                        (if (and (> size best-size) (command-prefix? text name)) raw best)
+                        (if (and (> size best-size) (command-prefix? text name)) size best-size)))))
+
+(defn flag-value [flags :document name :string i :i64] :document
+  (if (>= i (document-count flags)) (document-map :found (document-string "false") :value (document-string ""))
+      (let [flag (dat flags i)]
+        (if (string=? (dstr (dget flag :name)) name)
+          (document-map :found (document-string "true") :value (dget flag :value))
+          (flag-value flags name (+ i 1))))))
+
+(defn command-values [params :document i :i64 positional :document flags :document alias? :bool acc :document errors :document] :document
+  (if (>= i (document-count params))
+    (document-map :values acc :errors errors)
+    (let [param (dat params i)
+          name (json-field (dstr param) "name")
+          flag-name (if alias? (json-field (dstr param) "flag") name)
+          found (flag-value flags flag-name 0)
+          position-index i
+          has-position (and (not alias?) (< position-index (document-count positional)))
+          value (cond
+                  (string=? (dstr (dget found :found)) "true") (dstr (dget found :value))
+                  has-position (dstr (dat positional position-index))
+                  alias? (json-field (dstr param) "default")
+                  :else "")
+          required (or (= (raw-field (dstr param) "required") "true")
+                       (and alias? (= value "")))
+          error (if (and required (= value ""))
+                  (string-concat (string-concat "--" flag-name) " が必要です") "")]
+      (command-values params (+ i 1) positional flags alias?
+                      (if (= value "") acc
+                          (document-vector-conj acc
+                                                (document-map :name (document-string name)
+                                                              :value (document-string value))))
+                      (if (= error "") errors
+                          (document-vector-conj errors (document-string error)))))))
+
+(defn replace-token [source :string token :string replacement :string i :i64 acc :string] :string
+  (let [n (string-byte-length source)
+        token-size (string-byte-length token)]
+    (if (>= i n) acc
+        (if (and (> token-size 0) (<= (+ i token-size) n)
+                 (string=? (string-substring source i (+ i token-size)) token))
+          (replace-token source token replacement (+ i token-size) (string-concat acc replacement))
+          (let [width (cp-width (string-code-point-at source i))]
+            (replace-token source token replacement (+ i width)
+                           (string-concat acc (string-substring source i (+ i width)))))))))
+
+(defn apply-path-params [template :string params :document i :i64] :string
+  (if (>= i (document-count params)) template
+      (let [param (dat params i)
+            key (dstr (dget param :name))
+            value (dstr (dget param :value))
+            token (string-concat "{" (string-concat key "}"))]
+        (apply-path-params (replace-token template token value 0 "") params (+ i 1)))))
+
+(defn query-params [flags :document path-params :document i :i64 acc :document] :document
+  (if (>= i (document-count flags)) acc
+      (let [flag (dat flags i)
+            name (dstr (dget flag :name))
+            value (dstr (dget flag :value))]
+        (query-params flags path-params (+ i 1)
+                      (if (or (= name "") (path-param-name? path-params name 0)) acc
+                          (document-vector-conj acc
+                                                (document-map :name (document-string name)
+                                                              :value (document-string value))))))))
+
+(defn path-param-name? [params :document name :string i :i64] :bool
+  (if (>= i (document-count params)) false
+      (or (string=? name (dstr (dget (dat params i) :name)))
+          (path-param-name? params name (+ i 1)))))
+
+(defn allowed-write? [template :string] :bool
+  (or (string=? template "/api/agent-bots/{id}/messages")
+      (string=? template "/p/{profile}/api/sessions")
+      (string=? template "/p/{profile}/api/sessions/{session}/messages")))
+
+(defn transcript-change [state :document kind :string message :string] :document
+  (add-transcript (add-transcript state (terminal-entry "sent" (dstr (dget state :line))))
+                  (terminal-entry kind message)))
+
+(defn tail-vector [values :document start :i64 i :i64 acc :document] :document
+  (if (>= i (document-count values)) acc
+      (tail-vector values start (+ i 1)
+                   (if (< i start) acc (document-vector-conj acc (dat values i))))))
+
+(defn json-escape-from [s :string i :i64 n :i64 acc :string] :string
+  (if (>= i n) acc
+      (let [cp (string-code-point-at s i)
+            width (cp-width cp)
+            escaped (cond
+                      (= cp 34) (string-concat "\\" "\"")
+                      (= cp 92) "\\\\"
+                      (= cp 10) "\\n"
+                      (= cp 13) "\\r"
+                      (= cp 9) "\\t"
+                      (= cp 8) "\\b"
+                      (= cp 12) "\\f"
+                      :else (string-substring s i (+ i width)))]
+        (json-escape-from s (+ i width) n (string-concat acc escaped)))))
+
+(defn json-quote [s :string] :string
+  (string-concat "\"" (string-concat (json-escape-from s 0 (string-byte-length s) "") "\"")))
+
+(defn append-result [state :document kind :string message :string] :document
+  (document-assoc
+   (transcript-change state kind message)
+   :line (document-string "")))
+
+(defn request-state [state :document method :string template :string params :document query :document body :string label :string] :document
+  (let [next (document-assoc
+              (document-assoc
+               (document-assoc
+                (document-assoc
+                 (add-transcript state (terminal-entry "sent" (dstr (dget state :line))))
+                 :line (document-string ""))
+                :busy (document-string "true"))
+               :request-method (document-string method))
+              :request-template (document-string template))]
+    (issue-effect
+     (document-assoc
+      (document-assoc
+       (document-assoc
+        (document-assoc next :request-path-params params)
+        :request-query-params query)
+       :request-body (document-string body))
+      :request-label (document-string label))
+     "terminal-request")))
+
+(defn unavailable-result [state :document text :string message :string] :document
+  (append-result state "unavailable"
+                 (string-concat (string-concat "そのようなコマンドはありません: " text)
+                                (if (= message "") "" (string-concat "（" (string-concat message "）"))))))
+
+(defn plan-command [state :document entry :string alias? :bool positional :document flags :document label :string] :document
+  (let [template (json-field entry "template")
+        raw-method (json-field entry "method")
+        method (cond
+                 (or (string=? raw-method "get") (string=? raw-method "GET")) "GET"
+                 (or (string=? raw-method "post") (string=? raw-method "POST")) "POST"
+                 :else raw-method)
+        params (json-array-field entry "params")
+        values (command-values params 0 positional flags alias? (document-vector) (document-vector))
+        path-params (dget values :values)
+        errors (dget values :errors)
+        error (if (= (document-count errors) 0) "" (dstr (dat errors 0)))
+        request-path (apply-path-params template path-params 0)
+        offered (or (string=? method "GET")
+                    (and (string=? method "POST") (allowed-write? template)))]
+    (cond
+      (not= error "") (append-result state "refused" error)
+      (not offered)
+      (append-result state "unavailable"
+                     (string-concat "`" (string-concat label "` はこの画面では提供していません。書き込みはPasskeyが必要なため送信しません。")))
+      (string=? (dstr (dget state :paired)) "false")
+      (append-result state "refused"
+                     (string-concat "`" (string-concat label "` は組み立てられましたが、この端末はまだ対になっていないので送っていません。")))
+      (and (= method "POST") (string=? template "/api/agent-bots/{id}/messages"))
+      (let [text-flag (flag-value flags "text" 0)
+            message (dstr (dget text-flag :value))]
+        (if (or (not= (dstr (dget text-flag :found)) "true") (= message ""))
+          (append-result state "refused" "--text が必要です")
+          (request-state state method template path-params (document-vector)
+                         (string-concat "{\"text\":" (string-concat (json-quote message) "}")) label)))
+      :else
+      (request-state state method template path-params
+                     (if alias? (document-vector) (query-params flags path-params 0 (document-vector)))
+                     "" label))))
+
+(defn plan-terminal [state :document] :document
+  (let [line (dstr (dget state :line))
+        tokens (split-line line)
+        args (parse-arguments-from tokens 0 (document-vector) (document-vector))
+        positional (dget args :positional)
+        flags (dget args :flags)
+        name-text (join-strings positional 0 "" " ")
+        alias (choose-command (dget state :aliases) 0 name-text "" 0)
+        host-side (choose-command (dget state :host-side) 0 name-text "" 0)
+        route (choose-command (dget state :routes) 0 name-text "" 0)]
+    (cond
+      (string=? (dstr (dget state :busy)) "true") state
+      (= (document-count tokens) 0) state
+      (= (string-byte-length line) 0) state
+      (= (string-byte-length alias) 0)
+      (if (not= (string-byte-length host-side) 0)
+        (append-result state "unavailable"
+                       (string-concat "`" (string-concat (json-field host-side "commandName") "` は端末の中で動くコマンドで、この画面からは実行できません。")))
+        (if (not= (string-byte-length route) 0)
+          (plan-command state route false
+                        (tail-vector positional (decimal (host-count route "commandCount")) 0 (document-vector))
+                        flags name-text)
+          (unavailable-result state name-text "")))
+      :else
+      (plan-command state alias true positional flags name-text))))
+
+(defn step [state :document target :string kind :string value :string] :document
+  (cond
+    (and (string=? kind "input") (string=? target "query"))
+    (document-assoc state :query (document-string value))
+
+    (and (string=? kind "input") (string=? target "role"))
+    (document-assoc state :role (document-string (if (string=? value "all") "" value)))
+
+    (and (string=? kind "input") (string=? target "base-draft"))
+    (document-assoc state :base-draft (document-string value))
+
+    (and (string=? kind "input") (string=? target "token-draft"))
+    (document-assoc state :token-draft (document-string value))
+
+    (and (string=? kind "input") (string=? target "terminal-line"))
+    (document-assoc state :line (document-string value))
+
+    (and (string=? kind "click") (string=? target "search"))
+    (start-search state)
+
+    (and (string=? kind "change") (string=? target "role"))
+    (start-search (document-assoc state :role
+                                 (document-string (if (string=? value "all") "" value))))
+
+    (and (string=? kind "click") (string=? target "pane-about"))
+    (document-assoc (document-assoc state :pane (document-string "about"))
+                    :selected (document-string "-1"))
+
+    (and (string=? kind "click") (string=? target "pane-terminal"))
+    (document-assoc (document-assoc state :pane (document-string "terminal"))
+                    :selected (document-string "-1"))
+
+    (and (string=? kind "click") (string=? target "pane-fleet"))
+    (document-assoc (document-assoc state :pane (document-string "fleet"))
+                    :selected (document-string "-1"))
+
+    (and (string=? kind "click") (string=? target "retry"))
+    (start-search state)
+
+    (and (string=? kind "click") (string=? target "pair-save"))
+    (issue-effect state "pairing-save")
+
+    (and (string=? kind "click") (string=? target "terminal-submit"))
+    (plan-terminal state)
+
+    (and (string=? kind "keydown") (string=? value "Enter") (string=? target "terminal-line"))
+    (plan-terminal state)
+
+    (and (string=? kind "keydown") (string=? value "Enter") (string=? target "query"))
+    (start-search state)
+
+    (and (string=? kind "click") (string=? target "back"))
+    (document-assoc state :selected (document-string "-1"))
+
+    (and (string=? kind "click") (string=? (string-substring target 0 5) "open-"))
+    (document-assoc state :selected (document-string (string-substring target 5 (string-byte-length target))))
+
+    (and (string=? target "host") (string=? kind "fleet-start"))
+    (document-assoc
+     (document-assoc
+      (document-assoc state :actors (document-vector))
+      :selected (document-string "-1"))
+     :matched (document-string ""))
+
+    (and (string=? target "host") (string=? kind "role-facets"))
+    (document-assoc state :roles
+                    (facets-from (json-array-field value "values") 0 (document-vector)))
+
+    (and (string=? target "host") (string=? kind "actor"))
+    (let [actors (dget state :actors)]
+      (if (>= (document-count actors) 32) state
+          (document-assoc state :actors
+                          (document-vector-conj actors (actor value)))))
+
+    (and (string=? target "host") (string=? kind "fleet-count"))
+    (let [total (host-count value "total")
+          next (document-assoc
+                (document-assoc
+                 (document-assoc
+                  (document-assoc state :phase (document-string "ready"))
+                  :matched (document-string (host-count value "matched")))
+                 :total (document-string (if (= total "") (dstr (dget state :total)) total)))
+                :shown (document-string (host-count value "shown")))]
+      (document-assoc next :effect (document-string "")))
+
+    (and (string=? target "host") (string=? kind "pairing"))
+    (let [base (json-field value "base")
+          token (json-field value "token")
+          paired? (and (not= base "") (not= token ""))]
+      (document-assoc
+       (document-assoc
+        (document-assoc
+         (document-assoc
+          (document-assoc state :base (document-string base))
+          :token (document-string token))
+         :base-draft (document-string base))
+        :token-draft (document-string ""))
+       :paired (document-string (if paired? "true" "false"))))
+
+    (and (string=? target "host") (string=? kind "pairing-saved"))
+    (let [base (dstr (dget state :base-draft))
+          token (dstr (dget state :token-draft))
+          paired? (and (not= base "") (not= token ""))]
+      (document-assoc
+       (document-assoc
+        (document-assoc
+         (document-assoc
+          (document-assoc state :base (document-string base))
+          :token (document-string token))
+         :token-draft (document-string ""))
+        :paired (document-string (if paired? "true" "false")))
+       :effect (document-string "")))
+
+    (and (string=? target "host") (string=? kind "terminal-result"))
+    (let [entry (document-map :kind (document-string (json-field value "kind"))
+                              :text (document-string (json-field value "text"))
+                              :status (document-string (json-field value "status")))
+          next (add-transcript state entry)]
+      (document-assoc next :busy (document-string "false")))
+
+    (and (string=? target "host") (string=? kind "fleet-error"))
+    (document-assoc
+     (document-assoc
+      (document-assoc state :phase (document-string "error"))
+      :error (document-string value))
+     :effect (document-string ""))
+
+    :else state))

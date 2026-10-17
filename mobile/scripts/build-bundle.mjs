@@ -1,110 +1,116 @@
 #!/usr/bin/env node
-// Compile the bundle's JavaScript: mobile/dist/js/main.js.
-//
-// Why this exists. `npm run build` used to end in `npx shadow-cljs release
-// app`. The 2026-09-11 mechanical rewrite (bd620311) replaced that with
-// `amu compile --target wasm32-browser app`, which cannot do the job: amu
-// compiles ONE .kotoba/.cljk/.cljc source to a Wasm module, while this bundle
-// is a reagent/React app whose document loads `js/main.js`. Measured
-// 2026-10-14 with kotoba-lang/amu a81ba22: `amu compile --target
-// wasm32-browser app` answers `:error :usage "source input must use .kotoba,
-// .cljk, or .cljc"`. There is no amu target that emits a browser JS bundle.
-//
-// So shadow-cljs (the `:cljs` alias already pins thheller/shadow-cljs) stays
-// the bundle compiler. What changed underneath it is the extension: since the
-// cljk rename (adr-2609111500) every source on this classpath — this
-// project's, jp-go-dds's, cloud-itonami-commands's, kotoba-lang/text's — ends
-// in `.cljk`, which shadow-cljs does not read. This script stages each `.cljk`
-// on the classpath back to the extension it had before the rename (the lib's
-// own `cljk-origin.edn` when it records one, otherwise `.cljc`, which shadow
-// compiles for :cljs and which reads the same as `.cljs` for a file with no
-// reader conditionals), puts the staged tree FIRST on the classpath, and runs
-// shadow-cljs's release build. Nothing is written outside `mobile/target/`
-// and `mobile/dist/js/`.
-//
-// Env:
-//   JP_GO_DDS  absolute path of a kotoba-lang/jp-go-digital-design-system
-//              checkout, overriding deps.edn's superproject-relative
-//              :local/root (needed from a worktree outside the superproject).
-
+// Build the mobile document and its Amu/Kotoba guest without a Clojure or
+// Shadow CLJS build. The compiler and runtime are supplied by one pinned Amu
+// checkout, so the emitted guest and its host use the same runtime revision.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const here = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
-process.chdir(here);
+const here = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const dist = path.join(here, "dist");
+const target = path.join(here, "target", "amu-mobile");
+const expectedRevision = fs.readFileSync(path.join(here, "amu.lock"), "utf8").trim();
+const commandLock = Object.fromEntries(fs.readFileSync(path.join(here, "commands.lock"), "utf8")
+  .trim().split(/\r?\n/u).map(line => {
+    const index = line.indexOf("=");
+    return [line.slice(0, index), line.slice(index + 1)];
+  }));
+const engineLock = Object.fromEntries(fs.readFileSync(path.join(here, "engine.lock"), "utf8")
+  .trim().split(/\r?\n/u).map(line => {
+    const index = line.indexOf("=");
+    return [line.slice(0, index), line.slice(index + 1)];
+  }));
+const amuRoot = process.env.AMU_ROOT;
+const engineRoot = process.env.KBB_ENGINE_ROOT;
+const apiBase = process.env.MOBILE_API_BASE
+  ?? "https://cloud-itonami-app-edge.04-feasts-minded.workers.dev";
 
-const sdeps = process.env.JP_GO_DDS
-  ? ["-Sdeps", `{:aliases {:dds-local {:override-deps {io.github.kotoba-lang/jp-go-digital-design-system {:local/root "${process.env.JP_GO_DDS}"}}}}}`]
-  : [];
-const aliases = process.env.JP_GO_DDS ? "-M:cljs:dds-local" : "-M:cljs";
-
-const cp = spawnSync("clojure", [...sdeps, "-Spath", aliases], { encoding: "utf8" });
-if (cp.status !== 0) {
-  process.stderr.write(cp.stderr);
-  process.exit(cp.status ?? 1);
-}
-const entries = cp.stdout.trim().split(":");
-
-const stageRoot = path.join(here, "target", "cljk-stage");
-fs.rmSync(stageRoot, { recursive: true, force: true });
-
-function originsFor(dir) {
-  // `cljk-origin.edn` sits at the lib root, one level above `src`.
-  for (const root of [dir, path.dirname(dir)]) {
-    const f = path.join(root, "cljk-origin.edn");
-    if (fs.existsSync(f)) {
-      const text = fs.readFileSync(f, "utf8");
-      const m = new Map();
-      for (const [, p, ext] of text.matchAll(/"([^"]+\.cljk)"\s+"(\.clj[cs]?)"/g)) {
-        m.set(path.join(root, p), ext);
-      }
-      return m;
-    }
-  }
-  return new Map();
+function fail(message) {
+  console.error(`mobile Amu build: ${message}`);
+  process.exit(1);
 }
 
-function* walk(dir) {
-  for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
-    const p = path.join(dir, d.name);
-    if (d.isDirectory()) yield* walk(p);
-    else if (d.name.endsWith(".cljk")) yield p;
-  }
+if (!amuRoot) fail("set AMU_ROOT to the checkout of the commit in mobile/amu.lock");
+if (!fs.existsSync(path.join(amuRoot, "bin", "amu")))
+  fail(`AMU_ROOT does not contain bin/amu: ${amuRoot}`);
+
+const revision = spawnSync("git", ["-C", amuRoot, "rev-parse", "HEAD"], { encoding: "utf8" });
+if (revision.status !== 0)
+  fail(`cannot read the Amu checkout revision: ${revision.stderr.trim()}`);
+const actualRevision = revision.stdout.trim();
+if (actualRevision !== expectedRevision)
+  fail(`Amu revision mismatch: expected ${expectedRevision}, got ${actualRevision || "unknown"}`);
+
+if (!engineRoot) fail("set KBB_ENGINE_ROOT to the checkout pinned in mobile/engine.lock");
+const engineRevision = spawnSync("git", ["-C", engineRoot, "rev-parse", "HEAD"], { encoding: "utf8" });
+if (engineRevision.status !== 0)
+  fail(`cannot read the KBB engine checkout revision: ${engineRevision.stderr.trim()}`);
+if (engineRevision.stdout.trim() !== engineLock.revision)
+  fail(`KBB engine revision mismatch: expected ${engineLock.revision}, got ${engineRevision.stdout.trim()}`);
+const engineCli = path.join(engineRoot, engineLock.path);
+if (!fs.existsSync(engineCli)) fail(`KBB engine CLI is missing: ${engineCli}`);
+
+fs.rmSync(target, { recursive: true, force: true });
+fs.mkdirSync(target, { recursive: true });
+const output = path.join(target, "app.mjs");
+const commandTablesPath = path.join(here, "data", "command-tables.json");
+const commandTablesSource = fs.readFileSync(commandTablesPath, "utf8");
+const commandTables = JSON.parse(commandTablesSource);
+if (commandTables?.source?.repository !== commandLock.repository
+    || commandLock.repository !== "cloud-itonami/cloud-itonami-commands"
+    || commandTables?.source?.revision !== commandLock.revision
+    || createHash("sha256").update(commandTablesSource).digest("hex") !== commandLock.sha256
+    || commandTables?.routes?.length !== 211
+    || !Array.isArray(commandTables?.aliases)
+    || !Array.isArray(commandTables?.hostSide))
+  fail("mobile/data/command-tables.json does not match its pinned source schema");
+const guestTemplate = fs.readFileSync(
+  path.join(here, "src/cloud/itonami/mobile/app.kotoba"), "utf8");
+if (guestTemplate.split("__COMMAND_TABLES__").length !== 2)
+  fail("Kotoba guest must contain exactly one __COMMAND_TABLES__ insertion point");
+const guestSource = guestTemplate.replace("__COMMAND_TABLES__", JSON.stringify(commandTablesSource));
+const generatedSource = path.join(target, "app.generated.kotoba");
+fs.writeFileSync(generatedSource, guestSource);
+const compiler = spawnSync(process.execPath, [
+  path.join(amuRoot, "bin", "amu"), "compile",
+  generatedSource,
+  "--target", "js-kotoba-v1", "--jvm-free", "--output", output,
+], { encoding: "utf8", env: { ...process.env, KBB_ENGINE: engineCli } });
+if (compiler.stdout) process.stdout.write(compiler.stdout);
+if (compiler.stderr) process.stderr.write(compiler.stderr);
+if (compiler.status !== 0) process.exit(compiler.status ?? 1);
+
+for (const artifact of [output, `${output}.manifest.edn`, `${output}.manifest.json`, `${output}.provenance.edn`]) {
+  if (!fs.existsSync(artifact)) fail(`compiler did not write ${artifact}`);
 }
 
-const staged = [];
-let files = 0;
-entries.forEach((entry, i) => {
-  const dir = path.resolve(here, entry);
-  if (entry.endsWith(".jar") || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return;
-  const origins = originsFor(dir);
-  const out = path.join(stageRoot, String(i));
-  let any = false;
-  for (const f of walk(dir)) {
-    let rel = path.relative(dir, f).slice(0, -".cljk".length);
-    let ext = origins.get(f);
-    const inner = /\.(clj[cs]?)$/.exec(rel);
-    if (inner) { ext = ext ?? "." + inner[1]; rel = rel.slice(0, -inner[0].length); }
-    ext = ext ?? ".cljc";
-    const target = path.join(out, rel + ext);
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(f, target);
-    any = true;
-    files++;
-  }
-  if (any) staged.push(out);
-});
-console.error(`staged ${files} .cljk file(s) from ${staged.length} classpath dir(s)`);
+const jsDist = path.join(dist, "js");
+const runtimeDist = path.join(dist, "runtime");
+fs.rmSync(jsDist, { recursive: true, force: true });
+fs.rmSync(runtimeDist, { recursive: true, force: true });
+fs.mkdirSync(jsDist, { recursive: true });
+fs.mkdirSync(runtimeDist, { recursive: true });
+fs.copyFileSync(output, path.join(jsDist, "app.mjs"));
+fs.copyFileSync(path.join(amuRoot, "runtime/browser-host.mjs"),
+  path.join(runtimeDist, "browser-host.mjs"));
 
-const classpath = [...staged, ...entries].join(":");
-const args = process.argv.slice(2);
-const build = spawnSync(
-  "java",
-  ["-cp", classpath, "clojure.main", "-m", "shadow.cljs.devtools.cli", ...(args.length ? args : ["release", "app"])],
-  { stdio: "inherit" },
-);
-// shadow-cljs writes its module manifest beside the bundle. Nothing in the
-// app reads it, and everything in dist/ ships (README), so it does not stay.
-fs.rmSync(path.join(here, "dist", "js", "manifest.edn"), { force: true });
-process.exit(build.status ?? 1);
+const hostSource = fs.readFileSync(path.join(here, "src/main.mjs"), "utf8");
+if (!hostSource.includes("__MOBILE_API_BASE__")) fail("mobile host API placeholder is missing");
+fs.writeFileSync(path.join(jsDist, "main.js"),
+  hostSource.replaceAll("__MOBILE_API_BASE__", JSON.stringify(apiBase)));
+const hostCheck = spawnSync(process.execPath, ["--check", path.join(jsDist, "main.js")], { encoding: "utf8" });
+if (hostCheck.stdout) process.stdout.write(hostCheck.stdout);
+if (hostCheck.stderr) process.stderr.write(hostCheck.stderr);
+if (hostCheck.status !== 0) process.exit(hostCheck.status ?? 1);
+
+const indexPath = path.join(dist, "index.html");
+let index = fs.readFileSync(indexPath, "utf8");
+index = index.replace(/<script\s+src="js\/main\.js"\s+defer="defer"><\/script>/,
+  '<script type="module" src="js/main.js"></script>');
+if (!index.includes('<script type="module" src="js/main.js"></script>'))
+  fail("dist/index.html must contain the generated module entry script");
+fs.writeFileSync(indexPath, index);
+
+console.log(`Amu/Kotoba mobile bundle built from ${expectedRevision}`);

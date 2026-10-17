@@ -113,8 +113,11 @@ is the correct state, not a defect to work around.
 
 ## What is done, and what is not
 
-Done in this change: the decision, the manifest note and key, the README
-pointer. Nothing in the bundle's code changed.
+The original 2026-10-11 change recorded the decision, manifest note and key,
+and README pointer. The follow-up Amu/Kotoba migration replaces the original
+Reagent/Shadow CLJS mobile bundle with an Amu guest and a small JavaScript
+browser host. The mobile directory no longer has a Clojure/Shadow build or
+test path.
 
 Measured 2026-10-11 from this repository's root, with kotoba-lang/shell
 `8c01e97`, whose `bin/kotoba-shell` now dispatches `app` subcommands:
@@ -123,7 +126,7 @@ Measured 2026-10-11 from this repository's root, with kotoba-lang/shell
 |---|---|
 | `app scaffold --target ios --target android` | `ok? true`, `ready-count 2`, `web-assets {:placeholder? false :source "mobile/dist"}` |
 | `app check --target ios --target android` | `code app-ready`, `ready-count 2 / 2`, no missing files |
-| `npm run build` | **not run**: `amu` is not installed on this workstation, so `mobile/dist` held only the committed `index.html` (no `js/main.js`, no `dds.css`). The scaffold above proves the manifest and layout, not a working bundle. |
+| `npm run build` on 2026-10-11 | **not run**: `amu` was not installed on that workstation, so `mobile/dist` held only the committed `index.html` (no `js/main.js`, no `dds.css`). This historical result proves the manifest and layout only. |
 | `shinkansen.viewport/audit` over `mobile/dist/index.html` (ad hoc, not committed) | first run: **`{:ok false :problems [{:id :no-xs-band}]}`**, with and without `dds.css` as `:stylesheets`. After the phone band below, against shinkansen `426ecc6`: `{:ok true :bands [480 768]}` by default, with `:host :kotoba-shell`, and with `dds.css` |
 | safe-area insets in the same document | all four, including `top` |
 
@@ -145,25 +148,44 @@ names `scripts/gen_index.cljs` (the file is `.cljk`) and calls `kbb -Spath`,
 which kbb does not have; the generator was run and `--check`ed directly with
 kbb over an explicit classpath (jp-go-dds, html, css, text).
 
+### Amu/Kotoba bundle (2026-10-17)
+
+`mobile/src/cloud/itonami/mobile/app.kotoba` now owns the fleet, actor detail,
+terminal, pairing, and information panes. `mobile/src/main.mjs` owns DOM events,
+HTTPS requests, local pairing storage, and scroll behavior. The command screen
+embeds a pinned normalized command-table snapshot; it issues GET requests and
+the single allowlisted `bots task` message write. The host checks the HTTPS
+origin and exact write template again before sending.
+
+The build inputs are pinned in `mobile/amu.lock`, `mobile/engine.lock`,
+`mobile/dds.lock`, and `mobile/commands.lock`. On 2026-10-17, `npm run build`
+completed with Amu `c3b1ef6a01ca5f0dd2357c89b92f6aef65b0479e`, its engine
+`95ff779a659dbb344ab87017908c0acba4300b87`, and DADS
+`fb279e1c18fe86abe2ca6d815b2c3f5d0c51c347`: the guest compiled to
+`js-kotoba-v1` with no effects (230,134 bytes), the host JavaScript syntax
+check passed, the committed HTML matched its template, and the viewport audit
+reported bands `[480, 768]` with `safe-area-inset-top`. This build does not run
+a browser interaction suite or launch an iOS/Android simulator. A separate
+`mobile-bundle` workflow now rebuilds this bundle from the pinned inputs.
+
 Next, in order:
 
-1. Add shinkansen to `mobile/deps.edn` (it is on `../deps.edn` at
-   `301e50d8`, not on this project or any `nbb.edn`) and commit the viewport +
-   top-inset check as part of `kbb -M:test`. Not done here because it is new
-   dependency plumbing for a project whose classpath is deliberately narrow.
-2. Replace the copied phone band with the require once (1) lands, keeping
-   the body-padding subtraction; fix `npm run index` / `index:check`.
+1. **Done:** replace the Clojure/Shadow bundle and generator with the pinned
+   Amu/Kotoba compiler, browser host, and Node scripts; add a reproducible
+   mobile bundle workflow.
+2. **Done:** regenerate/check the HTML from its template and require a phone
+   viewport band plus the top safe-area inset in the local viewport audit.
 3. Run `adapter/adapt` in `npm run build` and write receipts into `dist`.
-4. Theme contract and `data-action` / `shinkansen.on` in the bundle.
-5. Locale variants and the runtime `negotiate`, when a second locale exists.
-6. `/v1/invoke` on the edge and the client envelope, with slice 2.
-7. Signing, when the owner decides it.
+4. Add the theme contract and `data-action` / `shinkansen.on` runtime.
+5. Add locale variants and the runtime `negotiate` when a second locale exists.
+6. Add `/v1/invoke` on the edge and the client envelope with slice 2.
+7. Signing remains deferred until the owner decides it.
 
 ## Consequences
 
 There is one itonami app on a phone, and one place to change it. A contract
 change in shinkansen reaches this app through SHELL-BINDING rather than through
-a second host that would have to learn it separately. Until the next steps
-land, this bundle is a kotoba-shell app that *intends* to be a shinkansen
-bundle; SHELL-BINDING's own maturity table should not count it as one before
-the gate runs in its build.
+a second host that would have to learn it separately. The bundle now uses the
+pinned Amu/Kotoba guest and passes its local viewport audit, but it remains a
+partial SHELL-BINDING adoption until the receipt gate, theme and interaction
+runtimes land. Its maturity table should reflect that scope.

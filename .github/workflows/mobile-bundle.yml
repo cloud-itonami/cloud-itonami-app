@@ -1,0 +1,55 @@
+name: mobile-bundle
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/mobile-bundle.yml"
+  pull_request:
+    paths:
+      - "mobile/**"
+      - ".github/workflows/mobile-bundle.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Checkout pinned Amu compiler and browser runtime
+        run: |
+          set -euo pipefail
+          mkdir -p target/mobile-deps
+          git clone --depth=5 --filter=blob:none --no-checkout https://github.com/kotoba-lang/amu.git target/mobile-deps/amu
+          amu_revision="$(cat mobile/amu.lock)"
+          git -C target/mobile-deps/amu fetch --depth=20 origin "$amu_revision"
+          git -C target/mobile-deps/amu checkout --detach "$amu_revision"
+      - name: Checkout pinned DADS stylesheet source
+        run: |
+          set -euo pipefail
+          git clone --depth=5 --filter=blob:none --no-checkout https://github.com/kotoba-lang/jp-go-digital-design-system.git target/mobile-deps/jp-go-digital-design-system
+          dds_revision="$(sed -n 's/^revision=//p' mobile/dds.lock)"
+          git -C target/mobile-deps/jp-go-digital-design-system fetch --depth=20 origin "$dds_revision"
+          git -C target/mobile-deps/jp-go-digital-design-system checkout --detach "$dds_revision"
+      - name: Checkout pinned Amu compiler engine
+        run: |
+          set -euo pipefail
+          git clone --depth=5 --filter=blob:none --no-checkout https://github.com/kotoba-lang/org-babashka-nbb.git target/mobile-deps/amu-engine
+          engine_revision="$(sed -n 's/^revision=//p' mobile/engine.lock)"
+          git -C target/mobile-deps/amu-engine fetch --depth=20 origin "$engine_revision"
+          git -C target/mobile-deps/amu-engine checkout --detach "$engine_revision"
+      - name: Build the Amu/Kotoba web bundle and audit the shipped document
+        working-directory: mobile
+        env:
+          AMU_ROOT: ${{ github.workspace }}/target/mobile-deps/amu
+          KBB_ENGINE_ROOT: ${{ github.workspace }}/target/mobile-deps/amu-engine
+          JP_GO_DDS: ${{ github.workspace }}/target/mobile-deps/jp-go-digital-design-system
+        run: |
+          npm ci
+          npm run build

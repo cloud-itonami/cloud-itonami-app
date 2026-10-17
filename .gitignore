@@ -13,16 +13,15 @@
 # build / cache output (untracked 2026-08-22)
 **/.wrangler/
 **/node_modules/
+**/.nbb/
+**/.shadow-cljs/
 
-# mobile: the built bundle. dist/index.html is generated and committed
-# (it is the one document the app has); everything else here is output.
+# mobile: the built bundle. dist/index.html is generated and committed;
+# runtime and JavaScript assets are copied from pinned build inputs.
 /mobile/dist/js/
+/mobile/dist/runtime/
 /mobile/dist/dds.css
 /mobile/dist/*.png
-/mobile/.shadow-cljs/
 # tools.deps caches, in any sub-project (root /.cpcache/ above is root-anchored)
 **/.cpcache/
 /mobile/target/
-
-# engine dependency cache for nbb.edn :deps (cold cache needs bb once)
-.nbb/
