@@ -1,0 +1,205 @@
+(ns awai-current-ref-benchmark
+  "Isolated comparison of the pre-refactor host predicate and the Kotoba KIR
+  current-ref decision core. This is not a full-app or selfhost benchmark."
+  (:require ["node:fs" :as fs]
+            ["node:perf_hooks" :as perf]
+            [cloud.itonami.app.kotoba-oracle :as oracle]))
+
+(def profile
+  {:profile-id "awai-test-profile"
+   :chain-id "awai-test-chain"
+   :genesis-hash "test-genesis"
+   :validator-set-id "test-validator-set"
+   :quorum-policy-id "test-quorum-policy"})
+
+(def valid-proof
+  {:trust "amano-inga-verified-current-ref"
+   :decision :verified
+   :profile-id (:profile-id profile)
+   :chain-id (:chain-id profile)
+   :genesis-hash (:genesis-hash profile)
+   :validator-set-id (:validator-set-id profile)
+   :quorum-policy-id (:quorum-policy-id profile)
+   :ref "awai/domain/murakumo.cloud"
+   :head-cid "bafkrei-test-head"
+   :challenge "test-challenge-123456"
+   :current? true
+   :quorum-read-verified? true
+   :current-read-proof {:trust "test-quorum-read"}
+   :finality-proof-verified? true
+   :finalized-event-cid "bafkrei-test-head"
+   :finality-proof {:status :finalized}
+   :observed-at 100
+   :expires-at 200})
+
+(def invalid-quorum-proof
+  (assoc valid-proof :quorum-policy-id "other-quorum-policy"))
+
+(def profile-record
+  [:record :awai-current-ref/profile
+   [[:profile-id :string] [:chain-id :string] [:genesis-hash :string]
+    [:validator-set-id :string] [:quorum-policy-id :string]]])
+
+(def proof-record
+  [:record :awai-current-ref/proof
+   [[:trust :string] [:decision-verified :bool] [:profile-id :string]
+    [:chain-id :string] [:genesis-hash :string] [:validator-set-id :string]
+    [:quorum-policy-id :string] [:reference :string] [:head-cid :string]
+    [:challenge :string] [:current :bool] [:quorum-read-verified :bool]
+    [:current-read-proof-present :bool] [:finality-proof-verified :bool]
+    [:finalized-event-cid :string] [:finality-proof-present :bool]
+    [:observed-at :i64] [:expires-at :i64] [:signature-valid :bool]]])
+
+(def request-record
+  [:record :awai-current-ref/request
+   [[:expected-ref :string] [:expected-head-cid :string]
+    [:expected-challenge :string] [:now-ms :i64]]])
+
+(defn- reference-verified? [proof expected-ref expected-head challenge now-ms]
+  (and (every? (fn [key]
+                 (let [value (get profile key)]
+                   (and (string? value) (seq value))))
+               [:profile-id :chain-id :genesis-hash :validator-set-id
+                :quorum-policy-id])
+       (map? proof)
+       (= "amano-inga-verified-current-ref" (:trust proof))
+       (= :verified (:decision proof))
+       (= (:profile-id profile) (:profile-id proof))
+       (= (:chain-id profile) (:chain-id proof))
+       (= (:genesis-hash profile) (:genesis-hash proof))
+       (= (:validator-set-id profile) (:validator-set-id proof))
+       (= (:quorum-policy-id profile) (:quorum-policy-id proof))
+       (= expected-ref (:ref proof))
+       (= expected-head (:head-cid proof))
+       (= challenge (:challenge proof))
+       (true? (:current? proof))
+       (true? (:quorum-read-verified? proof))
+       (map? (:current-read-proof proof))
+       (seq (:current-read-proof proof))
+       (true? (:finality-proof-verified? proof))
+       (= expected-head (:finalized-event-cid proof))
+       (map? (:finality-proof proof))
+       (seq (:finality-proof proof))
+       (nat-int? (:observed-at proof))
+       (nat-int? (:expires-at proof))
+       (<= (:observed-at proof) now-ms)
+       (< now-ms (:expires-at proof))
+       true))
+
+(defn- safe-string [value] (if (string? value) value ""))
+(defn- safe-i64 [value]
+  (oracle/i64 (if (and (nat-int? value) (oracle/fits-i64? value)) value -1)))
+
+(defn- guest-verified? [proof expected-ref expected-head challenge now-ms]
+  (let [profile-value
+        (oracle/record profile-record
+                       (mapv #(safe-string (get profile %))
+                             [:profile-id :chain-id :genesis-hash
+                              :validator-set-id :quorum-policy-id]))
+        proof-value
+        (oracle/record
+         proof-record
+         [(safe-string (:trust proof))
+          (= :verified (:decision proof))
+          (safe-string (:profile-id proof))
+          (safe-string (:chain-id proof))
+          (safe-string (:genesis-hash proof))
+          (safe-string (:validator-set-id proof))
+          (safe-string (:quorum-policy-id proof))
+          (safe-string (:ref proof))
+          (safe-string (:head-cid proof))
+          (safe-string (:challenge proof))
+          (true? (:current? proof))
+          (true? (:quorum-read-verified? proof))
+          (boolean (and (map? (:current-read-proof proof))
+                        (seq (:current-read-proof proof))))
+          (true? (:finality-proof-verified? proof))
+          (safe-string (:finalized-event-cid proof))
+          (boolean (and (map? (:finality-proof proof))
+                        (seq (:finality-proof proof))))
+          (safe-i64 (:observed-at proof))
+          (safe-i64 (:expires-at proof))
+          true])]
+    (true? (oracle/call
+            :awai-current-ref 'verified-current-ref?
+            [proof-value profile-value
+             (oracle/record request-record
+                            [expected-ref expected-head challenge
+                             (oracle/i64 now-ms)])]))))
+
+(defn- mixed-batch [valid? invalid? n]
+  (loop [i 0, accepted 0]
+    (if (= i n)
+      accepted
+      (recur (inc i)
+             (+ accepted
+                (if (even? i)
+                  (if (valid?) 1 0)
+                  (if (invalid?) 1 0)))))))
+
+(defn- elapsed-ms [f]
+  (let [start (.now (.-performance perf))
+        checksum (f)
+        elapsed (- (.now (.-performance perf)) start)]
+    {:elapsed-ms elapsed :checksum checksum}))
+
+(defn- median [values]
+  (nth (vec (sort values)) (quot (count values) 2)))
+
+(defn -main [& _]
+  (set! (.-exitCode js/process) 0)
+  (oracle/set-resource-loader!
+   (fn [path]
+     (let [file (str "resources/" path)]
+       (when (.existsSync fs file)
+         (.readFileSync fs file "utf8")))))
+  (let [ref "awai/domain/murakumo.cloud"
+        head "bafkrei-test-head"
+        challenge "test-challenge-123456"
+        now 150
+        old-valid #(reference-verified? valid-proof ref head challenge now)
+        old-invalid #(reference-verified? invalid-quorum-proof ref head challenge now)
+        kotoba-valid #(guest-verified? valid-proof ref head challenge now)
+        kotoba-invalid #(guest-verified? invalid-quorum-proof ref head challenge now)
+        iterations 300
+        rounds 3]
+    (if-not (and (old-valid) (kotoba-valid)
+                 (not (old-invalid)) (not (kotoba-invalid)))
+      (do
+        (println "FAIL: correctness precondition diverged; benchmark refused")
+        (set! (.-exitCode js/process) 1))
+      (do
+      ;; Warm both paths equally before collecting alternating measurements.
+      (mixed-batch old-valid old-invalid 60)
+      (mixed-batch kotoba-valid kotoba-invalid 60)
+      (let [old-times (atom [])
+            kotoba-times (atom [])
+            expected-checksum (quot iterations 2)]
+        (dotimes [round rounds]
+          (let [order (if (even? round)
+                        [[:host old-valid old-invalid old-times]
+                         [:kotoba kotoba-valid kotoba-invalid kotoba-times]]
+                        [[:kotoba kotoba-valid kotoba-invalid kotoba-times]
+                         [:host old-valid old-invalid old-times]])]
+            (doseq [[label valid? invalid? samples] order]
+              (let [{:keys [elapsed-ms checksum]}
+                    (elapsed-ms #(mixed-batch valid? invalid? iterations))]
+                (when-not (= expected-checksum checksum)
+                  (println "FAIL: checksum mismatch" label round checksum)
+                  (set! (.-exitCode js/process) 1))
+                (swap! samples conj (/ (* elapsed-ms 1000000.0) iterations))))))
+        (let [host-ns (median @old-times)
+              kotoba-ns (median @kotoba-times)]
+          (println "benchmark=awai-current-ref-isolated")
+          (println "artifact=KIR-generated-by-pinned-repository-JVM-generator")
+          (println "runtime=kbb-SCI-on-Node")
+          (println "Amu-selfhost=not-available; Amu-Wasm=measured-separately")
+          (println "workload=300 alternating valid/quorum-mismatch proofs per round")
+          (println "rounds=3; order=alternating; warmup=60 per implementation")
+          (println "host-reference-median-ns/op=" host-ns)
+          (println "kotoba-kir-median-ns/op=" kotoba-ns)
+          (println "ratio-kotoba-over-host=" (/ kotoba-ns host-ns))
+          (println "host-loadavg=" (seq (.loadavg (js/require "node:os"))))
+          (println "qualification=small-sample diagnostic-only; assess quiet-host and Amu-selfhost gates separately")))))))
+
+(-main)

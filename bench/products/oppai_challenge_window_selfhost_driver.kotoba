@@ -1,0 +1,27 @@
+;; Challenge window inclusive-boundary workload; no face data enters the bench.
+(ns oppai.challenge-window-selfhost-benchmark
+  (:require [oppai.gen.challenge-window-core :as policy])
+  (:export [main]))
+
+(defn- decision [case-code]
+  (cond
+    (= case-code 0) (policy/challenge-window-code 1 1000000 1000000)
+    (= case-code 1) (policy/challenge-window-code 1 1000000 1060000)
+    (= case-code 2) (policy/challenge-window-code 1 1000000 1060001)
+    (= case-code 3) (policy/challenge-window-code 1 1000000 999999)
+    :else (policy/challenge-window-code 0 1000000 1030000)))
+
+(defn main [] :i64
+  (let [cases-ok?
+        (and (= 1 (policy/challenge-window-code 1 1000000 1000000))
+             (= 1 (policy/challenge-window-code 1 1000000 1060000))
+             (= 0 (policy/challenge-window-code 1 1000000 1060001))
+             (= 0 (policy/challenge-window-code 1 1000000 999999))
+             (= 0 (policy/challenge-window-code 0 1000000 1030000)))
+        valid
+        (loop [i 0 count 0]
+          (if (< i 1000000)
+            (recur (+ i 1)
+                   (+ count (decision (mod i 5))))
+            count))]
+    (if (and cases-ok? (= valid 400000)) valid -1)))

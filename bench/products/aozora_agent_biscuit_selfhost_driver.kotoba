@@ -1,0 +1,49 @@
+;; Mixed authorization workload for Aozora's Biscuit capability boundary.
+(ns aozora.agent-biscuit-selfhost-benchmark
+  (:require [aozora.pds.agent-biscuit-admission-core :as policy])
+  (:schemas {:aozora/authorization-input
+             [:record :aozora/authorization-input
+              [[:repo-post :i64]
+               [:repo-write :i64]
+               [:account-bind :i64]
+               [:op-code :i64]
+               [:repo-match :i64]
+               [:collection-code :i64]]]})
+  (:export [main]))
+
+(defn- decision [case-code]
+  (cond
+    (= case-code 0) (policy/authorize-op-code
+                     (record-new [:ref :aozora/authorization-input] 1 0 0 0 1 1))
+    (= case-code 1) (policy/authorize-op-code
+                     (record-new [:ref :aozora/authorization-input] 1 0 0 0 1 2))
+    (= case-code 2) (policy/authorize-op-code
+                     (record-new [:ref :aozora/authorization-input] 0 1 0 1 1 0))
+    (= case-code 3) (policy/authorize-op-code
+                     (record-new [:ref :aozora/authorization-input] 0 1 0 0 0 1))
+    (= case-code 4) (policy/authorize-op-code
+                     (record-new [:ref :aozora/authorization-input] 0 0 1 6 0 0))
+    (= case-code 5) (policy/authorize-op-code
+                     (record-new [:ref :aozora/authorization-input] 1 0 0 4 0 0))
+    (= case-code 6) (policy/authorize-op-code
+                     (record-new [:ref :aozora/authorization-input] 0 0 1 5 1 0))
+    :else (policy/authorize-op-code
+           (record-new [:ref :aozora/authorization-input] 1 1 1 99 1 1))))
+
+(defn main [] :i64
+  (let [cases-ok?
+        (and (= 0 (decision 0))
+             (= 3 (decision 1))
+             (= 0 (decision 2))
+             (= 2 (decision 3))
+             (= 0 (decision 4))
+             (= 0 (decision 5))
+             (= 0 (decision 6))
+             (= 1 (decision 7)))
+        accepted
+        (loop [i 0 count 0]
+          (if (< i 1000000)
+            (recur (+ i 1)
+                   (+ count (if (= 0 (decision (mod i 8))) 1 0)))
+            count))]
+    (if (and cases-ok? (= accepted 625000)) accepted -1)))

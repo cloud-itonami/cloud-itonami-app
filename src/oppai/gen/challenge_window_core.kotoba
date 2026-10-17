@@ -1,0 +1,21 @@
+;; Pure time-window port of oppai.gen.guard/challenge-valid?.
+;; The host validates integer epoch-millisecond inputs and maps that check to
+;; timestamps-valid. This core decides the inclusive issued-at + 60s window.
+;; Result: 1 usable, 0 refused. Enrolment, consent capture, nonce consumption,
+;; face bytes, and persistence remain host-owned capabilities.
+(ns oppai.gen.challenge-window-core
+  (:export [challenge-window-code main]))
+
+(defn challenge-window-code
+  [timestamps-valid :i64 issued-at-ms :i64 now-ms :i64] :i64
+  (if (and (= timestamps-valid 1)
+           (>= issued-at-ms 0)
+           (<= issued-at-ms 9999999999999)
+           (>= now-ms 0)
+           (<= now-ms 9999999999999)
+           (>= now-ms issued-at-ms)
+           (<= (- now-ms issued-at-ms) 60000))
+    1
+    0))
+
+(defn main [] :i64 0)

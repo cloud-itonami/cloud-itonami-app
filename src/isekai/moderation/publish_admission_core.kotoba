@@ -1,0 +1,13 @@
+;; Product policy slice for isekai.network's public UGC publishing gate.
+;; The host maps the existing account tiers to this stable numeric ABI; tier
+;; lookup, parental-consent evidence, persistence, and UI remain host duties.
+;; Tier ABI: 0 unset, 1 minor, 2 teen, 3 adult. Only teen/adult may publish.
+(ns isekai.moderation.publish-admission-core
+  (:export [publish-admission-code main]))
+
+;; Stable result ABI: 0 allow, 1 refuse. Unknown tier codes fail closed.
+(defn publish-admission-code
+  [tier-code :i64] :i64
+  (if (or (= tier-code 2) (= tier-code 3)) 0 1))
+
+(defn main [] :i64 0)

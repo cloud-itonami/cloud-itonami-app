@@ -1,0 +1,45 @@
+{:format :kotoba.kir/v3,
+ :signature nil,
+ :functions
+ [{:name binary-code?,
+   :params [value],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_or_2 (= value 0)]
+    (if __kotoba_or_2 __kotoba_or_2 (= value 1)))}
+  {:name review-turn-code,
+   :params [blocked-hit emotion-code motion-code ambiguous-tier],
+   :result :i64,
+   :effects #{},
+   :body
+   (if
+    (let
+     [__kotoba_or_2 (= blocked-hit 1)]
+     (if
+      __kotoba_or_2
+      __kotoba_or_2
+      (if (binary-code? blocked-hit) false true)))
+    1
+    (if
+     (let
+      [__kotoba_or_2 (< emotion-code 0)]
+      (if __kotoba_or_2 __kotoba_or_2 (> emotion-code 5)))
+     2
+     (if
+      (let
+       [__kotoba_or_2 (< motion-code 0)]
+       (if __kotoba_or_2 __kotoba_or_2 (> motion-code 4)))
+      3
+      (if
+       (if (binary-code? ambiguous-tier) false true)
+       4
+       (if (= ambiguous-tier 1) 4 0)))))}],
+ :oracle-value 0,
+ :schema-identities nil,
+ :exports [review-turn-code],
+ :schemas nil,
+ :effects #{},
+ :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
+ :entry nil}

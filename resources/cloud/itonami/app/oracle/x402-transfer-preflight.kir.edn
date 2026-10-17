@@ -1,0 +1,254 @@
+{:format :kotoba.kir/v4,
+ :signature nil,
+ :functions
+ [{:name units-range?,
+   :params [value],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_2 (>= value 0)]
+    (if __kotoba_and_2 (<= value 999999999999999) __kotoba_and_2)),
+   :param-types [:i64]}
+  {:name transfer-amount-limit-code,
+   :params [amount per-transfer used daily],
+   :result :i64,
+   :effects #{},
+   :body
+   (if (> amount per-transfer) 7 (if (> (+ used amount) daily) 8 0)),
+   :param-types [:i64 :i64 :i64 :i64]}
+  {:name transfer-verdict-code,
+   :params [input],
+   :result :i64,
+   :effects #{},
+   :body
+   (let
+    [principal-valid
+     (record-get
+      [:record
+       :nexus/transfer-preflight-input
+       [[:principal-valid :i64]
+        [:wallet-scope-valid :i64]
+        [:grant-active :i64]
+        [:request-valid :i64]
+        [:recipient-allowed :i64]
+        [:budget-available :i64]
+        [:amount :i64]
+        [:per-transfer :i64]
+        [:used :i64]
+        [:daily :i64]]]
+      input
+      :principal-valid)
+     wallet-scope-valid
+     (record-get
+      [:record
+       :nexus/transfer-preflight-input
+       [[:principal-valid :i64]
+        [:wallet-scope-valid :i64]
+        [:grant-active :i64]
+        [:request-valid :i64]
+        [:recipient-allowed :i64]
+        [:budget-available :i64]
+        [:amount :i64]
+        [:per-transfer :i64]
+        [:used :i64]
+        [:daily :i64]]]
+      input
+      :wallet-scope-valid)
+     grant-active
+     (record-get
+      [:record
+       :nexus/transfer-preflight-input
+       [[:principal-valid :i64]
+        [:wallet-scope-valid :i64]
+        [:grant-active :i64]
+        [:request-valid :i64]
+        [:recipient-allowed :i64]
+        [:budget-available :i64]
+        [:amount :i64]
+        [:per-transfer :i64]
+        [:used :i64]
+        [:daily :i64]]]
+      input
+      :grant-active)
+     request-valid
+     (record-get
+      [:record
+       :nexus/transfer-preflight-input
+       [[:principal-valid :i64]
+        [:wallet-scope-valid :i64]
+        [:grant-active :i64]
+        [:request-valid :i64]
+        [:recipient-allowed :i64]
+        [:budget-available :i64]
+        [:amount :i64]
+        [:per-transfer :i64]
+        [:used :i64]
+        [:daily :i64]]]
+      input
+      :request-valid)
+     recipient-allowed
+     (record-get
+      [:record
+       :nexus/transfer-preflight-input
+       [[:principal-valid :i64]
+        [:wallet-scope-valid :i64]
+        [:grant-active :i64]
+        [:request-valid :i64]
+        [:recipient-allowed :i64]
+        [:budget-available :i64]
+        [:amount :i64]
+        [:per-transfer :i64]
+        [:used :i64]
+        [:daily :i64]]]
+      input
+      :recipient-allowed)
+     budget-available
+     (record-get
+      [:record
+       :nexus/transfer-preflight-input
+       [[:principal-valid :i64]
+        [:wallet-scope-valid :i64]
+        [:grant-active :i64]
+        [:request-valid :i64]
+        [:recipient-allowed :i64]
+        [:budget-available :i64]
+        [:amount :i64]
+        [:per-transfer :i64]
+        [:used :i64]
+        [:daily :i64]]]
+      input
+      :budget-available)
+     amount
+     (record-get
+      [:record
+       :nexus/transfer-preflight-input
+       [[:principal-valid :i64]
+        [:wallet-scope-valid :i64]
+        [:grant-active :i64]
+        [:request-valid :i64]
+        [:recipient-allowed :i64]
+        [:budget-available :i64]
+        [:amount :i64]
+        [:per-transfer :i64]
+        [:used :i64]
+        [:daily :i64]]]
+      input
+      :amount)
+     per-transfer
+     (record-get
+      [:record
+       :nexus/transfer-preflight-input
+       [[:principal-valid :i64]
+        [:wallet-scope-valid :i64]
+        [:grant-active :i64]
+        [:request-valid :i64]
+        [:recipient-allowed :i64]
+        [:budget-available :i64]
+        [:amount :i64]
+        [:per-transfer :i64]
+        [:used :i64]
+        [:daily :i64]]]
+      input
+      :per-transfer)
+     used
+     (record-get
+      [:record
+       :nexus/transfer-preflight-input
+       [[:principal-valid :i64]
+        [:wallet-scope-valid :i64]
+        [:grant-active :i64]
+        [:request-valid :i64]
+        [:recipient-allowed :i64]
+        [:budget-available :i64]
+        [:amount :i64]
+        [:per-transfer :i64]
+        [:used :i64]
+        [:daily :i64]]]
+      input
+      :used)
+     daily
+     (record-get
+      [:record
+       :nexus/transfer-preflight-input
+       [[:principal-valid :i64]
+        [:wallet-scope-valid :i64]
+        [:grant-active :i64]
+        [:request-valid :i64]
+        [:recipient-allowed :i64]
+        [:budget-available :i64]
+        [:amount :i64]
+        [:per-transfer :i64]
+        [:used :i64]
+        [:daily :i64]]]
+      input
+      :daily)]
+    (if
+     (if (= principal-valid 1) false true)
+     1
+     (if
+      (if (= wallet-scope-valid 1) false true)
+      2
+      (if
+       (if (= grant-active 1) false true)
+       3
+       (if
+        (let
+         [__kotoba_or_3 (if (= request-valid 1) false true)]
+         (if
+          __kotoba_or_3
+          __kotoba_or_3
+          (let
+           [__kotoba_or_2 (if (units-range? amount) false true)]
+           (if __kotoba_or_2 __kotoba_or_2 (= amount 0)))))
+        4
+        (if
+         (if (= recipient-allowed 1) false true)
+         5
+         (if
+          (let
+           [__kotoba_or_4 (if (= budget-available 1) false true)]
+           (if
+            __kotoba_or_4
+            __kotoba_or_4
+            (let
+             [__kotoba_or_3
+              (if (units-range? per-transfer) false true)]
+             (if
+              __kotoba_or_3
+              __kotoba_or_3
+              (let
+               [__kotoba_or_2 (if (units-range? used) false true)]
+               (if
+                __kotoba_or_2
+                __kotoba_or_2
+                (if (units-range? daily) false true)))))))
+          6
+          (transfer-amount-limit-code
+           amount
+           per-transfer
+           used
+           daily)))))))),
+   :param-types [[:ref :nexus/transfer-preflight-input]]}],
+ :oracle-value 0,
+ :schema-identities
+ #:nexus{:transfer-preflight-input
+         "c7e93685fe2d6c9e3dd94465eb2fa89d17f3f5c5a064fb3fe2e8466139ad6d23"},
+ :exports [transfer-verdict-code transfer-amount-limit-code],
+ :schemas
+ #:nexus{:transfer-preflight-input
+         [:record
+          :nexus/transfer-preflight-input
+          [[:principal-valid :i64]
+           [:wallet-scope-valid :i64]
+           [:grant-active :i64]
+           [:request-valid :i64]
+           [:recipient-allowed :i64]
+           [:budget-available :i64]
+           [:amount :i64]
+           [:per-transfer :i64]
+           [:used :i64]
+           [:daily :i64]]]},
+ :effects #{},
+ :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
+ :entry nil}

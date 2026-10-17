@@ -1,0 +1,5 @@
+observed_at_utc,zone,hostname,dns_record_type,proxy_enabled,tunnel_name,tunnel_status,ingress_host_matches,ingress_rule_count,ingress_path_patterns,zone_dnssec_status,evidence_limit
+2026-10-16T16:24:59Z,murakumo.cloud,gateway.murakumo.cloud,CNAME,true,comfyui-gad,healthy,true,3,,disabled,Cloudflare API GET; tunnel upstream target omitted; public HTTP reachability unverified
+2026-10-16T16:24:59Z,murakumo.cloud,infer.murakumo.cloud,CNAME,true,comfyui-gad,healthy,true,3,,disabled,Cloudflare API GET; tunnel upstream target omitted; public HTTP reachability unverified
+2026-10-16T16:24:59Z,murakumo.cloud,kekkai-control.murakumo.cloud,CNAME,true,kekkai-control-plane,healthy,true,3,^/v1/nodes/[^/]+/heartbeat$;^/v1/nodes/[^/]+/netmap$,disabled,Cloudflare API GET; tunnel upstream target omitted; public HTTP reachability unverified
+2026-10-16T16:24:59Z,murakumo.cloud,origin-generation.murakumo.cloud,CNAME,true,yukkuri-gemma-gad,down,false,4,,disabled,Cloudflare API GET; tunnel upstream target omitted; public HTTP reachability unverified

@@ -1,0 +1,11 @@
+observed_on_jst,domain,web_retrieval_result,crawler_age_hint,page_title,evidence_limit
+2026-10-17,murakumo.cloud,page-content-returned,today,Murakumo — 新しいチャット,Web retrieval returned page content; raw HTTP status origin DNS and API health not exposed
+2026-10-17,aozora.app,page-content-returned,yesterday,aozora | AIクリエイター・漫画・ゲームのソーシャルプラットフォーム,Web retrieval returned page content; raw HTTP status origin DNS and API health not exposed
+2026-10-17,oppai.fans,no-page-content,unavailable,,Web retrieval returned an access error; this does not establish DNS or HTTP unavailability
+2026-10-17,isekai.network,page-content-returned,yesterday,isekai.network — Build games with AI,Web retrieval returned page content; raw HTTP status origin DNS and API health not exposed
+2026-10-17,itonami.app,no-page-content,unavailable,,Web retrieval returned an access error; this does not establish DNS or HTTP unavailability
+2026-10-17,itonami.cloud,page-content-returned,yesterday,cloud-itonami — the operating system for how work gets done,Web retrieval returned page content; raw HTTP status origin DNS and API health not exposed
+2026-10-17,x402.nexus,no-page-content,unavailable,,Web retrieval returned an access error; this does not establish DNS or HTTP unavailability
+2026-10-17,shinshi.club,no-page-content,unavailable,,Web retrieval returned an access error; this does not establish DNS or HTTP unavailability
+2026-10-17,babiniku.net,no-page-content,unavailable,,Web retrieval returned an access error; this does not establish DNS or HTTP unavailability
+2026-10-17,awai.network,no-page-content,unavailable,,Web retrieval returned an access error; this does not establish DNS or HTTP unavailability

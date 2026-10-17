@@ -1,0 +1,7 @@
+read_date,account,zone,hostname,path,tunnel_name,tunnel_id,tunnel_status,config_version,origin,origin_status,evidence
+2026-10-17,cloud-kotoba,murakumo.cloud,gateway.murakumo.cloud,,comfyui-gad,c75a3e83-6cef-4d9b-ba22-fbb459ee6fbe,healthy,7,http://localhost:8189,configured,Cloudflare API GET tunnel configuration
+2026-10-17,cloud-kotoba,murakumo.cloud,infer.murakumo.cloud,,comfyui-gad,c75a3e83-6cef-4d9b-ba22-fbb459ee6fbe,healthy,7,http_status:404,configured,Cloudflare API GET tunnel configuration
+2026-10-17,cloud-kotoba,murakumo.cloud,,,comfyui-gad,c75a3e83-6cef-4d9b-ba22-fbb459ee6fbe,healthy,7,http://localhost:8188,configured-unmatched-host,Cloudflare API GET tunnel configuration
+2026-10-17,cloud-kotoba,murakumo.cloud,kekkai-control.murakumo.cloud,^/v1/nodes/[^/]+/heartbeat$,kekkai-control-plane,8bf06737-3000-4f5b-ad9f-a2e2014c852f,healthy,1,http://127.0.0.1:17892,configured,Cloudflare API GET tunnel configuration
+2026-10-17,cloud-kotoba,murakumo.cloud,kekkai-control.murakumo.cloud,^/v1/nodes/[^/]+/netmap$,kekkai-control-plane,8bf06737-3000-4f5b-ad9f-a2e2014c852f,healthy,1,http://127.0.0.1:17893,configured,Cloudflare API GET tunnel configuration
+2026-10-17,cloud-kotoba,murakumo.cloud,,,kekkai-control-plane,8bf06737-3000-4f5b-ad9f-a2e2014c852f,healthy,1,http_status:404,configured-unmatched-host,Cloudflare API GET tunnel configuration

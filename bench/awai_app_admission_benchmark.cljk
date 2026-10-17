@@ -1,0 +1,164 @@
+(ns awai-app-admission-benchmark
+  "Diagnostic comparison of the shared host predicate and Kotoba KIR core."
+  (:require ["node:fs" :as fs]
+            ["node:perf_hooks" :as perf]
+            [cloud.itonami.app.kotoba-oracle :as oracle]))
+
+(def finish-record
+  [:record :awai-app-admission/finish-install
+   [[:prepared :bool]
+    [:install-lock-valid :bool]
+    [:runtime-inputs-valid :bool]
+    [:clock-valid :bool]
+    [:dns-proof-valid :bool]
+    [:amano-state :i64]
+    [:content-complete :bool]
+    [:capabilities-approved :bool]]])
+
+(def resolve-record
+  [:record :awai-app-admission/resolve
+   [[:dns-proof-fresh :bool] [:amano-state :i64]]])
+
+(def base-input
+  {:prepared true
+   :install-lock-valid true
+   :runtime-inputs-valid true
+   :clock-valid true
+   :dns-proof-valid true
+   :amano-state 2
+   :content-complete true
+   :capabilities-approved true})
+
+(def finish-cases
+  [[0 base-input]
+   [1 (assoc base-input :prepared false)]
+   [2 (assoc base-input :install-lock-valid false)]
+   [3 (assoc base-input :runtime-inputs-valid false)]
+   [4 (assoc base-input :clock-valid false)]
+   [5 (assoc base-input :dns-proof-valid false)]
+   [6 (assoc base-input :amano-state 0)]
+   [7 (assoc base-input :amano-state 1)]
+   [7 (assoc base-input :amano-state 3)]
+   [8 (assoc base-input :content-complete false)]
+   [9 (assoc base-input :capabilities-approved false)]])
+
+(def resolve-cases
+  [[0 {:dns-proof-fresh true :amano-state 2}]
+   [1 {:dns-proof-fresh false :amano-state 2}]
+   [2 {:dns-proof-fresh true :amano-state 0}]
+   [3 {:dns-proof-fresh true :amano-state 1}]
+   [3 {:dns-proof-fresh true :amano-state 3}]])
+
+(defn- host-finish-code [input]
+  (cond
+    (not (:prepared input)) 1
+    (not (:install-lock-valid input)) 2
+    (not (:runtime-inputs-valid input)) 3
+    (not (:clock-valid input)) 4
+    (not (:dns-proof-valid input)) 5
+    (= 0 (:amano-state input)) 6
+    (not= 2 (:amano-state input)) 7
+    (not (:content-complete input)) 8
+    (not (:capabilities-approved input)) 9
+    :else 0))
+
+(defn- kotoba-finish-code [input]
+  (oracle/i64-value
+   (oracle/call
+    :awai-app-admission 'finish-install-admission-code
+    [(oracle/record
+      finish-record
+      [(:prepared input)
+       (:install-lock-valid input)
+       (:runtime-inputs-valid input)
+       (:clock-valid input)
+       (:dns-proof-valid input)
+       (oracle/i64 (:amano-state input))
+       (:content-complete input)
+       (:capabilities-approved input)])])))
+
+(defn- kotoba-resolve-code [input]
+  (oracle/i64-value
+   (oracle/call
+    :awai-app-admission 'resolve-admission-code
+    [(oracle/record resolve-record
+                    [(:dns-proof-fresh input)
+                     (oracle/i64 (:amano-state input))])])))
+
+(defn- mixed-batch [decision n]
+  (loop [i 0 accepted 0 valid? true]
+    (if (= i n)
+      accepted
+      (recur (inc i)
+             (+ accepted (if (zero? (decision (if valid?
+                                                 base-input
+                                                 (assoc base-input
+                                                        :capabilities-approved false))))
+                           1 0))
+             (not valid?)))))
+
+(defn- elapsed-ms [f]
+  (let [start (.now (.-performance perf))
+        checksum (f)
+        elapsed (- (.now (.-performance perf)) start)]
+    {:elapsed-ms elapsed :checksum checksum}))
+
+(defn- median [values]
+  (nth (vec (sort values)) (quot (count values) 2)))
+
+(defn -main [& _]
+  (set! (.-exitCode js/process) 0)
+  (oracle/set-resource-loader!
+   (fn [path]
+     (.readFileSync fs (str "resources/" path) "utf8")))
+  (let [finish-ok? (every? (fn [[expected input]]
+                            (and (= expected (host-finish-code input))
+                                 (= expected (kotoba-finish-code input))))
+                          finish-cases)
+        resolve-ok? (every? (fn [[expected input]]
+                             (= expected (kotoba-resolve-code input)))
+                           resolve-cases)]
+    (if-not (and finish-ok? resolve-ok?)
+      (do
+        (println "FAIL: host/Kotoba admission cases diverged; benchmark refused")
+        (set! (.-exitCode js/process) 1))
+      (let [iterations 300
+            rounds 7
+            warmups 2
+            host-decision host-finish-code
+            kotoba-decision kotoba-finish-code
+            expected-checksum (quot iterations 2)]
+        (dotimes [_ warmups]
+          (mixed-batch host-decision iterations)
+          (mixed-batch kotoba-decision iterations))
+        (let [host-times (atom [])
+              kotoba-times (atom [])]
+          (dotimes [round rounds]
+            (let [order (if (even? round)
+                          [[:host host-decision host-times]
+                           [:kotoba-kir kotoba-decision kotoba-times]]
+                          [[:kotoba-kir kotoba-decision kotoba-times]
+                           [:host host-decision host-times]])]
+              (doseq [[label decision samples] order]
+                (let [{:keys [elapsed-ms checksum]}
+                      (elapsed-ms #(mixed-batch decision iterations))]
+                  (when-not (= expected-checksum checksum)
+                    (println "FAIL: checksum mismatch" label round checksum)
+                    (set! (.-exitCode js/process) 1))
+                  (swap! samples conj
+                         (/ (* elapsed-ms 1000000.0) iterations))))))
+          (let [host-ns (median @host-times)
+                kotoba-ns (median @kotoba-times)]
+            (println "benchmark=awai-app-install-admission-kir-diagnostic")
+            (println "compiler=KBB-generated shipped KIR")
+            (println "runtime=KBB SCI on Node")
+            (println "workload=300 alternating admitted/capability-refused decisions")
+            (println "decision-cases=11 finish-install + 5 resolve-domain; all checked before timing")
+            (println "rounds=7; warmups=2 per implementation; order=alternating")
+            (println "host-predicate-median-ns/decision=" host-ns)
+            (println "kotoba-kir-median-ns/decision=" kotoba-ns)
+            (println "ratio-kir-over-host=" (/ kotoba-ns host-ns))
+            (println "host-loadavg=" (seq (.loadavg (js/require "node:os"))))
+            (println "qualification=diagnostic only; includes record construction and KIR interpretation, excludes external verifiers and I/O")))))))
+
+(-main)

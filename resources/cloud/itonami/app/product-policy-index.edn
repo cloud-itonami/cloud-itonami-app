@@ -1,0 +1,181 @@
+{:schema "itonami.app.product-policy-index.v1"
+ :publication-state :source-staging-only
+ :source-provenance :copied-from-selfhost-benchmark-workspaces
+ :product-repository-integration :pending
+ :description "Policy-core source index for the first external-domain cohort; not a signed app release or domain binding."
+ :benchmark-runtime {:compiler :amu-selfhost
+                     :target :aarch64-macos
+                     :comparison :warmed-javascript-reference}
+ :selfhost-browser-target :unsupported
+ :production-chain-profile :uncreated
+ :domains
+ {"murakumo.cloud"
+  {:core :murakumo-bid-admission
+   :source "cloud_murakumo/compute_market_admission.kotoba"
+   :driver "bench/products/compute_market_admission_selfhost_driver.kotoba"
+   :empty-driver "bench/products/compute_market_admission_selfhost_empty_driver.kotoba"
+   :export bid-admission-code
+   :input-abi [:i64 :i64 :i64]
+   :admit-result-codes [0]
+   :measured-source-match :exact}
+  "aozora.app"
+  {:core :aozora-biscuit-authorization
+   :source "aozora/pds/agent_biscuit_admission_core.kotoba"
+   :driver "bench/products/aozora_agent_biscuit_selfhost_driver.kotoba"
+   :empty-driver "bench/products/aozora_agent_biscuit_selfhost_empty_driver.kotoba"
+   :export authorize-op-code
+   :input-abi [[:ref :aozora/authorization-input]]
+   :input-record {:descriptor [:record :aozora/authorization-input
+                               [[:repo-post :i64]
+                                [:repo-write :i64]
+                                [:account-bind :i64]
+                                [:op-code :i64]
+                                [:repo-match :i64]
+                                [:collection-code :i64]]]
+                  :field-abi [:i64 :i64 :i64 :i64 :i64 :i64]}
+   :admit-result-codes [0]
+   :measured-source-match :exact}
+  "oppai.fans"
+  {:core :oppai-challenge-window
+   :source "oppai/gen/challenge_window_core.kotoba"
+   :driver "bench/products/oppai_challenge_window_selfhost_driver.kotoba"
+   :empty-driver "bench/products/oppai_challenge_window_selfhost_empty_driver.kotoba"
+   :export challenge-window-code
+   :input-abi [:i64 :i64 :i64]
+   :admit-result-codes [1]
+   :measured-source-match :exact}
+  "isekai.network"
+  {:core :isekai-publish-admission
+   :source "isekai/moderation/publish_admission_core.kotoba"
+   :driver "bench/products/isekai_publish_admission_selfhost_driver.kotoba"
+   :empty-driver "bench/products/isekai_publish_admission_selfhost_empty_driver.kotoba"
+   :export publish-admission-code
+   :input-abi [:i64]
+   :admit-result-codes [0]
+   :measured-source-match :exact}
+  "babiniku.net"
+  {:core :babiniku-proposal-governor
+   :source "babiniku/governor_core.kotoba"
+   :driver "bench/products/babiniku_governor_selfhost_driver.kotoba"
+   :empty-driver "bench/products/babiniku_governor_selfhost_empty_driver.kotoba"
+   :export review-turn-code
+   :input-abi [:i64 :i64 :i64 :i64]
+   :admit-result-codes [0]
+   :measured-source-match :exact}
+  "x402.nexus"
+  {:core :x402-transfer-preflight
+   :source "nexus/wallet/transfer_preflight_core.kotoba"
+   :driver "bench/products/x402_transfer_preflight_selfhost_driver.kotoba"
+   :empty-driver "bench/products/x402_transfer_preflight_selfhost_empty_driver.kotoba"
+   :export transfer-verdict-code
+   :additional-exports {transfer-amount-limit-code [:i64 :i64 :i64 :i64]}
+   :input-abi [[:ref :nexus/transfer-preflight-input]]
+   :input-record {:descriptor [:record :nexus/transfer-preflight-input
+                               [[:principal-valid :i64]
+                                [:wallet-scope-valid :i64]
+                                [:grant-active :i64]
+                                [:request-valid :i64]
+                                [:recipient-allowed :i64]
+                                [:budget-available :i64]
+                                [:amount :i64]
+                                [:per-transfer :i64]
+                                [:used :i64]
+                                [:daily :i64]]]
+                  :field-abi [:i64 :i64 :i64 :i64 :i64 :i64 :i64 :i64 :i64 :i64]}
+   :admit-result-codes [0]
+   :measured-source-match :exact}
+  "shinshi.club"
+  {:core :shinshi-video-black-frame
+   :source "shinshi/common/video_black_frame_core.kotoba"
+   :driver "bench/products/shinshi_video_black_frame_selfhost_driver.kotoba"
+   :empty-driver "bench/products/shinshi_video_black_frame_selfhost_empty_driver.kotoba"
+   :export black-frame-code
+   :input-abi [:i64 :i64]
+   :pass-result-codes [0]
+   :measured-source-match :exact}
+  "awai.network"
+  {:core :awai-network-chat-admission
+   :source "awai/apex/chat_admission_core.kotoba"
+   :driver "bench/products/awai_apex_chat_admission_selfhost_driver.kotoba"
+   :empty-driver "bench/products/awai_apex_chat_admission_selfhost_empty_driver.kotoba"
+   :export chat-admission-code
+   :input-abi [:i64 :i64 :i64]
+   :admit-result-codes [0]
+   :measured-source-match :exact}}
+ :shared-policies
+ {:awai-app-admission
+  {:core :awai-app-admission
+   :exports
+   {:resolve-admission-code
+    {:export resolve-admission-code
+     :argument-records
+     [{:descriptor [:record :awai-app-admission/resolve
+                    [[:dns-proof-fresh :bool] [:amano-state :i64]]]
+       :field-abi [:bool :i64]}]}
+    :finish-install-admission-code
+    {:export finish-install-admission-code
+     :argument-records
+     [{:descriptor [:record :awai-app-admission/finish-install
+                    [[:prepared :bool]
+                     [:install-lock-valid :bool]
+                     [:runtime-inputs-valid :bool]
+                     [:clock-valid :bool]
+                     [:dns-proof-valid :bool]
+                     [:amano-state :i64]
+                     [:content-complete :bool]
+                     [:capabilities-approved :bool]]]
+       :field-abi [:bool :bool :bool :bool :bool :i64 :bool :bool]}]}}}
+  :awai-current-ref
+  {:core :awai-current-ref
+   :exports
+   {:verified-current-ref?
+    {:export verified-current-ref?
+     :argument-records
+     [{:descriptor [:record :awai-current-ref/proof
+                    [[:trust :string]
+                     [:decision-verified :bool]
+                     [:profile-id :string]
+                     [:chain-id :string]
+                     [:genesis-hash :string]
+                     [:validator-set-id :string]
+                     [:quorum-policy-id :string]
+                     [:reference :string]
+                     [:head-cid :string]
+                     [:challenge :string]
+                     [:current :bool]
+                     [:quorum-read-verified :bool]
+                     [:current-read-proof-present :bool]
+                     [:finality-proof-verified :bool]
+                     [:finalized-event-cid :string]
+                     [:finality-proof-present :bool]
+                     [:observed-at :i64]
+                     [:expires-at :i64]
+                     [:signature-valid :bool]]]
+       :field-abi [:string :bool :string :string :string :string :string
+                   :string :string :string :bool :bool :bool :bool :string
+                   :bool :i64 :i64 :bool]}
+      {:descriptor [:record :awai-current-ref/profile
+                    [[:profile-id :string]
+                     [:chain-id :string]
+                     [:genesis-hash :string]
+                     [:validator-set-id :string]
+                     [:quorum-policy-id :string]]]
+       :field-abi [:string :string :string :string :string]}
+      {:descriptor [:record :awai-current-ref/request
+                    [[:expected-ref :string]
+                     [:expected-head-cid :string]
+                     [:expected-challenge :string]
+                     [:now-ms :i64]]]
+       :field-abi [:string :string :string :i64]}]}}}}
+ :shared-host-domains
+ {"itonami.app" {:role :common-app-host
+                  :release-state :unmerged}
+  "itonami.cloud" {:role :existing-host-surface
+                    :migration-state :service-inventory-pending}}
+ :shared-itonami-cores
+ [{:core :awai-app-admission
+   :source "cloud/itonami/app/awai_app_admission_core.kotoba"
+   :state :shared-host-source}
+  {:core :awai-current-ref
+   :source "cloud/itonami/app/awai_current_ref_core.kotoba"
+   :state :shared-host-source}]}

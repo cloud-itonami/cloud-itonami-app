@@ -1,0 +1,5 @@
+;; Empty KEXE loader baseline for the Babiniku governor benchmark.
+(ns babiniku.governor-selfhost-empty-benchmark
+  (:export [main]))
+
+(defn main [] :i64 0)
