@@ -66,8 +66,14 @@ jobs:
           cache: false
       - name: Install gitleaks
         run: go install github.com/zricethezav/gitleaks/v8@v8.28.0
-      - name: Scan Git history
-        run: gitleaks git --redact --no-banner
+      # Checkout fetches all refs so the PR base and head are available, but
+      # scanning every fetched ref lets an unrelated open branch fail this PR.
+      # Scan every commit introduced by this push or pull request instead.
+      - name: Scan commits introduced by this event
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: gitleaks git --redact --no-banner --log-opts="${BASE_SHA}..${HEAD_SHA}"
 
   # Smoke-tests the Windows launch path end to end: kbb + engine + guest-wasm
   # server, first-boot health on 1338. This is the run path the resident
