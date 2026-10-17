@@ -205,7 +205,7 @@
 
 (defn- install-scope-value
   [domain registry candidate proof manifest-result amano-result]
-  (let [trusted-registry {:trust "independently-verified-awai-envelopes"
+  (let [trusted-registry {:trust (get-in registry [:body :trust])
                           :snapshot (:verified-snapshot registry)}
         release-result (when (= :verified (:decision manifest-result))
                          (awai-apps/verified-release-descriptor
