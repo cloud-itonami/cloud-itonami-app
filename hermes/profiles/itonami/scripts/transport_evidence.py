@@ -1,79 +1,92 @@
 #!/usr/bin/env python3
-"""transport_evidence.py — read-only transport efficiency data collection.
+"""Collect the latest verified World Bank LPI rows for Itonami transport.
 
-Cron-facing evidence script. Pulls the official World Bank LPI observations
-and country metadata directly, reporting
-MEASURED/UNMEASURED per signal, never inventing values.
-
-Fix 2026-09-20: the old URL /v2/indicator/LP.LPI.OVRL.XQ?per_page=20 returns
-indicator METADATA only (total=1, no observation rows), so try_lpi() always
-returned empty -> worldbank_lpi was permanently UNMEASURED. The working shape
-is /v2/country/all/indicator/... with per_page=300 and mrnev=1. Aggregates
-(region=Aggregates, e.g. AFE/AFW/ARB) are excluded via the /v2/country list.
+Python launcher restored 2026-10-18 from the surviving Hy source
+`scripts/hermes-itonami-bots/transport_evidence.hy` (com-junkawasaki @
+a29f8709c61, "bots: migrate Itonami transport evidence jobs to Hy"). Logic is a
+faithful port: same World Bank country filter and numeric validation, same
+MEASURE/OBS output contract. Hermes-owned profiles run the Python launcher.
 """
+
+import datetime
 import json
-import sys
 import math
-from datetime import datetime, timezone
 import urllib.request
 
-LPI_URL = ("https://api.worldbank.org/v2/country/all/indicator/LP.LPI.OVRL.XQ"
-           "?format=json&per_page=300&mrnev=1")
+LPI_URL = "https://api.worldbank.org/v2/country/all/indicator/LP.LPI.OVRL.XQ?format=json&per_page=300&mrnev=1"
 COUNTRY_URL = "https://api.worldbank.org/v2/country?format=json&per_page=400"
+UA = "itonami-evidence/1.0"
+INDICATOR = "LP.LPI.OVRL.XQ"
 
-def print_sep(title):
-    print(f"=== {title} ===")
+
+def fetch_json(url):
+    try:
+        with urllib.request.urlopen(
+            urllib.request.Request(url, headers={"User-Agent": UA}), timeout=20
+        ) as response:
+            return json.loads(response.read())
+    except Exception:
+        return None
+
 
 def try_lpi():
     try:
-        req = urllib.request.Request(LPI_URL, headers={"User-Agent": "itonami-evidence/1.0"})
-        with urllib.request.urlopen(req, timeout=20) as r:
-            rows_all = json.load(r)
-        rows = rows_all[1]
-        countries = set()
-        try:
-            c_req = urllib.request.Request(COUNTRY_URL, headers={"User-Agent": "itonami-evidence/1.0"})
-            with urllib.request.urlopen(c_req, timeout=20) as r:
-                c_all = json.load(r)
-            countries = {c["id"] for c in c_all[1]
-                         if c.get("region", {}).get("value")
-                         and c["region"]["value"] != "Aggregates"}
-            if not countries:
-                return None
-        except Exception:
-            return None  # country classification is required; never label aggregates as countries
+        data = fetch_json(LPI_URL)
+        if not data or "_error" in data:
+            raise RuntimeError("LPI response unavailable")
+        countries_data = fetch_json(COUNTRY_URL)
+        if not countries_data or "_error" in countries_data:
+            raise RuntimeError("country metadata unavailable")
+        countries = {
+            country.get("id")
+            for country in countries_data[1]
+            if country.get("region", {}).get("value")
+            and country.get("region", {}).get("value") != "Aggregates"
+        }
         latest = {}
-        for row in rows:
-            c = row.get("countryiso3code")
-            v = row.get("value")
-            d = row.get("date")
-            if (not isinstance(c, str) or len(c) != 3 or c not in countries
-                    or not isinstance(d, str) or not d.isdigit()
-                    or not isinstance(v, (int, float)) or isinstance(v, bool)
-                    or not math.isfinite(v) or not 0 <= v <= 5
-                    or row.get("indicator", {}).get("id") != "LP.LPI.OVRL.XQ"):
-                continue
-            if c not in latest or d > latest[c][1]:
-                latest[c] = (v, d)
+        if not countries:
+            raise RuntimeError("country classification unavailable")
+        for row in data[1]:
+            code = row.get("countryiso3code")
+            value = row.get("value")
+            date = row.get("date")
+            indicator = row.get("indicator", {}).get("id")
+            if (
+                isinstance(code, str)
+                and len(code) == 3
+                and code in countries
+                and isinstance(date, str)
+                and date.isdigit()
+                and (isinstance(value, int) or isinstance(value, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+                and 0 <= value <= 5
+                and indicator == INDICATOR
+            ):
+                if code not in latest or date > latest[code][1]:
+                    latest.update({code: [value, date]})
         return latest
     except Exception:
         return None
 
+
 def main():
-    print_sep("TRANSPORT EFFICIENCY DATA")
-
-    print(f"MEASURE\tobserved_at\t{datetime.now(timezone.utc).isoformat()}")
-
+    print("=== TRANSPORT EFFICIENCY DATA ===")
+    print("MEASURE\tobserved_at\t{}".format(
+        datetime.datetime.now(datetime.timezone.utc).isoformat()))
     lpi = try_lpi()
     if lpi:
         print("MEASURE\tworldbank_lpi\tMEASURED")
         print(f"MEASURE\tworldbank_lpi_url\t{LPI_URL}")
-        for c in sorted(lpi)[:10]:
-            v, yr = lpi[c]
-            print(f"OBS\t{c}\t{v}\t{yr}")
-        sys.exit(0)
-    print("MEASURE\tworldbank_lpi\tUNMEASURED")
-    print(f"MEASURE\tworldbank_lpi_url\t{LPI_URL}")
+        for code in sorted(lpi)[:10]:
+            value = lpi[code][0]
+            year = lpi[code][1]
+            print("OBS\t{}\t{}\t{}".format(code, value, year))
+    else:
+        print("MEASURE\tworldbank_lpi\tUNMEASURED")
+        print(f"MEASURE\tworldbank_lpi_url\t{LPI_URL}")
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
