@@ -16,7 +16,7 @@ resident host）を aiueos VM 上の container で動かすための image 一�
 
 ```sh
 container/assemble-context.sh          # context 組み立て（app/cli/kbb/nbb を sibling 配置）
-podman build -f container/Containerfile -t itonami-agent .
+podman build -f container/Containerfile -t itonami-agent container/
 podman run --rm itonami-agent cli commands        # CLI 疎通（server 不要）
 podman run -d -p 1338:1338 -v itonami-data:/data itonami-agent serve
 ```
