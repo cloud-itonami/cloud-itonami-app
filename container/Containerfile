@@ -1,0 +1,34 @@
+# itonami agent (CLI + resident host) — container for the aiueos VM (JUN-77)
+#
+# Runtime is JVM-free by design (measured 2026-10-18):
+#   - CLI    = cloud-itonami-cli/bin/itonami  (kbb script, classpath-free client)
+#   - server = cloud-itonami-app/bin/cloud-itonami-server (kbb host + server_main.wasm guest)
+#   - kbb v2 = kotoba/bin/kbb -> SCI-on-Node engine (org-babashka-nbb), no java in PATH
+#
+# Build context is produced by container/assemble-context.sh (app + cli + the two
+# kbb engine repos at their sibling layout). The guest wasm artifact is NOT baked
+# here: build it with bin/compile-amu under the compiler pin (compiler-pin.edn)
+# and mount it at /data/guest/server_main.wasm, or extend this file with a
+# builder stage once the amu launcher image exists. See container/README.md.
+
+FROM docker.io/library/node:22-bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends bash git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY context/ /opt/itonami/
+ENV KBB_HOME=/opt/itonami/kotoba-lang/kotoba \
+    CLOUD_ITONAMI_DATA_DIR=/data \
+    PATH=/opt/itonami/kotoba-lang/kotoba/bin:$PATH
+
+RUN mkdir -p /data && chmod 755 /data
+
+# 1338 = the guest-decided listen port (bin/cloud-itonami-server)
+EXPOSE 1338
+VOLUME ["/data"]
+
+COPY container/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["serve"]

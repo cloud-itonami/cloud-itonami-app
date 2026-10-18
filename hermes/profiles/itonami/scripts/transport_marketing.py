@@ -1,53 +1,43 @@
 #!/usr/bin/env python3
-"""Marketing and outreach analysis for cloud-itonami.
+"""Decision-free marketing evidence and a draft for human review.
 
-Collects market signals, potential customer profiles, and drafts outreach messages.
-Decision-free: only outputs MEASURE lines and drafted messages for human review.
+Python launcher restored 2026-10-18 from the surviving Hy source
+`scripts/hermes-itonami-bots/transport_marketing.hy` (com-junkawasaki @
+a29f8709c61). Faithful port: same local-file measurements, same fixed
+human-review draft output. No send/decision action is taken here.
 """
-import os
-import sys
-import json
-from datetime import datetime
 
-def refuse(why):
-    print("REFUSED — no marketing evidence was gathered this run.")
-    print(why)
-    sys.exit(2)
+import datetime
+import json
+import os
+
 
 def main():
-    # Marketing data sources (placeholder paths - would be populated by crawlers)
     customer_leads = "/tmp/itonami_leads.json"
     market_reports = "/tmp/itonami_market_reports.json"
-    
     print("=== MARKETING SIGNALS ===")
-    
-    # Check for lead data
     if os.path.exists(customer_leads):
         try:
-            with open(customer_leads, 'r') as f:
-                leads = json.load(f)
+            with open(customer_leads, "r", encoding="utf-8") as source:
+                leads = json.load(source)
             if isinstance(leads, dict):
-                # itonami_leads_v1 wrapper: count records, not top-level keys
                 leads = leads.get("records", list(leads.values()))
             print(f"MEASURE\tcustomer_leads_count\t{len(leads)}")
-            print(f"MEASURE\tleads_timestamp\t{datetime.now().isoformat()}")
-        except Exception as e:
-            print(f"MEASURE\tcustomer_leads_count\tUNMEASURED")
+            print(f"MEASURE\tleads_timestamp\t{datetime.datetime.now().isoformat()}")
+        except Exception:
+            print("MEASURE\tcustomer_leads_count\tUNMEASURED")
     else:
-        print(f"MEASURE\tcustomer_leads_count\tUNMEASURED")
+        print("MEASURE\tcustomer_leads_count\tUNMEASURED")
         print(f"MEASURE\tleads_reason\tfile not found: {customer_leads}")
-    
-    # Check for market reports
     if os.path.exists(market_reports):
         try:
-            with open(market_reports, 'r') as f:
-                reports = json.load(f)
+            with open(market_reports, "r", encoding="utf-8") as source:
+                reports = json.load(source)
             print(f"MEASURE\tmarket_reports_count\t{len(reports)}")
-        except Exception as e:
-            print(f"MEASURE\tmarket_reports_count\tUNMEASURED")
+        except Exception:
+            print("MEASURE\tmarket_reports_count\tUNMEASURED")
     else:
-        print(f"MEASURE\tmarket_reports_count\tUNMEASURED")
-    
+        print("MEASURE\tmarket_reports_count\tUNMEASURED")
     print()
     print("=== OUTREACH DRAFTS (for human review) ===")
     print("Draft: itonami.cloud value proposition for logistics sector")
@@ -56,6 +46,8 @@ def main():
     print("         real-time route optimization, cargo tracking integration,")
     print("         and automated compliance reporting.")
     print("Status: DRAFT - awaiting human send approval")
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
