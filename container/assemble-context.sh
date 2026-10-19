@@ -21,7 +21,7 @@ sync_repo "$GH/kotoba-lang/kotoba"                 "$OUT/kotoba-lang/kotoba"
 sync_repo "$GH/kotoba-lang/org-babashka-nbb"       "$OUT/kotoba-lang/org-babashka-nbb"
 # kbb stdlib siblings (measured 2026-10-18: absent siblings print
 # "NOT on the classpath: stdlib sibling not checked out" warnings at runtime)
-for lib in process bytes json http pprint error coll fs io spec test; do
+for lib in process bytes json http pprint error coll fs io spec test text edn; do
   if [ -d "$GH/kotoba-lang/$lib" ]; then
     sync_repo "$GH/kotoba-lang/$lib" "$OUT/kotoba-lang/$lib"
   fi
