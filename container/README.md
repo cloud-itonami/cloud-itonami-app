@@ -25,6 +25,21 @@ podman run -d -p 1338:1338 -v itonami-data:/data itonami-agent serve
 
 ## guest wasm の provenance
 
+実測（2026-10-18）: `AMU=<amu launcher> kbb --backend sci --classpath bin bin/compile-amu`
+で `target/amu/server_main.wasm`（3,434 bytes）ほかが provenance 付きで発行される。
+server は `<app>/target/amu/server_main.wasm` を読むので、それを mount する:
+
+```sh
+podman run -d --name itonami-serve -v $PWD/target/amu:/opt/itonami/cloud-itonami/cloud-itonami-app/target/amu:ro \
+  -v itonami-data:/data itonami-agent:dev serve
+podman exec itonami-serve curl -s http://127.0.0.1:1338/health   # → 200 guest-wasm
+podman exec itonami-serve itonami status                          # → :answering? true
+```
+
+⚠ server は意図的に **127.0.0.1 bind**（loopback host）。`-p 1338:1338` の
+port publish では外から届かない（設計どおり）。CLI/監視は同一 container 内の
+exec、または同一 pod の sidecar から。
+
 `server_main.wasm` は image に含めない。`bin/compile-amu` を compiler pin
 （`compiler-pin.edn`）どおりに走らせて発行された artifact を
 `/data/guest/server_main.wasm` に mount する。builder stage への組み込みは
