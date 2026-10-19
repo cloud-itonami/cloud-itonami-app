@@ -1,0 +1,171 @@
+;; Complete the owner's Passkey ceremony in automation — the step
+;; test/browser/signin_gate.cljk documents as impossible:
+;;
+;;     "the Passkey that should follow never arrives, because a headless
+;;      browser has no authenticator to create one with."
+;;
+;; CDP's virtual authenticator is the missing hardware. Target surface:
+;; `src/cloud/itonami/app/signin_server.cljk` (JVM-free sign-in server, the
+;; one that serves the REAL web surface and the passkey endpoints with
+;; webauthn.adapters.edge verification):
+;;
+;;     NODE_PATH=<monorepo>/node_modules \
+;;       kbb --backend sci --classpath src src/cloud/itonami/app/signin_server.cljk &
+;;     NODE_PATH=<monorepo>/node_modules ITONAMI_BASE=http://localhost:1338 \
+;;       kbb --backend sci test/browser/passkey_ceremony.cljk
+;;
+;; nbb, not .mjs (CLAUDE.md). Like signin_gate.cljk: EMPTY store only; it
+;; refuses a store that already holds a finished registration.
+;;
+;; ## What "verified" means here (do not overstate)
+;;
+;; The virtual authenticator is TEST hardware: isUserVerified=true is a test
+;; input. This proves the ceremony PATH completes end to end (creation options
+;; -> navigator.credentials.create -> attestation -> the server's own WebCrypto
+;; verification -> bound passkey + session). It proves nothing about who held
+;; the authenticator; human identity stays the real Passkey ceremony.
+
+(require '["playwright$default" :as pw]
+         '[kotoba.lang.text :as str]
+         '[promesa.core :as p])
+
+;; signin_server listens on 1338 (its own docstring; the guest host shares the
+;; port convention). ITONAMI_BASE must be its own origin — the CSRF and cookie
+;; flows compare against it (measured 403 on mismatch, per signin_gate.cljk).
+(def base (or (aget js/process.env "ITONAMI_BASE") "http://localhost:1338"))
+
+(def failures (atom []))
+(def console-errors (atom []))
+
+(defn check! [label ok?]
+  (println (if ok? "  ok  " "  FAIL") label)
+  (when-not ok? (swap! failures conj label)))
+
+(defn json-fetch
+  ([path] (json-fetch path nil))
+  ([path opts]
+   (p/let [response (js/fetch (str base path)
+                              (clj->js (merge {:credentials "include"
+                                               :headers {"Content-Type" "application/json"
+                                                         "Origin" base}}
+                                              opts)))
+           text (.text response)]
+     #js {:status (.-status response)
+          :body (if (str/blank? text) #js {} (js/JSON.parse text))})))
+
+(defn virtual-authenticator! [context page]
+  (p/let [client (.newCDPSession context page)
+          _ (.send client "WebAuthn.enable" #js {})
+          added (.send client "WebAuthn.addVirtualAuthenticator"
+                       #js {:options #js {:protocol "ctap2"
+                                          :transport "internal"
+                                          :hasResidentKey true
+                                          :hasUserVerification true
+                                          :isUserVerified true
+                                          :isUserConsent true}})]
+    #js {:client client
+         :authenticatorId (aget added "authenticatorId")}))
+
+(defn -main []
+  (p/let [status (json-fetch "/api/identity")
+          body (aget status "body")
+          registered? (aget body "registered?")]
+    (when registered?
+      (println "refusing to run: this store already holds a finished registration")
+      (js/process.exit 2))
+
+    (p/let [resume (json-fetch "/api/passkeys/onboarding/resume" {:method "POST" :body "{}"})
+            csrf (or (aget (aget resume "body") "csrf")
+                     (aget (aget resume "body") "csrf-token")
+                     (aget (aget status "body") "csrf"))
+            browser (.launch (.-chromium pw)
+                             #js {:headless true
+                                  :executablePath
+                                  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"})
+            context (.newContext browser)
+            page (.newPage context)
+            va (virtual-authenticator! context page)
+            _ (.on page "console"
+                   (fn [msg] (when (= "error" (.type msg))
+                               (swap! console-errors conj (.text msg)))))
+            _ (.on page "pageerror"
+                   (fn [err] (swap! console-errors conj (str "pageerror: " err))))
+            _ (.goto page base #js {:waitUntil "networkidle"})]
+
+      (println "\n── onboarding session ──")
+      (println "  resume status:" (aget resume "status"))
+      (check! "onboarding resume answered 200 (owner session)" (= 200 (aget resume "status")))
+      (check! "a csrf token came back for the session" (some? csrf))
+
+      (println "\n── register/start: the server's creation options ──")
+      (p/let [start (js/fetch (str base "/api/passkeys/register/start")
+                              #js {:method "POST"
+                                   :credentials "include"
+                                   :headers #js {"Content-Type" "application/json"
+                                                 "Origin" base
+                                                 "x-cloud-itonami-csrf" (or csrf "")}
+                                   :body "{}"})
+              start-text (.text start)
+              start-body (if (str/blank? start-text) #js {} (js/JSON.parse start-text))
+              tid (aget start-body "transaction-id")]
+        (println "  register/start status:" (.-status start))
+        (check! "register/start answered 200" (= 200 (.-status start)))
+        (check! "a transaction id came back" (some? tid))
+
+        ;; The real ceremony, in the real page origin: the browser builds the
+        ;; credential; the virtual authenticator is the hardware.
+        (p/let [created (.evaluate page
+                                   (fn [options]
+                                     (js/Promise.
+                                      (fn [resolve reject]
+                                        (-> (.create js/navigator.credentials
+                                                     #js {:publicKey (js/JSON.parse options)})
+                                            (.then (fn [cred]
+                                                     (resolve
+                                                      (.stringify js/JSON
+                                                                  #js {:id (.-id cred)
+                                                                       :rawId (.stringify js/JSON (.toJSON (.-rawId cred)))
+                                                                       :type (.-type cred)
+                                                                       :response #js {:clientDataJSON (.stringify js/JSON (.toJSON (.-response.clientDataJSON cred)))
+                                                                                      :attestationObject (.stringify js/JSON (.toJSON (.-response.attestationObject cred)))}}))))
+                                            (.catch (fn [e] (reject (str e)))))))
+                                   (.stringify js/JSON (aget start-body "publicKey")))
+              cred-payload (js/JSON.parse created)
+              finish (json-fetch "/api/passkeys/register/finish"
+                                 {:method "POST"
+                                  :headers {"Content-Type" "application/json"
+                                            "Origin" base
+                                            "x-cloud-itonami-csrf" (or csrf "")}
+                                  :body (.stringify js/JSON
+                                                    #js {:transaction-id tid
+                                                         :credential cred-payload})})]
+
+          (println "\n── the Passkey arrived ──")
+          (check! "navigator.credentials.create completed (virtual authenticator)"
+                  (some? created))
+          (println "  register/finish status:" (aget finish "status"))
+          (check! "the server's own verification accepted the attestation"
+                  (= 200 (aget finish "status")))
+
+          (p/let [creds (.send (aget va "client") "WebAuthn.getCredentials"
+                               #js {:authenticatorId (aget va "authenticatorId")})
+                  held (aget creds "credentials")
+                  after (json-fetch "/api/identity")
+                  after-body (aget after "body")]
+            (check! "the virtual authenticator holds the credential" (pos? (.-length held)))
+            (check! "identity now reports a registered passkey"
+                    (boolean (or (aget after-body "registered?")
+                                 (aget after-body "passkey-enrolled?"))))
+
+            (println "\n── console ──")
+            (doseq [e @console-errors] (println "  !" e))
+            (check! "no console errors" (empty? @console-errors))
+
+            (p/let [_ (.close browser)]
+              (if (seq @failures)
+                (do (println "\n" (count @failures) "failed:")
+                    (doseq [f @failures] (println "  -" f))
+                    (js/process.exit 1))
+                (println "\nall checks passed")))))))))
+
+(-main)
