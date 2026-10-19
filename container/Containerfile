@@ -13,10 +13,24 @@
 
 FROM docker.io/library/node:22-bookworm-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends bash git ca-certificates \
+# openjdk JRE is NOT for the runtime (CLI/server are kbb/Node): it exists solely
+# because nbb -> bb -> tools.deps dependency resolution shells out to `java`
+# (measured 2026-10-18: "Couldn't find 'java'. Please set JAVA_HOME" from
+# borkdude.deps). The warm-up below pre-resolves at build, so runs are offline.
+RUN apt-get update && apt-get install -y --no-install-recommends bash git ca-certificates curl openjdk-17-jre-headless \
     && rm -rf /var/lib/apt/lists/*
 
+# babashka: nbb's :deps resolution shells out to `bb` (AGENTS.md warns: cold .nbb cache
+# without bb = failure; measured live 2026-10-18 as ERR 127 'bb: not found').
+# Arch-aware static install, pinned.
+RUN BB_VER=1.12.218; ARCH=$(uname -m); case "$ARCH" in x86_64) BB_ARCH=amd64 ;; aarch64) BB_ARCH=aarch64 ;; *) BB_ARCH=$ARCH ;; esac; \
+    curl -sL "https://github.com/babashka/babashka/releases/download/v${BB_VER}/babashka-${BB_VER}-linux-${BB_ARCH}-static.tar.gz" | tar -xz -C /usr/local/bin bb && bb --version
+
 COPY context/ /opt/itonami/
+# the SCI engine's npm deps (import-meta-resolve et al.) — measured 2026-10-18:
+# without this, `itonami commands` dies ERR_MODULE_NOT_FOUND from nbb_api.js
+RUN npm install --omit=dev --prefix /opt/itonami/kotoba-lang/org-babashka-nbb
+
 ENV KBB_HOME=/opt/itonami/kotoba-lang/kotoba \
     CLOUD_ITONAMI_DATA_DIR=/data \
     PATH=/opt/itonami/kotoba-lang/kotoba/bin:$PATH
@@ -26,6 +40,9 @@ RUN mkdir -p /data && chmod 755 /data
 # 1338 = the guest-decided listen port (bin/cloud-itonami-server)
 EXPOSE 1338
 VOLUME ["/data"]
+
+# warm the .nbb deps cache at build time so the first run is not a cold resolution
+RUN /opt/itonami/cloud-itonami/cloud-itonami-cli/bin/itonami commands >/dev/null 2>&1 || true
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

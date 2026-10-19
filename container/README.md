@@ -5,7 +5,9 @@ resident host）を aiueos VM 上の container で動かすための image 一�
 
 ## 形態（実測ベース、2026-10-18）
 
-- **JVM は不要**（PR #270 以降の実装）: CLI は classpath-free な kbb クライアント、
+- **実行は JVM 不要**（PR #270 以降の実装）。ただし image には JRE を入れている —
+  nbb→bb→tools.deps の**依存解決だけ**が `java` を呼ぶため（実測: 『Couldn't find
+  'java'』で cold 解決が失敗）。build 時に warm-up 済みなので実行時に解決は走らない: CLI は classpath-free な kbb クライアント、
   server は `bin/cloud-itonami-server` = Node http ホスト + `server_main.wasm`
   guest（listen 判定は guest 側、port 1338）。
 - kbb v2 は SCI-on-Node（`kotoba-lang/kotoba/bin/kbb` → `org-babashka-nbb`）。
