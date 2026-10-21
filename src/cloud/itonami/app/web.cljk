@@ -2134,15 +2134,17 @@
     [:p {:id "apps-status" :role "status"}]
     [:div {:class "market-grid" :id "installed-app-grid"}]]
    [:section {:class "view" :data-view-panel "marketplace" :hidden true}
-    (view-header "マーケットプレイス" "仕事に合わせて、Plugin・Bot・App を追加。")
+    (view-header "マーケットプレイス" "Plugin・Bot・App を追加し、公開 DApps profile を閲覧。")
     [:div {:class "market-tabs" :role "tablist" :aria-label "種類"}
      (for [[id label] [["plugin" "Plugin"] ["bot" "Bot"] ["app" "App"]
-                       ["awai" "分散App"]]]
+                       ["awai" "分散App"] ["dapp" "DApps"]]]
        [:button {:type "button" :role "tab" :id (str "market-tab-" id)
                  :data-market-tab id :aria-selected (= id "plugin")
                  :aria-controls "market-results" :tabindex (if (= id "plugin") 0 -1)} label])]
     [:label {:class "visually-hidden" :for "market-search"} "マーケットプレイスを検索"]
     [:input {:id "market-search" :type "search" :placeholder "名前や用途で検索"}]
+    [:p {:class "form-help" :id "market-dapp-note" :hidden true}
+     "Etz Hayyim actor repo の公開 profile を固定 revision で閲覧します。これは説明用 metadata で、実行・インストール・権限付与は行いません。"]
     [:div {:class "market-filters" :id "market-filters"}
      [:label [:input {:id "market-installed-only" :type "checkbox"}] "追加済みだけ"]]
     [:p {:id "market-status" :role "status" :aria-live "polite"}]

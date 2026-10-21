@@ -13582,6 +13582,42 @@
     let awaiRegistryLoaded = false;
     let awaiRegistryGeneration = 0;
     let marketKind = 'plugin';
+    const etzhayyimDappBrief = 'etzhayyim actor repo の公開 profile。権限要求なし。';
+    const etzhayyimDapps = [
+      ['actor-abuse','0c51e4b817489a214010aae9dcf35b0f4a98d5cd'],
+      ['actor-ake','befeb230c848a16dce96a03cce192abb680ba178'],
+      ['actor-asobi','89a38fcd9605e66f35acc475ffa06cf08492e778'],
+      ['actor-chigiri','e406c895023e0a1a7081f2570456cc4b9098c920'],
+      ['actor-fuchi','69f7878f6dc6dc1f4de84fc42ce9b31d8ad3f36a'],
+      ['actor-hokorobi','eacc038e040268b0e21a4fb2b34cf36d7f536601'],
+      ['actor-ibuki','dc508955ca0127bea6eed6386cbfc35f6c54bb26'],
+      ['actor-inochi','a030a85dcaa99578546477952cef76041baab0f2'],
+      ['actor-itonami','412645024509bf0a964810618a45f9b9142b3874'],
+      ['actor-joucho','2900c170774f47b851594a56f0d96cac0a0ed1c7'],
+      ['actor-junkan','45206fe87ca0a0297482b61275b5c4f5edd01365'],
+      ['actor-kabuto','03e28e27357022ebee6d341779072e650a491a44'],
+      ['actor-kaiyaku','c80d101f248387ad04e58dfe1a58da802d0b1197'],
+      ['actor-kasa','ad3221d3cdbdfd93511e1a762b3c657c4c8a44b0'],
+      ['actor-kataribe','b3204a87aff08119ab68fde4f555904a232e4107'],
+      ['actor-kizashi','ab3625863ca576a7b13fb99564d30ee12f23f509'],
+      ['actor-kizuna','36fb1ab2250f2706c6b7003beec8f6a0a0a13165'],
+      ['actor-magatama','8a7ef9061daa96ba332f4f6aa33ef25639bc97f9'],
+      ['actor-manabi','3c24f6807519567345fa26b9fda0fee82da892d8'],
+      ['actor-musubi','a031154eeba8de7e34f9c4ea0539c0fe419bcfe3'],
+      ['actor-niyaku','50383466f8296623c61db265ad86d98b4aee1afd'],
+      ['actor-nusa','61223cab194f4b8c84be15f4e2ab8608491c67a5'],
+      ['actor-ossekai','67a052f4628962167c7904bf31e2be0e96231e7b'],
+      ['actor-rasen','857b3b917d91d3e74fb81744ac3f87a4cb457a82'],
+      ['actor-sanae','ddc83cfc89615862bd17d7b7dbd1037eb09ab526'],
+      ['actor-sentei','34d7b086bd88851db8887564064cbdc0376be9ff'],
+      ['actor-shidemori','87f1d2ce5634ef85256847a116c7f23a82f46234'],
+      ['actor-shinka','81c57d0de8f396493a87bb98d97801da29274cd7'],
+      ['actor-shiori','545e98ff34cab484cb943af9d0e9d22e6a11f17f'],
+      ['actor-tanemaki','025e91551aaec912924a90764b69b6c76a62ae3c'],
+      ['actor-ugachi','997d1eafacbadb7304b4855f407ea5cf413a5b69'],
+      ['actor-uzu','888edab7b328041cfd2d49ebd273796966679d95'],
+      ['actor-yosoku','1d155741ad3a2c8350679638f6742a5b5a886a80']
+    ].map(([name, revision]) => ({name, revision, repo: `etzhayyim/${name}`, brief: etzhayyimDappBrief}));
     let appsLoadGeneration = 0;
     const appCard = (app, installedView = false) => {
       const card = make('article', 'market-card');
@@ -13711,10 +13747,23 @@
       const query = $('#market-search').value.trim().toLocaleLowerCase('ja');
       const installedOnly = $('#market-installed-only').checked;
       const matches = (text) => text.toLocaleLowerCase('ja').includes(query);
-      $('#market-filters').hidden = marketKind === 'awai';
+      $('#market-filters').hidden = marketKind === 'awai' || marketKind === 'dapp';
+      $('#market-dapp-note').hidden = marketKind !== 'dapp';
       if (marketKind === 'app') {
         workspaceApps.filter((app) => (!installedOnly || app['installed?']) && matches(`${app.name} ${app.description} ${app.category}`))
           .forEach((app) => grid.append(appCard(app)));
+      } else if (marketKind === 'dapp') {
+        etzhayyimDapps.filter((entry) => matches(`${entry.name} ${entry.repo} ${entry.brief}`)).forEach((entry) => {
+          const card = make('article', 'market-card');
+          const copy = make('div', 'market-copy');
+          const details = make('p', 'form-help', `Profile · ${entry.revision.slice(0, 12)} · no tools requested`);
+          copy.append(make('h3', null, entry.name), make('p', null, entry.brief), details);
+          const actions = make('div', 'market-actions');
+          const profile = make('a', 'tool-button', 'Profile を見る');
+          profile.href = `https://github.com/${entry.repo}/blob/${entry.revision}/.itonami/profiles/shared.edn`;
+          profile.target = '_blank'; profile.rel = 'noopener noreferrer';
+          actions.append(profile); card.append(copy, actions); grid.append(card);
+        });
       } else if (marketKind === 'awai') {
         renderAwaiRegistry(grid, matches);
       } else if (marketKind === 'plugin') {
@@ -13771,7 +13820,10 @@
           });
         }
       }
-      if (marketKind === 'awai') {
+      if (marketKind === 'dapp') {
+        const count = grid.children.length;
+        $('#market-status').textContent = `${count} 件の DApps。profile参照のみ。実行・インストール・権限付与は行いません。`;
+      } else if (marketKind === 'awai') {
         const count = awaiRegistryState?.status === 'ok' ? (awaiRegistryState.candidates || []).length : 0;
         $('#market-status').textContent = awaiRegistryState?.status === 'ok'
           ? fmt('{length} 件のdomain候補。DNS proof・manifest・bundle・revocation検証後にinstall可能になります。', {length: count})
