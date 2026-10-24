@@ -7,7 +7,7 @@
   fails on every other one), reason literals pinned exactly, and the
   JVM-only round-trip against `ipns.core` is *absent* on ClojureScript —
   absence is not a pass, it is a skip with a reason."
-  (:require #?(:clj [clojure.test :refer [deftest is testing]]
+  (:require #?(:clj [kotoba.test :refer [deftest is testing]]
                :cljs [cljs.test :refer [deftest is testing]])
             [clojure.string :as str]
             [cloud.itonami.app.app-did :as app-did]
@@ -92,7 +92,9 @@
 
 (deftest a-did-shape-reading-is-a-did-shape-reading-in-both-directions
   (is (true? (app-did/did-key? real-app-did)))
-  (is (true? (app-did/did-key? "did:key:z6MkSyntheticQualA")))
+  (is (true? (app-did/did-key? "did:key:z6MkSyntheticQua1A")))
+  (is (false? (app-did/did-key? "did:key:z6MkSyntheticQualA"))
+      "base58 has no `l` — a literal that looks right but is not in the alphabet is not a reading")
   (is (false? (app-did/did-key?
                "bafkreiabxxpmnzydzr2iidu7u63mdrcai2a56b6r4qz2rdjzv4lv7fgbny"))
       "a CID is not a DID")
@@ -103,15 +105,52 @@
   (is (false? (app-did/did-key? "")) "a blank is not a reading")
   (is (false? (app-did/did-key? nil))))
 
-#?(:clj
-   (deftest the-derived-key-reproduces-the-latest-name-through-the-repo-lib
-     ;; Second source: feed the derived public key octets back through the
-     ;; repo's own IPNS library (`ipns.core/pubkey->name`, the same function
-     ;; `cloud.itonami.app.latest/name-from-seed` publishes with). If the
-     ;; derivation were wrong in any byte, the name would not come back.
-     ;; SKIPPED on ClojureScript — ipns.core is JVM there, and a skip is not
-     ;; a pass.
+(deftest the-derived-key-reproduces-the-latest-name-through-the-repo-lib
+  ;; Second source: feed the derived public key octets back through the
+  ;; repo's own IPNS library (`ipns.core/pubkey->name`, the same function
+  ;; `cloud.itonami.app.latest/name-from-seed` publishes with). If the
+  ;; derivation were wrong in any byte, the name would not come back.
+  ;; On ClojureScript this is a SKIP, and the skip is printed as one — the
+  ;; deftest body runs there so the output says `SKIP` instead of silently
+  ;; contributing zero assertions to a green run (skip ≠ pass).
+  #?(:clj
      (let [pubkey (:octets (app-did/ed25519-pubkey-from-latest-name real-latest-name))]
        (is (vector? pubkey))
        (is (= 32 (count pubkey)))
-       (is (= real-latest-name (ipns/pubkey->name pubkey))))))
+       (is (= real-latest-name (ipns/pubkey->name pubkey))))
+     :cljs
+     (println "SKIP (not a pass): ipns.core round-trip is JVM-only on ClojureScript")))
+
+(deftest the-run-log-line-is-the-reading-or-an-absence-never-both
+  (testing "the reading line carries the DID literal verbatim (value evidences itself)"
+    (is (= (str "app-did " real-app-did)
+           (app-did/run-log-line
+            {:kotoba.app/id "cloud.itonami.app" :kotoba.app/latest real-latest-name})))
+    (is (= (str "app-did " synthetic-app-did)
+           (app-did/run-log-line {:kotoba.app/latest synthetic-latest-name}))))
+  (testing "an absent reading is a reason literal, pinned exactly"
+    (is (= "app-did absent :app-did/manifest-missing" (app-did/run-log-line nil)))
+    (is (= "app-did absent :app-did/manifest-missing"
+           (app-did/run-log-line "not a manifest")))
+    (is (= "app-did absent :app-did/latest-attr-missing"
+           (app-did/run-log-line {:kotoba.app/id "cloud.itonami.app"})))
+    (is (= "app-did absent :app-did/name-shape"
+           (app-did/run-log-line {:kotoba.app/latest "k51abc"})))
+    (is (= "app-did absent :app-did/name-shape"
+           (app-did/run-log-line
+            {:kotoba.app/latest
+             "bafkreiabxxpmnzydzr2iidu7u63mdrcai2a56b6r4qz2rdjzv4lv7fgbny"})))
+    (is (= "app-did absent :app-did/cid-shape"
+           (app-did/run-log-line {:kotoba.app/latest bad-codec-name})))
+    (is (= "app-did absent :app-did/key-shape"
+           (app-did/run-log-line {:kotoba.app/latest bad-key-type-name}))))
+  (testing "an absent line never looks like a reading — no `did:` prefix anywhere"
+    (doseq [manifest [nil "not a manifest" {:kotoba.app/id "cloud.itonami.app"}
+                      {:kotoba.app/latest "k51abc"}
+                      {:kotoba.app/latest bad-codec-name}
+                      {:kotoba.app/latest bad-key-type-name}]]
+      (let [line (app-did/run-log-line manifest)]
+        (is (str/starts-with? line "app-did absent "))
+        (is (not (str/includes? line "did:"))
+            (str "absence line leaked a did: prefix: " line))
+        (is (nil? (:did (app-did/app-did-from-manifest manifest))))))))

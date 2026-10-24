@@ -168,3 +168,25 @@
         (if did
           {:ok? true :did did :latest-name nm}
           {:ok? false :error error})))))
+
+(defn run-log-line
+  "The one line the run-log writer prints for the `:app-did` surface.
+
+  Exactly two shapes exist, and they are not symmetric in what they may
+  contain:
+    `app-did did:key:z…`            — the reading; the DID literal is the
+                                      line's payload (value evidences itself)
+    `app-did absent <reason>`       — no reading; the reason literal is the
+                                      payload and the line MUST NOT contain a
+                                      `did:` prefix, because an absent reading
+                                      that looks like a reading is how a
+                                      missing measurement gets counted as one.
+
+  The manifest argument is whatever the host read (a map of the published
+  `:kotoba.app/*` datoms, or nil when the file is missing/unreadable/not edn
+  — nil is `:app-did/manifest-missing`, not a crash and not a pass)."
+  [manifest]
+  (let [{:keys [ok? did error]} (app-did-from-manifest manifest)]
+    (if ok?
+      (str "app-did " did)
+      (str "app-did absent " error))))

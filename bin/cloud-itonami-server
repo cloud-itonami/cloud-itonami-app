@@ -26,6 +26,8 @@
             [cloud.itonami.app.awai-manifest-node :as awai-manifest]
             [cloud.itonami.app.awai-registry-node :as awai-registry]
             [cloud.itonami.app.awai-sandbox-policy :as awai-sandbox-policy]
+            [cloud.itonami.app.app-did :as app-did]
+            [kotoba.lang.edn :as edn]
             [kotoba.protocol.cid :as app-cid]
             [kotoba.protocol.install :as app-install]
             [kotoba.protocol.vocab :as vocab]
@@ -1248,6 +1250,29 @@
 
       :else
       (handle-standard hosted guest-main req res))))
+
+(defn- app-manifest-path
+  "The published app manifest. `CLOUD_ITONAMI_APP_MANIFEST` overrides it so
+  the absent direction of this surface can be probed against a manifest that
+  lacks the signed latest pointer — a surface that has only ever been run on
+  the happy manifest has not been tested, it has been demoed."
+  []
+  (or (aget js/process.env "CLOUD_ITONAMI_APP_MANIFEST")
+      (path/resolve app-directory "resources/cloud/itonami/app/kotoba.app.edn")))
+
+(defn- emit-app-did!
+  "Write the `:app-did` observation surface as the first line of the run log.
+  The DID literal must appear verbatim when a reading exists
+  (`app-did did:key:z…`), and an absent reading prints its reason literal
+  (`app-did absent :app-did/…`) and never a `did:` prefix. A missing or
+  unreadable manifest is an absent reading, not a crash and not a pass."
+  []
+  (let [manifest (try (edn/read-string (fs/readFileSync (app-manifest-path) "utf8"))
+                      (catch :default _ nil))
+        line (app-did/run-log-line manifest)]
+    (binding [*print-fn* *print-err-fn*]
+      (println line))
+    line))
 
 (defn -main [& _]
   ;; The :app-did surface is the first thing in the run log — the literal
