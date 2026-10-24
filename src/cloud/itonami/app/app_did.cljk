@@ -1,0 +1,192 @@
+(ns cloud.itonami.app.app-did
+  "The `:app-did` observation surface (KOT-15 残条件).
+
+  `:app-did` is the signer DID of the signed app manifest
+  (kotoba.protocol.app: the `:kotoba.app/*` datoms are L3 CACAO-authorized
+  graph writes — inherently signed with history). The measurement path is
+  pinned in root `manifest/awai-app-plane-qual.kotoba`
+  `:awai-app-plane-qual/app-did-path`: the DID literal must appear verbatim
+  in a run log (`:value-evidences-itself`, value shape `did:` — never
+  inferred from bundle-cid or app-id).
+
+  This namespace derives that DID from the manifest datom
+  `:kotoba.app/latest`, whose vocabulary entry (kotoba.protocol.vocab) says
+  it is 「更新チャネル = 提供 actor の鍵由来 IPNS 名（署名済み latest ポインタ）」
+  — the providing actor's key-derived IPNS name. An IPNS name is a
+  base36-multibase CIDv1(libp2p-key, identity) of the Ed25519 public key
+  (layers.cljc L3: 「Ed25519 did:key。graph 名 = 鍵由来 IPNS 名」), so the
+  signer DID is *derived from the key the manifest is signed with*, not
+  copied from a config literal and not invented here:
+
+    k51…  --base36-->  01 72 00 24 | 08 01 12 20 <ed25519 pubkey>
+    did:key:z… = \"did:key:z\" + base58btc(0xed 0x01 + pubkey)
+
+  Nothing here holds or touches a private key. The derivation is pure and
+  portable (no BigInt, no reader-specific numerics beyond string ops) so the
+  same bytes are produced on the JVM and on ClojureScript; the host's run
+  log is where the literal surfaces.
+
+  Fail-closed, never inferred: a name that is not exactly the expected
+  shape, a CID that is not libp2p-key/identity, a protobuf that is not an
+  Ed25519 32-byte key, or a manifest without `:kotoba.app/latest` each
+  return a `:error` reason literal — no DID is produced on any of them.
+  The run-log writer (`bin/cloud-itonami-server`) prints `app-did absent
+  <reason>` and emits no `did:` literal on those paths.")
+
+;; did-key? shape is the two-source pin of kotoba.protocol.vocab/did-key? —
+;; the literal regex must stay identical there. Changing one without the
+;; other is how a shape starts meaning two things.
+(def did-key-shape #"did:key:z[1-9A-HJ-NP-Za-km-z]+")
+
+;; IPNS name shape, the two-source pin of kotoba.protocol.vocab/ipns-name?.
+(def latest-name-shape #"k51[a-z0-9]{50,}")
+
+(defn did-key?
+  "The value shape of an `:app-did` reading (vocab pin)."
+  [s]
+  (boolean (and (string? s) (re-matches did-key-shape s))))
+
+(defn latest-name?
+  "The value shape of `:kotoba.app/latest` (vocab pin)."
+  [s]
+  (boolean (and (string? s) (re-matches latest-name-shape s))))
+
+(def ^:private b36-alphabet "0123456789abcdefghijklmnopqrstuvwxyz")
+
+(defn- b36-digit [ch]
+  (let [i (.indexOf b36-alphabet (str ch))]
+    (when (neg? i) (throw (ex-info "not a base36 digit" {:ch ch})))
+    i))
+
+(defn- mul-add
+  "big-endian base-256 digit vector `acc` → acc*36 + d. carry stays < 36 so
+  one byte per position always holds."
+  [acc d]
+  (loop [i (dec (count acc)) carry d out acc]
+    (if (neg? i)
+      (if (pos? carry) (into [carry] out) out)
+      (let [cur (+ (* 36 (nth out i)) carry)
+            lo (mod cur 256)
+            hi (quot cur 256)]
+        (recur (dec i) hi (assoc out i lo))))))
+
+(defn- b36->bytes
+  "base36 body (no multibase prefix) → big-endian byte vector."
+  [body]
+  (when (and (string? body) (pos? (count body))
+             (every? #(not (neg? (.indexOf b36-alphabet (str %)))) body))
+    (reduce (fn [acc ch] (mul-add acc (b36-digit ch))) [] body)))
+
+(def ^:private b58-alphabet
+  "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+
+(defn- divmod58
+  "big-endian byte vector ÷ 58 → [quotient carry]. Leading zero quotient
+  bytes are dropped."
+  [bytes]
+  (loop [i 0 carry 0 out []]
+    (if (< i (count bytes))
+      (let [cur (+ (* 256 carry) (nth bytes i))
+            q (quot cur 58)
+            r (- cur (* 58 q))
+            out' (if (and (empty? out) (zero? q)) out (conj out q))]
+        (recur (inc i) r out'))
+      [out carry])))
+
+(defn- b58btc
+  "bytes → base58btc string (multibase `z` is added by the caller).
+  Dividing out by 58 collects the digits least-significant first, so the
+  remainders are reversed before printing."
+  [bytes]
+  (let [leading (count (take-while zero? bytes))
+        rems (loop [v (vec bytes) acc []]
+               (let [[q r] (divmod58 v)]
+                 (if (empty? q)
+                   (conj acc r)
+                   (recur q (conj acc r)))))]
+    (str (apply str (repeat leading \1))
+         (apply str (map #(nth b58-alphabet %) (reverse rems))))))
+
+(def ^:private ed25519-pub-multicodec [0xed 0x01])
+
+(defn- parse-libp2p-key
+  "CIDv1(libp2p-key, identity) byte vector → the 32-byte Ed25519 public key,
+  or nil when any part of the shape is not exactly that."
+  [bytes]
+  (when (and (vector? bytes) (= 40 (count bytes))
+             ;; CIDv1 (0x01) | libp2p-key (0x72) | identity mh (0x00) | len 36
+             (= [0x01 0x72 0x00 0x24] (subvec bytes 0 4))
+             ;; PublicKey protobuf: field 1 (Type) = Ed25519 (1),
+             ;; field 2 (Data) = 32 bytes
+             (= [0x08 0x01 0x12 0x20] (subvec bytes 4 8)))
+    (subvec bytes 8 40)))
+
+(defn ed25519-pubkey-from-latest-name
+  "`k51…` → `{:octets [<32 ints 0..255>]}` or `{:error <reason-literal>}`.
+  This is the derivation's observable: the public key the manifest's signed
+  latest pointer is named by. Every shape failure is its own reason literal;
+  none of them produce a key."
+  [nm]
+  (cond
+    (not (latest-name? nm))
+    {:error :app-did/name-shape}
+
+    :else
+    (let [bytes (b36->bytes (subs nm 1))
+          pubkey (when bytes (parse-libp2p-key (vec bytes)))]
+      (cond
+        (nil? bytes) {:error :app-did/name-shape}
+        (nil? pubkey) (if (and (vector? bytes) (= 0x01 (first bytes)) (= 0x72 (second bytes)))
+                        {:error :app-did/key-shape}
+                        {:error :app-did/cid-shape})
+        :else {:octets (vec pubkey)}))))
+
+(defn did-key-from-latest-name
+  "`k51…` → `{:did \"did:key:z…\"}` or `{:error <reason-literal>}`."
+  [nm]
+  (let [{:keys [octets error]} (ed25519-pubkey-from-latest-name nm)]
+    (if error
+      {:error error}
+      (let [did (str "did:key:z"
+                     (b58btc (vec (concat ed25519-pub-multicodec octets))))]
+        ;; The result must satisfy the vocab shape — a derivation that
+        ;; produces something else has not produced a reading.
+        (if (did-key? did)
+          {:did did}
+          {:error :app-did/did-shape})))))
+
+(defn app-did-from-manifest
+  "Published app manifest (the `:kotoba.app/*` datoms as edn) →
+  `{:ok? true :did … :latest-name …}` or `{:ok? false :error <reason>}`."
+  [manifest]
+  (let [nm (when (map? manifest) (:kotoba.app/latest manifest))]
+    (cond
+      (not (map? manifest)) {:ok? false :error :app-did/manifest-missing}
+      (nil? nm) {:ok? false :error :app-did/latest-attr-missing}
+      :else
+      (let [{:keys [did error]} (did-key-from-latest-name nm)]
+        (if did
+          {:ok? true :did did :latest-name nm}
+          {:ok? false :error error})))))
+
+(defn run-log-line
+  "The one line the run-log writer prints for the `:app-did` surface.
+
+  Exactly two shapes exist, and they are not symmetric in what they may
+  contain:
+    `app-did did:key:z…`            — the reading; the DID literal is the
+                                      line's payload (value evidences itself)
+    `app-did absent <reason>`       — no reading; the reason literal is the
+                                      payload and the line MUST NOT contain a
+                                      `did:` prefix, because an absent reading
+                                      that looks like a reading is how a
+                                      missing measurement gets counted as one.
+
+  The manifest argument is whatever the host read (a map of the published
+  `:kotoba.app/*` datoms, or nil when the file is missing/unreadable/not edn
+  — nil is `:app-did/manifest-missing`, not a crash and not a pass)."
+  [manifest]
+  (let [{:keys [ok? did error]} (app-did-from-manifest manifest)]
+    (if ok?
+      (str "app-did " did)
+      (str "app-did absent " error))))
