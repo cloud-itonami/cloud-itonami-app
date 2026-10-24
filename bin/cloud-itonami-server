@@ -1250,6 +1250,9 @@
       (handle-standard hosted guest-main req res))))
 
 (defn -main [& _]
+  ;; The :app-did surface is the first thing in the run log — the literal
+  ;; must exist even if the guest later fails to load.
+  (emit-app-did!)
   (-> (guest/load-guest app-directory "target/amu/server_main.wasm")
       (.then
        (fn [loaded]

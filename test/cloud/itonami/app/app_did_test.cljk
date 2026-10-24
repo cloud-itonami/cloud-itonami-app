@@ -1,0 +1,117 @@
+(ns cloud.itonami.app.app-did-test
+  "Runs on the JVM and on ClojureScript, which is the point of the namespace
+  being portable at all (`bin/test-portable-cljs` is the second half).
+
+  These are the 8-question controls of the `:app-did` observation surface:
+  both directions (the derivation succeeds on the exact pinned shape and
+  fails on every other one), reason literals pinned exactly, and the
+  JVM-only round-trip against `ipns.core` is *absent* on ClojureScript —
+  absence is not a pass, it is a skip with a reason."
+  (:require #?(:clj [clojure.test :refer [deftest is testing]]
+               :cljs [cljs.test :refer [deftest is testing]])
+            [clojure.string :as str]
+            [cloud.itonami.app.app-did :as app-did]
+            #?(:clj [ipns.core :as ipns])))
+
+;; ── pinned vectors ──────────────────────────────────────────────────────────
+;; The manifest's real `:kotoba.app/latest` (published app manifest,
+;; resources/cloud/itonami/app/kotoba.app.edn) and the DID derived from it.
+;; These two literals are what the run log must show verbatim.
+
+(def real-latest-name
+  "k51qzi5uqu5dj6z20sjzztyay81591voe6yofukl0ylsmug9euf934z1g04erd")
+
+(def real-app-did
+  "did:key:z6MknanuUzTgZ91DX1mTgjVY1dBy9QhgyWEKCAAjGCS3s9SY")
+
+;; Synthetic vector: the Ed25519 public key is bytes 0..31, so the expected
+;; output is recomputable by hand and is not this deployment's identity.
+(def synthetic-latest-name
+  "k51qzi5uqu5dg6lcd99r9gmb963kgugjinxxggwy7o93oagk3f2eg3qcjh7127")
+
+(def synthetic-app-did
+  "did:key:z6MkeTGwHmLmuCmgg4ABYhzWVh6ZX7hTwWt8gguAretUfc9c")
+
+;; Same CIDv1/libp2p-key/identity frame, one part wrong in each:
+;; codec dag-pb (0x71) instead of libp2p-key (0x72);
+;; protobuf Type = Secp256k1 (2) instead of Ed25519 (1).
+(def bad-codec-name
+  "k519aw276bkydlpzuo3jpb14vjaid4pul22vv4nlrwj9jcsmbzoykqhie98l5r")
+
+(def bad-key-type-name
+  "k51qzi5ur340u7jm9qtxcw32hv5ght5ewc4u0j7lpfhwb2t9u2xvnyyfp2g0tb")
+
+(deftest the-signer-did-is-derived-from-the-manifest-latest-name
+  (testing "the deployment's own manifest: the exact DID literal the run log must show"
+    (is (= {:ok? true :did real-app-did :latest-name real-latest-name}
+           (app-did/app-did-from-manifest
+            {:kotoba.app/id "cloud.itonami.app"
+             :kotoba.app/latest real-latest-name}))))
+  (testing "a synthetic key: derivation, not memorisation of one value"
+    (is (= {:did synthetic-app-did}
+           (app-did/did-key-from-latest-name synthetic-latest-name))))
+  (testing "the derived value has the shape the vocab calls a DID"
+    (is (true? (app-did/did-key? real-app-did)))
+    (is (true? (app-did/did-key? synthetic-app-did)))))
+
+(deftest a-name-that-is-not-the-pinned-shape-produces-no-did
+  (testing "name-shape: not `k51` base36 of at least 50 more characters"
+    (is (= {:error :app-did/name-shape}
+           (app-did/did-key-from-latest-name (str/upper-case real-latest-name)))
+        "upper case is not base36-normalised here — the caller does not get to")
+    (is (= {:error :app-did/name-shape}
+           (app-did/did-key-from-latest-name "k51abc")))
+    (is (= {:error :app-did/name-shape} (app-did/did-key-from-latest-name nil)))
+    (is (= {:error :app-did/name-shape} (app-did/did-key-from-latest-name 42)))
+    (is (= {:error :app-did/name-shape}
+           (app-did/did-key-from-latest-name real-app-did))
+        "a DID is not a name — the two value shapes are not interchangeable"))
+  (testing "cid-shape: decodes, but the CID is not libp2p-key/identity"
+    (is (= {:error :app-did/cid-shape}
+           (app-did/did-key-from-latest-name bad-codec-name))))
+  (testing "key-shape: libp2p-key, but the protobuf key is not Ed25519"
+    (is (= {:error :app-did/key-shape}
+           (app-did/did-key-from-latest-name bad-key-type-name))))
+  (testing "and none of these ever return a :did"
+    (doseq [nm [(str/upper-case real-latest-name)
+                "k51abc" nil 42 real-app-did bad-codec-name bad-key-type-name]]
+      (is (nil? (:did (app-did/did-key-from-latest-name nm)))))))
+
+(deftest a-manifest-without-the-signed-latest-pointer-produces-no-did
+  (is (= {:ok? false :error :app-did/manifest-missing}
+         (app-did/app-did-from-manifest nil)))
+  (is (= {:ok? false :error :app-did/manifest-missing}
+         (app-did/app-did-from-manifest "not a manifest")))
+  (is (= {:ok? false :error :app-did/latest-attr-missing}
+         (app-did/app-did-from-manifest {:kotoba.app/id "cloud.itonami.app"})))
+  (testing "a bundle-cid is not an :app-did and cannot stand in for the signer"
+    (is (= {:ok? false :error :app-did/name-shape}
+           (app-did/app-did-from-manifest
+            {:kotoba.app/latest
+             "bafkreiabxxpmnzydzr2iidu7u63mdrcai2a56b6r4qz2rdjzv4lv7fgbny"})))))
+
+(deftest a-did-shape-reading-is-a-did-shape-reading-in-both-directions
+  (is (true? (app-did/did-key? real-app-did)))
+  (is (true? (app-did/did-key? "did:key:z6MkSyntheticQualA")))
+  (is (false? (app-did/did-key?
+               "bafkreiabxxpmnzydzr2iidu7u63mdrcai2a56b6r4qz2rdjzv4lv7fgbny"))
+      "a CID is not a DID")
+  (is (false? (app-did/did-key? "did:web:example.com"))
+      "the vocab shape is did:key, not any did scheme")
+  (is (false? (app-did/did-key? real-latest-name)))
+  (is (false? (app-did/did-key? "cloud.itonami.app")))
+  (is (false? (app-did/did-key? "")) "a blank is not a reading")
+  (is (false? (app-did/did-key? nil))))
+
+#?(:clj
+   (deftest the-derived-key-reproduces-the-latest-name-through-the-repo-lib
+     ;; Second source: feed the derived public key octets back through the
+     ;; repo's own IPNS library (`ipns.core/pubkey->name`, the same function
+     ;; `cloud.itonami.app.latest/name-from-seed` publishes with). If the
+     ;; derivation were wrong in any byte, the name would not come back.
+     ;; SKIPPED on ClojureScript — ipns.core is JVM there, and a skip is not
+     ;; a pass.
+     (let [pubkey (:octets (app-did/ed25519-pubkey-from-latest-name real-latest-name))]
+       (is (vector? pubkey))
+       (is (= 32 (count pubkey)))
+       (is (= real-latest-name (ipns/pubkey->name pubkey))))))
