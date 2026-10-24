@@ -1,0 +1,37 @@
+(ns awai-app-plane-nbb
+  "Run the Awai app resolver/content tests against the packaged KIR under NBB.
+
+  From the Itonami repository root:
+    kbb --backend sci --classpath src:test test/awai_app_plane_nbb.cljk"
+  (:require [clojure.string :as str]
+            [kotoba.test :as test]
+            [cloud.itonami.app.kotoba-oracle :as oracle]
+            [cloud.itonami.app.awai-apps-test]
+            [cloud.itonami.app.awai-content-test]
+            ["node:fs" :as fs]
+            ["node:path" :as path]))
+
+;; NBB has no classpath. Read the same packaged KIR files as the local app
+;; server, with the same relative-path and regular-file boundaries.
+(oracle/set-resource-loader!
+ (fn [resource-path]
+   (when (and (string? resource-path)
+              (not (str/starts-with? resource-path "/"))
+              (not (some #{".."} (str/split resource-path #"/")))
+              (re-matches #"[A-Za-z0-9._/-]+" resource-path))
+     (let [resource-root (.resolve path (js/process.cwd) "resources")
+           resource-file (.resolve path resource-root resource-path)
+           relative (.relative path resource-root resource-file)]
+       (when (and (not (str/starts-with? relative ".."))
+                  (not (.isAbsolute path relative))
+                  (.existsSync fs resource-file)
+                  (.isFile (.statSync fs resource-file)))
+         (.readFileSync fs resource-file "utf8"))))))
+
+(defn -main [& _]
+  (let [result (test/run-tests 'cloud.itonami.app.awai-apps-test
+                               'cloud.itonami.app.awai-content-test)]
+    (when (pos? (+ (:fail result) (:error result)))
+      (set! (.-exitCode js/process) 1))))
+
+(-main)

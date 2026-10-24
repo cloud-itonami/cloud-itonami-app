@@ -1,0 +1,882 @@
+{:format :kotoba.kir/v4,
+ :signature {:params [], :result :i64},
+ :functions
+ [{:name non-empty?,
+   :params [value],
+   :result :bool,
+   :effects #{},
+   :body (if (string=? value "") false true),
+   :param-types [:string]}
+  {:name profile-complete?,
+   :params [profile],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_5
+     (non-empty?
+      (record-get
+       [:record
+        :awai-current-ref/profile
+        [[:profile-id :string]
+         [:chain-id :string]
+         [:genesis-hash :string]
+         [:validator-set-id :string]
+         [:quorum-policy-id :string]]]
+       profile
+       :profile-id))]
+    (if
+     __kotoba_and_5
+     (let
+      [__kotoba_and_4
+       (non-empty?
+        (record-get
+         [:record
+          :awai-current-ref/profile
+          [[:profile-id :string]
+           [:chain-id :string]
+           [:genesis-hash :string]
+           [:validator-set-id :string]
+           [:quorum-policy-id :string]]]
+         profile
+         :chain-id))]
+      (if
+       __kotoba_and_4
+       (let
+        [__kotoba_and_3
+         (non-empty?
+          (record-get
+           [:record
+            :awai-current-ref/profile
+            [[:profile-id :string]
+             [:chain-id :string]
+             [:genesis-hash :string]
+             [:validator-set-id :string]
+             [:quorum-policy-id :string]]]
+           profile
+           :genesis-hash))]
+        (if
+         __kotoba_and_3
+         (let
+          [__kotoba_and_2
+           (non-empty?
+            (record-get
+             [:record
+              :awai-current-ref/profile
+              [[:profile-id :string]
+               [:chain-id :string]
+               [:genesis-hash :string]
+               [:validator-set-id :string]
+               [:quorum-policy-id :string]]]
+             profile
+             :validator-set-id))]
+          (if
+           __kotoba_and_2
+           (non-empty?
+            (record-get
+             [:record
+              :awai-current-ref/profile
+              [[:profile-id :string]
+               [:chain-id :string]
+               [:genesis-hash :string]
+               [:validator-set-id :string]
+               [:quorum-policy-id :string]]]
+             profile
+             :quorum-policy-id))
+           __kotoba_and_2))
+         __kotoba_and_3))
+       __kotoba_and_4))
+     __kotoba_and_5)),
+   :param-types [[:ref :awai-current-ref/profile]]}
+  {:name profile-matches-proof?,
+   :params [proof profile],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_5
+     (string=?
+      (record-get
+       [:record
+        :awai-current-ref/proof
+        [[:trust :string]
+         [:decision-verified :bool]
+         [:profile-id :string]
+         [:chain-id :string]
+         [:genesis-hash :string]
+         [:validator-set-id :string]
+         [:quorum-policy-id :string]
+         [:reference :string]
+         [:head-cid :string]
+         [:challenge :string]
+         [:current :bool]
+         [:quorum-read-verified :bool]
+         [:current-read-proof-present :bool]
+         [:finality-proof-verified :bool]
+         [:finalized-event-cid :string]
+         [:finality-proof-present :bool]
+         [:observed-at :i64]
+         [:expires-at :i64]
+         [:signature-valid :bool]]]
+       proof
+       :profile-id)
+      (record-get
+       [:record
+        :awai-current-ref/profile
+        [[:profile-id :string]
+         [:chain-id :string]
+         [:genesis-hash :string]
+         [:validator-set-id :string]
+         [:quorum-policy-id :string]]]
+       profile
+       :profile-id))]
+    (if
+     __kotoba_and_5
+     (let
+      [__kotoba_and_4
+       (string=?
+        (record-get
+         [:record
+          :awai-current-ref/proof
+          [[:trust :string]
+           [:decision-verified :bool]
+           [:profile-id :string]
+           [:chain-id :string]
+           [:genesis-hash :string]
+           [:validator-set-id :string]
+           [:quorum-policy-id :string]
+           [:reference :string]
+           [:head-cid :string]
+           [:challenge :string]
+           [:current :bool]
+           [:quorum-read-verified :bool]
+           [:current-read-proof-present :bool]
+           [:finality-proof-verified :bool]
+           [:finalized-event-cid :string]
+           [:finality-proof-present :bool]
+           [:observed-at :i64]
+           [:expires-at :i64]
+           [:signature-valid :bool]]]
+         proof
+         :chain-id)
+        (record-get
+         [:record
+          :awai-current-ref/profile
+          [[:profile-id :string]
+           [:chain-id :string]
+           [:genesis-hash :string]
+           [:validator-set-id :string]
+           [:quorum-policy-id :string]]]
+         profile
+         :chain-id))]
+      (if
+       __kotoba_and_4
+       (let
+        [__kotoba_and_3
+         (string=?
+          (record-get
+           [:record
+            :awai-current-ref/proof
+            [[:trust :string]
+             [:decision-verified :bool]
+             [:profile-id :string]
+             [:chain-id :string]
+             [:genesis-hash :string]
+             [:validator-set-id :string]
+             [:quorum-policy-id :string]
+             [:reference :string]
+             [:head-cid :string]
+             [:challenge :string]
+             [:current :bool]
+             [:quorum-read-verified :bool]
+             [:current-read-proof-present :bool]
+             [:finality-proof-verified :bool]
+             [:finalized-event-cid :string]
+             [:finality-proof-present :bool]
+             [:observed-at :i64]
+             [:expires-at :i64]
+             [:signature-valid :bool]]]
+           proof
+           :genesis-hash)
+          (record-get
+           [:record
+            :awai-current-ref/profile
+            [[:profile-id :string]
+             [:chain-id :string]
+             [:genesis-hash :string]
+             [:validator-set-id :string]
+             [:quorum-policy-id :string]]]
+           profile
+           :genesis-hash))]
+        (if
+         __kotoba_and_3
+         (let
+          [__kotoba_and_2
+           (string=?
+            (record-get
+             [:record
+              :awai-current-ref/proof
+              [[:trust :string]
+               [:decision-verified :bool]
+               [:profile-id :string]
+               [:chain-id :string]
+               [:genesis-hash :string]
+               [:validator-set-id :string]
+               [:quorum-policy-id :string]
+               [:reference :string]
+               [:head-cid :string]
+               [:challenge :string]
+               [:current :bool]
+               [:quorum-read-verified :bool]
+               [:current-read-proof-present :bool]
+               [:finality-proof-verified :bool]
+               [:finalized-event-cid :string]
+               [:finality-proof-present :bool]
+               [:observed-at :i64]
+               [:expires-at :i64]
+               [:signature-valid :bool]]]
+             proof
+             :validator-set-id)
+            (record-get
+             [:record
+              :awai-current-ref/profile
+              [[:profile-id :string]
+               [:chain-id :string]
+               [:genesis-hash :string]
+               [:validator-set-id :string]
+               [:quorum-policy-id :string]]]
+             profile
+             :validator-set-id))]
+          (if
+           __kotoba_and_2
+           (string=?
+            (record-get
+             [:record
+              :awai-current-ref/proof
+              [[:trust :string]
+               [:decision-verified :bool]
+               [:profile-id :string]
+               [:chain-id :string]
+               [:genesis-hash :string]
+               [:validator-set-id :string]
+               [:quorum-policy-id :string]
+               [:reference :string]
+               [:head-cid :string]
+               [:challenge :string]
+               [:current :bool]
+               [:quorum-read-verified :bool]
+               [:current-read-proof-present :bool]
+               [:finality-proof-verified :bool]
+               [:finalized-event-cid :string]
+               [:finality-proof-present :bool]
+               [:observed-at :i64]
+               [:expires-at :i64]
+               [:signature-valid :bool]]]
+             proof
+             :quorum-policy-id)
+            (record-get
+             [:record
+              :awai-current-ref/profile
+              [[:profile-id :string]
+               [:chain-id :string]
+               [:genesis-hash :string]
+               [:validator-set-id :string]
+               [:quorum-policy-id :string]]]
+             profile
+             :quorum-policy-id))
+           __kotoba_and_2))
+         __kotoba_and_3))
+       __kotoba_and_4))
+     __kotoba_and_5)),
+   :param-types
+   [[:ref :awai-current-ref/proof] [:ref :awai-current-ref/profile]]}
+  {:name request-matches-proof?,
+   :params [proof request],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_4
+     (string=?
+      (record-get
+       [:record
+        :awai-current-ref/proof
+        [[:trust :string]
+         [:decision-verified :bool]
+         [:profile-id :string]
+         [:chain-id :string]
+         [:genesis-hash :string]
+         [:validator-set-id :string]
+         [:quorum-policy-id :string]
+         [:reference :string]
+         [:head-cid :string]
+         [:challenge :string]
+         [:current :bool]
+         [:quorum-read-verified :bool]
+         [:current-read-proof-present :bool]
+         [:finality-proof-verified :bool]
+         [:finalized-event-cid :string]
+         [:finality-proof-present :bool]
+         [:observed-at :i64]
+         [:expires-at :i64]
+         [:signature-valid :bool]]]
+       proof
+       :reference)
+      (record-get
+       [:record
+        :awai-current-ref/request
+        [[:expected-ref :string]
+         [:expected-head-cid :string]
+         [:expected-challenge :string]
+         [:now-ms :i64]]]
+       request
+       :expected-ref))]
+    (if
+     __kotoba_and_4
+     (let
+      [__kotoba_and_3
+       (string=?
+        (record-get
+         [:record
+          :awai-current-ref/proof
+          [[:trust :string]
+           [:decision-verified :bool]
+           [:profile-id :string]
+           [:chain-id :string]
+           [:genesis-hash :string]
+           [:validator-set-id :string]
+           [:quorum-policy-id :string]
+           [:reference :string]
+           [:head-cid :string]
+           [:challenge :string]
+           [:current :bool]
+           [:quorum-read-verified :bool]
+           [:current-read-proof-present :bool]
+           [:finality-proof-verified :bool]
+           [:finalized-event-cid :string]
+           [:finality-proof-present :bool]
+           [:observed-at :i64]
+           [:expires-at :i64]
+           [:signature-valid :bool]]]
+         proof
+         :head-cid)
+        (record-get
+         [:record
+          :awai-current-ref/request
+          [[:expected-ref :string]
+           [:expected-head-cid :string]
+           [:expected-challenge :string]
+           [:now-ms :i64]]]
+         request
+         :expected-head-cid))]
+      (if
+       __kotoba_and_3
+       (let
+        [__kotoba_and_2
+         (string=?
+          (record-get
+           [:record
+            :awai-current-ref/proof
+            [[:trust :string]
+             [:decision-verified :bool]
+             [:profile-id :string]
+             [:chain-id :string]
+             [:genesis-hash :string]
+             [:validator-set-id :string]
+             [:quorum-policy-id :string]
+             [:reference :string]
+             [:head-cid :string]
+             [:challenge :string]
+             [:current :bool]
+             [:quorum-read-verified :bool]
+             [:current-read-proof-present :bool]
+             [:finality-proof-verified :bool]
+             [:finalized-event-cid :string]
+             [:finality-proof-present :bool]
+             [:observed-at :i64]
+             [:expires-at :i64]
+             [:signature-valid :bool]]]
+           proof
+           :challenge)
+          (record-get
+           [:record
+            :awai-current-ref/request
+            [[:expected-ref :string]
+             [:expected-head-cid :string]
+             [:expected-challenge :string]
+             [:now-ms :i64]]]
+           request
+           :expected-challenge))]
+        (if
+         __kotoba_and_2
+         (string=?
+          (record-get
+           [:record
+            :awai-current-ref/proof
+            [[:trust :string]
+             [:decision-verified :bool]
+             [:profile-id :string]
+             [:chain-id :string]
+             [:genesis-hash :string]
+             [:validator-set-id :string]
+             [:quorum-policy-id :string]
+             [:reference :string]
+             [:head-cid :string]
+             [:challenge :string]
+             [:current :bool]
+             [:quorum-read-verified :bool]
+             [:current-read-proof-present :bool]
+             [:finality-proof-verified :bool]
+             [:finalized-event-cid :string]
+             [:finality-proof-present :bool]
+             [:observed-at :i64]
+             [:expires-at :i64]
+             [:signature-valid :bool]]]
+           proof
+           :finalized-event-cid)
+          (record-get
+           [:record
+            :awai-current-ref/request
+            [[:expected-ref :string]
+             [:expected-head-cid :string]
+             [:expected-challenge :string]
+             [:now-ms :i64]]]
+           request
+           :expected-head-cid))
+         __kotoba_and_2))
+       __kotoba_and_3))
+     __kotoba_and_4)),
+   :param-types
+   [[:ref :awai-current-ref/proof] [:ref :awai-current-ref/request]]}
+  {:name read-evidence-valid?,
+   :params [proof],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_6
+     (record-get
+      [:record
+       :awai-current-ref/proof
+       [[:trust :string]
+        [:decision-verified :bool]
+        [:profile-id :string]
+        [:chain-id :string]
+        [:genesis-hash :string]
+        [:validator-set-id :string]
+        [:quorum-policy-id :string]
+        [:reference :string]
+        [:head-cid :string]
+        [:challenge :string]
+        [:current :bool]
+        [:quorum-read-verified :bool]
+        [:current-read-proof-present :bool]
+        [:finality-proof-verified :bool]
+        [:finalized-event-cid :string]
+        [:finality-proof-present :bool]
+        [:observed-at :i64]
+        [:expires-at :i64]
+        [:signature-valid :bool]]]
+      proof
+      :current)]
+    (if
+     __kotoba_and_6
+     (let
+      [__kotoba_and_5
+       (record-get
+        [:record
+         :awai-current-ref/proof
+         [[:trust :string]
+          [:decision-verified :bool]
+          [:profile-id :string]
+          [:chain-id :string]
+          [:genesis-hash :string]
+          [:validator-set-id :string]
+          [:quorum-policy-id :string]
+          [:reference :string]
+          [:head-cid :string]
+          [:challenge :string]
+          [:current :bool]
+          [:quorum-read-verified :bool]
+          [:current-read-proof-present :bool]
+          [:finality-proof-verified :bool]
+          [:finalized-event-cid :string]
+          [:finality-proof-present :bool]
+          [:observed-at :i64]
+          [:expires-at :i64]
+          [:signature-valid :bool]]]
+        proof
+        :quorum-read-verified)]
+      (if
+       __kotoba_and_5
+       (let
+        [__kotoba_and_4
+         (record-get
+          [:record
+           :awai-current-ref/proof
+           [[:trust :string]
+            [:decision-verified :bool]
+            [:profile-id :string]
+            [:chain-id :string]
+            [:genesis-hash :string]
+            [:validator-set-id :string]
+            [:quorum-policy-id :string]
+            [:reference :string]
+            [:head-cid :string]
+            [:challenge :string]
+            [:current :bool]
+            [:quorum-read-verified :bool]
+            [:current-read-proof-present :bool]
+            [:finality-proof-verified :bool]
+            [:finalized-event-cid :string]
+            [:finality-proof-present :bool]
+            [:observed-at :i64]
+            [:expires-at :i64]
+            [:signature-valid :bool]]]
+          proof
+          :current-read-proof-present)]
+        (if
+         __kotoba_and_4
+         (let
+          [__kotoba_and_3
+           (record-get
+            [:record
+             :awai-current-ref/proof
+             [[:trust :string]
+              [:decision-verified :bool]
+              [:profile-id :string]
+              [:chain-id :string]
+              [:genesis-hash :string]
+              [:validator-set-id :string]
+              [:quorum-policy-id :string]
+              [:reference :string]
+              [:head-cid :string]
+              [:challenge :string]
+              [:current :bool]
+              [:quorum-read-verified :bool]
+              [:current-read-proof-present :bool]
+              [:finality-proof-verified :bool]
+              [:finalized-event-cid :string]
+              [:finality-proof-present :bool]
+              [:observed-at :i64]
+              [:expires-at :i64]
+              [:signature-valid :bool]]]
+            proof
+            :finality-proof-verified)]
+          (if
+           __kotoba_and_3
+           (let
+            [__kotoba_and_2
+             (record-get
+              [:record
+               :awai-current-ref/proof
+               [[:trust :string]
+                [:decision-verified :bool]
+                [:profile-id :string]
+                [:chain-id :string]
+                [:genesis-hash :string]
+                [:validator-set-id :string]
+                [:quorum-policy-id :string]
+                [:reference :string]
+                [:head-cid :string]
+                [:challenge :string]
+                [:current :bool]
+                [:quorum-read-verified :bool]
+                [:current-read-proof-present :bool]
+                [:finality-proof-verified :bool]
+                [:finalized-event-cid :string]
+                [:finality-proof-present :bool]
+                [:observed-at :i64]
+                [:expires-at :i64]
+                [:signature-valid :bool]]]
+              proof
+              :finality-proof-present)]
+            (if
+             __kotoba_and_2
+             (record-get
+              [:record
+               :awai-current-ref/proof
+               [[:trust :string]
+                [:decision-verified :bool]
+                [:profile-id :string]
+                [:chain-id :string]
+                [:genesis-hash :string]
+                [:validator-set-id :string]
+                [:quorum-policy-id :string]
+                [:reference :string]
+                [:head-cid :string]
+                [:challenge :string]
+                [:current :bool]
+                [:quorum-read-verified :bool]
+                [:current-read-proof-present :bool]
+                [:finality-proof-verified :bool]
+                [:finalized-event-cid :string]
+                [:finality-proof-present :bool]
+                [:observed-at :i64]
+                [:expires-at :i64]
+                [:signature-valid :bool]]]
+              proof
+              :signature-valid)
+             __kotoba_and_2))
+           __kotoba_and_3))
+         __kotoba_and_4))
+       __kotoba_and_5))
+     __kotoba_and_6)),
+   :param-types [[:ref :awai-current-ref/proof]]}
+  {:name proof-fresh?,
+   :params [proof request],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_3
+     (<=
+      0
+      (record-get
+       [:record
+        :awai-current-ref/proof
+        [[:trust :string]
+         [:decision-verified :bool]
+         [:profile-id :string]
+         [:chain-id :string]
+         [:genesis-hash :string]
+         [:validator-set-id :string]
+         [:quorum-policy-id :string]
+         [:reference :string]
+         [:head-cid :string]
+         [:challenge :string]
+         [:current :bool]
+         [:quorum-read-verified :bool]
+         [:current-read-proof-present :bool]
+         [:finality-proof-verified :bool]
+         [:finalized-event-cid :string]
+         [:finality-proof-present :bool]
+         [:observed-at :i64]
+         [:expires-at :i64]
+         [:signature-valid :bool]]]
+       proof
+       :observed-at))]
+    (if
+     __kotoba_and_3
+     (let
+      [__kotoba_and_2
+       (<=
+        (record-get
+         [:record
+          :awai-current-ref/proof
+          [[:trust :string]
+           [:decision-verified :bool]
+           [:profile-id :string]
+           [:chain-id :string]
+           [:genesis-hash :string]
+           [:validator-set-id :string]
+           [:quorum-policy-id :string]
+           [:reference :string]
+           [:head-cid :string]
+           [:challenge :string]
+           [:current :bool]
+           [:quorum-read-verified :bool]
+           [:current-read-proof-present :bool]
+           [:finality-proof-verified :bool]
+           [:finalized-event-cid :string]
+           [:finality-proof-present :bool]
+           [:observed-at :i64]
+           [:expires-at :i64]
+           [:signature-valid :bool]]]
+         proof
+         :observed-at)
+        (record-get
+         [:record
+          :awai-current-ref/request
+          [[:expected-ref :string]
+           [:expected-head-cid :string]
+           [:expected-challenge :string]
+           [:now-ms :i64]]]
+         request
+         :now-ms))]
+      (if
+       __kotoba_and_2
+       (<
+        (record-get
+         [:record
+          :awai-current-ref/request
+          [[:expected-ref :string]
+           [:expected-head-cid :string]
+           [:expected-challenge :string]
+           [:now-ms :i64]]]
+         request
+         :now-ms)
+        (record-get
+         [:record
+          :awai-current-ref/proof
+          [[:trust :string]
+           [:decision-verified :bool]
+           [:profile-id :string]
+           [:chain-id :string]
+           [:genesis-hash :string]
+           [:validator-set-id :string]
+           [:quorum-policy-id :string]
+           [:reference :string]
+           [:head-cid :string]
+           [:challenge :string]
+           [:current :bool]
+           [:quorum-read-verified :bool]
+           [:current-read-proof-present :bool]
+           [:finality-proof-verified :bool]
+           [:finalized-event-cid :string]
+           [:finality-proof-present :bool]
+           [:observed-at :i64]
+           [:expires-at :i64]
+           [:signature-valid :bool]]]
+         proof
+         :expires-at))
+       __kotoba_and_2))
+     __kotoba_and_3)),
+   :param-types
+   [[:ref :awai-current-ref/proof] [:ref :awai-current-ref/request]]}
+  {:name verified-current-ref?,
+   :params [proof profile request],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_7 (profile-complete? profile)]
+    (if
+     __kotoba_and_7
+     (let
+      [__kotoba_and_6
+       (string=?
+        (record-get
+         [:record
+          :awai-current-ref/proof
+          [[:trust :string]
+           [:decision-verified :bool]
+           [:profile-id :string]
+           [:chain-id :string]
+           [:genesis-hash :string]
+           [:validator-set-id :string]
+           [:quorum-policy-id :string]
+           [:reference :string]
+           [:head-cid :string]
+           [:challenge :string]
+           [:current :bool]
+           [:quorum-read-verified :bool]
+           [:current-read-proof-present :bool]
+           [:finality-proof-verified :bool]
+           [:finalized-event-cid :string]
+           [:finality-proof-present :bool]
+           [:observed-at :i64]
+           [:expires-at :i64]
+           [:signature-valid :bool]]]
+         proof
+         :trust)
+        "amano-inga-verified-current-ref")]
+      (if
+       __kotoba_and_6
+       (let
+        [__kotoba_and_5
+         (record-get
+          [:record
+           :awai-current-ref/proof
+           [[:trust :string]
+            [:decision-verified :bool]
+            [:profile-id :string]
+            [:chain-id :string]
+            [:genesis-hash :string]
+            [:validator-set-id :string]
+            [:quorum-policy-id :string]
+            [:reference :string]
+            [:head-cid :string]
+            [:challenge :string]
+            [:current :bool]
+            [:quorum-read-verified :bool]
+            [:current-read-proof-present :bool]
+            [:finality-proof-verified :bool]
+            [:finalized-event-cid :string]
+            [:finality-proof-present :bool]
+            [:observed-at :i64]
+            [:expires-at :i64]
+            [:signature-valid :bool]]]
+          proof
+          :decision-verified)]
+        (if
+         __kotoba_and_5
+         (let
+          [__kotoba_and_4 (profile-matches-proof? proof profile)]
+          (if
+           __kotoba_and_4
+           (let
+            [__kotoba_and_3 (request-matches-proof? proof request)]
+            (if
+             __kotoba_and_3
+             (let
+              [__kotoba_and_2 (read-evidence-valid? proof)]
+              (if
+               __kotoba_and_2
+               (proof-fresh? proof request)
+               __kotoba_and_2))
+             __kotoba_and_3))
+           __kotoba_and_4))
+         __kotoba_and_5))
+       __kotoba_and_6))
+     __kotoba_and_7)),
+   :param-types
+   [[:ref :awai-current-ref/proof]
+    [:ref :awai-current-ref/profile]
+    [:ref :awai-current-ref/request]]}
+  {:name main,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 0,
+   :param-types []}],
+ :oracle-value 0,
+ :schema-identities
+ #:awai-current-ref{:profile
+                    "ef04cf2c31f83779b2d65e5c0a59f49e0c11dd7d54615446fae9fa3e0b2ff5ba",
+                    :proof
+                    "f218843d871e5ebfa69a948b68ba4f9afeb065aa2d43f445f736a99b35d1a515",
+                    :request
+                    "24e4531416f1eb5a0e947009fc0c03b97e18db242fcd3fc92a82097b266cf1ed"},
+ :exports [verified-current-ref? main],
+ :schemas
+ #:awai-current-ref{:profile
+                    [:record
+                     :awai-current-ref/profile
+                     [[:profile-id :string]
+                      [:chain-id :string]
+                      [:genesis-hash :string]
+                      [:validator-set-id :string]
+                      [:quorum-policy-id :string]]],
+                    :proof
+                    [:record
+                     :awai-current-ref/proof
+                     [[:trust :string]
+                      [:decision-verified :bool]
+                      [:profile-id :string]
+                      [:chain-id :string]
+                      [:genesis-hash :string]
+                      [:validator-set-id :string]
+                      [:quorum-policy-id :string]
+                      [:reference :string]
+                      [:head-cid :string]
+                      [:challenge :string]
+                      [:current :bool]
+                      [:quorum-read-verified :bool]
+                      [:current-read-proof-present :bool]
+                      [:finality-proof-verified :bool]
+                      [:finalized-event-cid :string]
+                      [:finality-proof-present :bool]
+                      [:observed-at :i64]
+                      [:expires-at :i64]
+                      [:signature-valid :bool]]],
+                    :request
+                    [:record
+                     :awai-current-ref/request
+                     [[:expected-ref :string]
+                      [:expected-head-cid :string]
+                      [:expected-challenge :string]
+                      [:now-ms :i64]]]},
+ :effects #{},
+ :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
+ :entry main}

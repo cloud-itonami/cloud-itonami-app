@@ -4,6 +4,8 @@
             [kotoba.test :refer [deftest is]]
             [kotoba.protocol.install :as install]
             [cloud.itonami.app.awai-apps :as apps]
+            [cloud.itonami.app.kotoba-oracle :as oracle]
+            [cloud.itonami.app.product-policy :as product-policy]
             [cloud.itonami.app.awai-manifest :as manifest]))
 
 (def app-id "net.kotoba.murakumo")
@@ -27,7 +29,7 @@
           :expires-at 2000000000}})
 
 (defn- snapshot [origins release-body]
-  {:schema "awai.app-registry.read.v3"
+  {:schema "awai.app-registry.read.v4"
    :dna-cid "bafkreifwintjn6lddprilx7xpbxrtorzkuxhjwhs7c4x3c4aippelcipnu"
    :records (into
              [{:cid "bafkreihbfo374yy4mz2w3sli2azqfw3ea73cnr3jm5gzqvub7wsh57uoxa"
@@ -38,6 +40,7 @@
                       :publisher-did publisher-did
                       :domain-owner-did publisher-did
                       :channel "stable"
+                      :release-cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
                       :sequence 1
                       :previous-binding-cid ""
                       :expires-at 2000000000}}
@@ -61,7 +64,7 @@
 
 (defn- resolve-candidates [snapshot]
   (apps/registry-domain-candidates
-   {:trust "independently-verified-awai-envelopes" :snapshot snapshot}
+   {:trust "configured-peer-checkpoint-quorum" :snapshot snapshot}
    1800000000))
 
 (defn- installed-record [cells]
@@ -87,6 +90,78 @@
    :approved-caps []
    :installed-at 1800000001})
 
+(def ^:private app-domain-binding-cid
+  "bafkreihbfo374yy4mz2w3sli2azqfw3ea73cnr3jm5gzqvub7wsh57uoxa")
+(def ^:private app-release-cid
+  "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4")
+(def ^:private app-chain-profile
+  {:profile-id "awai-apps-test-v1"
+   :chain-id "awai-apps-test-chain-v1"
+   :genesis-hash "genesis-test-hash"
+   :validator-set-id "validators-test-v1"
+   :quorum-policy-id "quorum-policy-test-v1"})
+
+(defn- current-ref-proof [ref head-cid challenge now-ms]
+  {:trust "amano-inga-verified-current-ref"
+   :decision :verified
+   :profile-id (:profile-id app-chain-profile)
+   :chain-id (:chain-id app-chain-profile)
+   :genesis-hash (:genesis-hash app-chain-profile)
+   :validator-set-id (:validator-set-id app-chain-profile)
+   :quorum-policy-id (:quorum-policy-id app-chain-profile)
+   :ref ref
+   :head-cid head-cid
+   :challenge challenge
+   :current? true
+   :quorum-read-verified? true
+   :current-read-proof {:trust "inga-quorum-current-ref-read"}
+   :finality-proof-verified? true
+   :finalized-event-cid head-cid
+   :finality-proof {:status :finalized}
+   :observed-at (dec now-ms)
+   :expires-at (+ now-ms 30000)})
+
+(defn- lifecycle-dns-proof [domain binding-cid now]
+  {:verified? true
+   :fresh? true
+   :dnssec-status :secure
+   :domain domain
+   :qname (str "_itonami-app." domain ".")
+   :binding-cid binding-cid
+   :alias-chain []
+   :txt-record-count 1
+   :checked-at now
+   :expires-at (+ now 30)
+   :signature-expires-at (+ now 300)
+   :ttl-seconds 30})
+
+(defn- lifecycle-resolution-input [now-ms]
+  (let [domain "murakumo.cloud"
+        challenge "test-challenge-123456"
+        domain-ref (str "awai/domain/" domain)
+        app-ref (str "awai/app/" app-id "/stable")]
+    {:binding {:verified? true
+               :domain domain
+               :entry-cid app-domain-binding-cid
+               :app-id app-id
+               :publisher-did publisher-did
+               :channel "stable"
+               :sequence 1
+               :expires-at 2000000000}
+     :txt-proof (lifecycle-dns-proof domain app-domain-binding-cid 1800000000)
+     :release {:app-id app-id
+               :publisher-did publisher-did
+               :channel "stable"
+               :release-cid app-release-cid
+               :sequence 1}
+     :now 1800000001
+     :amano-now-ms now-ms
+     :challenge challenge
+     :amano-chain-profile app-chain-profile
+     :amano-ref-proofs
+     {domain-ref (current-ref-proof domain-ref app-domain-binding-cid challenge now-ms)
+      app-ref (current-ref-proof app-ref app-release-cid challenge now-ms)}}))
+
 (deftest first-domain-binding-release-and-origin-records-resolve
   (let [records (registered-origins)
         result (resolve-candidates
@@ -98,6 +173,51 @@
     (is (= "ready" (get-in result [:candidates 0 :content-origin-status])))
     (is (= ["content-a.example" "content-b.example" "content-c.example"]
            (mapv :host (get-in result [:candidates 0 :content-origins]))))))
+
+(deftest domain-binding-stays-on-its-explicit-release-pin
+  (let [records (registered-origins)
+        release-one "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
+        release-two {:cid (ipld/cid (ipld/encode {"release" "next"}))
+                     :sequence 1
+                     :type "app/release"
+                     :body {:app-id app-id
+                            :publisher-did publisher-did
+                            :channel "stable"
+                            :sequence 2
+                            :previous-release-cid release-one
+                            :manifest-cid (ipld/cid (ipld/encode {"manifest" "next"}))
+                            :content-origin-cids origin-cids}}
+        result (resolve-candidates
+                (update (snapshot records {:content-origin-cids origin-cids})
+                        :records conj release-two))
+        candidate (first (:candidates result))]
+    (is (= :candidate (:decision candidate)))
+    (is (= release-one (:release-cid candidate)))
+    (is (= 1 (:release-sequence candidate)))
+    (is (= "bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny"
+           (:manifest-cid candidate)))))
+
+(deftest domain-binding-requires-a-release-cid
+  (let [registry (update-in (snapshot (registered-origins) {})
+                            [:records 0 :body] dissoc :release-cid)
+        result (resolve-candidates registry)]
+    (is (= :refuse (:decision result)))
+    (is (= :invalid-registry-record (:error result)))))
+
+(deftest domain-binding-refuses-cloudflare-managed-aliases
+  (let [registry (assoc-in (snapshot (registered-origins) {})
+                           [:records 0 :body :domain]
+                           "setup.workers.dev")
+        result (resolve-candidates registry)]
+    (is (= :refuse (:decision result)))
+    (is (= :invalid-registry-record (:error result)))))
+
+(deftest persisted-installation-refuses-cloudflare-managed-domain
+  (let [record (assoc-in (installed-record [{:id cell-id :dna-cid cell-cid}])
+                         [:origin :domain]
+                         "setup.pages.dev")]
+    (is (= [{:field :origin :error :invalid-domain-origin}]
+           (apps/installation-problems record)))))
 
 (deftest publisher-revocation-removes-the-release-from-domain-candidates
   (let [release-cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
@@ -188,8 +308,8 @@
                                :publisher-did publisher-did
                                :channel "stable"
                                :sequence 1}}
-        registry-result {:trust "independently-verified-awai-envelopes"
-                         :snapshot {:schema "awai.app-registry.read.v3"
+        registry-result {:trust "configured-peer-checkpoint-quorum"
+                         :snapshot {:schema "awai.app-registry.read.v4"
                                     :records [release-record]}}
         result (apps/verified-release-descriptor
                 registry-result release-cid manifest-result)]
@@ -215,8 +335,8 @@
                                :manifest-cid "bafkreifwintjn6lddprilx7xpbxrtorzkuxhjwhs7c4x3c4aippelcipnu"
                                :publisher-did publisher-did
                                :channel "stable" :sequence 1}}
-        registry-result {:trust "independently-verified-awai-envelopes"
-                         :snapshot {:schema "awai.app-registry.read.v3"
+        registry-result {:trust "configured-peer-checkpoint-quorum"
+                         :snapshot {:schema "awai.app-registry.read.v4"
                                     :records [release-record]}}
         result (apps/verified-release-descriptor
                 registry-result release-cid manifest-result)]
@@ -245,8 +365,8 @@
                            :release-cid release-cid :sequence 1
                            :previous-revoke-cid "" :reason-code "security-review"
                            :issued-at 1800000000}}
-        registry-result {:trust "independently-verified-awai-envelopes"
-                         :snapshot {:schema "awai.app-registry.read.v3"
+        registry-result {:trust "configured-peer-checkpoint-quorum"
+                         :snapshot {:schema "awai.app-registry.read.v4"
                                     :records [release-record revocation]}}
         result (apps/verified-release-descriptor
                 registry-result release-cid manifest-result)]
@@ -272,3 +392,39 @@
     (is (= :cell-not-declared-by-install-lock (:error wrong-cid)))
     (is (= :cell-not-declared-by-install-lock (:error undeclared-cell)))
     (is (= :invalid-installation (:error corrupted)))))
+
+(deftest amano-ref-freshness-uses-milliseconds-separately-from-dns-seconds
+  (let [now-ms 1800000001000
+        checks (atom [])
+        result (apps/resolve-domain
+                "murakumo.cloud"
+                (assoc (lifecycle-resolution-input now-ms)
+                       :verify-amano-ref
+                       (fn [request]
+                         (swap! checks conj (:now-ms request))
+                         true)))]
+    (is (= [now-ms now-ms] @checks))
+    (is (not (contains? #{:amano-current-ref-proof-unavailable
+                          :invalid-amano-current-ref-proof}
+                        (:error result))))))
+
+(deftest amano-ref-proof-fails-closed-without-millisecond-clock
+  (let [input (dissoc (lifecycle-resolution-input 1800000001000)
+                      :amano-now-ms)
+        result (apps/resolve-domain "murakumo.cloud"
+                                    (assoc input :verify-amano-ref (fn [_] true)))]
+    (is (= :refuse (:decision result)))
+    (is (= :amano-current-ref-proof-unavailable (:error result)))))
+
+(deftest shinshi-policy-call-uses-the-indexed-micro-luma-abi
+  (is (= [:i64 :i64]
+         (:input-abi (product-policy/policy-info "shinshi.club"))))
+  (is (= 1 (oracle/i64-value
+            (product-policy/call-policy
+             "shinshi.club" 'black-frame-code [1 7999999]))))
+  (is (= 0 (oracle/i64-value
+            (product-policy/call-policy
+             "shinshi.club" 'black-frame-code [1 8000000]))))
+  (is (= 1 (oracle/i64-value
+            (product-policy/call-policy
+             "shinshi.club" 'black-frame-code [0 8000000])))))

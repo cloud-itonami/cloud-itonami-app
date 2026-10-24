@@ -68,3 +68,11 @@ d8c308948ae0faf09e09406df9bf29fdc303a0dc:hermes/profiles/itonami-mktg/skills/jav
 2cc76af623ed141d2b35371b5895366d5cf580cb:test/cloud/itonami/app/awai_real_peer_integration_run.cljk:generic-api-key:23
 2cc76af623ed141d2b35371b5895366d5cf580cb:test/cloud/itonami/app/awai_install_bridge_client_run.cljk:generic-api-key:24
 2cc76af623ed141d2b35371b5895366d5cf580cb:test/cloud/itonami/app/awai_apps_test.cljk:generic-api-key:74
+# Older app-plane baseline commit e708d000 has the same public did:key fixtures; these exact fingerprints are not credentials.
+e708d000e6ff634a9368fbb3a832867db1d7e6fe:test/cloud/itonami/app/awai_install_bridge_test.cljk:generic-api-key:18
+e708d000e6ff634a9368fbb3a832867db1d7e6fe:test/cloud/itonami/app/awai_install_store_test.cljk:generic-api-key:12
+e708d000e6ff634a9368fbb3a832867db1d7e6fe:test/cloud/itonami/app/awai_real_peer_integration_run.cljk:generic-api-key:23
+e708d000e6ff634a9368fbb3a832867db1d7e6fe:test/cloud/itonami/app/awai_envelope_test.cljk:generic-api-key:166
+e708d000e6ff634a9368fbb3a832867db1d7e6fe:test/cloud/itonami/app/awai_apps_test.cljk:generic-api-key:74
+e708d000e6ff634a9368fbb3a832867db1d7e6fe:test/cloud/itonami/app/awai_install_bridge_client_run.cljk:generic-api-key:24
+e708d000e6ff634a9368fbb3a832867db1d7e6fe:test/cloud/itonami/app/awai_graph_authority_test.cljk:generic-api-key:7

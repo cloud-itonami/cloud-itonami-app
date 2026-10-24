@@ -1,0 +1,116 @@
+;; Pure acceptance rule for a challenge-bound Awai current-ref proof.
+;;
+;; The host adapter reads the registry response and invokes the configured
+;; signature/finality verifier. This core binds that verifier result to the
+;; exact chain identity, quorum policy, ref, head, challenge, and freshness
+;; window. Production values come from an operator-owned chain profile; this
+;; module deliberately contains no chain ID, genesis hash, validator set, or
+;; quorum value of its own.
+(ns cloud.itonami.app.awai-current-ref-core
+  (:schemas {:awai-current-ref/profile
+             [:record :awai-current-ref/profile
+              [[:profile-id :string]
+               [:chain-id :string]
+               [:genesis-hash :string]
+               [:validator-set-id :string]
+               [:quorum-policy-id :string]]]
+             :awai-current-ref/proof
+             [:record :awai-current-ref/proof
+              [[:trust :string]
+               [:decision-verified :bool]
+               [:profile-id :string]
+               [:chain-id :string]
+               [:genesis-hash :string]
+               [:validator-set-id :string]
+               [:quorum-policy-id :string]
+               [:reference :string]
+               [:head-cid :string]
+               [:challenge :string]
+               [:current :bool]
+               [:quorum-read-verified :bool]
+               [:current-read-proof-present :bool]
+               [:finality-proof-verified :bool]
+               [:finalized-event-cid :string]
+               [:finality-proof-present :bool]
+               [:observed-at :i64]
+               [:expires-at :i64]
+               [:signature-valid :bool]]]
+             :awai-current-ref/request
+             [:record :awai-current-ref/request
+              [[:expected-ref :string]
+               [:expected-head-cid :string]
+               [:expected-challenge :string]
+               [:now-ms :i64]]]})
+  (:export [verified-current-ref? main]))
+
+(defn- non-empty? [value :string] :bool
+  (not (string=? value "")))
+
+(defn- profile-complete? [profile [:ref :awai-current-ref/profile]] :bool
+  (and (non-empty? (record-get [:ref :awai-current-ref/profile] profile :profile-id))
+       (non-empty? (record-get [:ref :awai-current-ref/profile] profile :chain-id))
+       (non-empty? (record-get [:ref :awai-current-ref/profile] profile :genesis-hash))
+       (non-empty? (record-get [:ref :awai-current-ref/profile] profile :validator-set-id))
+       (non-empty? (record-get [:ref :awai-current-ref/profile] profile :quorum-policy-id))))
+
+(defn- profile-matches-proof?
+  [proof [:ref :awai-current-ref/proof]
+   profile [:ref :awai-current-ref/profile]]
+  :bool
+  (and (string=? (record-get [:ref :awai-current-ref/proof] proof :profile-id)
+                 (record-get [:ref :awai-current-ref/profile] profile :profile-id))
+       (string=? (record-get [:ref :awai-current-ref/proof] proof :chain-id)
+                 (record-get [:ref :awai-current-ref/profile] profile :chain-id))
+       (string=? (record-get [:ref :awai-current-ref/proof] proof :genesis-hash)
+                 (record-get [:ref :awai-current-ref/profile] profile :genesis-hash))
+       (string=? (record-get [:ref :awai-current-ref/proof] proof :validator-set-id)
+                 (record-get [:ref :awai-current-ref/profile] profile :validator-set-id))
+       (string=? (record-get [:ref :awai-current-ref/proof] proof :quorum-policy-id)
+                 (record-get [:ref :awai-current-ref/profile] profile :quorum-policy-id))))
+
+(defn- request-matches-proof?
+  [proof [:ref :awai-current-ref/proof]
+   request [:ref :awai-current-ref/request]]
+  :bool
+  (and (string=? (record-get [:ref :awai-current-ref/proof] proof :reference)
+                 (record-get [:ref :awai-current-ref/request] request :expected-ref))
+       (string=? (record-get [:ref :awai-current-ref/proof] proof :head-cid)
+                 (record-get [:ref :awai-current-ref/request] request :expected-head-cid))
+       (string=? (record-get [:ref :awai-current-ref/proof] proof :challenge)
+                 (record-get [:ref :awai-current-ref/request] request :expected-challenge))
+       (string=? (record-get [:ref :awai-current-ref/proof] proof :finalized-event-cid)
+                 (record-get [:ref :awai-current-ref/request] request :expected-head-cid))))
+
+(defn- read-evidence-valid? [proof [:ref :awai-current-ref/proof]] :bool
+  (and (record-get [:ref :awai-current-ref/proof] proof :current)
+       (record-get [:ref :awai-current-ref/proof] proof :quorum-read-verified)
+       (record-get [:ref :awai-current-ref/proof] proof :current-read-proof-present)
+       (record-get [:ref :awai-current-ref/proof] proof :finality-proof-verified)
+       (record-get [:ref :awai-current-ref/proof] proof :finality-proof-present)
+       (record-get [:ref :awai-current-ref/proof] proof :signature-valid)))
+
+(defn- proof-fresh?
+  [proof [:ref :awai-current-ref/proof]
+   request [:ref :awai-current-ref/request]]
+  :bool
+  (and (<= 0 (record-get [:ref :awai-current-ref/proof] proof :observed-at))
+       (<= (record-get [:ref :awai-current-ref/proof] proof :observed-at)
+           (record-get [:ref :awai-current-ref/request] request :now-ms))
+       (< (record-get [:ref :awai-current-ref/request] request :now-ms)
+          (record-get [:ref :awai-current-ref/proof] proof :expires-at))))
+
+(defn verified-current-ref?
+  [proof [:ref :awai-current-ref/proof]
+   profile [:ref :awai-current-ref/profile]
+   request [:ref :awai-current-ref/request]]
+  :bool
+  (and (profile-complete? profile)
+       (string=? (record-get [:ref :awai-current-ref/proof] proof :trust)
+                 "amano-inga-verified-current-ref")
+       (record-get [:ref :awai-current-ref/proof] proof :decision-verified)
+       (profile-matches-proof? proof profile)
+       (request-matches-proof? proof request)
+       (read-evidence-valid? proof)
+       (proof-fresh? proof request)))
+
+(defn main [] :i64 0)

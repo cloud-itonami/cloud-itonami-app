@@ -1,0 +1,33 @@
+;; Deterministic final admission rule for one normalized Murakumo compute bid.
+;; DID/signature verification, registry reads, model matching, and region
+;; discovery are host ports; this core consumes a compact bitset of verified
+;; facts and bounded integer amounts.
+(ns cloud-murakumo.compute-market-admission
+  (:export [bid-admission-code main]))
+
+;; Bit positions mirror eligible-bid?'s conjunction order:
+;; 0 bid shape valid; 1 verified; 2 available; 3 modality match;
+;; 4 model match; 5 region match; 6 confidential match.
+;; Stable result codes: 0 admitted; 1 invalid shape/amount; 2 unverified;
+;; 3 unavailable; 4 modality mismatch; 5 model mismatch;
+;; 6 region mismatch; 7 confidential mismatch; 8 over budget.
+(defn bid-admission-code
+  [policy-bits :i64 estimated-micros :i64 maximum-micros :i64] :i64
+  (if (or (< estimated-micros 0) (< maximum-micros 0)
+          (= 0 (bit-and policy-bits 1)))
+    1
+    (if (= 0 (bit-and policy-bits 2))
+      2
+      (if (= 0 (bit-and policy-bits 4))
+        3
+        (if (= 0 (bit-and policy-bits 8))
+          4
+          (if (= 0 (bit-and policy-bits 16))
+            5
+            (if (= 0 (bit-and policy-bits 32))
+              6
+              (if (= 0 (bit-and policy-bits 64))
+                7
+                (if (> estimated-micros maximum-micros) 8 0)))))))))
+
+(defn main [] :i64 0)

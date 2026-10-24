@@ -1,0 +1,5 @@
+;; Empty KEXE loader baseline for x402 wallet preflight.
+(ns nexus.wallet.transfer-preflight-selfhost-empty-benchmark
+  (:export [main]))
+
+(defn main [] :i64 0)

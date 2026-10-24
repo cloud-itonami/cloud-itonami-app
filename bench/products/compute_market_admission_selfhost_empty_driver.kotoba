@@ -1,0 +1,9 @@
+;; Empty-loop process baseline for the native selfhost benchmark.
+(ns murakumo.compute-market-admission-selfhost-empty-benchmark
+  (:export [main]))
+
+(defn main [] :i64
+  (loop [i 0]
+    (if (< i 1000000)
+      (recur (+ i 1))
+      0)))

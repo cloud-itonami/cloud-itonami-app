@@ -1,0 +1,5 @@
+;; Empty-loader baseline for the Amu selfhost native app-admission benchmark.
+(ns awai.app-admission-selfhost-empty
+  (:export [main]))
+
+(defn main [] :i64 0)

@@ -1,34 +1,50 @@
 (ns cloud.itonami.app.awai-registry
-  "Read the accepted app.registry projection from the local Awai peer host.
+  "Read and compare signed app.registry checkpoints from configured Awai peers.
 
-  The local gateway is deliberately a single, loopback-only URL. This adapter
-  never discovers a fallback origin and does not treat DNS, release manifests,
-  or application bundles as verified; it only reports app releases, domain
-  bindings, and content origins accepted by the configured Awai node. Each
-  signed envelope is then independently verified before the snapshot is trusted."
-  (:require [kotoba.json :as json]
+  Each snapshot is signed by its libp2p identity, and the host accepts only a
+  two-thirds quorum over the exact accepted-record CID set. Local checks use
+  loopback HTTP; remote peers require public-host HTTPS. This is a configured
+  witness quorum, not consensus finality; operator independence remains a
+  deployment qualification."
+  (:require [clojure.string :as cstr]
+            [kotoba.json :as json]
             [kotoba.lang.text :as str]
             [cloud.itonami.app.awai-envelope :as envelope]
             [kotoba.protocol.cid :as cid]
             [kotoba.protocol.vocab :as vocab])
   (:import [java.io ByteArrayOutputStream]
+           [java.math BigInteger]
            [java.net Proxy ProxySelector URI]
            [java.net.http HttpClient HttpClient$Redirect HttpRequest
             HttpResponse$BodyHandlers]
-           [java.time Duration]))
+           [java.nio.charset StandardCharsets]
+           [java.security KeyFactory Signature]
+           [java.security.spec X509EncodedKeySpec]
+           [java.time Duration]
+           [java.util Arrays]))
 
 (def ^:dynamic *environment* #(System/getenv %))
-(def schema "awai.app-registry.read.v3")
+(def schema "awai.app-registry.read.v4")
+(def checkpoint-schema "awai.app-registry.checkpoint.v1")
 (def maximum-records 1024)
 (def maximum-snapshot-bytes (* 16 1024 1024))
 (def maximum-safe-integer 9007199254740991)
+(def maximum-peers 12)
+(def minimum-peers 3)
+(def checkpoint-maximum-age-seconds 120)
+(def checkpoint-clock-skew-seconds 30)
 (def accepted-types #{"app/release" "app/revoke" "domain/bind" "content/origin"})
+
+(def ^:private base58-alphabet
+  "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+(def ^:private ed25519-x509-prefix
+  (byte-array [48 42 48 5 6 3 43 101 112 3 33 0]))
 
 (def ^:private peer-http-client
   (let [builder (HttpClient/newBuilder)]
-    ;; This bridge must stay on loopback even if a peer returns Location or the
-    ;; process has an ambient proxy configured. Neither behavior is inherited
-    ;; from the app's general-purpose outbound HTTP transport.
+    ;; Peer endpoints are an explicit operator allowlist. Never follow a
+    ;; redirect or inherit an ambient proxy from the app's general-purpose
+    ;; outbound HTTP transport.
     (.followRedirects builder HttpClient$Redirect/NEVER)
     (.connectTimeout builder (Duration/ofSeconds 2))
     (.proxy builder
@@ -74,18 +90,132 @@
   (boolean (and (vocab/cid? value)
                 (not (:error (cid/parse-cid value))))))
 
+(defn checkpoint-message
+  "Canonical message covered by an Awai peer's registry checkpoint signature."
+  [dna-cid peer-id issued-at record-cids]
+  (str "awai-app-registry-checkpoint.v1\n"
+       dna-cid "\n" peer-id "\n" issued-at "\n"
+       (cstr/join "\n" record-cids)))
+
+(defn- base58-value [text]
+  (reduce (fn [^BigInteger value character]
+            (let [digit (.indexOf ^String base58-alphabet (int character))]
+              (if (neg? digit)
+                (reduced nil)
+                (.add (.multiply value (BigInteger/valueOf 58))
+                      (BigInteger/valueOf digit)))))
+          BigInteger/ZERO text))
+
+(defn- base58-decode [text]
+  (when (and (string? text)
+             (<= 1 (count text) 128)
+             (every? #(not (neg? (.indexOf ^String base58-alphabet (int %)))) text))
+    (let [number (base58-value text)
+          leading-ones (count (take-while #(= \1 %) text))
+          signed-bytes (.toByteArray ^BigInteger number)
+          start (if (and (pos? (alength signed-bytes))
+                         (zero? (bit-and 0xff (aget signed-bytes 0))))
+                  1 0)
+          magnitude (Arrays/copyOfRange signed-bytes start (alength signed-bytes))
+          decoded (byte-array (+ leading-ones (alength magnitude)))]
+      (System/arraycopy magnitude 0 decoded leading-ones (alength magnitude))
+      decoded)))
+
+(defn- peer-id-public-key [peer-id]
+  (try
+    (let [multihash (base58-decode peer-id)]
+      ;; Ed25519 libp2p peer IDs inline the 36-byte protobuf public key in an
+      ;; identity multihash: 0x00 0x24 0x08 0x01 0x12 0x20 <32-byte key>.
+      (when (and multihash
+                 (= 38 (alength multihash))
+                 (= [0 36 8 1 18 32]
+                    (mapv #(bit-and 0xff (aget multihash %)) (range 6)))
+                 (= \1 (first peer-id)))
+        (let [raw (Arrays/copyOfRange multihash 6 38)
+              encoded (byte-array (+ (alength ed25519-x509-prefix) (alength raw)))]
+          (System/arraycopy ed25519-x509-prefix 0 encoded 0
+                            (alength ed25519-x509-prefix))
+          (System/arraycopy raw 0 encoded (alength ed25519-x509-prefix)
+                            (alength raw))
+          (.generatePublic (KeyFactory/getInstance "Ed25519")
+                           (X509EncodedKeySpec. encoded)))))
+    (catch Exception _ nil)))
+
+(defn- hex-bytes [value]
+  (when (and (string? value)
+             (even? (count value))
+             (re-matches #"[0-9a-f]+" value))
+    (byte-array
+     (map (fn [pair]
+            (unchecked-byte (Integer/parseInt pair 16)))
+          (map #(apply str %) (partition 2 value))))))
+
+(defn- valid-peer-checkpoint? [peer snapshot now]
+  (try
+    (let [checkpoint (:checkpoint snapshot)
+          peer-id (:peer-id peer)
+          public-key (peer-id-public-key peer-id)
+          issued-at (:issued-at checkpoint)
+          record-cids (mapv :cid (:records snapshot))
+          signature-bytes (hex-bytes (:signature-hex checkpoint))
+          payload (checkpoint-message (:dna-cid snapshot) peer-id issued-at record-cids)
+          verifier (when public-key (Signature/getInstance "Ed25519"))]
+      (boolean
+       (and public-key
+            (= #{:schema :peer-id :issued-at :record-cids :signature-hex}
+               (set (keys checkpoint)))
+            (= checkpoint-schema (:schema checkpoint))
+            (= peer-id (:peer-id checkpoint))
+            (integer? issued-at)
+            (<= 0 issued-at maximum-safe-integer)
+            (<= (- now checkpoint-maximum-age-seconds) issued-at
+                (+ now checkpoint-clock-skew-seconds))
+            (= record-cids (:record-cids checkpoint))
+            (vector? (:record-cids checkpoint))
+            (= (count record-cids) (count (set record-cids)))
+            (every? valid-cid? record-cids)
+            (= 128 (count (:signature-hex checkpoint)))
+            signature-bytes
+            (do
+              (.initVerify verifier public-key)
+              (.update verifier (.getBytes payload StandardCharsets/UTF_8))
+              (.verify verifier signature-bytes)))))
+    (catch Exception _ false)))
+
+(defn- public-peer-host? [hostname]
+  (and (string? hostname)
+       (= hostname (cstr/lower-case hostname))
+       (re-matches #"(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+"
+                   hostname)
+       (not (re-matches #"[0-9.]+" hostname))
+       (not-any? #(cstr/ends-with? hostname %)
+                 [".localhost" ".local" ".internal" ".home.arpa"
+                  ".test" ".invalid" ".example"])))
+
 (defn- endpoint-uri [value]
   (try
     (let [uri (URI/create value)]
-      (when (and (= "http" (.getScheme uri))
-                 (= "127.0.0.1" (.getHost uri))
-                 (<= 1 (.getPort uri) 65535)
+      (let [scheme (.getScheme uri)
+            hostname (.getHost uri)
+            port (.getPort uri)
+            local? (and (= "http" scheme)
+                        (= "127.0.0.1" hostname)
+                        (<= 1 port 65535))
+            public-tls? (and (= "https" scheme)
+                             (public-peer-host? hostname)
+                             (or (= -1 port) (= 443 port)))]
+      (when (and (or local? public-tls?)
                  (= "/v2/app-registry" (.getPath uri))
                  (nil? (.getUserInfo uri))
                  (nil? (.getQuery uri))
                  (nil? (.getFragment uri)))
-        uri))
+        uri)))
     (catch Exception _ nil)))
+
+(defn valid-peer-endpoint?
+  "Accept loopback HTTP for local checks and public-host HTTPS for peers."
+  [value]
+  (boolean (endpoint-uri value)))
 
 (defn- valid-record? [record]
   (and (map? record)
@@ -102,44 +232,83 @@
 
 (defn- valid-snapshot? [snapshot]
   (and (map? snapshot)
+       (= #{:schema :dna-cid :records :checkpoint} (set (keys snapshot)))
        (= schema (:schema snapshot))
        (valid-cid? (:dna-cid snapshot))
        (vector? (:records snapshot))
        (<= (count (:records snapshot)) maximum-records)
+       (= (count (:records snapshot)) (count (set (map :cid (:records snapshot)))))
        (every? valid-record? (:records snapshot))))
 
+(defn- valid-peer-configs? [peers]
+  (and (vector? peers)
+       (<= minimum-peers (count peers) maximum-peers)
+       (every? (fn [peer]
+                 (and (map? peer)
+                      (= #{:peer-id :operator-did :url} (set (keys peer)))
+                      (peer-id-public-key (:peer-id peer))
+                      (vocab/did-key? (:operator-did peer))
+                      (endpoint-uri (:url peer))))
+               peers)
+       (= (count peers) (count (set (map :peer-id peers))))
+       (= (count peers) (count (set (map :operator-did peers))))))
+
+(defn- read-peer [peer now]
+  (try
+    (let [response (read-peer-snapshot (endpoint-uri (:url peer)))]
+      (when (and (= 200 (:status response))
+                 (not (:too-large? response)))
+        (let [snapshot (json/read-str (:body response) :key-fn keyword)]
+          (when (and (valid-snapshot? snapshot)
+                     (valid-peer-checkpoint? peer snapshot now)
+                     (every? #(-> (envelope/verify-record (:dna-cid snapshot) %) :ok?)
+                             (:records snapshot)))
+            {:peer-id (:peer-id peer)
+             :operator-did (:operator-did peer)
+             :snapshot snapshot}))))
+    (catch Exception _ nil)))
+
+(defn- quorum-size [peer-count]
+  ;; ceil(2N/3): for the minimum three configured peers, two matching recent
+  ;; signed checkpoints can outvote one stale or unavailable peer.
+  (quot (+ (* 2 peer-count) 2) 3))
+
+(defn- snapshot-state-key [snapshot]
+  [(:dna-cid snapshot) (mapv :cid (:records snapshot))])
+
 (defn registry-snapshot
-  "Read one bounded accepted-state snapshot; return an explicit unavailable
-  result when the adapter is unset, unreachable, or returns an invalid shape."
+  "Read bounded snapshots from a configured peer set and require a fresh,
+  signed two-thirds quorum over one exact accepted-record CID set."
   []
-  (let [configured (some-> (*environment* "ITONAMI_AWAI_REGISTRY_URL") str/trim not-empty)
-        uri (when configured (endpoint-uri configured))]
+  (let [configured (some-> (*environment* "ITONAMI_AWAI_REGISTRY_PEERS") str/trim not-empty)
+        peers (when configured
+                (try (json/read-str configured :key-fn keyword)
+                     (catch Exception _ nil)))]
     (cond
       (nil? configured)
       {:status "unavailable" :reason "unconfigured"}
 
-      (nil? uri)
-      {:status "unavailable" :reason "invalid-local-endpoint"}
+      (not (valid-peer-configs? peers))
+      {:status "unavailable" :reason "invalid-peer-set"}
 
       :else
-      (try
-        (let [response (read-peer-snapshot uri)]
-          (cond
-            (not= 200 (:status response))
-            {:status "unavailable" :reason "peer-host-unavailable"}
-
-            (:too-large? response)
-            {:status "unavailable" :reason "snapshot-too-large"}
-
-            :else
-            (let [snapshot (json/read-str (:body response) :key-fn keyword)]
-              (if-not (valid-snapshot? snapshot)
-                {:status "unavailable" :reason "invalid-peer-snapshot"}
-                (if (every? #(-> (envelope/verify-record (:dna-cid snapshot) %) :ok?)
-                            (:records snapshot))
-                  {:status "ok"
-                   :trust "independently-verified-awai-envelopes"
-                   :snapshot snapshot}
-                  {:status "unavailable" :reason "unverified-peer-envelope"}))))))
-        (catch Exception _
-          {:status "unavailable" :reason "peer-host-unreachable"})))))
+      (let [now (quot (System/currentTimeMillis) 1000)
+            observations (vec (keep #(read-peer % now) peers))
+            required (quorum-size (count peers))
+            winner (some #(when (>= (count %) required) %)
+                         (vals (group-by (comp snapshot-state-key :snapshot)
+                                         observations)))]
+        (if winner
+          {:status "ok"
+           :trust "configured-peer-checkpoint-quorum"
+           :snapshot (:snapshot (first winner))
+           :quorum {:required required
+                    :observed (count winner)
+                    :configured (count peers)
+                    :peer-ids (mapv :peer-id winner)
+                    :operator-dids (mapv :operator-did winner)}}
+          {:status "unavailable"
+           :reason "registry-quorum-unavailable"
+           :quorum {:required required
+                    :observed (count observations)
+                    :configured (count peers)}})))))

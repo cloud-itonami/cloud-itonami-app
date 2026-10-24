@@ -1,0 +1,73 @@
+run=awai-product-kotoba-selfhost-native-refresh
+date=2026-10-16
+compiler=Amu adopted native selfhost seed; seed pins verified in saved build reports
+guest=aarch64-macos native images executed by trusted KEXE loader
+source=existing builds reused after each three-file source closure matched its current product worktree
+workload=1,000,000 decisions per sample; 7 alternating rounds; 1 warmup per executable path
+timing=native median process wall time minus median empty-loader time; warmed in-process JavaScript reference
+host=10 logical CPUs; load high during the full run
+scope=decision kernels only; not full app, request, browser, Worker, or deployment performance
+
+product=murakumo bid admission
+native-process-median-ms=47.922541
+empty-loader-median-ms=31.083459
+amu-selfhost-adjusted-ns/decision=16.839082
+javascript-reference-ns/decision=10.052125
+native-over-js=1.675176343
+load-average-1-5-15=46.722167969 / 57.524902344 / 49.053222656
+
+product=aozora Biscuit authorization
+native-process-median-ms=79.317084
+empty-loader-median-ms=31.076500
+amu-selfhost-adjusted-ns/decision=48.240584
+javascript-reference-ns/decision=45.792000
+native-over-js=1.053471873
+load-average-1-5-15=44.181640625 / 56.818847656 / 48.853515625
+
+product=isekai publish-tier admission
+native-process-median-ms=41.413417
+empty-loader-median-ms=34.336041
+amu-selfhost-adjusted-ns/decision=7.077376
+javascript-reference-ns/decision=2.864334
+native-over-js=2.470862686
+load-average-1-5-15=44.181640625 / 56.818847656 / 48.853515625
+
+product=babiniku proposal governor
+native-process-median-ms=65.987042
+empty-loader-median-ms=32.014375
+amu-selfhost-adjusted-ns/decision=33.972667
+javascript-reference-ns/decision=19.616625
+native-over-js=1.731830373
+load-average-1-5-15=44.181640625 / 56.818847656 / 48.853515625
+
+product=x402 transfer preflight
+native-process-median-ms=62.564750
+empty-loader-median-ms=28.472417
+amu-selfhost-adjusted-ns/decision=34.092333
+javascript-reference-ns/decision=30.822667
+native-over-js=1.106079918
+load-average-1-5-15=44.181640625 / 56.818847656 / 48.853515625
+
+product=shinshi black-frame threshold
+native-process-median-ms=52.499750
+empty-loader-median-ms=31.247625
+amu-selfhost-adjusted-ns/decision=21.252125
+javascript-reference-ns/decision=15.035583
+native-over-js=1.413455335
+load-average-1-5-15=42.004882812 / 56.157714844 / 48.666503906
+
+product=oppai challenge window
+native-process-median-ms=56.260375
+empty-loader-median-ms=39.796708
+amu-selfhost-adjusted-ns/decision=16.463667
+javascript-reference-ns/decision=21.693541
+native-over-js=0.758920224
+load-average-1-5-15=42.004882812 / 56.157714844 / 48.666503906
+
+product=awai network chat admission
+native-process-median-ms=52.511042
+empty-loader-median-ms=32.237917
+amu-selfhost-adjusted-ns/decision=20.273125
+javascript-reference-ns/decision=16.193417
+native-over-js=1.251936203
+load-average-1-5-15=42.004882812 / 56.157714844 / 48.666503906

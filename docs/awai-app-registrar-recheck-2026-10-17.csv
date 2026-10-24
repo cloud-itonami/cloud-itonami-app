@@ -1,0 +1,21 @@
+observed_at_utc,domain,registration_status,registrar_locked,auto_renew,expires_at_utc,privacy_mode,zone_status,dnssec_status,evidence
+2026-10-16T15:56:27Z,murakumo.cloud,active,true,true,2027-06-22T12:12:29Z,redaction,active,disabled,Cloudflare Registrar and DNSSEC GET
+2026-10-16T15:56:27Z,aozora.app,active,true,true,2027-06-20T06:59:07Z,redaction,active,disabled,Cloudflare Registrar and DNSSEC GET
+2026-10-16T15:56:27Z,oppai.fans,active,true,true,2027-09-03T23:59:59Z,redaction,active,disabled,Cloudflare Registrar and DNSSEC GET
+2026-10-16T15:56:27Z,isekai.network,active,true,true,2027-06-21T02:40:43Z,redaction,active,disabled,Cloudflare Registrar and DNSSEC GET
+2026-10-16T15:56:27Z,itonami.app,active,true,true,2027-08-14T03:36:07Z,redaction,active,disabled,Cloudflare Registrar and DNSSEC GET
+2026-10-16T15:56:27Z,itonami.cloud,active,true,true,2027-06-27T06:38:53Z,redaction,active,disabled,Cloudflare Registrar and DNSSEC GET
+2026-10-16T15:56:27Z,x402.nexus,active,true,true,2027-07-09T13:14:57Z,redaction,active,disabled,Cloudflare Registrar and DNSSEC GET
+2026-10-16T15:56:27Z,shinshi.club,active,true,true,2027-05-31T11:33:29Z,redaction,active,disabled,Cloudflare Registrar and DNSSEC GET
+2026-10-16T15:56:27Z,babiniku.net,active,true,true,2027-06-21T02:36:41Z,redaction,active,disabled,Cloudflare Registrar and DNSSEC GET
+2026-10-16T15:56:27Z,awai.network,active,true,true,2027-07-20T06:28:01Z,redaction,active,disabled,Cloudflare Registrar and DNSSEC GET
+"2026-10-16T17:43:46Z","shinshi.club","active","true","true","2027-05-31T11:33:29Z","redaction","active","disabled","Cloudflare Registrar and DNSSEC API GET; configuration only, not transfer or external delegation proof"
+"2026-10-16T17:43:46Z","aozora.app","active","true","true","2027-06-20T06:59:07Z","redaction","active","disabled","Cloudflare Registrar and DNSSEC API GET; configuration only, not transfer or external delegation proof"
+"2026-10-16T17:43:46Z","babiniku.net","active","true","true","2027-06-21T02:36:41Z","redaction","active","disabled","Cloudflare Registrar and DNSSEC API GET; configuration only, not transfer or external delegation proof"
+"2026-10-16T17:43:46Z","isekai.network","active","true","true","2027-06-21T02:40:43Z","redaction","active","disabled","Cloudflare Registrar and DNSSEC API GET; configuration only, not transfer or external delegation proof"
+"2026-10-16T17:43:46Z","murakumo.cloud","active","true","true","2027-06-22T12:12:29Z","redaction","active","disabled","Cloudflare Registrar and DNSSEC API GET; configuration only, not transfer or external delegation proof"
+"2026-10-16T17:43:46Z","itonami.cloud","active","true","true","2027-06-27T06:38:53Z","redaction","active","disabled","Cloudflare Registrar and DNSSEC API GET; configuration only, not transfer or external delegation proof"
+"2026-10-16T17:43:46Z","x402.nexus","active","true","true","2027-07-09T13:14:57Z","redaction","active","disabled","Cloudflare Registrar and DNSSEC API GET; configuration only, not transfer or external delegation proof"
+"2026-10-16T17:43:46Z","awai.network","active","true","true","2027-07-20T06:28:01Z","redaction","active","disabled","Cloudflare Registrar and DNSSEC API GET; configuration only, not transfer or external delegation proof"
+"2026-10-16T17:43:46Z","itonami.app","active","true","true","2027-08-14T03:36:07Z","redaction","active","disabled","Cloudflare Registrar and DNSSEC API GET; configuration only, not transfer or external delegation proof"
+"2026-10-16T17:43:46Z","oppai.fans","active","true","true","2027-09-03T23:59:59Z","redaction","active","disabled","Cloudflare Registrar and DNSSEC API GET; configuration only, not transfer or external delegation proof"

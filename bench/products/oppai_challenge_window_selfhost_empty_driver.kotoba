@@ -1,0 +1,5 @@
+;; Empty KEXE loader baseline for Oppai's challenge-window benchmark.
+(ns oppai.challenge-window-selfhost-empty-benchmark
+  (:export [main]))
+
+(defn main [] :i64 0)

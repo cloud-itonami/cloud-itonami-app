@@ -1,0 +1,5 @@
+service,repository,commit,path,blob_sha,scope_note
+murakumo-node-registration,network-awai/cloud-murakumo,52fd611ee16a3794692f0548353630d0c8a1014f,wrangler.node-registration.jsonc,3b648c9927b84167a3371f223691a82962780273,Route ownership only; deployed handler source is not matched
+murakumo-operator,network-awai/cloud-murakumo,52fd611ee16a3794692f0548353630d0c8a1014f,wrangler.operator.jsonc,c61bc05d596a55b1e484f7ebadd33161b304cbe2,Read-only operator Worker; provider inventory also maps console alias but this config declares only operator hostname
+murakumo-setup,network-awai/cloud-murakumo,52fd611ee16a3794692f0548353630d0c8a1014f,wrangler.setup.jsonc,be93b7b200d1ee5d1664b051709059af0feaeb49,Worker name and setup custom domain; stable and preview aliases remain separate migration decisions
+murakumo-web,network-awai/cloud-murakumo,52fd611ee16a3794692f0548353630d0c8a1014f,wrangler.web.jsonc,05fdbca0c345be10696696173ffce5428f752f46,Worker name and web custom domain

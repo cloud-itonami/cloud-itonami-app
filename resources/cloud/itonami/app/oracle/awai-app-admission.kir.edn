@@ -1,0 +1,264 @@
+{:format :kotoba.kir/v4,
+ :signature nil,
+ :functions
+ [{:name resolve-admission-code,
+   :params [input],
+   :result :i64,
+   :effects #{},
+   :body
+   (if
+    (if
+     (record-get
+      [:record
+       :awai-app-admission/resolve
+       [[:dns-proof-fresh :bool] [:amano-state :i64]]]
+      input
+      :dns-proof-fresh)
+     false
+     true)
+    1
+    (if
+     (=
+      0
+      (record-get
+       [:record
+        :awai-app-admission/resolve
+        [[:dns-proof-fresh :bool] [:amano-state :i64]]]
+       input
+       :amano-state))
+     2
+     (if
+      (=
+       1
+       (record-get
+        [:record
+         :awai-app-admission/resolve
+         [[:dns-proof-fresh :bool] [:amano-state :i64]]]
+        input
+        :amano-state))
+      3
+      (if
+       (=
+        2
+        (record-get
+         [:record
+          :awai-app-admission/resolve
+          [[:dns-proof-fresh :bool] [:amano-state :i64]]]
+         input
+         :amano-state))
+       0
+       3)))),
+   :param-types [[:ref :awai-app-admission/resolve]]}
+  {:name finish-install-admission-code,
+   :params [input],
+   :result :i64,
+   :effects #{},
+   :body
+   (if
+    (if
+     (record-get
+      [:record
+       :awai-app-admission/finish-install
+       [[:prepared :bool]
+        [:install-lock-valid :bool]
+        [:runtime-inputs-valid :bool]
+        [:clock-valid :bool]
+        [:dns-proof-valid :bool]
+        [:amano-state :i64]
+        [:content-complete :bool]
+        [:capabilities-approved :bool]]]
+      input
+      :prepared)
+     false
+     true)
+    1
+    (if
+     (if
+      (record-get
+       [:record
+        :awai-app-admission/finish-install
+        [[:prepared :bool]
+         [:install-lock-valid :bool]
+         [:runtime-inputs-valid :bool]
+         [:clock-valid :bool]
+         [:dns-proof-valid :bool]
+         [:amano-state :i64]
+         [:content-complete :bool]
+         [:capabilities-approved :bool]]]
+       input
+       :install-lock-valid)
+      false
+      true)
+     2
+     (if
+      (if
+       (record-get
+        [:record
+         :awai-app-admission/finish-install
+         [[:prepared :bool]
+          [:install-lock-valid :bool]
+          [:runtime-inputs-valid :bool]
+          [:clock-valid :bool]
+          [:dns-proof-valid :bool]
+          [:amano-state :i64]
+          [:content-complete :bool]
+          [:capabilities-approved :bool]]]
+        input
+        :runtime-inputs-valid)
+       false
+       true)
+      3
+      (if
+       (if
+        (record-get
+         [:record
+          :awai-app-admission/finish-install
+          [[:prepared :bool]
+           [:install-lock-valid :bool]
+           [:runtime-inputs-valid :bool]
+           [:clock-valid :bool]
+           [:dns-proof-valid :bool]
+           [:amano-state :i64]
+           [:content-complete :bool]
+           [:capabilities-approved :bool]]]
+         input
+         :clock-valid)
+        false
+        true)
+       4
+       (if
+        (if
+         (record-get
+          [:record
+           :awai-app-admission/finish-install
+           [[:prepared :bool]
+            [:install-lock-valid :bool]
+            [:runtime-inputs-valid :bool]
+            [:clock-valid :bool]
+            [:dns-proof-valid :bool]
+            [:amano-state :i64]
+            [:content-complete :bool]
+            [:capabilities-approved :bool]]]
+          input
+          :dns-proof-valid)
+         false
+         true)
+        5
+        (if
+         (=
+          0
+          (record-get
+           [:record
+            :awai-app-admission/finish-install
+            [[:prepared :bool]
+             [:install-lock-valid :bool]
+             [:runtime-inputs-valid :bool]
+             [:clock-valid :bool]
+             [:dns-proof-valid :bool]
+             [:amano-state :i64]
+             [:content-complete :bool]
+             [:capabilities-approved :bool]]]
+           input
+           :amano-state))
+         6
+         (if
+          (=
+           1
+           (record-get
+            [:record
+             :awai-app-admission/finish-install
+             [[:prepared :bool]
+              [:install-lock-valid :bool]
+              [:runtime-inputs-valid :bool]
+              [:clock-valid :bool]
+              [:dns-proof-valid :bool]
+              [:amano-state :i64]
+              [:content-complete :bool]
+              [:capabilities-approved :bool]]]
+            input
+            :amano-state))
+          7
+          (if
+           (if
+            (=
+             2
+             (record-get
+              [:record
+               :awai-app-admission/finish-install
+               [[:prepared :bool]
+                [:install-lock-valid :bool]
+                [:runtime-inputs-valid :bool]
+                [:clock-valid :bool]
+                [:dns-proof-valid :bool]
+                [:amano-state :i64]
+                [:content-complete :bool]
+                [:capabilities-approved :bool]]]
+              input
+              :amano-state))
+            false
+            true)
+           7
+           (if
+            (if
+             (record-get
+              [:record
+               :awai-app-admission/finish-install
+               [[:prepared :bool]
+                [:install-lock-valid :bool]
+                [:runtime-inputs-valid :bool]
+                [:clock-valid :bool]
+                [:dns-proof-valid :bool]
+                [:amano-state :i64]
+                [:content-complete :bool]
+                [:capabilities-approved :bool]]]
+              input
+              :content-complete)
+             false
+             true)
+            8
+            (if
+             (if
+              (record-get
+               [:record
+                :awai-app-admission/finish-install
+                [[:prepared :bool]
+                 [:install-lock-valid :bool]
+                 [:runtime-inputs-valid :bool]
+                 [:clock-valid :bool]
+                 [:dns-proof-valid :bool]
+                 [:amano-state :i64]
+                 [:content-complete :bool]
+                 [:capabilities-approved :bool]]]
+               input
+               :capabilities-approved)
+              false
+              true)
+             9
+             0)))))))))),
+   :param-types [[:ref :awai-app-admission/finish-install]]}],
+ :oracle-value 0,
+ :schema-identities
+ #:awai-app-admission{:finish-install
+                      "c8a048a6d5061ec6f4d1c351d116b189abefd2fc94e148fac51e597e0e072c2d",
+                      :resolve
+                      "be109deb10681a06413cfb6f1d171e3f257cb66d6a60564abba20c82963e73b2"},
+ :exports [resolve-admission-code finish-install-admission-code],
+ :schemas
+ #:awai-app-admission{:resolve
+                      [:record
+                       :awai-app-admission/resolve
+                       [[:dns-proof-fresh :bool] [:amano-state :i64]]],
+                      :finish-install
+                      [:record
+                       :awai-app-admission/finish-install
+                       [[:prepared :bool]
+                        [:install-lock-valid :bool]
+                        [:runtime-inputs-valid :bool]
+                        [:clock-valid :bool]
+                        [:dns-proof-valid :bool]
+                        [:amano-state :i64]
+                        [:content-complete :bool]
+                        [:capabilities-approved :bool]]]},
+ :effects #{},
+ :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
+ :entry nil}
