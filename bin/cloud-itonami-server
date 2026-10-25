@@ -27,6 +27,7 @@
             [cloud.itonami.app.awai-registry-node :as awai-registry]
             [cloud.itonami.app.awai-sandbox-policy :as awai-sandbox-policy]
             [cloud.itonami.app.app-did :as app-did]
+            [cloud.itonami.app.server-role :as server-role]
             [kotoba.lang.edn :as edn]
             [kotoba.protocol.cid :as app-cid]
             [kotoba.protocol.install :as app-install]
@@ -1057,6 +1058,43 @@
                                        :status "unavailable"
                                        :reason "app-operation-unavailable"}))))))))
 
+;; ── :server-role observation surface (KOT-15「実測経路の確定」を受けての実装) ──
+;; The route-admission decision boundary records the measured provenance of
+;; each admit/refuse decision — `:guest-export` when the boolean is delegated
+;; to a guest export through `admit?` (the pinned delegation), `:host` when
+;; this host computes the decision itself. The run-log line is the pinned
+;; role literal; the mapping and the append-only protocol (the last line
+;; wins) are pinned in `cloud.itonami.app.server-role`. Nothing here decides
+;; an admission — this block only observes who did.
+
+(defonce ^:private boundary-provenances (atom []))
+(defonce ^:private boundary-role-printed (atom nil))
+
+(defn- print-run-log-line! [line]
+  (binding [*print-fn* *print-err-fn*]
+    (println line))
+  line)
+
+(defn- record-boundary-decision!
+  "One route-admission decision at the boundary. Prints the role line when
+  the computed role changes (nil → reading, or :transport-only → :decides);
+  the run log is append-only and the last server-role line is the run's
+  reading."
+  [provenance]
+  (swap! boundary-provenances conj provenance)
+  (let [role (server-role/role-of @boundary-provenances)]
+    (when-not (= role @boundary-role-printed)
+      (reset! boundary-role-printed role)
+      (print-run-log-line! (server-role/run-log-line @boundary-provenances)))))
+
+(defn- admit?
+  "Route admission delegated to a guest export (this host listens; the guest
+  decides). The delegation is the measurement: the decision provenance of
+  this boundary decision is `:guest-export`."
+  [hosted export-name method url-path]
+  (record-boundary-decision! :guest-export)
+  (guest/call-bool hosted export-name method url-path))
+
 (defn- sandbox-request-entry [request-url default-entry]
   (let [url-path (.-pathname request-url)]
     (if (= "/" url-path)
@@ -1076,11 +1114,12 @@
       ;; `null` is accepted only for this read-only, CID-verified asset route.
       (not (awai-sandbox-policy/static-origin-allowed?
             expected-origin request-origin))
-      (json-response res 403 {:status "refused"
-                              :reason "app-origin-mismatch"})
+      (do (record-boundary-decision! :host)
+          (json-response res 403 {:status "refused"
+                                  :reason "app-origin-mismatch"}))
 
-      (not (guest/call-bool hosted "app-static-route?" (.-method req)
-                            (.-pathname request-url)))
+      (not (admit? hosted "app-static-route?" (.-method req)
+                   (.-pathname request-url)))
       (json-response res 404 {:status "refused"
                               :reason "guest-route-not-admitted"})
 
@@ -1182,16 +1221,16 @@
   (let [method (.-method req)
         request-url (js/URL. (str "http://127.0.0.1" (.-url req)))
         url-path (.-pathname request-url)
-        health-admitted? (guest/call-bool hosted "health-route?" method url-path)
-        registry-admitted? (guest/call-bool hosted "app-registry-route?" method url-path)
-        platform-status-admitted? (guest/call-bool hosted "platform-status-route?" method url-path)
-        domain-proof-admitted? (guest/call-bool hosted "app-domain-proof-route?" method url-path)
-        install-plan-admitted? (guest/call-bool hosted "app-install-plan-route?" method url-path)
-        install-content-admitted? (guest/call-bool hosted "app-content-stage-route?" method url-path)
-        install-admitted? (guest/call-bool hosted "app-install-route?" method url-path)
-        app-launch-admitted? (guest/call-bool hosted "app-launch-route?" method url-path)
-        app-operation-admitted? (guest/call-bool hosted "app-operation-route?" method url-path)
-        launcher-admitted? (guest/call-bool hosted "launcher-route?" method url-path)]
+        health-admitted? (admit? hosted "health-route?" method url-path)
+        registry-admitted? (admit? hosted "app-registry-route?" method url-path)
+        platform-status-admitted? (admit? hosted "platform-status-route?" method url-path)
+        domain-proof-admitted? (admit? hosted "app-domain-proof-route?" method url-path)
+        install-plan-admitted? (admit? hosted "app-install-plan-route?" method url-path)
+        install-content-admitted? (admit? hosted "app-content-stage-route?" method url-path)
+        install-admitted? (admit? hosted "app-install-route?" method url-path)
+        app-launch-admitted? (admit? hosted "app-launch-route?" method url-path)
+        app-operation-admitted? (admit? hosted "app-operation-route?" method url-path)
+        launcher-admitted? (admit? hosted "launcher-route?" method url-path)]
     (cond
       health-admitted?
       (json-response res 200 {:ok true
@@ -1245,8 +1284,9 @@
       (app-static-response! hosted res req request-url app-id)
 
       (sandbox-host? req)
-      (json-response res 421 {:status "refused"
-                              :reason "invalid-app-sandbox-host"})
+      (do (record-boundary-decision! :host)
+          (json-response res 421 {:status "refused"
+                                  :reason "invalid-app-sandbox-host"}))
 
       :else
       (handle-standard hosted guest-main req res))))
@@ -1278,6 +1318,10 @@
   ;; The :app-did surface is the first thing in the run log — the literal
   ;; must exist even if the guest later fails to load.
   (emit-app-did!)
+  ;; The :server-role surface speaks too, before any boundary decision: the
+  ;; boundary is named unobserved (a reason literal, never a reading). The
+  ;; role literal appears only after a decision was actually measured.
+  (print-run-log-line! (server-role/run-log-line []))
   (-> (guest/load-guest app-directory "target/amu/server_main.wasm")
       (.then
        (fn [loaded]

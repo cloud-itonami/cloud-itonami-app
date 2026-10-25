@@ -1,0 +1,111 @@
+(ns cloud.itonami.app.server-role
+  "The `:server-role` observation surface (KOT-15 残条件「:server-role 実測経路の
+  確定」を受けての観測面の実装)。
+
+  `:server-role` is one of the 4 確定 conditions (root
+  `manifest/awai-app-plane.kotoba` ③「サーバーに意思決定を置かない。server の
+  役割は transport / liveness のみ」: `:server {:role :transport-only
+  :decision-location :client}`). The measurement path is pinned in root
+  `manifest/awai-app-plane-qual.kotoba` `:awai-app-plane-qual/server-role-path`:
+  the **route-admission decision boundary** of the launched app plane (host
+  listens only; admission is delegated to the guest exports via
+  `guest/call-bool`), and the role literal must appear **verbatim in a run
+  log** — the value shape is the keyword literal `:transport-only` or
+  `:decides` and nothing else. The delegation prose (「This host listens; the
+  guest decides」) and the HTTP admit/refuse behaviour are **not** a
+  `:server-role` reading — the reading exists only as the emitted literal
+  (`:never-inferred`).
+
+  ## What is measured at the boundary
+
+  The boundary observable is the **decision provenance** of each route
+  admission — who computed the admit/refuse boolean:
+
+    `:guest-export` — the boolean came from a guest export via
+                      `guest/call-bool` (the pinned delegation). The host
+                      computed no admission decision: its role at the
+                      boundary is transport/liveness only.
+    anything else   — the host computed the decision itself (no delegation).
+                      A boundary the server decides on is `:decides`, and
+                      with it ③ fails.
+
+  The mapping is fail-closed toward the violation literal: **one** host
+  decision among many delegated ones still means the server decided, so the
+  role is `:decides`. Only a boundary where every decision was delegated
+  reads `:transport-only`. A boundary that was never exercised reads as an
+  **absence**, not a pass and not a reading.
+
+  ## Run-log protocol (append-only; the last line wins)
+
+    `server-role absent :server-role/boundary-unobserved`
+                                    — before the first boundary decision (or
+                                      in a run that never reaches one). A
+                                      named absence with a reason literal and
+                                      **never** a role literal.
+    `:server-role :transport-only`  — the reading when the role first becomes
+                                      measurable (or worsens to it).
+    `:server-role :decides`         — the reading once any host-computed
+                                      decision is observed.
+
+  The run log only grows, so the reading is the **last** of these lines: a
+  run whose boundary mixed delegation and host decisions ends on
+  `:server-role :decides`. Exactly like `cloud.itonami.app.app-did`, a
+  reading line and an absence line are not symmetric in what they may
+  contain — an absence that looks like a reading is how a missing
+  measurement gets counted as one.
+
+  Nothing here holds or touches a private key, and nothing here decides an
+  admission: this namespace only turns observed provenance into the pinned
+  literal. The boundary instrumentation lives in `bin/cloud-itonami-server`.")
+
+(def role-values
+  "The pinned value shape of a `:server-role` reading. Exactly these two
+  keyword literals; the enum is a two-source pin of the contract's
+  `:value-shape` (root manifest/awai-app-plane-qual.kotoba
+  `:awai-app-plane-qual/server-role-path`) and of the collector's
+  `:fact-rules` rows for `:server-role`."
+  #{:transport-only :decides})
+
+(def absent-line
+  "The one absence shape. Its payload is a reason literal and it must never
+  contain a role literal."
+  "server-role absent :server-role/boundary-unobserved")
+
+(defn- delegated?
+  "A decision provenance is delegated only when it is exactly `:guest-export`.
+  Anything else — a host fallback, an unknown keyword, a typo — means the
+  host did not delegate, which is the conservative direction."
+  [provenance]
+  (= :guest-export provenance))
+
+(defn role-of
+  "Observed decision provenances (a collection of keywords, one per
+  route-admission decision at the boundary) → the role literal, or nil when
+  the boundary was never exercised.
+
+  nil        — no decision observed (:unmeasured, never inferred)
+  :decides   — any host-computed decision observed (fail-closed)
+  :transport-only — every observed decision was delegated to a guest export"
+  [provenances]
+  (cond
+    (empty? provenances) nil
+    (every? delegated? provenances) :transport-only
+    :else :decides))
+
+(defn run-log-line
+  "The run-log line for the observed boundary. Exactly three shapes exist,
+  and the absence shape is not allowed to look like a reading:
+
+    \":server-role :transport-only\"
+    \":server-role :decides\"
+    \"server-role absent :server-role/boundary-unobserved\"
+
+  The role literal is the line's payload and must match the pinned value
+  shape — a line that carries a role outside `role-values` has not produced
+  a reading."
+  [provenances]
+  (let [role (role-of provenances)]
+    (if (nil? role)
+      absent-line
+      (do (assert (contains? role-values role))
+          (str ":server-role :" (name role))))))
