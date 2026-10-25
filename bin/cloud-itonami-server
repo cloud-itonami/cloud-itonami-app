@@ -57,7 +57,7 @@
                   (not (.isAbsolute path relative))
                   (.existsSync fs resource-file)
                   (.isFile (.statSync fs resource-file)))
-         (.readFileSync fs resource-file "utf8")))))
+         (.readFileSync fs resource-file "utf8"))))))
 
 (defn- data-dir []
   (or (aget js/process.env "CLOUD_ITONAMI_DATA_DIR")
