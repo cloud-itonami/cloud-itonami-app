@@ -59,6 +59,7 @@
             [cloud.itonami.app.hermes-compat :as hermes-compat]
             [cloud.itonami.app.hermes-migration :as hermes-migration]
             [cloud.itonami.app.humanity-trust :as humanity-trust]
+            [cloud.itonami.app.dapp-publish :as dapp-publish]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.fax :as fax]
             [cloud.itonami.app.lawfirm :as lawfirm]
@@ -7644,6 +7645,60 @@
                             :message "Human Passport verification is unavailable."}}
                    {"Cache-Control" "no-store"})))))))
 
+(defn- dapps-publish-handler
+  "The DApps Store publication surface (ADR-0144 / ADR-0145 / JUN-424).
+
+  POST /api/v1/dapps/publish submits one publication request
+  {:listing {:name :repo :revision :files {path sha256}} :files {path content}}
+  and admits it only with valid stored Human Passport step-up evidence and an
+  approved static review. GET /api/v1/dapps/publications reads back the
+  published records — what the UI renders as tier badges is exactly this."
+  [configuration]
+  (reify HttpHandler
+    (handle [_ exchange]
+      (let [method (.getRequestMethod exchange)
+            path (.getPath (.getRequestURI exchange))]
+        (try
+          (cond
+            (and (= method "POST") (= path "/api/v1/dapps/publish"))
+            (let [session (require-human-session! exchange)
+                  body (read-json-limited exchange 262144 keyword)]
+              (require-origin! exchange configuration)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (dapp-publish/submit!
+                      (identity/session-principal-id session)
+                      {:listing (:listing body) :files (:files body)}
+                      (str (java.time.Instant/now)))
+                     {"Cache-Control" "no-store"}))
+
+            (and (= method "GET") (= path "/api/v1/dapps/publications"))
+            (send! exchange 200
+                   {:publications (dapp-publish/publications (store/snapshot))}
+                   {"Cache-Control" "no-store"})
+
+            :else
+            (send! exchange 404 {:error {:type "not_found"}}))
+          (catch kerror/ExceptionInfo error
+            (let [data (ex-data error)
+                  type (:type data)
+                  status (cond
+                           (= :identity/unauthenticated type) 401
+                           (contains? #{:identity/invalid-origin
+                                        :identity/invalid-csrf
+                                        :identity/agent-session-forbidden} type) 403
+                           (= :http/payload-too-large type) 413
+                           :else 422)]
+              (send! exchange status
+                     {:error {:type (name (or type :dapp-publish/refused))
+                              :message (.getMessage error)}}
+                     {"Cache-Control" "no-store"})))
+          (catch Exception _
+            (send! exchange 500
+                   {:error {:type "internal_error"
+                            :message "dapp publication failed"}}
+                   {"Cache-Control" "no-store"})))))))
+
 (defn- update-handler [configuration]
   (reify HttpHandler
     (handle [_ exchange]
@@ -7792,6 +7847,8 @@
                      (wallet-handler configuration))
      (.createContext instance "/api/v1/trust/human-passport"
                      (human-passport-handler configuration))
+     (.createContext instance "/api/v1/dapps"
+                     (dapps-publish-handler configuration))
      (.createContext instance "/api/agent-bots"
                      (agent-bots-handler configuration))
      ;; Hermes Agent Bot Mode compatibility. The longer prefixes win over the

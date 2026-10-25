@@ -1,0 +1,115 @@
+(ns cloud.itonami.app.dapp-publish-test
+  (:require [kotoba.lang.error :as kerror]
+            [kotoba.test :refer [deftest is testing]]
+            [cloud.itonami.app.dapp-publish :as publish]
+            [cloud.itonami.app.dapp-publish-gate :as gate]
+            [cloud.itonami.app.dapp-review :as review]))
+
+(def now "2026-10-25T00:00:00Z")
+(def valid-until "2026-11-24T00:00:00Z")
+(def revision (apply str (repeat 40 "c")))
+
+(def contents
+  {"profile.yaml" "name: actor-example\nkind: profile\n"
+   "SOUL.md" "# actor-example\nA sample publisher profile.\n"})
+
+(defn listing-for [files]
+  {:name "actor-example"
+   :repo "etzhayyim/actor-example"
+   :revision revision
+   :files (into {} (map (fn [[path content]] [path (review/sha256-of content)])
+                        files))})
+
+(def snapshot
+  {:trust {:external {:human-passport
+                      {"urn:kotoba:principal:alice"
+                       {:latest "0xuid"
+                        "0xuid" {:schema "cloud.itonami.app.external-trust.v1"
+                                 :subject-principal "urn:kotoba:principal:alice"
+                                 :attestation-uid "0xuid"
+                                 :decision {:allowed? true
+                                            :policy-id "itonami-human-passport.v1"
+                                            :claim-id "claim-1"
+                                            :valid-until valid-until}}}}}}})
+
+(defn run-submit [snap listing files]
+  (let [persisted (atom nil)
+        result (try
+                 (publish/submit-with!
+                  {:snapshot snap :now now :persist! #(reset! persisted %)}
+                  {:principal-id "urn:kotoba:principal:alice"
+                   :listing listing :files files})
+                 (catch kerror/ExceptionInfo error
+                   {:refused (:type (ex-data error))}))]
+    [result @persisted]))
+
+(deftest an-approved-publication-is-persisted-with-pinned-digests
+  (let [[result persisted] (run-submit snapshot (listing-for contents) contents)]
+    (is (= publish/schema (:schema result)))
+    (is (= "urn:kotoba:principal:alice" (:principal-id result)))
+    (is (= :approved (get-in result [:review :review/status])))
+    (is (= "0xuid" (get-in result [:admission :attestation-uid])))
+    (is (= revision (get-in result [:review :artifact :revision])))
+    (is (re-matches #"^sha256:[0-9a-f]{64}$"
+                    (get-in result [:review :composite-digest])))
+    (is (= result persisted))))
+
+(deftest a-gate-refusal-persists-nothing
+  (let [[result persisted] (run-submit {} (listing-for contents) contents)]
+    (is (= :dapp-publish/no-trust-evidence (:refused result)))
+    (is (nil? persisted))))
+
+(deftest negative-fixtures-never-reach-an-approved-record
+  (testing "static rules fire even when the declared digests match"
+    (doseq [[label files]
+            [[:secret-material
+              (assoc contents "SOUL.md" (str "api_key = \"sk_live_"
+                                             (apply str (repeat 24 "A")) "\"\n"))]
+             [:private-key-block
+              (assoc contents "SOUL.md" "-----BEGIN PRIVATE KEY-----\nabc\n")]
+             [:fabricated-claim
+              (assoc contents "SOUL.md" "この dapp は必ず儲かります。\n")]
+             [:fabricated-claim-en
+              (assoc contents "SOUL.md" "Guaranteed profit every week.\n")]
+             [:obfuscated-payload
+              (assoc contents "SOUL.md"
+                     (str (apply str (repeat 620 "A")) "\n"))]]]
+      (let [[result persisted] (run-submit snapshot (listing-for files) files)]
+        (is (some? (:refused result)) (name label))
+        (is (nil? persisted) (name label)))))
+  (testing "artifact integrity failures are refused"
+    (let [good (listing-for contents)
+          swapped-sha (apply str (repeat 64 "0"))
+          bad-digest-listing
+          (assoc good :files {"profile.yaml" swapped-sha
+                              "SOUL.md" (get-in good [:files "SOUL.md"])})]
+      (doseq [[label files listing]
+              [[:digest-mismatch contents bad-digest-listing]
+               [:file-set-mismatch (assoc contents "extra.sh" "echo pwned\n") good]
+               [:files-missing {} good]]]
+        (let [[result persisted] (run-submit snapshot listing files)]
+          (is (some? (:refused result)) (name label))
+          (is (nil? persisted) (name label)))))))
+
+(deftest review-record-is-order-independent-and-deterministic
+  (let [a (review/review {:listing (listing-for contents) :files contents} now)
+        b (review/review {:listing (listing-for contents)
+                          :files (into {} (reverse contents))} now)]
+    (is (= :approved (:review/status a)))
+    (is (= (:composite-digest a) (:composite-digest b)))
+    (is (= now (:reviewed-at a)))
+    (is (= review/tool-revision (:tool-revision a)))))
+
+(deftest digest-mismatch-names-the-swapped-files
+  (let [tampered (assoc contents "SOUL.md" "tampered\n")
+        record (review/review {:listing (listing-for contents) :files tampered} now)]
+    (is (= :refused (:review/status record)))
+    (is (= :dapp-review/digest-mismatch (:reason record)))
+    (is (= ["SOUL.md"] (:mismatched record)))))
+
+(deftest publish-id-is-required-shaped-like-the-gate
+  (is (some? gate/action))
+  (let [[result persisted] (run-submit snapshot (dissoc (listing-for contents) :repo)
+                                       contents)]
+    (is (= :dapp-publish/listing-incomplete (:refused result)))
+    (is (nil? persisted))))

@@ -1,0 +1,80 @@
+(ns cloud.itonami.app.dapp-publish
+  "One dapp publication: admission gate + static review + persisted record.
+
+  ADR-0145 admits the request from stored Human Passport evidence; ADR-0144
+  requires the published record to carry the tier claims; JUN-424 is this
+  orchestration. Fail closed at every step and persist only an approved
+  publication — a refusal writes nothing and throws a typed error.
+
+  `submit-with!` takes its snapshot, clock and persist! as arguments so the
+  whole decision is testable without a store; `submit!` is the production
+  binding to `cloud.itonami.app.store`."
+  (:require [cloud.itonami.app.dapp-publish-gate :as gate]
+            [cloud.itonami.app.dapp-review :as review]))
+
+(def schema "cloud.itonami.app.dapp-publication.v1")
+
+(defn- refusal! [type message data]
+  (throw (ex-info message (assoc data :type type))))
+
+(defn submit-with!
+  "Admit, review and persist one publication.
+
+  request: {:session-or-principal-id ... :listing {:name :repo :revision :files}
+            :files {path content-string}}
+  context: {:snapshot s :now instant :persist! (fn [publication] ...)}
+
+  Returns the persisted publication record. Any gate refusal, review refusal
+  or malformed input throws before `persist!` runs."
+  [{:keys [snapshot now persist!]} {:keys [principal-id listing files] :as request}]
+  (when-not (map? request)
+    (refusal! :dapp-publish/request-malformed "Malformed publication request." {}))
+  (let [admission (gate/evaluate snapshot
+                                 {:principal-id principal-id
+                                  :listing listing
+                                  :now now})]
+    (when-not (:allowed? admission)
+      (refusal! (:reason admission)
+                (str "dapp publication refused: " (name (:reason admission)))
+                (or (:detail admission) {})))
+    (let [record (review/review {:listing listing :files files} now)]
+      (when-not (= :approved (:review/status record))
+        (refusal! (or (:reason record) :dapp-review/refused)
+                  (str "dapp review refused: "
+                       (name (or (:reason record) :dapp-review/refused)))
+                  {:findings (:findings record)}))
+      (let [publication {:schema schema
+                         :published-at now
+                         :principal-id principal-id
+                         :admission (:evidence admission)
+                         :review record}]
+        (when persist! (persist! publication))
+        publication))))
+
+(defn publications
+  "The published record set, as the UI and API read it."
+  [snapshot]
+  (vec (sort-by :published-at
+                (vals (get-in snapshot [:dapps :publications])))))
+
+(defn submit!
+  "Production binding: the store snapshot is the gate's evidence source and
+  the publication is transacted into [:dapps :publications <composite>].
+  The caller resolves `principal-id` from its own session boundary and owns
+  the clock (`now`). The store is resolved at call time so the decision core
+  above stays loadable without the persistence host."
+  [principal-id request now]
+  (require 'cloud.itonami.app.store)
+  (let [store-snapshot (resolve 'cloud.itonami.app.store/snapshot)
+        store-transact! (resolve 'cloud.itonami.app.store/transact!)
+        snapshot (store-snapshot)]
+    (submit-with!
+     {:snapshot snapshot
+      :now now
+      :persist!
+      (fn [publication]
+        (let [id (get-in publication [:review :composite-digest])]
+          (store-transact!
+           (fn [state]
+             (assoc-in state [:dapps :publications id] publication)))))}
+     (assoc request :principal-id principal-id))))
