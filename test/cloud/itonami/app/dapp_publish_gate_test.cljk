@@ -1,0 +1,132 @@
+(ns cloud.itonami.app.dapp-publish-gate-test
+  (:require [kotoba.lang.error :as kerror]
+            [kotoba.test :refer [deftest is testing]]
+            [cloud.itonami.app.dapp-publish-gate :as gate]))
+
+(def now-iso "2026-10-25T00:00:00Z")
+(def later-iso "2026-11-24T00:00:00Z")
+(def earlier-iso "2026-10-24T00:00:00Z")
+(def recipient (str "0x" (apply str (repeat 40 "b"))))
+(def sha (apply str (repeat 64 "a")))
+(def revision (apply str (repeat 40 "c")))
+
+(def listing
+  {:name "actor-example"
+   :repo "etzhayyim/actor-example"
+   :revision revision
+   :files {"profile.yaml" sha "SOUL.md" sha}})
+
+(defn snapshot-with [decision]
+  {:trust {:external {:human-passport
+                      {"urn:kotoba:principal:alice"
+                       {:latest "0xuid"
+                        "0xuid" {:schema "cloud.itonami.app.external-trust.v1"
+                                 :source :human-passport
+                                 :subject-principal "urn:kotoba:principal:alice"
+                                 :attestation-uid "0xuid"
+                                 :decision decision}}}}}})
+
+(def allowed-decision
+  {:allowed? true
+   :action "identity.sybil-step-up"
+   :policy-id "itonami-human-passport.v1"
+   :claim-id "claim-1"
+   :subject-recipient recipient
+   :valid-until later-iso})
+
+(def request
+  {:principal-id "urn:kotoba:principal:alice"
+   :listing listing
+   :now now-iso})
+
+(deftest valid-evidence-and-listing-admit-without-any-capability
+  (let [result (gate/evaluate (snapshot-with allowed-decision) request)]
+    (is (:allowed? result))
+    (is (= "dapp.publish" (:action result)))
+    (is (false? (:grants-capability? result)))
+    (is (= "0xuid" (get-in result [:evidence :attestation-uid])))
+    (is (= later-iso (get-in result [:evidence :valid-until])))
+    (is (= 2 (get-in result [:listing :files])))))
+
+(deftest missing-evidence-never-admits
+  (doseq [[label snapshot] [[:empty-snapshot {}]
+                            [:no-latest-pointer
+                             {:trust {:external {:human-passport
+                                                 {"urn:kotoba:principal:alice"
+                                                  {"0xuid" {:decision allowed-decision}}}}}}]
+                            [:other-principal (snapshot-with allowed-decision)]]]
+    (let [request' (if (= label :other-principal)
+                     (assoc request :principal-id "urn:kotoba:principal:mallory")
+                     request)
+          result (gate/evaluate snapshot request')]
+      (is (false? (:allowed? result)) (name label))
+      (is (= :dapp-publish/no-trust-evidence (:reason result)) (name label)))))
+
+(deftest disallowed-or-mismatched-evidence-refuses
+  (testing "a stored refusal stays a refusal"
+    (let [result (gate/evaluate
+                  (snapshot-with {:allowed? false :reason :subject/recipient-mismatch})
+                  request)]
+      (is (= :dapp-publish/evidence-not-allowed (:reason result)))))
+  (testing "evidence persisted for another subject refuses"
+    (let [snapshot (update-in (snapshot-with allowed-decision)
+                              [:trust :external :human-passport
+                               "urn:kotoba:principal:alice" "0xuid"]
+                              assoc :subject-principal "urn:kotoba:principal:mallory")
+          result (gate/evaluate snapshot request)]
+      (is (= :dapp-publish/evidence-subject-mismatch (:reason result))))))
+
+(deftest stale-evidence-refuses-in-both-instant-shapes
+  (doseq [[label decision now]
+          [[:iso (assoc allowed-decision :valid-until earlier-iso) now-iso]
+           [:iso-boundary (assoc allowed-decision :valid-until now-iso) now-iso]
+           [:epoch (assoc allowed-decision :valid-until "1761000000") "1761300000"]]]
+    (let [result (gate/evaluate (snapshot-with decision) (assoc request :now now))]
+      (is (false? (:allowed? result)) (name label))
+      (is (= :dapp-publish/evidence-expired (:reason result)) (name label))))
+  (doseq [[label decision now]
+          [[:iso-future (assoc allowed-decision :valid-until later-iso) now-iso]
+           [:epoch-future (assoc allowed-decision :valid-until "1761300000") "1761000000"]]]
+    (is (:allowed? (gate/evaluate (snapshot-with decision) (assoc request :now now)))
+        (name label))))
+
+(deftest unreadable-time-shapes-are-expired-not-fresh
+  (doseq [[label decision now]
+          [[:mixed-shapes allowed-decision "1761000000"]
+           [:garbage-valid-until (assoc allowed-decision :valid-until "soon") now-iso]
+           [:missing-valid-until (dissoc allowed-decision :valid-until) now-iso]
+           [:missing-now allowed-decision nil]]]
+    (let [result (gate/evaluate (snapshot-with decision) (assoc request :now now))
+          expected (if (= label :missing-valid-until)
+                     :dapp-publish/evidence-expiry-missing
+                     :dapp-publish/evidence-time-unreadable)]
+      (is (false? (:allowed? result)) (name label))
+      (is (= expected (:reason result)) (name label)))))
+
+(deftest listing-integrity-is-required
+  (let [snapshot (snapshot-with allowed-decision)]
+    (doseq [[label listing' reason]
+            [[:no-revision (dissoc listing :revision) :dapp-publish/listing-incomplete]
+             [:short-revision (assoc listing :revision "abc") :dapp-publish/revision-malformed]
+             [:no-files (dissoc listing :files) :dapp-publish/listing-incomplete]
+             [:empty-files (assoc listing :files {}) :dapp-publish/listing-incomplete]
+             [:short-digest (assoc listing :files {"a" "beef"}) :dapp-publish/digest-malformed]
+             [:no-repo (dissoc listing :repo) :dapp-publish/listing-incomplete]
+             [:bad-repo (assoc listing :repo "actor-example") :dapp-publish/repo-malformed]]]
+      (let [result (gate/evaluate snapshot (assoc request :listing listing'))]
+        (is (false? (:allowed? result)) (name label))
+        (is (= reason (:reason result)) (name label))))))
+
+(deftest principal-is-required
+  (let [result (gate/evaluate (snapshot-with allowed-decision)
+                              (assoc request :principal-id "  "))]
+    (is (= :dapp-publish/principal-required (:reason result)))))
+
+(deftest admit-bang-throws-the-refusal-as-a-typed-error
+  (is (= :dapp-publish/no-trust-evidence
+         (try
+           (gate/admit! {} request)
+           nil
+           (catch kerror/ExceptionInfo error
+             (:type (ex-data error))))))
+  (is (:allowed? (gate/admit! (snapshot-with allowed-decision) request))))
