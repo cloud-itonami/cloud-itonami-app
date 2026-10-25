@@ -1,0 +1,142 @@
+(ns cloud.itonami.app.dapp-review
+  "Static review of one dapp publication artifact (ADR-0144 / JUN-424).
+
+  Pure: an artifact in, a machine-readable review record out. It pins the
+  reviewed bytes to one immutable revision with one sha256 per file, refuses
+  anything the reviewer cannot vouch for, and never publishes anything by
+  itself. A refused review is fail closed: the caller must not publish.
+
+  The rules here are a deterministic floor, not a fraud oracle. Brand cloning
+  and social engineering stay with the human reviewer named in
+  docs/dapps-store-takedown-runbook.md; what this namespace guarantees is
+  that an artifact whose bytes differ from what was reviewed, or that carries
+  secret material / fabricated-return claims / obfuscated payloads, cannot
+  reach an approved record."
+  (:require [kotoba.lang.text :as str]
+            [kotoba.bytes :as kbytes]
+            [kotoba.bytes.sha256 :as sha256]
+            [cloud.itonami.app.dapp-publish-gate :as gate]))
+
+(def tool-revision "dapp-review.v1")
+
+(def schema "cloud.itonami.app.dapp-review.v1")
+
+;; Deterministic floor rules. Each is a vector of [rule-key regex].
+(def ^:private secret-rules
+  [[:dapp-review/secret-material
+    #"(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----"]
+   [:dapp-review/secret-material
+    #"(?i)\b(aws_secret_access_key|aws-access-key-id)\b\s*[:=]\s*\S+"]
+   [:dapp-review/secret-material
+    #"\b(ghp|gho|ghu|ghs|github_pat)_[A-Za-z0-9]{20,}\b"]
+   [:dapp-review/secret-material
+    #"(?i)\b(api[_-]?key|secret|password|token)\b\s*[:=]\s*['\"]?[A-Za-z0-9/+_-]{16,}"]])
+
+(def ^:private claim-rules
+  [[:dapp-review/fabricated-claim #"(必ず儲か|利益保証|元本保証|確実に儲|必ず勝てる)"]
+   [:dapp-review/fabricated-claim
+    #"(?i)\b(guaranteed\s+(profit|return)|risk[- ]free\s+(profit|return)|no\s+risk\s+guaranteed)\b"]])
+
+(def ^:private obfuscation-rule
+  [:dapp-review/obfuscated-payload #"(?m)^[A-Za-z0-9+/=]{600,}$"])
+
+(defn- content-bytes [content]
+  (mapv #(bit-and (int %) 0xff) (kbytes/utf8-bytes (str content))))
+
+(defn sha256-of
+  "sha256 hex of one file's UTF-8 content."
+  [content]
+  (sha256/sha256-hex (content-bytes content)))
+
+(defn composite-digest
+  "One digest over the whole reviewed set: sha256 of the sorted
+  `path sha256\\n` lines. Order-independent, path-bound."
+  [file-shas]
+  (->> file-shas
+       (map (fn [[path digest]] (str path " " digest "\n")))
+       sort
+       (apply str)
+       sha256-of))
+
+(defn- findings
+  "Every rule hit across the declared files, capped per file so one hostile
+  file cannot flood the record."
+  [files]
+  (vec
+   (take 64
+         (for [[path content] (sort-by key files)
+               [rule regex] (concat secret-rules claim-rules [obfuscation-rule])
+               :when (re-find regex (str content))]
+           {:rule rule :path path}))))
+
+(defn review
+  "Review one artifact. `files` is {path content-string} — the exact bytes
+  being published. `now` is any instant shape the gate accepts; it lands in
+  the record as `:reviewed-at`.
+
+  Returns {:review/status :approved|:refused ...}. A refused record carries
+  :reason and :findings; an approved one carries the pinned
+  :artifact {revision, files {path sha256}} and :composite-digest."
+  [{:keys [listing files]} now]
+  (let [base {:schema schema
+              :tool-revision tool-revision
+              :reviewed-at now
+              :listing (select-keys listing [:name :repo :revision])}]
+    (cond
+      (not (and (map? files) (seq files)))
+      (assoc base :review/status :refused
+             :reason :dapp-review/files-incomplete :findings [])
+
+      (not (and (string? (:revision listing))
+                (re-matches gate/revision-pattern (:revision listing))))
+      (assoc base :review/status :refused
+             :reason :dapp-review/revision-malformed :findings [])
+
+      (not (and (string? (:repo listing))
+                (re-matches gate/repo-pattern (:repo listing))))
+      (assoc base :review/status :refused
+             :reason :dapp-review/repo-malformed :findings [])
+
+      (some str/blank? (keys files))
+      (assoc base :review/status :refused
+             :reason :dapp-review/path-malformed :findings [])
+
+      ;; The declared pin and the submitted bytes are one set: a missing
+      ;; declared file or an extra undeclared one is an artifact swap.
+      (not= (set (keys (:files listing))) (set (keys files)))
+      (assoc base :review/status :refused
+             :reason :dapp-review/file-set-mismatch
+             :declared (sort (keys (:files listing)))
+             :submitted (sort (keys files))
+             :findings [])
+
+      :else
+      (let [file-shas (into {} (map (fn [[path content]] [path (sha256-of content)])
+                                    files))
+            declared (:files listing)
+            mismatched (for [[path digest] file-shas
+                             :let [expected (get declared path)]
+                             :when (not (and (string? expected)
+                                             (= (str/lower digest)
+                                                (str/lower expected))))]
+                         path)
+            hits (findings files)]
+        (cond
+          (seq mismatched)
+          (assoc base :review/status :refused
+                 :reason :dapp-review/digest-mismatch
+                 :mismatched (vec (sort mismatched))
+                 :findings [])
+
+          (seq hits)
+          (assoc base :review/status :refused
+                 :reason (:rule (first hits))
+                 :artifact {:revision (:revision listing) :files file-shas}
+                 :composite-digest (str "sha256:" (composite-digest file-shas))
+                 :findings hits)
+
+          :else
+          (assoc base :review/status :approved
+                 :artifact {:revision (:revision listing) :files file-shas}
+                 :composite-digest (str "sha256:" (composite-digest file-shas))
+                 :findings []))))))
