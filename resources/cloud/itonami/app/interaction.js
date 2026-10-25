@@ -13582,6 +13582,20 @@
     let awaiRegistryLoaded = false;
     let awaiRegistryGeneration = 0;
     let marketKind = 'plugin';
+    // The published record is the only badge source (ADR-0144 / JUN-426):
+    // rows come from GET /api/v1/dapps/publications and this layer renders
+    // their labels verbatim. A card with no row is 未審査 — never a badge.
+    let dappRows = null;
+    const loadDappRows = async () => {
+      try {
+        const response = await fetch('/api/v1/dapps/publications', {headers: {'Accept': 'application/json'}});
+        if (!response.ok) throw new Error('publications unavailable');
+        dappRows = (await response.json())?.publications || [];
+      } catch (_) {
+        dappRows = []; // fail closed: an unreadable record claims nothing
+      }
+      return dappRows;
+    };
     const etzhayyimDappBrief = 'etzhayyim actor repo の公開 profile。権限要求なし。';
     const etzhayyimDapps = [
       ['actor-abuse','0c51e4b817489a214010aae9dcf35b0f4a98d5cd'],
@@ -13753,17 +13767,65 @@
         workspaceApps.filter((app) => (!installedOnly || app['installed?']) && matches(`${app.name} ${app.description} ${app.category}`))
           .forEach((app) => grid.append(appCard(app)));
       } else if (marketKind === 'dapp') {
+        if (!dappRows) {
+          grid.append(make('p', 'form-help', '公開レコードを確認しています…'));
+          loadDappRows().then(() => { if (marketKind === 'dapp') renderMarketplace(); });
+          return;
+        }
+        const rows = new Map(dappRows.map((row) => [row.repo, row]));
         etzhayyimDapps.filter((entry) => matches(`${entry.name} ${entry.repo} ${entry.brief}`)).forEach((entry) => {
+          const row = rows.get(entry.repo);
+          // quarantine は非表示。UI は公開レコードの state に追従する（JUN-425）。
+          if (row && row.state === 'quarantined') return;
           const card = make('article', 'market-card');
           const copy = make('div', 'market-copy');
           const details = make('p', 'form-help', `Profile · ${entry.revision.slice(0, 12)} · no tools requested`);
           copy.append(make('h3', null, entry.name), make('p', null, entry.brief), details);
+          if (row) {
+            // badge はレコード由来の label をそのまま描く。この層では造らない。
+            copy.append(make('p', 'form-help',
+              `${row['tier-label']} · 審査 ${row['reviewed-at'] || '—'} · ${String(row['composite-digest'] || '').slice(0, 19)}`));
+            (row.warnings || []).forEach((warning) =>
+              copy.append(make('p', 'form-help', `警告: ${warning}`)));
+          } else {
+            copy.append(make('p', 'form-help', '未審査: 説明用 metadata のみ（実行・インストール・権限付与なし）。'));
+          }
           const actions = make('div', 'market-actions');
           const profile = make('a', 'tool-button', 'Profile を見る');
           profile.href = `https://github.com/${entry.repo}/blob/${entry.revision}/.itonami/profiles/shared.edn`;
           profile.target = '_blank'; profile.rel = 'noopener noreferrer';
-          actions.append(profile); card.append(copy, actions); grid.append(card);
+          // An inline field rather than window.prompt: the same reason the
+          // drive editor uses one. The report only reaches the runbook's
+          // intake — it never changes the listing by itself (JUN-425).
+          const report = make('button', 'tool-button', '通報');
+          report.type = 'button';
+          const reasonField = make('input', 'workspace-search');
+          reasonField.type = 'text'; reasonField.hidden = true;
+          reasonField.setAttribute('aria-label', `${entry.name} の通報理由`);
+          const reportSend = make('button', 'tool-button', '通報を送る');
+          reportSend.type = 'button'; reportSend.hidden = true;
+          report.addEventListener('click', () => {
+            report.hidden = true; reasonField.hidden = false; reportSend.hidden = false;
+            reasonField.focus();
+          });
+          reportSend.addEventListener('click', async () => {
+            reportSend.disabled = true;
+            try {
+              const response = await fetch('/api/v1/dapps/reports', {method: 'POST',
+                headers: identityHeaders(),
+                body: JSON.stringify({repo: entry.repo, revision: entry.revision, reason: reasonField.value.trim()})});
+              if (!response.ok) throw new Error('report refused');
+              reasonField.hidden = true; reportSend.hidden = true;
+              copy.append(make('p', 'form-help', '通報を受理しました。受付のみで掲載状態は変わりません。'));
+            } catch (_) {
+              reportSend.disabled = false;
+              copy.append(make('p', 'form-help', '通報を送信できませんでした。'));
+            }
+          });
+          actions.append(profile, report, reasonField, reportSend);
+          card.append(copy, actions); grid.append(card);
         });
+        if (!grid.children.length) grid.append(make('p', 'empty-state', '検索に一致するdappがありません。'));
       } else if (marketKind === 'awai') {
         renderAwaiRegistry(grid, matches);
       } else if (marketKind === 'plugin') {

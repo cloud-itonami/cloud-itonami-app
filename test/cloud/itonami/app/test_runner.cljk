@@ -99,6 +99,7 @@
             [cloud.itonami.app.humanity-trust-test]
             [cloud.itonami.app.dapp-publish-gate-test]
             [cloud.itonami.app.dapp-publish-test]
+            [cloud.itonami.app.dapp-marketplace-ui-test]
             [cloud.itonami.app.humanity-trust-http-test]
             [cloud.itonami.app.human-work-test]
             [cloud.itonami.app.human-work-assurance-test]
@@ -355,6 +356,7 @@
     cloud.itonami.app.humanity-trust-test
     cloud.itonami.app.dapp-publish-gate-test
     cloud.itonami.app.dapp-publish-test
+    cloud.itonami.app.dapp-marketplace-ui-test
     cloud.itonami.app.humanity-trust-http-test
     cloud.itonami.app.human-work-test
     cloud.itonami.app.human-work-assurance-test
