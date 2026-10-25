@@ -1,0 +1,26 @@
+;; Pure numeric policy port of babiniku.governor/review-turn.
+;; The host detects configured blocked terms and maps the proposal's emotion,
+;; motion cue, and content tier to codes. The ledger and rendered turn remain
+;; host values; no dialogue text or I/O enters this kernel.
+;;
+;; ABI: blocked-hit (0/1), emotion (0 neutral, 1 happy, 2 sad, 3 surprised,
+;; 4 angry, 5 shy), motion (0 idle, 1 wave, 2 nod, 3 shake-head, 4 lean-in),
+;; ambiguous-tier (0/1). Results: 0 allowed, 1 blocked-term hard hold,
+;; 2 invalid emotion, 3 invalid motion cue, 4 ambiguous-tier escalation.
+(ns babiniku.governor-core
+  (:export [review-turn-code main]))
+
+(defn- binary-code? [value]
+  (or (= value 0) (= value 1)))
+
+(defn review-turn-code
+  [blocked-hit :i64 emotion-code :i64 motion-code :i64 ambiguous-tier :i64] :i64
+  (cond
+    (or (= blocked-hit 1) (not (binary-code? blocked-hit))) 1
+    (or (< emotion-code 0) (> emotion-code 5)) 2
+    (or (< motion-code 0) (> motion-code 4)) 3
+    (not (binary-code? ambiguous-tier)) 4
+    (= ambiguous-tier 1) 4
+    :else 0))
+
+(defn main [] :i64 0)

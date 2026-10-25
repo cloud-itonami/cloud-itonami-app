@@ -4,6 +4,26 @@
   const retry = document.getElementById('awai-retry');
   const runtime = document.getElementById('awai-app-runtime');
   const localInstaller = location.hostname === '127.0.0.1';
+  const hostname = location.hostname.toLowerCase();
+  const validDomain = (value) => typeof value === 'string'
+    && value.length >= 4 && value.length <= 253
+    && value === value.toLowerCase() && !value.endsWith('.')
+    && !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(value)
+    && value.split('.').length >= 2
+    && value.split('.').every((label) => label.length >= 1 && label.length <= 63
+      && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label));
+  const localHandoffRequested = hostname === '127.0.0.1'
+    && typeof location.search === 'string' && location.search.length > 0;
+  const localHandoffParameters = new URLSearchParams(location.search || '');
+  const localHandoffValues = localHandoffParameters.getAll('domain');
+  const localHandoffDomain = localHandoffValues.length === 1
+    && [...localHandoffParameters.keys()].length === 1
+    && validDomain(localHandoffValues[0])
+    ? localHandoffValues[0]
+    : null;
+  const focusedDomain = ['itonami.app', 'localhost', '127.0.0.1'].includes(hostname)
+    ? (localHandoffRequested ? localHandoffDomain : null)
+    : hostname;
   let activeHostPort = null;
 
   const paragraph = (parent, text, className) => {
@@ -182,6 +202,17 @@
       }
     });
     card.append(launchButton);
+
+    if (!localInstaller && candidate.decision === 'candidate'
+        && validDomain(candidate.domain)) {
+      const localRuntimeLink = document.createElement('a');
+      const localRuntimeUrl = new URL('http://127.0.0.1:1338/');
+      localRuntimeUrl.searchParams.set('domain', candidate.domain);
+      localRuntimeLink.href = localRuntimeUrl.href;
+      localRuntimeLink.textContent = 'ローカル Itonami host でこの domain を開く';
+      card.append(localRuntimeLink);
+      paragraph(card, 'install、権限同意、Awai peer の検証には、127.0.0.1:1338 で利用者のローカル Itonami host を起動してください。');
+    }
 
     const proofStatus = paragraph(card, 'DNSSEC proof: 未確認');
     const proofButton = document.createElement('button');
@@ -399,12 +430,24 @@
         renderUnavailable(result.reason || `台帳を取得できませんでした (HTTP ${response.status})。`);
         return;
       }
-      trust.textContent = '単一のローカル peer から取得しました。各署名 envelope は検証済みですが、独立 peer 間の合意は未確認です。';
-      if (result.candidates.length === 0) {
-        paragraph(list, '現在、公開候補はありません。', 'empty-state');
+      if (localHandoffRequested && !localHandoffDomain) {
+        trust.textContent = 'ローカル host への domain 引き継ぎを拒否しました。';
+        paragraph(list, '単一の canonical domain query が必要です。', 'empty-state');
         return;
       }
-      result.candidates.forEach(renderCandidate);
+      trust.textContent = focusedDomain
+        ? `${focusedDomain} の Awai app binding を表示しています。単一 peer の読み取りで、独立 peer 間の合意は未確認です。`
+        : '単一のローカル peer から取得しました。各署名 envelope は検証済みですが、独立 peer 間の合意は未確認です。';
+      const candidates = focusedDomain
+        ? result.candidates.filter((candidate) => candidate.domain === focusedDomain)
+        : result.candidates;
+      if (candidates.length === 0) {
+        paragraph(list, focusedDomain
+          ? `${focusedDomain} に一致する Awai domain binding は見つかりません。`
+          : '現在、公開候補はありません。', 'empty-state');
+        return;
+      }
+      candidates.forEach(renderCandidate);
     } catch (_) {
       renderUnavailable('peer が未設定か、台帳応答を取得できませんでした。');
     } finally {

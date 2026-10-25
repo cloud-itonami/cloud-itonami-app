@@ -20,6 +20,11 @@
              (not (re-find #"[;\r\n]" app-origin))
              (not (re-find #"[;\r\n]" parent-origin)))
     (str "default-src 'none'; "
+         ;; Apply the sandbox to the document response itself too. The iframe
+         ;; attribute is not present when someone opens the per-app URL
+         ;; directly, so response-level sandboxing must preserve the opaque
+         ;; origin and deny top-level navigation in both cases.
+         "sandbox allow-scripts; "
          "script-src " app-origin " 'wasm-unsafe-eval'; "
          "style-src " app-origin " 'unsafe-inline'; "
          "img-src " app-origin " data:; "

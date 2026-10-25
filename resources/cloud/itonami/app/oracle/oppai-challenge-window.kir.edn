@@ -1,0 +1,49 @@
+{:format :kotoba.kir/v3,
+ :signature nil,
+ :functions
+ [{:name challenge-window-code,
+   :params [timestamps-valid issued-at-ms now-ms],
+   :result :i64,
+   :effects #{},
+   :body
+   (if
+    (let
+     [__kotoba_and_7 (= timestamps-valid 1)]
+     (if
+      __kotoba_and_7
+      (let
+       [__kotoba_and_6 (>= issued-at-ms 0)]
+       (if
+        __kotoba_and_6
+        (let
+         [__kotoba_and_5 (<= issued-at-ms 9999999999999)]
+         (if
+          __kotoba_and_5
+          (let
+           [__kotoba_and_4 (>= now-ms 0)]
+           (if
+            __kotoba_and_4
+            (let
+             [__kotoba_and_3 (<= now-ms 9999999999999)]
+             (if
+              __kotoba_and_3
+              (let
+               [__kotoba_and_2 (>= now-ms issued-at-ms)]
+               (if
+                __kotoba_and_2
+                (<= (- now-ms issued-at-ms) 60000)
+                __kotoba_and_2))
+              __kotoba_and_3))
+            __kotoba_and_4))
+          __kotoba_and_5))
+        __kotoba_and_6))
+      __kotoba_and_7))
+    1
+    0)}],
+ :oracle-value 0,
+ :schema-identities nil,
+ :exports [challenge-window-code],
+ :schemas nil,
+ :effects #{},
+ :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
+ :entry nil}

@@ -1,0 +1,33 @@
+;; Mixed request-shape preflight workload for awai.network's chat gateway.
+(ns awai.apex.chat-admission-selfhost-benchmark
+  (:require [awai.apex.chat-admission-core :as policy])
+  (:export [main]))
+
+(defn- decision [case-code]
+  (cond
+    (= case-code 0) (policy/chat-admission-code 1 1 5000)
+    (= case-code 1) (policy/chat-admission-code 0 0 0)
+    (= case-code 2) (policy/chat-admission-code 1 0 0)
+    (= case-code 3) (policy/chat-admission-code 1 41 0)
+    (= case-code 4) (policy/chat-admission-code 1 1 24001)
+    (= case-code 5) (policy/chat-admission-code 1 40 24000)
+    (= case-code 6) (policy/chat-admission-code 1 1 24000)
+    :else (policy/chat-admission-code 0 41 24001)))
+
+(defn main [] :i64
+  (let [cases-ok?
+        (and (= 0 (policy/chat-admission-code 1 1 5000))
+             (= 1 (policy/chat-admission-code 0 0 0))
+             (= 2 (policy/chat-admission-code 1 0 0))
+             (= 3 (policy/chat-admission-code 1 41 0))
+             (= 4 (policy/chat-admission-code 1 1 24001))
+             (= 0 (policy/chat-admission-code 1 40 24000))
+             (= 0 (policy/chat-admission-code 1 1 24000))
+             (= 1 (policy/chat-admission-code 0 41 24001)))
+        admitted
+        (loop [i 0 count 0]
+          (if (< i 1000000)
+            (recur (+ i 1)
+                   (+ count (if (= 0 (decision (mod i 8))) 1 0)))
+            count))]
+    (if (and cases-ok? (= admitted 375000)) admitted -1)))

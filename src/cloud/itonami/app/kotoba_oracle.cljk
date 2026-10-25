@@ -68,7 +68,8 @@
   is a default: the seam does not reach for `node:fs` on its own, because a
   namespace that does cannot be bundled into a Worker running without
   `nodejs_compat` — which this one's is, deliberately."
-  (:require [kotoba.lang.edn :as edn]
+  (:require #?(:clj [clojure.edn :as artifact-edn]
+               :cljs [cljs.reader :as artifact-edn])
             [kotoba.kir :as ir]
             #?(:clj [kotoba.io :as io])))
 
@@ -88,6 +89,8 @@
    :oauth-resource "cloud/itonami/app/oauth_resource_core.kotoba"
    :did-web "cloud/itonami/app/did_web_core.kotoba"
    :domain-binding "cloud/itonami/app/domain_binding_core.kotoba"
+   :awai-current-ref "cloud/itonami/app/awai_current_ref_core.kotoba"
+   :awai-app-admission "cloud/itonami/app/awai_app_admission_core.kotoba"
    :identity "cloud/itonami/app/identity_core.kotoba"
    :store-core "cloud/itonami/app/store_core.kotoba"
    :workforce-cadence "cloud/itonami/app/workforce_cadence_core.kotoba"
@@ -97,7 +100,15 @@
    :vf-calibrate-core "cloud/itonami/app/vf_calibrate_core.kotoba"
    :vf-authority-core "cloud/itonami/app/vf_authority_core.kotoba"
    :connectors-core "cloud/itonami/app/connectors_core.kotoba"
-   :appearance-core "cloud/itonami/app/appearance_core.kotoba"})
+   :appearance-core "cloud/itonami/app/appearance_core.kotoba"
+   :murakumo-bid-admission "cloud_murakumo/compute_market_admission.kotoba"
+   :aozora-biscuit-authorization "aozora/pds/agent_biscuit_admission_core.kotoba"
+   :oppai-challenge-window "oppai/gen/challenge_window_core.kotoba"
+   :isekai-publish-admission "isekai/moderation/publish_admission_core.kotoba"
+   :babiniku-proposal-governor "babiniku/governor_core.kotoba"
+   :x402-transfer-preflight "nexus/wallet/transfer_preflight_core.kotoba"
+   :shinshi-video-black-frame "shinshi/common/video_black_frame_core.kotoba"
+   :awai-network-chat-admission "awai/apex/chat_admission_core.kotoba"})
 
 (defn resource-path [id]
   (str "cloud/itonami/app/oracle/" (name id) ".kir.edn"))
@@ -129,18 +140,36 @@
   (reset! resource-loader f)
   f)
 
+(defn resource-text
+  "Read a packaged resource by classpath path on the JVM or the installed
+  loader on ClojureScript. Missing resources fail closed."
+  [path]
+  #?(:clj
+     (if-let [url (io/resource path)]
+       (slurp url)
+       (throw (ex-info "packaged Kotoba resource is missing" {:path path})))
+     :cljs
+     (if-let [text (when-let [f @resource-loader] (f path))]
+       text
+       (throw (ex-info "no packaged-resource loader is installed" {:path path})))))
+
 (defn- read-artifact [id]
+  ;; Shipped KIR is compiler-produced EDN and uses standard EDN sets and
+  ;; namespaced maps for record schemas. The bounded application-data reader
+  ;; deliberately rejects namespaced-map dispatch, so use the platform EDN
+  ;; reader only for these packaged artifacts; caller input still uses
+  ;; `kotoba.lang.edn` at its own boundary.
   #?(:clj
      (let [path (resource-path id)]
        (if-let [url (io/resource path)]
-         (edn/read-string (slurp url))
+         (artifact-edn/read-string (slurp url))
          (throw (ex-info "shipped decision core is missing — run `kbb -M:test:gen`"
                          {:oracle id :path path}))))
      :cljs
      (let [path (resource-path id)
            text (when-let [f @resource-loader] (f path))]
        (if text
-         (edn/read-string text)
+         (artifact-edn/read-string text)
          (throw (ex-info "no classpath on this runtime — register-kir! or set-resource-loader! first"
                          {:oracle id :path path}))))))
 

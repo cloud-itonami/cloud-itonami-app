@@ -1,0 +1,215 @@
+run=itonami-app-plane-next-kotoba-selfhost-refresh-2026-10-16
+compiler=Amu adopted native selfhost seed; compiler seed pins verified in matched build reports
+guest=aarch64-macos native images executed by trusted KEXE loader
+workload=1,000,000 decisions per sample; 7 alternating rounds; 1 warmup per executable path
+timing=native median process wall time minus empty-loader median; warmed in-process JavaScript reference
+host=10 logical CPUs; load remained elevated during the run
+scope=decision kernels only; excludes full app/request/browser/Worker/deployment performance
+machine-readable-run-record=/Users/junkawasaki/github/workspaces/codex/itonami-app-plane-next-kotoba-selfhost-refresh-20261016/results.json
+
+product=murakumo.cloud
+build-report=/Users/junkawasaki/github/workspaces/codex/murakumo-compute-market-selfhostbench-20261016-final/report.json
+compiler-sha256=47fba216e1a65b892458216575bbb70be228d86f4b7a6d73ebae84230279f20b
+source-closure-mode=--source-path --unpinned
+load-average-before-1-5-15=6.432 / 8.458 / 12.413
+source-sha256=81c98aa6cfa2d359b9708457084391fbce8d8fde1608159de9a5533bf94da87c  /Users/junkawasaki/github/workspaces/codex/murakumo-compute-market-selfhostbench-20261016-final/artifacts/project/src/cloud_murakumo/compute_market_admission.kotoba
+source-sha256=ce22f349405e2f226038c57136d7bcb7ba3afbbfe75651654e5252922a843685  /Users/junkawasaki/github/workspaces/codex/murakumo-compute-market-selfhostbench-20261016-final/artifacts/project/bench/compute_market_admission_selfhost_driver.kotoba
+source-sha256=05b18667da6157482149afcf09506c194d8e7a57fb4ed904f07a158e4d0e6406  /Users/junkawasaki/github/workspaces/codex/murakumo-compute-market-selfhostbench-20261016-final/artifacts/project/bench/compute_market_admission_selfhost_empty_driver.kotoba
+stdout:
+  benchmark=murakumo-compute-market-bid-admission-selfhost-native
+  compiler=Amu native selfhost seed; adopted pinned compiler image
+  guest=Amu selfhost-compiled aarch64-macos native image via trusted KEXE loader
+  workload=1000000 alternating eligible/confidentiality-refused bid decisions per sample
+  rounds=7; warmup=1 per executable path; order=alternating
+  selfhost-native-median-total-ms=14.749
+  empty-loader-median-total-ms=10.199333
+  selfhost-native-adjusted-median-ns/decision=4.549667
+  javascript-reference-median-ns/decision=3.546375
+  ratio-selfhost-native-over-js=1.2829063480314407
+  host-loadavg=6.431640625 / 8.45849609375 / 12.4130859375; logical-cpus=10
+  timing=native wall time minus empty KEXE loader median; JS reference is warmed in-process
+  qualification=Kotoba decision-core diagnostic only; current quote-selector source calls the separate bootstrap WASM wrapper, but the Worker build and Awai app release remain unverified; excludes registry and signature checks, bid sorting, network I/O, execution, and full app runtime
+
+product=aozora.app
+build-report=/Users/junkawasaki/github/workspaces/codex/aozora-biscuit-selfhostbench-20261016-retry1/report.json
+compiler-sha256=47fba216e1a65b892458216575bbb70be228d86f4b7a6d73ebae84230279f20b
+source-closure-mode=--source-path --unpinned
+load-average-before-1-5-15=6.432 / 8.458 / 12.413
+source-sha256=99d44bce4edd817f8a3217a4f98a25322eb2b0813d7e3218c65188ac609aa959  /Users/junkawasaki/github/workspaces/codex/aozora-biscuit-selfhostbench-20261016-retry1/artifacts/project/src/aozora/pds/agent_biscuit_admission_core.kotoba
+source-sha256=0adebb8b661c193cb6b6ca3bde0f59e850a8f84359e98e5050d8e3d69fc8c3c6  /Users/junkawasaki/github/workspaces/codex/aozora-biscuit-selfhostbench-20261016-retry1/artifacts/project/bench/aozora_agent_biscuit_selfhost_driver.kotoba
+source-sha256=0d9cc1e69ad120ea915d94347391360a571336c751c5dd51b2cff24f312733cc  /Users/junkawasaki/github/workspaces/codex/aozora-biscuit-selfhostbench-20261016-retry1/artifacts/project/bench/aozora_agent_biscuit_selfhost_empty_driver.kotoba
+stdout:
+  benchmark=aozora-agent-biscuit-admission-selfhost-native
+  compiler=Amu native selfhost seed; adopted pinned compiler image
+  guest=Amu selfhost-compiled aarch64-macos native image via trusted KEXE loader
+  workload=1000000 decisions across 8 mixed route/cap/repo/collection cases; 5 allow, 3 refuse
+  rounds=7; warmup=1 per executable path; order=alternating
+  selfhost-native-median-total-ms=25.770791
+  empty-loader-median-total-ms=10.099209
+  selfhost-native-adjusted-median-ns/decision=15.671582
+  javascript-reference-median-ns/decision=14.347083
+  ratio-selfhost-native-over-js=1.0923183479178311
+  host-loadavg=6.431640625 / 8.45849609375 / 12.4130859375; logical-cpus=10
+  timing=native wall time minus empty KEXE loader median; JS reference is warmed in-process
+  qualification=Kotoba decision-core diagnostic only; current PDS source calls the separate bootstrap WASM wrapper, but its Worker build and Awai app release remain unverified; excludes Biscuit parsing/signature verification, network, repo storage, and HTTP effects
+
+product=isekai.network
+build-report=/Users/junkawasaki/github/workspaces/codex/isekai-publish-admission-selfhostbench-20261016/report.json
+compiler-sha256=47fba216e1a65b892458216575bbb70be228d86f4b7a6d73ebae84230279f20b
+source-closure-mode=--source-path --unpinned
+load-average-before-1-5-15=6.432 / 8.458 / 12.413
+source-sha256=837dba2d2cd51199591010220bb33b72c17bf6ce995966d12b9d90b61423abc8  /Users/junkawasaki/github/workspaces/codex/isekai-publish-admission-selfhostbench-20261016/artifacts/project/src/isekai/moderation/publish_admission_core.kotoba
+source-sha256=2bea00a4b7d0cf849e1d7a5e9dfcf9e32c9a9dcef348db143cbf106c60e1b364  /Users/junkawasaki/github/workspaces/codex/isekai-publish-admission-selfhostbench-20261016/artifacts/project/bench/isekai_publish_admission_selfhost_driver.kotoba
+source-sha256=abc50cc5216c1956e3b3df8c9550cb8ec8d08d2ef6e591cb0de346c88e313b28  /Users/junkawasaki/github/workspaces/codex/isekai-publish-admission-selfhostbench-20261016/artifacts/project/bench/isekai_publish_admission_selfhost_empty_driver.kotoba
+stdout:
+  benchmark=isekai-publish-admission-selfhost-native
+  compiler=Amu native selfhost seed; adopted pinned compiler image
+  guest=Amu selfhost-compiled aarch64-macos native image via trusted KEXE loader
+  workload=1000000 alternating teen-allow/minor-refuse decisions per sample
+  rounds=7; warmup=1 per executable path; order=alternating
+  selfhost-native-median-total-ms=13.029292
+  empty-loader-median-total-ms=10.383541
+  selfhost-native-adjusted-median-ns/decision=2.645751
+  javascript-reference-median-ns/decision=1.105625
+  ratio-selfhost-native-over-js=2.3929912945166762
+  host-loadavg=6.431640625 / 8.45849609375 / 12.4130859375; logical-cpus=10
+  timing=native wall time minus empty KEXE loader median; JS reference is warmed in-process
+  qualification=Kotoba decision-core diagnostic only; current account-tier.mjs source calls the separate bootstrap WASM module, but the Pages build and Awai app release remain unverified; excludes consent verification, storage, network, rendering, and full app lifecycle
+
+product=babiniku.net
+build-report=/Users/junkawasaki/github/workspaces/codex/babiniku-governor-selfhostbench-20261016/report.json
+compiler-sha256=47fba216e1a65b892458216575bbb70be228d86f4b7a6d73ebae84230279f20b
+source-closure-mode=--source-path --unpinned
+load-average-before-1-5-15=6.432 / 8.458 / 12.413
+source-sha256=030af9b19b543b446401c5be3b59fcba0f2cfa2a037f3a1eea0f3761c0f5c7ab  /Users/junkawasaki/github/workspaces/codex/babiniku-governor-selfhostbench-20261016/artifacts/project/src/babiniku/governor_core.kotoba
+source-sha256=e8d43aa6339025a3b027e005c811f1ac3caa6279944535caf98f986c38fdb91a  /Users/junkawasaki/github/workspaces/codex/babiniku-governor-selfhostbench-20261016/artifacts/project/bench/babiniku_governor_selfhost_driver.kotoba
+source-sha256=2878f65c1f91792ec024f5c1822ada7db050a5c68e551598f3c17f97c7197e0f  /Users/junkawasaki/github/workspaces/codex/babiniku-governor-selfhostbench-20261016/artifacts/project/bench/babiniku_governor_selfhost_empty_driver.kotoba
+stdout:
+  benchmark=babiniku-governor-selfhost-native
+  compiler=Amu native selfhost seed; adopted pinned compiler image
+  guest=Amu selfhost-compiled aarch64-macos native image via trusted KEXE loader
+  workload=1000000 decisions across 8 mixed blocked/emotion/motion/tier cases; 2 allow, 5 hard hold, 1 escalate
+  rounds=7; warmup=1 per executable path; order=alternating
+  selfhost-native-median-total-ms=19.807792
+  empty-loader-median-total-ms=9.975125
+  selfhost-native-adjusted-median-ns/decision=9.832667
+  javascript-reference-median-ns/decision=5.874708
+  ratio-selfhost-native-over-js=1.6737286346827793
+  host-loadavg=6.431640625 / 8.45849609375 / 12.4130859375; logical-cpus=10
+  timing=native wall time minus empty KEXE loader median; JS reference is warmed in-process
+  qualification=Kotoba decision-core diagnostic only; current review-turn source calls the separate bootstrap WASM adapter, but the generated app bundle remains unbuilt; excludes blocked-term text matching, dialogue construction, rendering, storage, network, and human escalation
+
+product=x402.nexus
+build-report=/Users/junkawasaki/github/workspaces/codex/x402-wallet-selfhostbench-refactor-20261016-unsandboxed/report.json
+compiler-sha256=47fba216e1a65b892458216575bbb70be228d86f4b7a6d73ebae84230279f20b
+source-closure-mode=--source-path --unpinned
+load-average-before-1-5-15=6.432 / 8.458 / 12.413
+source-sha256=042cc396ff13157b9456939d254aea688167178b389fc035ed937e195d1e5a86  /Users/junkawasaki/github/workspaces/codex/x402-wallet-selfhostbench-refactor-20261016-unsandboxed/artifacts/project/src/nexus/wallet/transfer_preflight_core.kotoba
+source-sha256=d29cae7dd6fcef66cd0ee008d14f2f5890cd2254fb7813ece3321fd201057863  /Users/junkawasaki/github/workspaces/codex/x402-wallet-selfhostbench-refactor-20261016-unsandboxed/artifacts/project/bench/x402_transfer_preflight_selfhost_driver.kotoba
+source-sha256=0f81bdba1b9ee39184c14915074c00fdb1c9bd924e8b5f31569aea9e9e1d6b8e  /Users/junkawasaki/github/workspaces/codex/x402-wallet-selfhostbench-refactor-20261016-unsandboxed/artifacts/project/bench/x402_transfer_preflight_selfhost_empty_driver.kotoba
+stdout:
+  benchmark=x402-wallet-transfer-preflight-selfhost-native
+  compiler=Amu native selfhost seed; adopted pinned compiler image
+  guest=Amu selfhost-compiled aarch64-macos native image via trusted KEXE loader
+  workload=1000000 preflight decisions across 10 ordered outcome cases; one admit, eight refusals, one precedence check
+  rounds=7; warmup=1 per executable path; order=alternating
+  selfhost-native-median-total-ms=20.640792
+  empty-loader-median-total-ms=9.744542
+  selfhost-native-adjusted-median-ns/decision=10.89625
+  javascript-reference-median-ns/decision=10.501083
+  ratio-selfhost-native-over-js=1.0376310710047716
+  host-loadavg=6.431640625 / 8.45849609375 / 12.4130859375; logical-cpus=10
+  timing=native wall time minus empty KEXE loader median; JS reference is warmed in-process
+  qualification=diagnostic only; preflight never authorizes signing and excludes string parsing, transport auth, durable reads, atomic reservation, key custody, network, and settlement
+
+product=shinshi.club
+build-report=/Users/junkawasaki/github/workspaces/codex/shinshi-black-frame-selfhostbench-20261016-retry1/report.json
+compiler-sha256=47fba216e1a65b892458216575bbb70be228d86f4b7a6d73ebae84230279f20b
+source-closure-mode=--source-path --unpinned
+load-average-before-1-5-15=6.237 / 8.384 / 12.364
+source-sha256=50e22988227db6c2e127d6d10290f1b4753f9addbb8b5a920865022ccae8b9c6  /Users/junkawasaki/github/workspaces/codex/shinshi-black-frame-selfhostbench-20261016-retry1/artifacts/project/cljs/src/shinshi/common/video_black_frame_core.kotoba
+source-sha256=867c7541a20df2f1ff49a8fa99b99ef574850d68ec5b9d255958938a9de92c4d  /Users/junkawasaki/github/workspaces/codex/shinshi-black-frame-selfhostbench-20261016-retry1/artifacts/project/bench/shinshi_video_black_frame_selfhost_driver.kotoba
+source-sha256=49124c3daab3fd47fba2896da1c3606c16fab6eb3642a38c20afcded7a76e796  /Users/junkawasaki/github/workspaces/codex/shinshi-black-frame-selfhostbench-20261016-retry1/artifacts/project/bench/shinshi_video_black_frame_selfhost_empty_driver.kotoba
+stdout:
+  benchmark=shinshi-video-black-frame-selfhost-native
+  compiler=Amu native selfhost seed; adopted pinned compiler image
+  guest=Amu selfhost-compiled aarch64-macos native image via trusted KEXE loader
+  workload=1000000 measured-luma decisions across five cases; three reject, two pass
+  rounds=7; warmup=1 per executable path; order=alternating
+  selfhost-native-median-total-ms=16.264667
+  empty-loader-median-total-ms=10.073375
+  selfhost-native-adjusted-median-ns/decision=6.191292
+  javascript-reference-median-ns/decision=4.7525
+  ratio-selfhost-native-over-js=1.3027442398737505
+  host-loadavg=6.23681640625 / 8.38427734375 / 12.36376953125; logical-cpus=10
+  timing=native wall time minus empty KEXE loader median; JS reference is warmed in-process
+  qualification=Kotoba threshold-core diagnostic only; video_publish/black-frame? and the offline video-drain publication path now call the bootstrap WASM wrapper, but the Worker/app build and Awai release remain unverified; excludes frame sampling, decoding, network, storage, content safety, and publication approval
+
+product=oppai.fans
+build-report=/Users/junkawasaki/github/workspaces/codex/oppai-challenge-selfhostbench-20261016/report.json
+compiler-sha256=47fba216e1a65b892458216575bbb70be228d86f4b7a6d73ebae84230279f20b
+source-closure-mode=--source-path --unpinned
+load-average-before-1-5-15=6.237 / 8.384 / 12.364
+source-sha256=97aceab094d46f7c72e98dcc231bf21ca2d7d21bc9c22a2d94cec00b52683368  /Users/junkawasaki/github/workspaces/codex/oppai-challenge-selfhostbench-20261016/artifacts/project/src/oppai/gen/challenge_window_core.kotoba
+source-sha256=1896d1600ed5e5f84588922fe9e180037e7d0a14be0a1eb10b5290ea0b706c6a  /Users/junkawasaki/github/workspaces/codex/oppai-challenge-selfhostbench-20261016/artifacts/project/bench/oppai_challenge_window_selfhost_driver.kotoba
+source-sha256=05d54c6f3a7942cf039cfe82fbb07810425564f4f28708bfeb46f48cdf8f1927  /Users/junkawasaki/github/workspaces/codex/oppai-challenge-selfhostbench-20261016/artifacts/project/bench/oppai_challenge_window_selfhost_empty_driver.kotoba
+stdout:
+  benchmark=oppai-enrollment-challenge-window-selfhost-native
+  compiler=Amu native selfhost seed; adopted pinned compiler image
+  guest=Amu selfhost-compiled aarch64-macos native image via trusted KEXE loader
+  workload=1000000 challenge-window decisions across five cases; two valid, three refused
+  rounds=7; warmup=1 per executable path; order=alternating
+  selfhost-native-median-total-ms=16.885333
+  empty-loader-median-total-ms=9.656583
+  selfhost-native-adjusted-median-ns/decision=7.22875
+  javascript-reference-median-ns/decision=6.508417
+  ratio-selfhost-native-over-js=1.1106771431517064
+  host-loadavg=6.23681640625 / 8.38427734375 / 12.36376953125; logical-cpus=10
+  timing=native wall time minus empty KEXE loader median; JS reference is warmed in-process
+  qualification=diagnostic only; challenge-window verdict is not enrollment consent or permission to use face data and excludes nonce consumption, storage, camera, and network
+
+product=awai.network
+build-report=/Users/junkawasaki/github/workspaces/codex/awai-apex-chat-selfhostbench-20261016/report.json
+compiler-sha256=47fba216e1a65b892458216575bbb70be228d86f4b7a6d73ebae84230279f20b
+source-closure-mode=--source-path --unpinned
+load-average-before-1-5-15=6.237 / 8.384 / 12.364
+source-sha256=1332d4ed5456ea3a1dd407f380ea678423275c3fb858e61563d193d5d380ce67  /Users/junkawasaki/github/workspaces/codex/awai-apex-chat-selfhostbench-20261016/artifacts/project/src/awai/apex/chat_admission_core.kotoba
+source-sha256=108688e02f7ed3b8954f2855dfc3db087b8e45794e73d1679492bcf841dd115a  /Users/junkawasaki/github/workspaces/codex/awai-apex-chat-selfhostbench-20261016/artifacts/project/bench/awai_apex_chat_admission_selfhost_driver.kotoba
+source-sha256=63ef5f405156df9423ea40e34d4dfb064d2d5112ad607befbeea45dd6fb4a9ef  /Users/junkawasaki/github/workspaces/codex/awai-apex-chat-selfhostbench-20261016/artifacts/project/bench/awai_apex_chat_admission_selfhost_empty_driver.kotoba
+stdout:
+  benchmark=awai-network-chat-admission-selfhost-native
+  compiler=Amu native selfhost seed; adopted pinned compiler image
+  guest=Amu selfhost-compiled aarch64-macos native image via trusted KEXE loader
+  workload=1000000 request-shape decisions across eight cases; three admitted, five refused
+  rounds=7; warmup=1 per executable path; order=alternating
+  selfhost-native-median-total-ms=17.698958
+  empty-loader-median-total-ms=9.953792
+  selfhost-native-adjusted-median-ns/decision=7.745166
+  javascript-reference-median-ns/decision=5.013167
+  ratio-selfhost-native-over-js=1.5449646899853924
+  host-loadavg=6.23681640625 / 8.38427734375 / 12.36376953125; logical-cpus=10
+  timing=native wall time minus empty KEXE loader median; JS reference is warmed in-process
+  qualification=Kotoba decision-core diagnostic only; current sanitize-chat source calls the separate bootstrap WASM wrapper, but the Worker build and Awai app release remain unverified; excludes JSON parsing, message character counting, model selection, streaming, upstream inference, and the full request lifecycle
+
+product=itonami.app (shared install gate)
+build-report=/Users/junkawasaki/github/workspaces/codex/itonami-app-plane-next-bench-escalated-20261016/report.json
+compiler-sha256=47fba216e1a65b892458216575bbb70be228d86f4b7a6d73ebae84230279f20b
+source-closure-mode=--source-path --unpinned
+load-average-before-1-5-15=6.237 / 8.384 / 12.364
+source-sha256=bd8455bfac6557362c08decbac92afc9dad00403f3e5b1dcf9ffa5c680ef48a6  /Users/junkawasaki/github/workspaces/codex/itonami-app-plane-next-bench-escalated-20261016/artifacts/project/src/cloud/itonami/app/awai_app_admission_core.kotoba
+source-sha256=bc1b08a6c19f29dacc8379d1717b5516c69f584807f34f3cd4f8d7190faa1db6  /Users/junkawasaki/github/workspaces/codex/itonami-app-plane-next-bench-escalated-20261016/artifacts/project/bench/awai_app_admission_selfhost_driver.kotoba
+source-sha256=d8ec66f91ef88432953b9bbc85736ae0272011cc2c120d18470652939345be57  /Users/junkawasaki/github/workspaces/codex/itonami-app-plane-next-bench-escalated-20261016/artifacts/project/bench/awai_app_admission_selfhost_empty_driver.kotoba
+stdout:
+  benchmark=awai-app-install-admission-selfhost-native-core
+  compiler=Amu native selfhost seed; adopted pinned compiler image
+  guest=Amu selfhost-compiled aarch64-macos native image via trusted KEXE loader
+  workload=1000000 alternating admitted/capability-refused decisions per sample
+  rounds=7; warmup=1 per executable path; order=alternating
+  selfhost-native-median-total-ms=38.342792
+  empty-loader-median-total-ms=10.208416
+  selfhost-native-adjusted-median-ns/decision=28.134376
+  javascript-reference-median-ns/decision=4.610416
+  ratio-selfhost-native-over-js=6.102350850769215
+  host-loadavg=6.23681640625 / 8.38427734375 / 12.36376953125; logical-cpus=10
+  timing=native wall time minus empty KEXE loader median; JS reference is warmed in-process
+  qualification=diagnostic only; source-path build is unpinned and excludes adapters, cryptography, I/O, and full app lifecycle

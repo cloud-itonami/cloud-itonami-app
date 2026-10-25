@@ -1,0 +1,5 @@
+;; Empty KEXE loader baseline for the Isekai publish-tier benchmark.
+(ns isekai.publish-admission-selfhost-empty-benchmark
+  (:export [main]))
+
+(defn main [] :i64 0)

@@ -1,0 +1,235 @@
+(ns cloud.itonami.app.awai-amano-adapter
+  "Host adapter for the pure Awai install policy.
+
+  This namespace gathers signed current-ref replies and a committed head proof
+  from Inga. It does not provide chain identity, validator membership,
+  signature keys, quorum thresholds, or endpoint transport: those are loaded
+  from an operator-owned profile and host port. An absent or mismatched
+  profile fails closed."
+  (:require [kotoba.lang.edn :as edn]
+            [inga.commitment :as commitment]
+            [inga.current-ref-read :as current-ref-read]
+            [inga.prefix :as prefix]))
+
+(def ^:private profile-fields
+  [:profile-id :chain-id :genesis-hash :validator-set-id :quorum-policy-id])
+
+(def ^:private read-fields
+  [:version :chain-id :witness :ref :head-seq :head-cid :challenge
+   :observed-at :signature])
+
+(defn- read-field [m k]
+  (if (contains? m k) (get m k) (get m (name k))))
+
+(defn- normalize-read [read]
+  (when (map? read)
+    (into {} (map (fn [k] [k (read-field read k)]) read-fields))))
+
+(defn- normalize-head [head]
+  (when (map? head)
+    (into {} (map (fn [[k v]] [(if (keyword? k) (name k) k) v]) head))))
+
+(defn- decode-commitment-proof [value]
+  (let [decoded (if (string? value)
+                  (try (edn/read-string value)
+                       (catch #?(:clj Exception :cljs :default) _ nil))
+                  value)]
+    (when (and (map? decoded)
+               (map? (:block decoded))
+               (map? (:qc decoded)))
+      decoded)))
+
+(defn- decode-finalized-prefix [value]
+  (let [decoded (if (string? value)
+                  (try (edn/read-string value)
+                       (catch #?(:clj Exception :cljs :default) _ nil))
+                  value)]
+    (when (and (map? decoded)
+               (map? (:checkpoint decoded))
+               (map? (:proof decoded))
+               (vector? (get-in decoded [:proof :blocks])))
+      decoded)))
+
+(defn- profile-context?
+  [profile context]
+  (and (map? context)
+       (every? (fn [k]
+                 (and (some? (get profile k))
+                      (= (get profile k) (get context k))))
+               profile-fields)))
+
+(defn- same-validator-context?
+  [left right]
+  (and (map? left)
+       (map? right)
+       (= (:chain-id left) (:chain-id right))
+       (= (:quorum left) (:quorum right))
+       (= (set (:witnesses left)) (set (:witnesses right)))
+       (= (:verify-fn left) (:verify-fn right))))
+
+(defn- current-read-context
+  [profile ref challenge now-ms]
+  (let [context (:current-ref-read-context profile)]
+    (when (and (profile-context? profile context)
+               (= (:chain-id profile) (:chain-id context))
+               (fn? (:verify-fn context))
+               (vector? (:witnesses context))
+               (seq (:witnesses context))
+               (pos-int? (:max-age-ms context)))
+      (assoc context :ref ref :challenge challenge :now now-ms))))
+
+(defn- finalized-prefix-context [profile]
+  (let [context (:finalized-prefix-context profile)]
+    (when (and (profile-context? profile context)
+               (= (:chain-id profile) (:chain-id context))
+               (ifn? (:hash-fn context))
+               (= (:genesis-hash profile)
+                  ((:hash-fn context) (:genesis context)))
+               (prefix/context-valid? context))
+      context)))
+
+(defn- commitment-context [profile]
+  (let [context (:commitment-context profile)
+        finalized-context (finalized-prefix-context profile)]
+    (when (and (profile-context? profile context)
+               (= (:chain-id profile) (:chain-id context))
+               (same-validator-context? context finalized-context)
+               (= (:hash-fn context) (:hash-fn finalized-context))
+               (fn? (:hash-fn context))
+               (fn? (:decode-proposal context))
+               (fn? (:verify-fn context)))
+      (assoc context :admitted? (set (:witnesses finalized-context))))))
+
+(defn- verified-commitment?
+  [head proof ref head-cid profile]
+  (let [context (commitment-context profile)]
+    (and context
+         (map? head)
+         (= ref (get head "ref"))
+         (= head-cid (get head "cid"))
+         (nil? (commitment/verify-head head ref proof context)))))
+
+(defn- response-for-head
+  [responses ref head-seq head-cid]
+  (first
+   (filter (fn [response]
+             (let [head (normalize-head (read-field response :head))]
+               (and (map? head)
+                    (= ref (get head "ref"))
+                    (= head-seq (get head "seq"))
+                    (= head-cid (get head "cid"))
+                    (decode-commitment-proof
+                     (read-field response :commitment-proof)))))
+           responses)))
+
+(defn- verified-event-finality?
+  [finalized-prefix head commitment-proof ref head-cid profile read-context]
+  (let [context (finalized-prefix-context profile)
+        prefix-proof (:proof finalized-prefix)
+        checkpoint (:checkpoint finalized-prefix)
+        result (when context (prefix/verify prefix-proof context))
+        committed-blocks (:blocks result)
+        committed-event-block (:block commitment-proof)]
+    (and context
+         (same-validator-context? read-context context)
+         (= (:chain-id profile) (:chain-id checkpoint))
+         (= (:genesis-hash profile) (:genesis-hash checkpoint))
+         (= (:finalized-height checkpoint) (:height result))
+         (= (:tip-hash checkpoint) (:tip-hash result))
+         (= (:block-count checkpoint) (count (:blocks prefix-proof)))
+         (= :finalized (:status result))
+         (some #{committed-event-block} committed-blocks)
+         (verified-commitment? head commitment-proof ref head-cid profile))))
+
+(defn assemble-proof
+  "Verify endpoint replies and return the normalized proof expected by
+  `awai-apps/resolve-domain`, or nil.
+
+  `responses` is a vector of `/current-ref` JSON response maps. The separate
+  `finalized-prefix` argument is the decoded or EDN-encoded response from an
+  immutable Inga `/finalized-prefix?checkpoint=<CID>` read. A quorum of signed
+  reads must agree on one head, its commitment block must occur in the
+  cryptographically verified three-chain finalized prefix, and its record
+  commitment must verify. Prefix verification starts at the operator-trusted
+  genesis and is bounded by the profile's `:max-blocks`; no chain values are
+  built in."
+  [profile ref challenge now-ms responses finalized-prefix]
+  (try
+    (when (and (map? profile)
+               (string? ref) (string? challenge)
+               (nat-int? now-ms)
+               (vector? responses))
+      (let [read-context (current-read-context profile ref challenge now-ms)
+            normalized-reads (mapv #(normalize-read (or (read-field % :read) %))
+                                   responses)
+            quorum-result (when read-context
+                            (current-ref-read/verify-quorum normalized-reads
+                                                            read-context))
+            read-proof (:proof quorum-result)
+            head-seq (:head-seq read-proof)
+            head-cid (:head-cid read-proof)
+            response (when (= :verified (:status quorum-result))
+                       (response-for-head responses ref head-seq head-cid))
+            head (normalize-head (read-field response :head))
+            finality-proof (decode-commitment-proof
+                            (read-field response :commitment-proof))
+            prefix-envelope (decode-finalized-prefix finalized-prefix)]
+        (when (and (= :verified (:status quorum-result))
+                   (string? head-cid)
+                   (verified-commitment? head finality-proof ref head-cid profile)
+                   (verified-event-finality? prefix-envelope head finality-proof
+                                             ref head-cid profile read-context))
+          (merge (select-keys profile profile-fields)
+                 {:trust "amano-inga-verified-current-ref"
+                  :decision :verified
+                  :ref ref
+                  :head-cid head-cid
+                  :challenge challenge
+                  :current? true
+                  :quorum-read-verified? true
+                  :current-read-proof read-proof
+                  :finality-proof-verified? true
+                  :finalized-event-cid head-cid
+                  :finality-proof {:head head
+                                   :proof finality-proof
+                                   :prefix prefix-envelope}
+                  :observed-at (:observed-at read-proof)
+                  :expires-at (:expires-at read-proof)}))))
+    (catch #?(:clj Exception :cljs :default) _ nil)))
+
+(defn verify-amano-ref
+  "Drop-in `:verify-amano-ref` callback for `awai-apps`. Re-run both Inga
+  read verification and finalized-prefix verification over the embedded
+  proofs, then bind them to the supplied request and operator profile."
+  [{:keys [proof chain-profile ref head-cid challenge now-ms]}]
+  (try
+    (let [read-proof (:current-read-proof proof)
+          reads (:reads read-proof)
+          context (current-read-context chain-profile ref challenge now-ms)
+          quorum-result (when (and context (vector? reads))
+                          (current-ref-read/verify-quorum reads context))
+          verified-read (:proof quorum-result)
+          finality (:finality-proof proof)
+          head (:head finality)
+          commitment-proof (:proof finality)
+          prefix-envelope (:prefix finality)]
+      (and (= :verified (:decision proof))
+           (= "amano-inga-verified-current-ref" (:trust proof))
+           (= (select-keys chain-profile profile-fields)
+              (select-keys proof profile-fields))
+           (= ref (:ref proof))
+           (= head-cid (:head-cid proof))
+           (= challenge (:challenge proof))
+           (true? (:current? proof))
+           (= :verified (:status quorum-result))
+           (= ref (:ref verified-read))
+           (= head-cid (:head-cid verified-read))
+           (= (:head-seq verified-read) (get head "seq"))
+           (= challenge (:challenge verified-read))
+           (= (:observed-at verified-read) (:observed-at proof))
+           (= (:expires-at verified-read) (:expires-at proof))
+           (true? (:finality-proof-verified? proof))
+           (= head-cid (:finalized-event-cid proof))
+           (verified-event-finality? prefix-envelope head commitment-proof
+                                     ref head-cid chain-profile context)))
+    (catch #?(:clj Exception :cljs :default) _ false)))

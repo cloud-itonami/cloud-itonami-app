@@ -16,6 +16,8 @@
             ["node:path" :as path]
             [clojure.string :as str]
             [cloud.itonami.app.awai-apps :as awai-apps]
+            [cloud.itonami.app.awai-amano-adapter :as awai-amano-adapter]
+            [cloud.itonami.app.awai-amano-node :as awai-amano-node]
             [cloud.itonami.app.awai-bundle-node :as awai-bundle]
             [cloud.itonami.app.awai-content-node :as awai-content]
             [cloud.itonami.app.awai-content-store-node :as awai-content-store]
@@ -32,11 +34,30 @@
             [kotoba.protocol.cid :as app-cid]
             [kotoba.protocol.install :as app-install]
             [kotoba.protocol.vocab :as vocab]
+            [cloud.itonami.app.kotoba-oracle :as kotoba-oracle]
             [guest-runtime :as guest]
             [nbb.core :refer [*file*]]))
 
 (def app-directory
   (fs/realpathSync (path/resolve (path/dirname *file*) "..")))
+
+;; Nbb has no classpath. Install the same bounded resource seam used by the
+;; page host so lifecycle decisions execute their packaged Kotoba KIR rather
+;; than failing only when the first registry/install request arrives.
+(kotoba-oracle/set-resource-loader!
+ (fn [resource-path]
+   (when (and (string? resource-path)
+              (not (str/starts-with? resource-path "/"))
+              (not (some #{".."} (str/split resource-path #"/")))
+              (re-matches #"[A-Za-z0-9._/-]+" resource-path))
+     (let [resource-root (path/resolve app-directory "resources")
+           resource-file (path/resolve resource-root resource-path)
+           relative (path/relative resource-root resource-file)]
+       (when (and (not (str/starts-with? relative ".."))
+                  (not (.isAbsolute path relative))
+                  (.existsSync fs resource-file)
+                  (.isFile (.statSync fs resource-file)))
+         (.readFileSync fs resource-file "utf8")))))
 
 (defn- data-dir []
   (or (aget js/process.env "CLOUD_ITONAMI_DATA_DIR")
@@ -179,8 +200,15 @@
                                      :domain domain
                                      :reason "registry-unavailable"})))))))
 
-(defn- install-scope-value [domain registry candidate proof manifest-result]
-  (let [trusted-registry {:trust "independently-verified-awai-envelopes"
+(defn- amano-expected-heads [domain candidate]
+  (sorted-map
+   (str "awai/domain/" domain) (:binding-cid candidate)
+   (str "awai/app/" (:app-id candidate) "/" (:channel candidate))
+   (:release-cid candidate)))
+
+(defn- install-scope-value
+  [domain registry candidate proof manifest-result amano-result]
+  (let [trusted-registry {:trust (get-in registry [:body :trust])
                           :snapshot (:verified-snapshot registry)}
         release-result (when (= :verified (:decision manifest-result))
                          (awai-apps/verified-release-descriptor
@@ -200,7 +228,13 @@
                     domain {:binding binding
                             :txt-proof proof
                             :release (:release release-result)
-                            :now now}))
+                            :now now
+                            :amano-now-ms (:checked-at-ms amano-result)
+                            :amano-chain-profile (:profile amano-result)
+                            :amano-ref-proofs (:proofs amano-result)
+                            :challenge (:challenge amano-result)
+                            :verify-amano-ref
+                            awai-amano-adapter/verify-amano-ref}))
         plan (:install-plan resolved)]
     (cond
       (not= :verified (:decision manifest-result))
@@ -210,6 +244,10 @@
       (not= :verified (:decision release-result))
       {:decision :refuse
        :error (or (:error release-result) :release-manifest-invalid)}
+
+      (not= :verified (:decision amano-result))
+      {:decision :unavailable
+       :error (or (:error amano-result) :current-ref-proof-unavailable)}
 
       (not= :install-prepared (:decision plan))
       {:decision :refuse
@@ -221,6 +259,7 @@
        :candidate candidate
        :proof proof
        :release (:release release-result)
+       :amano-profile (:profile amano-result)
        :plan plan})))
 
 (defn- resolve-install-scope! [domain registry candidate]
@@ -241,8 +280,28 @@
              :else
              (-> (awai-manifest/fetch-release-manifest! (data-dir) candidate)
                  (.then (fn [manifest-result]
-                          (install-scope-value domain registry candidate proof
-                                               manifest-result))))))))
+                          (if-not (= :verified (:decision manifest-result))
+                            (install-scope-value domain registry candidate proof
+                                                 manifest-result nil)
+                            (let [profile-result
+                                  (awai-amano-node/load-profile
+                                   (aget js/process.env
+                                         "ITONAMI_AWAI_AMANO_PROFILE"))]
+                              (if-not (= :loaded (:decision profile-result))
+                                {:decision :unavailable
+                                 :error (or (:error profile-result)
+                                            :amano-chain-profile-unavailable)}
+                                (let [profile (:profile profile-result)
+                                      now-ms (.now js/Date)]
+                                  (-> (awai-amano-node/current-ref-proofs!
+                                       profile
+                                       (amano-expected-heads domain candidate)
+                                       now-ms)
+                                      (.then
+                                       (fn [amano-result]
+                                         (install-scope-value
+                                          domain registry candidate proof
+                                          manifest-result amano-result)))))))))))))))
       (.catch (fn [_]
                 {:decision :unavailable :error :install-scope-unavailable}))))
 
@@ -582,6 +641,66 @@
    (js/Promise.resolve {:decision :installed :installed-cells installed})
    cells))
 
+(defn- persist-and-install-staged!
+  [res candidate approved content-stage bridge-config finished]
+  (let [app-id (:app-id candidate)
+        release-cid (:release-cid candidate)
+        cells (get-in finished [:installation :install-lock :cells])]
+    (if-not (= :installed (:decision finished))
+      (json-response res 409
+                     {:status "refused"
+                      :domain (:domain candidate)
+                      :reason (name (or (:error finished)
+                                        :install-finalization-failed))})
+      (let [committed (awai-install-store/commit-installation!
+                       (data-dir) app-id nil (:installation finished))]
+        (if-not (= :persisted (:decision committed))
+          (json-response
+           res (if (= :refuse (:decision committed)) 409 503)
+           {:status (if (= :refuse (:decision committed))
+                      "refused" "unavailable")
+            :domain (:domain candidate)
+            :reason (name (or (:error committed) :install-record-write-failed))})
+          (let [installation-result
+                (awai-install-store/read-installation (data-dir) app-id)]
+            (if-not (= :found (:decision installation-result))
+              (let [rollback (awai-install-store/rollback-installation!
+                             (data-dir) app-id release-cid nil)]
+                (json-response res 503
+                               {:status "unavailable"
+                                :domain (:domain candidate)
+                                :reason "install-record-readback-failed"
+                                :rollback-status (name (:decision rollback))}))
+              (-> (install-cells-sequentially!
+                   cells installation-result content-stage bridge-config [])
+                  (.then
+                   (fn [installed]
+                     (if-not (= :installed (:decision installed))
+                       (let [rollback
+                             (awai-install-store/rollback-installation!
+                              (data-dir) app-id release-cid nil)]
+                         (json-response
+                          res 503
+                          {:status "install-incomplete"
+                           :domain (:domain candidate)
+                           :app-id app-id
+                           :release-cid release-cid
+                           :reason (name (or (:error installed)
+                                             :awai-cell-install-failed))
+                           :failed-cell-id (:failed-cell-id installed)
+                           :installed-cells (:installed-cells installed)
+                           :local-record-rollback (name (:decision rollback))}))
+                       (json-response
+                        res 201
+                        {:status "installed"
+                         :domain (:domain candidate)
+                         :app-id app-id
+                         :release-cid release-cid
+                         :approved-capabilities approved
+                         :installed-cells (:installed-cells installed)
+                         :content-block-count (:block-count content-stage)
+                         :launch-status "local-loopback-static-only"}))))))))))))
+
 (defn- perform-consented-install! [res body scope bridge-config]
   (let [candidate (:candidate scope)
         plan (:plan scope)
@@ -649,76 +768,36 @@
                      :reason (name (or (:error content-stage)
                                        :content-stage-failed))
                      :verified-cid-count (count (:verified-cids content-stage))})
-                   (let [now (quot (.now js/Date) 1000)
-                         finished (awai-apps/finish-install
-                                   plan {:verified-cids
-                                         (:verified-cids content-stage)
-                                         :approved-caps approved
-                                         :host-supported #{}
-                                         :now now})]
-                     (if-not (= :installed (:decision finished))
-                       (json-response res 409
-                                      {:status "refused"
-                                       :domain (:domain candidate)
-                                       :reason (name (or (:error finished)
-                                                         :install-finalization-failed))})
-                       (let [committed (awai-install-store/commit-installation!
-                                        (data-dir) app-id nil
-                                        (:installation finished))]
-                         (if-not (= :persisted (:decision committed))
-                           (json-response
-                            res (if (= :refuse (:decision committed)) 409 503)
-                            {:status (if (= :refuse (:decision committed))
-                                       "refused" "unavailable")
-                             :domain (:domain candidate)
-                             :reason (name (or (:error committed)
-                                               :install-record-write-failed))})
-                           (let [installation-result
-                                 (awai-install-store/read-installation
-                                  (data-dir) app-id)]
-                             (if-not (= :found (:decision installation-result))
-                               (let [rollback
-                                     (awai-install-store/rollback-installation!
-                                      (data-dir) app-id release-cid nil)]
-                                 (json-response
-                                  res 503
-                                  {:status "unavailable"
-                                   :domain (:domain candidate)
-                                   :reason "install-record-readback-failed"
-                                   :rollback-status (name (:decision rollback))}))
-                               (-> (install-cells-sequentially!
-                                    cells installation-result content-stage
-                                    bridge-config [])
-                                   (.then
-                                    (fn [installed]
-                                      (if-not (= :installed (:decision installed))
-                                        (let [rollback
-                                              (awai-install-store/rollback-installation!
-                                               (data-dir) app-id release-cid nil)]
-                                          (json-response
-                                           res 503
-                                           {:status "install-incomplete"
-                                            :domain (:domain candidate)
-                                            :app-id app-id
-                                            :release-cid release-cid
-                                            :reason (name (or (:error installed)
-                                                              :awai-cell-install-failed))
-                                            :failed-cell-id (:failed-cell-id installed)
-                                            :installed-cells (:installed-cells installed)
-                                            :local-record-rollback
-                                            (name (:decision rollback))}))
-                                        (json-response
-                                         res 201
-                                         {:status "installed"
-                                          :domain (:domain candidate)
-                                          :app-id app-id
-                                          :release-cid release-cid
-                                          :approved-capabilities approved
-                                          :installed-cells
-                                          (:installed-cells installed)
-                                          :content-block-count
-                                          (:block-count content-stage)
-                                          :launch-status "local-loopback-static-only"}))))))))))))))
+                   (let [now-ms (.now js/Date)]
+                     (-> (awai-amano-node/current-ref-proofs!
+                          (:amano-profile scope)
+                          (amano-expected-heads (:domain candidate) candidate)
+                          now-ms)
+                         (.then
+                          (fn [ref-result]
+                            (if-not (= :verified (:decision ref-result))
+                              (json-response
+                               res 503
+                               {:status "unavailable"
+                                :domain (:domain candidate)
+                                :reason (name (or (:error ref-result)
+                                                  :current-ref-proof-unavailable))})
+                              (let [finished
+                                    (awai-apps/finish-install
+                                     plan {:verified-cids
+                                           (:verified-cids content-stage)
+                                           :approved-caps approved
+                                           :host-supported #{}
+                                           :now (quot now-ms 1000)
+                                           :amano-now-ms now-ms
+                                           :amano-chain-profile (:profile ref-result)
+                                           :amano-ref-proofs (:proofs ref-result)
+                                           :amano-challenge (:challenge ref-result)
+                                           :verify-amano-ref
+                                           awai-amano-adapter/verify-amano-ref})]
+                                (persist-and-install-staged!
+                                 res candidate approved content-stage
+                                 bridge-config finished)))))))))))
 
           {:decision :unavailable}
           (json-response res 503 {:status "unavailable"
@@ -727,7 +806,7 @@
 
           (json-response res 503 {:status "unavailable"
                                   :domain (:domain candidate)
-                                  :reason "local-install-store-unavailable"})))))))
+                                  :reason "local-install-store-unavailable"}))))))
 
 (defn- install-request-response! [res req request-url]
   (let [parameters (.-searchParams request-url)

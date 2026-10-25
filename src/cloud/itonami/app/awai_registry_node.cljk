@@ -1,30 +1,54 @@
 (ns cloud.itonami.app.awai-registry-node
-  "Bounded Node/Nbb adapter for the local Awai peer-host snapshot.
+  "Bounded Node/Nbb adapter for configured Awai peer checkpoints.
 
-  This is a local, unauthenticated read-only discovery route. The peer endpoint
-  is restricted to one explicit loopback URL; redirects, oversized bodies, malformed
-  projections, and any invalid signed envelope fail closed. A single peer's
-  accepted-state claim remains a discovery fact, not multi-peer finality."
+  It accepts only a fresh two-thirds quorum of peer-signed snapshots over the
+  same accepted-record CID set. Local checks may use loopback HTTP; remote peers
+  require public-host HTTPS. Peer identities and operator labels are local
+  trust configuration; this does not prove operator independence or consensus."
   (:require [cloud.itonami.app.awai-apps :as apps]
-            [cloud.itonami.app.awai-envelope :as envelope]))
+            [cloud.itonami.app.awai-envelope :as envelope]
+            [clojure.string :as str]
+            [kotoba.protocol.vocab :as vocab]
+            ["./awai_registry_checkpoint.mjs"
+             :refer [validPeerId verifyCheckpoint]]))
 
-(def schema "awai.app-registry.read.v3")
+(def schema "awai.app-registry.read.v4")
+(def checkpoint-schema "awai.app-registry.checkpoint.v1")
 (def maximum-records 1024)
 (def maximum-snapshot-bytes (* 16 1024 1024))
 (def maximum-entry-bytes 4096)
+(def minimum-peers 3)
+(def maximum-peers 12)
 
 (defn- unavailable [reason]
   {:http-status 503
    :body {:status "unavailable" :reason reason}})
 
+(defn- public-peer-host? [hostname]
+  (and (string? hostname)
+       (= hostname (str/lower-case hostname))
+       (re-matches #"(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+"
+                   hostname)
+       (not (re-matches #"[0-9.]+" hostname))
+       (not-any? #(str/ends-with? hostname %)
+                 [".localhost" ".local" ".internal" ".home.arpa"
+                  ".test" ".invalid" ".example"])))
+
 (defn- endpoint-url [value]
   (try
     (let [url (js/URL. value)
-          port (when-not (empty? (.-port url))
-                 (js/parseInt (.-port url) 10))]
-      (when (and (= "http:" (.-protocol url))
-                 (= "127.0.0.1" (.-hostname url))
-                 (number? port) (<= 1 port 65535)
+          protocol (.-protocol url)
+          hostname (.-hostname url)
+          port (.-port url)
+          local? (and (= "http:" protocol)
+                      (= "127.0.0.1" hostname)
+                      (not (empty? port))
+                      (let [parsed (js/parseInt port 10)]
+                        (and (number? parsed) (<= 1 parsed 65535))))
+          public-tls? (and (= "https:" protocol)
+                           (public-peer-host? hostname)
+                           (or (empty? port) (= "443" port)))]
+      (when (and (or local? public-tls?)
                  (= "/v2/app-registry" (.-pathname url))
                  (empty? (.-username url))
                  (empty? (.-password url))
@@ -32,6 +56,11 @@
                  (empty? (.-hash url)))
         url))
     (catch :default _ nil)))
+
+(defn valid-peer-endpoint?
+  "Accept loopback HTTP for co-located tests and public-host HTTPS for peers."
+  [value]
+  (boolean (endpoint-url value)))
 
 (defn- bounded-json! [response]
   (let [content-length (.get (.-headers response) "content-length")
@@ -78,6 +107,32 @@
        (re-matches #"[0-9a-f]+" (:envelope-hex record))
        (:ok? (envelope/verify-record dna-cid record))))
 
+(defn- valid-peer-configs? [peers]
+  (and (vector? peers)
+       (<= minimum-peers (count peers) maximum-peers)
+       (every? (fn [peer]
+                 (try
+                   (let [peer-id (when (and (map? peer)
+                                            (= #{:peer-id :operator-did :url}
+                                               (set (keys peer)))
+                                            (vocab/did-key? (:operator-did peer))
+                                            (endpoint-url (:url peer)))
+                               (validPeerId (:peer-id peer)))]
+                     (boolean peer-id))
+                   (catch :default _ false)))
+               peers)
+       (= (count peers) (count (set (map :peer-id peers))))
+       (= (count peers) (count (set (map :operator-did peers))))))
+
+(defn- valid-checkpoint? [peer snapshot now]
+  (try
+    (and (= #{:schema :dna-cid :records :checkpoint} (set (keys snapshot)))
+         (= #{:schema :peer-id :issued-at :record-cids :signature-hex}
+            (set (keys (:checkpoint snapshot))))
+         (= checkpoint-schema (get-in snapshot [:checkpoint :schema]))
+         (verifyCheckpoint (:peer-id peer) (clj->js snapshot) now))
+    (catch :default _ false)))
+
 (def candidate-wire-keys
   [:domain :app-id :publisher-did :channel :decision :reason :revocation-status
    :binding-cid :binding-sequence :binding-expires-at :release-cid
@@ -94,68 +149,117 @@
   [candidate]
   (select-keys candidate candidate-wire-keys))
 
-(defn- snapshot-result [snapshot]
-  (let [records (:records snapshot)
-        now (quot (.now js/Date) 1000)]
-    (cond
-      (not (and (map? snapshot)
-                (= #{:schema :dna-cid :records} (set (keys snapshot)))
-                (= schema (:schema snapshot))
-                (string? (:dna-cid snapshot))
-                (vector? records)
-                (<= (count records) maximum-records)))
-      (unavailable "invalid-peer-snapshot")
+(defn- valid-snapshot? [snapshot]
+  (let [records (:records snapshot)]
+    (and (map? snapshot)
+         (= #{:schema :dna-cid :records :checkpoint} (set (keys snapshot)))
+         (= schema (:schema snapshot))
+         (string? (:dna-cid snapshot))
+         (vector? records)
+         (<= (count records) maximum-records)
+         (= (count records) (count (set (map :cid records))))
+         (every? #(valid-record-envelope? (:dna-cid snapshot) %) records))))
 
-      (not (every? #(valid-record-envelope? (:dna-cid snapshot) %) records))
-      (unavailable "unverified-peer-envelope")
+(defn- read-peer! [peer now]
+  (let [url (endpoint-url (:url peer))]
+    (-> (js/fetch (.-href url)
+                  #js {:method "GET"
+                       :redirect "error"
+                       :headers #js {"accept" "application/json"}
+                       :signal (js/AbortSignal.timeout 2500)})
+        (.then (fn [response]
+                 (if (= 200 (.-status response))
+                   (bounded-json! response)
+                   (js/Promise.reject (js/Error. "peer-host-unavailable")))))
+        (.then (fn [snapshot]
+                 (when (and (valid-snapshot? snapshot)
+                            (valid-checkpoint? peer snapshot now))
+                   {:peer-id (:peer-id peer)
+                    :operator-did (:operator-did peer)
+                    :snapshot snapshot})))
+        (.catch (fn [_] nil)))))
 
-      :else
-      (let [trusted {:status "ok"
-                     :trust "independently-verified-awai-envelopes"
+(defn quorum-size [peer-count]
+  (quot (+ (* 2 peer-count) 2) 3))
+
+(defn- snapshot-state-key [observation]
+  (let [snapshot (:snapshot observation)]
+    [(:dna-cid snapshot) (mapv :cid (:records snapshot))]))
+
+(defn checkpoint-quorum
+  "Select one exact signed-state set when it reaches ceil(2N/3) configured peers.
+
+  Observations must already have valid record envelopes and fresh peer
+  signatures. This policy lets two current peers outvote one stale peer in the
+  three-peer minimum; it is not a consensus or independence proof."
+  [observations peer-count]
+  (let [required (quorum-size peer-count)
+        winner (some #(when (>= (count %) required) %)
+                     (vals (group-by snapshot-state-key observations)))]
+    (if winner
+      {:decision :quorum
+       :required required
+       :observed (count winner)
+       :snapshot (:snapshot (first winner))
+       :peer-ids (mapv :peer-id winner)
+       :operator-dids (mapv :operator-did winner)}
+      {:decision :refuse
+       :error :registry-quorum-unavailable
+       :required required
+       :observed (count observations)})))
+
+(defn- snapshot-result [observations peers now]
+  (let [quorum (checkpoint-quorum observations (count peers))]
+    (if-not (= :quorum (:decision quorum))
+      (unavailable "registry-quorum-unavailable")
+      (let [snapshot (:snapshot quorum)
+            required (:required quorum)
+            trusted {:status "ok"
+                     :trust "configured-peer-checkpoint-quorum"
                      :snapshot snapshot}
             resolved (apps/registry-domain-candidates trusted now)]
         (if (= :candidates (:decision resolved))
           {:http-status 200
-           ;; Keep authenticated records in the host return value for local
-           ;; install-plan resolution. The HTTP registry route serializes only
-           ;; `:body`, so these verification facts are never exposed there.
            :verified-snapshot snapshot
            :verified-candidates (:candidates resolved)
            :body {:status "ok"
                   :trust (:trust trusted)
-                  :accepted-state-source "single-local-peer"
+                  :accepted-state-source "configured-peer-checkpoint-quorum"
+                  :quorum {:required required
+                           :observed (:observed quorum)
+                           :configured (count peers)
+                           :peer-ids (:peer-ids quorum)
+                           :operator-dids (:operator-dids quorum)}
                   :dna-cid (:dna-cid snapshot)
-                  :registry-record-count (count records)
+                  :registry-record-count (count (:records snapshot))
                   :candidates (mapv candidate->wire (:candidates resolved))}}
           (unavailable (name (or (:error resolved) :registry-resolution-failed))))))))
 
 (defn registry-response!
-  "Read and independently verify one configured loopback Awai snapshot.
+  "Read and independently verify a configured loopback Awai peer quorum.
 
   Returns a Promise of `{:http-status n :body map}` for the active Node host."
   []
-  (let [configured (some-> (aget js/process.env "ITONAMI_AWAI_REGISTRY_URL")
+  (let [configured (some-> (aget js/process.env "ITONAMI_AWAI_REGISTRY_PEERS")
                            str)
-        url (when configured (endpoint-url configured))]
+        peers (when configured
+                (try (js->clj (js/JSON.parse configured) :keywordize-keys true)
+                     (catch :default _ nil)))
+        now (quot (.now js/Date) 1000)]
     (cond
       (or (nil? configured) (empty? configured))
       (js/Promise.resolve (unavailable "unconfigured"))
 
-      (nil? url)
-      (js/Promise.resolve (unavailable "invalid-local-endpoint"))
+      (not (valid-peer-configs? peers))
+      (js/Promise.resolve (unavailable "invalid-peer-set"))
 
       :else
-      (-> (js/fetch (.-href url)
-                    #js {:method "GET"
-                         :redirect "error"
-                         :headers #js {"accept" "application/json"}
-                         :signal (js/AbortSignal.timeout 2500)})
-          (.then (fn [response]
-                   (if (= 200 (.-status response))
-                     (bounded-json! response)
-                     (js/Promise.reject (js/Error. "peer-host-unavailable")))))
-          (.then snapshot-result)
+      (let [reads (mapv #(read-peer! % now) peers)]
+        (-> (js/Promise.all (clj->js reads))
+          (.then (fn [observations]
+                   (snapshot-result (vec (keep identity (array-seq observations)))
+                                    peers now)))
           (.catch (fn [error]
                     (if (= "snapshot-too-large" (.-message error))
                       (unavailable "snapshot-too-large")
-                      (unavailable "peer-host-unavailable"))))))))
+                      (unavailable "peer-host-unavailable")))))))))

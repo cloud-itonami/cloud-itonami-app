@@ -1,0 +1,2 @@
+observed_at_utc,accounts,zones,dns_records,baseline_snapshot,comparison_fields,added_records,removed_records,evidence_limit
+2026-10-16T16:24:59Z,3,30,361,awai-cloudflare-dns-hostnames-2026-10-17.csv,"account, zone, hostname, record type, proxy state",0,0,Cloudflare API GET; record contents and targets omitted; exact multiset match only proves configuration equality

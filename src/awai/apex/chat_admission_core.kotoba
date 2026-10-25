@@ -1,0 +1,18 @@
+;; Pure preflight decision port of awai.apex.worker/sanitize-chat's ordered
+;; message-shape and length checks. The host still parses JSON, counts actual
+;; message contents, supplies the fixed upstream model, and builds the body.
+;; Result: 0 admit, 1 messages is not an array, 2 empty, 3 over 40 messages,
+;; 4 over 24,000 characters (or invalid host character-count evidence).
+(ns awai.apex.chat-admission-core
+  (:export [chat-admission-code main]))
+
+(defn chat-admission-code
+  [messages-array :i64 message-count :i64 total-chars :i64] :i64
+  (cond
+    (not= messages-array 1) 1
+    (<= message-count 0) 2
+    (> message-count 40) 3
+    (or (< total-chars 0) (> total-chars 24000)) 4
+    :else 0))
+
+(defn main [] :i64 0)

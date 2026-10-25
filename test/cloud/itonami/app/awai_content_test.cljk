@@ -39,6 +39,18 @@
              (:reason (content-policy/content-origins
                        records app-id publisher-did now)))))))
 
+(deftest cloudflare-host-policy-matches-provider-roots-and-subdomains
+  (doseq [host ["workers.dev" "setup.workers.dev"
+                "pages.dev" "assets.pages.dev"
+                "r2.dev" "bucket.r2.dev"
+                "cloudflare.com" "assets.cloudflare.com"
+                "cloudflare.net" "cloudflare-dns.com"
+                "tunnel.cfargotunnel.com"]]
+    (is (true? (content-policy/cloudflare-host? host)) host))
+  (is (false? (content-policy/cloudflare-host? "murakumo.cloud")))
+  (is (true? (content-policy/cloudflare-host? "WORKERS.DEV")))
+  (is (false? (content-policy/cloudflare-host? nil))))
+
 (deftest origin-records-reject-ambiguous-or-untrusted-sets
   (let [origins (origin-set)]
     (is (= :duplicate-origin-host

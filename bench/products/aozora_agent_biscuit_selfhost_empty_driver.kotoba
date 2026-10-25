@@ -1,0 +1,5 @@
+;; Empty KEXE loader baseline for Aozora's Biscuit authorization benchmark.
+(ns aozora.agent-biscuit-selfhost-empty-benchmark
+  (:export [main]))
+
+(defn main [] :i64 0)

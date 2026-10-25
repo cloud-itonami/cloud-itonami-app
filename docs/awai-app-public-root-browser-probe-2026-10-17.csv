@@ -1,0 +1,20 @@
+observed_on_jst,domain,probe_method,probe_result,page_title_or_browser_error,evidence_limit
+2026-10-17,murakumo.cloud,web-tool-open,page-content-returned-today,Murakumo — 新しいチャット,Tool returned homepage content; no raw HTTP status or origin identity
+2026-10-17,aozora.app,web-tool-open,page-content-returned-yesterday,aozora | AIクリエイター・漫画・ゲームのソーシャルプラットフォーム,Tool returned homepage content; no raw HTTP status or origin identity
+2026-10-17,oppai.fans,cua-browser-open,net::ERR_NAME_NOT_RESOLVED,,This browser resolver could not resolve the host; not an authoritative global DNS proof
+2026-10-17,isekai.network,web-tool-open,page-content-returned-yesterday,isekai.network — Build games with AI,Tool returned homepage content; no raw HTTP status or origin identity
+2026-10-17,itonami.app,cua-browser-open,net::ERR_NAME_NOT_RESOLVED,,This browser resolver could not resolve the host; not an authoritative global DNS proof
+2026-10-17,itonami.cloud,web-tool-open,page-content-returned-yesterday,cloud-itonami — the operating system for how work gets done,Tool returned homepage content; no raw HTTP status or origin identity
+2026-10-17,x402.nexus,cua-browser-open,page-opened,x402.nexus — open x402 facilitator and testnet faucet for AI agents,Browser rendered the public homepage; API and payment behavior not exercised
+2026-10-17,shinshi.club,cua-browser-open,page-opened,Shinshi,Browser rendered the public homepage; age verification and payment behavior not exercised
+2026-10-17,babiniku.net,cua-browser-open,page-opened,babiniku — live rooms and AI character chat,Browser rendered the public homepage; room write and broadcast behavior not exercised
+2026-10-17,awai.network,cua-browser-open,page-opened,"Japanese expression, built into generative models. — awai.network",Browser rendered the public homepage; advertised model inference not tested
+2026-10-17,etzhayyim.com,cua-browser-open,page-content-returned,etzhayyim,Browser rendered public identity and observation content; no raw HTTP status or origin identity
+2026-10-17,kotoba-lang.org,cua-browser-open,page-content-returned,"Kotoba — Lisp machine for Artificial Intelligence (Super Intelligence)",Browser rendered the public homepage; no raw HTTP status or origin identity
+2026-10-17,kotoba.cloud,cua-browser-open,page-content-returned,"Kotoba — A Well Becoming Tech Company",Browser rendered the public homepage; no raw HTTP status or origin identity
+2026-10-17,kotoba.foundation,cua-browser-open,page-content-returned,"Kotoba Foundation — 計算の力を、次の世代の生きる力へ。",Browser rendered public foundation content; no raw HTTP status or origin identity
+2026-10-17,kotobalabs.com,cua-browser-open,browser-navigated-to-canonical-domain,"Kotoba — Lisp machine for Artificial Intelligence (Super Intelligence)",Browser ended at https://www.kotoba-lang.org/; redirect status and origin identity not exposed
+2026-10-17,manimani.cloud,cua-browser-open,page-content-returned,"manimani — local-first triage, one Decision Ledger",Browser rendered the public homepage; no raw HTTP status or origin identity
+2026-10-17,mithril.fund,cua-browser-open,page-content-returned,"Mithril | Whitehat as a Service",Browser rendered the public homepage; no raw HTTP status or origin identity
+2026-10-17,spirit-in-physics.org,cua-browser-open,page-content-returned,spirit-in-physics.org,Browser rendered public research visualization content; no raw HTTP status or origin identity
+2026-10-17,yaoi.dev,cua-browser-open,page-rendered-error-text,yaoi.dev,Browser body displayed internal error; no raw HTTP status or origin identity
