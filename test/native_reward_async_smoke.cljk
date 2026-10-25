@@ -1,0 +1,15 @@
+(require '[cloud.itonami.app.bots :as bots])
+(def started (promise))
+(def release (promise))
+(def calls (atom 0))
+(def session {:user-id "async-owner" :organization-id "async-org"})
+(with-redefs [bots/dispatch-profile-reviews! (fn [_ s] (assert (= session s)) (swap! calls inc) (deliver started true) @release)]
+  (let [begin (System/nanoTime) future (bots/dispatch-profile-reviews-async! {} session)]
+    (assert (< (/ (- (System/nanoTime) begin) 1000000.0) 1000))
+    (assert (= true (deref started 3000 :timeout)))
+    (assert (nil? (bots/dispatch-profile-reviews-async! {} session)))
+    (assert (= 1 @calls))
+    (deliver release true)
+    (.get future 5 java.util.concurrent.TimeUnit/SECONDS)))
+(println "Async learning passed: primary response independent of provisioning, exact session preserved, duplicate dispatcher suppressed")
+(shutdown-agents)

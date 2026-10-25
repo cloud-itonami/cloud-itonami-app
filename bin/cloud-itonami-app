@@ -83,7 +83,7 @@ if ! command -v nbb >/dev/null 2>&1; then
   printf 'cloud-itonami-app: nbb is required to start the host adapter\n' >&2
   exit 127
 fi
-nbb --classpath bin "$app_dir/bin/cloud-itonami-server" >target-server.log 2>&1 &
+kbb --backend sci --classpath bin "$app_dir/bin/cloud-itonami-server" >target-server.log 2>&1 &
 server_pid=$!
 
 for _ in {1..300}; do

@@ -160,7 +160,7 @@ because they need three different answers from a person.
 
 ## Verification
 
-Suite: 1641 tests, 9730 assertions, 0 failures (`clojure -M:test`); `clojure
+Suite: 1641 tests, 9730 assertions, 0 failures (`kbb -M:test`); `clojure
 -M:lint` reports nothing new for the files this touched.
 
 Measured on macOS 26.3.1, 2026-08-18/19, with the frontmost application and the

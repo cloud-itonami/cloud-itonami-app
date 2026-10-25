@@ -53,7 +53,7 @@
 ;; Nothing here names a provider, a model, a vendor or a price. Those are the
 ;; host's, and they change; the four judgements below do not.
 ;;
-;; Parity: test/cloud/itonami/app/model_routing_kotoba_parity_test.clj
+;; Parity: test/cloud/itonami/app/model_routing_kotoba_parity_test.cljk
 
 (ns model-routing-core
   (:schemas {;; What the host found when it looked for an assignment covering

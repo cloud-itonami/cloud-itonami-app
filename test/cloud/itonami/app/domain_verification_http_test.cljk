@@ -1,0 +1,159 @@
+(ns cloud.itonami.app.domain-verification-http-test
+  "The domain-ownership routes as a BROWSER reaches them.
+
+  Every other `*-http-test` in this suite sets an `Origin` header on every
+  request, because that is what makes the write routes pass. That convention is
+  why nothing caught this: a browser sends `Origin` on non-GET requests and on
+  cross-origin ones, and **not** on a same-origin GET. So the read route, which
+  asked for it, answered 403 to its only caller on every page load — and every
+  test of it passed, because every test sent a header the browser never would.
+
+  These tests therefore send requests shaped like the browser's: no `Origin` on
+  the GET, `Origin` on the writes. The point is the asymmetry, so both halves
+  are asserted — dropping the check from the read must not weaken the writes."
+  (:require [kotoba.io :as kio] [kotoba.json :as json]
+            [kotoba.test :refer [deftest is testing]]
+            [cloud.itonami.app.config :as config-loader]
+            [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.server :as server]
+            [cloud.itonami.app.store :as store]
+            [cloud.itonami.app.tls-certificate :as tls])
+  (:import [java.net URI]
+           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
+            HttpResponse$BodyHandlers]))
+
+(def ^:private origin "http://localhost:1338")
+(def ^:private csrf "domain-csrf")
+(def ^:private config
+  {:brand {:name "Test"}
+   :server {:host "127.0.0.1" :port 0 :public-origin origin
+            :webauthn-rp-id "localhost"}
+   :routing {:default-provider "ollama" :default-model "test-model"
+             :cloud-enabled? false}
+   :privacy {:allow-cloud-without-review? false :bind-loopback-only? true}
+   :memory {:max-session-messages 10 :max-context-messages 10}
+   :providers [{:id "ollama" :kind :ollama :local? true :base-url "http://127.0.0.1:11434" :reviewed? true :enabled? true}]})
+
+(defonce ^:private client (HttpClient/newHttpClient))
+
+(defn- call
+  "`send-origin?` is the whole point of this namespace: a browser omits the
+  header on a same-origin GET and sends it on a POST, so a test that always
+  sends it is testing a client nobody has."
+  [method path {:keys [body send-origin? csrf?]}]
+  (let [builder (cond-> (-> (HttpRequest/newBuilder
+                             (URI/create (str "http://127.0.0.1:"
+                                              (.getPort (.getAddress @server/server))
+                                              path)))
+                            (.header "Content-Type" "application/json"))
+                  send-origin? (.header "Origin" origin)
+                  csrf? (.header "X-CLOUD-ITONAMI-CSRF" csrf))
+        request (case method
+                  :get (.GET builder)
+                  :post (.POST builder (HttpRequest$BodyPublishers/ofString
+                                        (json/write-str (or body {})))))
+        response (.send client (.build request) (HttpResponse$BodyHandlers/ofString))]
+    {:status (.statusCode response)
+     :body (try (json/read-str (.body response) :key-fn keyword)
+                (catch Exception _ (.body response)))}))
+
+(defn- with-server [f]
+  (let [temporary (kio/temp-dir
+                   "cloud-itonami-domain-http")
+        previous @store/state
+        session {:csrf csrf :user-id "user-a" :organization-id "org-a"
+                 :membership-id "membership-a"
+                 :kind :passkey :authn-level :phishing-resistant}]
+    (try
+      (reset! store/state
+              (assoc (store/initial-state)
+                     :identity
+                     {:organizations {"org-a" {:id "org-a" :organization-id "acme"
+                                               :name "Acme" :status :active}}
+                      :users {"user-a" {:id "user-a" :passkey-enrolled? true}}
+                      :memberships {"membership-a" {:id "membership-a"
+                                                    :organization-id "org-a"
+                                                    :user-id "user-a" :role :owner}}
+                      :domain-verifications {}}))
+      (with-redefs [config-loader/data-dir (fn [] temporary)
+                    identity/session (fn [_] session)
+                    identity/require-passkey! identity
+                    identity/configure! (fn [_] nil)]
+        (server/stop!)
+        (server/start! config)
+        (try (f) (finally (server/stop!))))
+      (finally (server/stop!) (reset! store/state previous)))))
+
+(deftest the-read-answers-a-browser-shaped-request
+  (with-server
+    (fn []
+      (testing "no Origin, as a same-origin GET from a page actually arrives"
+        (let [{:keys [status body]} (call :get "/api/identity/domain-verifications"
+                                          {:send-origin? false})]
+          (is (= 200 status)
+              "this answered 403 on every page load until 2026-08-12")
+          (is (vector? (:verifications body)))))
+      (testing "and still answers when a client does send one"
+        (is (= 200 (:status (call :get "/api/identity/domain-verifications"
+                                  {:send-origin? true}))))))))
+
+(deftest the-writes-still-require-origin-and-csrf
+  (with-server
+    (fn []
+      (testing "a write without Origin is refused — the read's relaxation must
+                not have reached the routes that change something"
+        (is (= 403 (:status (call :post "/api/identity/domain-verifications"
+                                  {:body {:domain "example.com"}
+                                   :send-origin? false :csrf? true})))))
+      (testing "and a write without the CSRF token is refused too"
+        (is (= 403 (:status (call :post "/api/identity/domain-verifications"
+                                  {:body {:domain "example.com"}
+                                   :send-origin? true :csrf? false})))))
+      (testing "with both, it is admitted"
+        (is (= 201 (:status (call :post "/api/identity/domain-verifications"
+                                  {:body {:domain "example.com"}
+                                   :send-origin? true :csrf? true}))))))))
+
+(deftest the-acme-challenge-answers-a-published-token-as-plain-bytes
+  ;; The CA compares the response body to the key authorization byte for byte
+  ;; (RFC 8555), so this route must not wrap it in anything. And it must be
+  ;; reachable with no session at all — the CA holds no credential here.
+  (with-server
+    (fn []
+      (let [token "acme-token-0123456789abcd"]
+        (is (= 404 (:status (call :get (str "/.well-known/acme-challenge/" token)
+                                  {:send-origin? false})))
+            "nothing is published yet, and a guess is not an answer")
+        (tls/publish-challenge! "acme.example" token "the-key-authorization")
+        (let [{:keys [status body]}
+              (call :get (str "/.well-known/acme-challenge/" token)
+                    {:send-origin? false})]
+          (is (= 200 status))
+          (is (= "the-key-authorization" body)
+              "the bytes and nothing else — no JSON envelope, no trailing newline"))
+        (tls/retract-challenge! token)
+        (is (= 404 (:status (call :get (str "/.well-known/acme-challenge/" token)
+                                  {:send-origin? false}))))))))
+
+(deftest the-activation-nonce-document-is-public-and-refuses-to-guess
+  ;; Gate B's document (ADR-0043). It has to answer a caller that holds no
+  ;; session — a prober being pointed at a name for the first time has no
+  ;; credential for it — so the thing worth asserting is that being public does
+  ;; not make it answer for a name nobody proved.
+  (with-server
+    (fn []
+      (testing "reachable with no session, no Origin and no CSRF"
+        (let [{:keys [status body]}
+              (call :get "/.well-known/itonami-domain-binding.json"
+                    {:send-origin? false})]
+          ;; The request arrives with `Host: 127.0.0.1:<port>`, which no binding
+          ;; claims. With no match there is no fallback: handing out a nonce for
+          ;; "the deployment's binding" is how a name gets activated for a
+          ;; tenant that never proved it (the same reading as ADR-0025).
+          (is (= 404 status))
+          (is (= "cloud.itonami.app.domain-binding-nonce.v1" (:schema body)))
+          (is (nil? (:nonce body))
+              "a 404 that carried a nonce would defeat the whole gate")))
+      (testing "and it is a GET-only document"
+        (is (not= 200 (:status (call :post "/.well-known/itonami-domain-binding.json"
+                                     {:send-origin? true :csrf? true}))))))))

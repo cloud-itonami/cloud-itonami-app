@@ -1,0 +1,38 @@
+providers:
+  murakumo:
+    stale_timeout_seconds: 600
+    request_timeout_seconds: 900
+model:
+  max_tokens: 8192
+  provider: murakumo
+  default: mishima
+  base_url: https://api.murakumo.cloud/v1
+auxiliary:
+  free_only: true
+  vision:
+    reasoning_effort: none
+  web_extract: {}
+  compression:
+    reasoning_effort: none
+  skills_hub: {}
+  approval: {}
+  mcp: {}
+  title_generation:
+    reasoning_effort: none
+  triage_specifier: {}
+plugins:
+  enabled: []
+gateway:
+  cron_only: true
+  multiplex_profiles: true
+_config_version: 51
+agent:
+  max_turns: 500
+  run_budget_seconds: 600
+cron:
+  max_parallel_jobs: 12
+
+compression:
+  threshold_tokens: 20000
+  proactive_prune_tokens: 16000
+  tail_mode: lean

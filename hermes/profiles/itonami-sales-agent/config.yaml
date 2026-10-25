@@ -1,0 +1,107 @@
+# Host-local blocks (command_allowlist, onboarding, secrets, skills, terminal) are kept on the host and omitted here.
+model:
+  provider: murakumo
+  base_url: https://api.murakumo.cloud/v1
+  default: mishima
+  max_tokens: 8192
+  context_length: 131072
+providers:
+  murakumo:
+    base_url: https://api.murakumo.cloud/v1
+    api_mode: chat_completions
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+fallback_providers: []
+auxiliary:
+  free_only: true
+  vision:
+    provider: murakumo
+    base_url: https://api.murakumo.cloud/v1
+    model: qwen3-vl-2b-instruct
+    reasoning_effort: none
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  web_extract:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  compression:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    reasoning_effort: none
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  skills_hub:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  approval:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  mcp:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  title_generation:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    reasoning_effort: none
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  triage_specifier:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+agent:
+  max_turns: 40
+  run_budget_seconds: 600
+platform_toolsets:
+  cli: [mcp-agency]
+  telegram: []
+  discord: []
+  whatsapp: []
+  slack: []
+  signal: []
+  homeassistant: []
+  qqbot: []
+  yuanbao: []
+  teams: []
+  google_chat: []
+mcp_servers:
+  agency:
+    env:
+      ITONAMI_AGENCY_ROLE: itonami-sales-agent
+      ITONAMI_AGENCY_APP_DIR: ${ITONAMI_AGENCY_APP_DIR}
+      ITONAMI_AGENCY_CONFIG: ${ITONAMI_AGENCY_CONFIG}
+      AGENCY_SALES_MAIL_TOKEN: ${AGENCY_SALES_MAIL_TOKEN}
+      AGENCY_SALES_AOZORA_TOKEN: ${AGENCY_SALES_AOZORA_TOKEN}
+      AGENCY_SALES_EVENT_KEY: ${AGENCY_SALES_EVENT_KEY}
+    command: /bin/sh
+    args:
+      - -c
+      - 'exec node "${ITONAMI_AGENCY_APP_DIR:?}/bin/itonami-agency-mcp.mjs"'
+    connect_timeout: 30.0
+    tools:
+      include:
+        - agency_status
+        - agency_mail_list
+        - agency_mail_read
+        - agency_mail_context
+        - agency_mail_submissions
+        - agency_mail_draft
+        - agency_mail_send
+        - agency_mail_submit
+        - agency_event_append
+        - agency_events_read

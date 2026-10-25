@@ -1,0 +1,16 @@
+(ns cloud.itonami.app.central-auth-claims
+  "Assurance predicate for claims ALREADY fetched from the configured issuer.
+  Does not authenticate a request or establish membership. The caller must
+  still verify issuer, audience/client, scope, nonce/PKCE and owner binding.")
+
+(defn passkey-proof?
+  "Accept direct WebAuthn and the exact provenance of the first-party Kotoba
+  controller link. Additional/unknown methods and lower assurance refuse.
+  A controller-link label without WebAuthn is not a passkey proof."
+  [profile]
+  (and (= "phishing-resistant" (:acr profile))
+       (sequential? (:amr profile))
+       (every? string? (:amr profile))
+       (= (count (:amr profile)) (count (set (:amr profile))))
+       (contains? #{#{"webauthn"} #{"webauthn" "kotoba-controller-link"}}
+                  (set (:amr profile)))))

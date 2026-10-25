@@ -1,0 +1,21 @@
+;; pure-head decision core probe
+;;
+;; Exists only so the parity suite can prove that the pinned compiler admits
+;; the pure S-expression heads `lam`/`app`/`ref` on the word-typed i64 slice.
+;; Before amu `78cdc2e` (kotoba-sema `3378b1d3`), these heads did not lower in
+;; the frontend; this file did not compile. It is deliberately trivial and
+;; side-effect free — it is a portability gate, not a product decision.
+;;
+;; `ref` here is used the way the grammar admits: to name a top-level
+;; definition (`inc1`), not a local — the STM forbids `ref` on locals with
+;; `:ambient-forbidden`. `perform` is the host-answered capability effect and
+;; is intentionally NOT used: it needs a host capability kit this probe has
+;; no business wiring.
+(ns pure-head-probe
+  (:export [step round-trip]))
+
+(defn inc1 [n :i64] :i64 (+ n 1))
+
+(defn step [n :i64] :i64 (app (ref inc1) n))
+
+(defn round-trip [n :i64] :i64 (app (lam [x] (+ x x)) n))

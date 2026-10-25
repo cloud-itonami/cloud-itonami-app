@@ -1,0 +1,17 @@
+{:format :kotoba.kir/v4,
+ :signature nil,
+ :functions
+ [{:name calibration-kind,
+   :params [has-measure? is-leaf?],
+   :result :string,
+   :effects #{},
+   :body
+   (if has-measure? (if is-leaf? "rebased" "ignored") "unmatched"),
+   :param-types [:bool :bool]}],
+ :oracle-value nil,
+ :schema-identities nil,
+ :exports [calibration-kind],
+ :schemas nil,
+ :effects #{},
+ :blocks [],
+ :entry nil}

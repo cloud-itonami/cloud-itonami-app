@@ -10,7 +10,7 @@ zip="$release_dir/Cloud-Itonami-${version}-Windows-x64.zip"
 
 cd "$repo_dir"
 if [[ ! -f target/release/cloud-itonami-app.jar ]]; then
-  clojure -T:build uber
+  kbb -T:build uber
 fi
 rm -rf "$stage_parent"
 mkdir -p "$stage"

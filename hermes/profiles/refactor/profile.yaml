@@ -1,0 +1,12 @@
+description: refactor — clj, cljc を kotoba に refactor するよ. jvm 依存を外して, amu, kotoba
+  cli compile にするよ.
+description_auto: false
+ui_meta:
+  hermes-bots:
+    shape: blobatar
+    color: '#f97316'
+    imageKind: shape
+    title: refactor
+    created: 1788071491945
+_ui_meta_revisions:
+  hermes-bots: 1

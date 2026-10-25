@@ -70,7 +70,7 @@ esign, approval, and `may-act?` remains the Passkey ceremony.
   card and three disabled SSO buttons explained only by a `title` tooltip.
 - A browser without WebAuthn is a state of the surface, not an error of the
   click: the Passkey controls are disabled with the reason on the screen.
-- `test/browser/signin_gate.cljs` holds this in a real browser. It reaches the
+- `test/browser/signin_gate.cljk` holds this in a real browser. It reaches the
   interrupted state the way a person does — register, then no authenticator to
   finish with — and refuses to run against a store holding a finished
   registration.

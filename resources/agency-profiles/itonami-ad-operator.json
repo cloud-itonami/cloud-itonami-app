@@ -1,0 +1,28 @@
+{
+  "schema": "itonami.agency.profile.v1",
+  "role": "itonami-ad-operator",
+  "channels": [
+    "mail",
+    "aozora"
+  ],
+  "hostConfigurationExample": "config/agency-ad-operator.example.json",
+  "tools": [
+    "agency_status",
+    "agency_mail_list",
+    "agency_mail_read",
+    "agency_mail_context",
+    "agency_mail_submissions",
+    "agency_mail_draft",
+    "agency_mail_send",
+    "agency_mail_submit",
+    "agency_aozora_metrics",
+    "agency_aozora_publish",
+    "agency_event_append",
+    "agency_events_read"
+  ],
+  "authority": "host-pinned owner-signed exact-action capability",
+  "state": "encrypted owner-approved events in the bound aozora DID repository",
+  "liveVerified": false,
+  "distributedExecutionQualified": false,
+  "resendReadOnlyExample": "config/agency-ad-operator.resend.example.json"
+}

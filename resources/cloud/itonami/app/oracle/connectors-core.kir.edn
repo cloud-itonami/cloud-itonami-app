@@ -1,0 +1,28 @@
+{:format :kotoba.kir/v4,
+ :signature nil,
+ :functions
+ [{:name implier-of,
+   :params [scope],
+   :result [:option :string],
+   :effects #{},
+   :body
+   (if
+    (string=? scope "https://www.googleapis.com/auth/gmail.readonly")
+    (option-some-of
+     [:option :string]
+     "https://www.googleapis.com/auth/gmail.modify")
+    (if
+     (string=? scope "Mail.Read")
+     (option-some-of [:option :string] "Mail.ReadWrite")
+     (if
+      (string=? scope "Mail.ReadBasic")
+      (option-some-of [:option :string] "Mail.ReadWrite")
+      (option-none-of [:option :string])))),
+   :param-types [:string]}],
+ :oracle-value nil,
+ :schema-identities nil,
+ :exports [implier-of],
+ :schemas nil,
+ :effects #{},
+ :blocks [],
+ :entry nil}

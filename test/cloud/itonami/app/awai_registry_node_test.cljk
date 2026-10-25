@@ -1,0 +1,37 @@
+(ns cloud.itonami.app.awai-registry-node-test
+  "The active Node host keeps accepted content origins available to its
+  install adapter without widening the candidate response."
+  (:require [kotoba.test :refer [deftest is]]
+            [cloud.itonami.app.awai-registry-node :as registry-node]))
+
+(deftest candidate-wire-carries-only-the-release-selected-origin-records
+  (let [origins [{:cid "bafy-origin-a"
+                  :host "origin-a.example"
+                  :spki-sha256 (apply str (repeat 64 "a"))
+                  :expires-at 2000000000}
+                 {:cid "bafy-origin-b"
+                  :host "origin-b.example"
+                  :spki-sha256 (apply str (repeat 64 "b"))
+                  :expires-at 2000000000}
+                 {:cid "bafy-origin-c"
+                  :host "origin-c.example"
+                  :spki-sha256 (apply str (repeat 64 "c"))
+                  :expires-at 2000000000}]
+        candidate {:domain "murakumo.cloud"
+                   :app-id "net.kotoba.murakumo"
+                   :publisher-did "did:key:z1"
+                   :decision :candidate
+                   :revocation-status "clear"
+                   :manifest-cid "bafy-manifest"
+                   :content-origin-cids (mapv :cid origins)
+                   :content-origin-records origins
+                   :content-origins [{:origin "https://origin-a.example"}]
+                   :private-host-detail "must-not-cross-the-wire"}
+        wire (registry-node/candidate->wire candidate)
+        expected-keys (set (filter #(contains? candidate %)
+                                   registry-node/candidate-wire-keys))]
+    (is (= origins (:content-origin-records wire)))
+    (is (= (mapv :cid origins) (:content-origin-cids wire)))
+    (is (not (contains? wire :content-origins)))
+    (is (not (contains? wire :private-host-detail)))
+    (is (= expected-keys (set (keys wire))))))

@@ -125,8 +125,8 @@ and wrong: the first tenant here is `gftd`, a real company with real members.
 
 ## Verified
 
-`clojure -M:test` — 1216 tests, 4968 assertions, 0 failures, 0 errors.
-`clojure -M:lint` — 0 errors (10 warnings, all pre-existing and elsewhere).
+`kbb -M:test` — 1216 tests, 4968 assertions, 0 failures, 0 errors.
+`kbb -M:lint` — 0 errors (10 warnings, all pre-existing and elsewhere).
 
 Covering this ADR: `core-test/a-personal-tenant-is-the-users-own-namespace-and-landing-is-deliberate`
 (one tenant after a registration that names no organization, and it is personal;

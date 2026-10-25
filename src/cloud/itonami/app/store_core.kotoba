@@ -49,7 +49,7 @@
 ;; around it — compiles for `:x86_64-kotoba-v1` and `:aarch64-kotoba-v1`
 ;; too (see the parity test's native-target assertions).
 ;;
-;; Parity: test/cloud/itonami/app/store_core_kotoba_parity_test.clj
+;; Parity: test/cloud/itonami/app/store_core_kotoba_parity_test.cljk
 
 (ns store-core
   (:export [retention-drop-count retention-drop-count-hysteresis]))

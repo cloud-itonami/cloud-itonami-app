@@ -1,0 +1,376 @@
+;; Drive the real Bots view in a real browser.
+;;
+;;     NODE_PATH=<superproject>/node_modules kbb --backend sci test/browser/bots_view.cljk
+;;
+;; Needs a server on :1338 whose store already holds a human session. It is not
+;; in `test-runner`: that suite is pure JVM and this needs a browser and a
+;; running app, which is a different thing to have and a different thing to
+;; fail at.
+;;
+;; nbb rather than .mjs: AGENTS.md forbids new Node harnesses in raw JS.
+;;
+;; ## Why this exists, measured
+;;
+;; The JVM suite proves the contract and the host. It cannot prove the CLIENT
+;; runs, and on the first run of this file it found two defects that 1343
+;; passing tests did not — both of the same shape, a value crossing the JSON
+;; boundary and quietly becoming something else:
+;;
+;;   - `bot/avatar` read `:avatar/color`; the wire sends `{color}`. Every Bot
+;;     came back the default blue however it was drawn, in the function whose
+;;     docstring says it refuses rather than substitutes.
+;;   - `grant-widens?` compared the grant against tools narrowed by CONNECTION
+;;     as well as by what the deployment enables, so a brand-new Bot warned
+;;     "this Bot names tools this deployment has not enabled" — every time.
+;;
+;; Neither raises an exception. Both render. That is the class of bug this
+;; catches and why the assertions below are about the page rather than about
+;; a return value.
+
+(require '["playwright$default" :as pw]
+         '[kotoba.lang.text :as str]
+         '[promesa.core :as p])
+
+(def base "http://localhost:1338")
+(def token "botsdemo-token-0123456789")
+
+(def failures (atom []))
+(def console-errors (atom []))
+
+(defn check! [label ok?]
+  (println (if ok? "  ok  " "  FAIL") label)
+  (when-not ok? (swap! failures conj label)))
+
+(defn -main []
+  ;; The Chrome that is on this machine, headless, with its own profile —
+  ;; rather than downloading Playwright's bundled build. Headless also keeps it
+  ;; out of the focus contention this desktop has with its other sessions.
+  (p/let [browser (.launch (.-chromium pw)
+                           #js {:headless true
+                                :executablePath
+                                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"})
+          context (.newContext browser)
+          _ (.addCookies context #js [#js {:name "cloud_itonami_identity"
+                                           :value token
+                                           :domain "localhost"
+                                           :path "/"}])
+          page (.newPage context)
+          _ (.setViewportSize page #js {:width 390 :height 844})
+          _ (.on page "console"
+                 (fn [msg]
+                   (when (= "error" (.type msg))
+                     (swap! console-errors conj (.text msg)))))
+          _ (.on page "pageerror"
+                 (fn [err] (swap! console-errors conj (str "pageerror: " err))))
+          ;; A bare "403 Forbidden" in the console names nothing. Record the
+          ;; method and URL, or the next person has to guess which of a dozen
+          ;; polled endpoints it was.
+          _ (.on page "response"
+                 (fn [res]
+                   (when (>= (.status res) 400)
+                     (swap! console-errors conj
+                            (str "HTTP " (.status res) " "
+                                 (.method (.request res)) " " (.url res))))))
+          _ (.goto page (str base "/#/bots") #js {:waitUntil "networkidle"})
+          _ (.waitForTimeout page 1500)]
+
+    (println "\n── the view is reachable and rendered ──")
+    (p/let [nav-visible (.isVisible page ".local-nav__item[data-view='bots']")
+            _ (.click page ".local-nav__item[data-view='bots']")
+            _ (.waitForTimeout page 1200)
+            panel-hidden (.getAttribute (.locator page "[data-view-panel='bots']") "hidden")
+            current (.textContent page "#current-view")]
+      (check! "Bots nav item is present" nav-visible)
+      (check! "the Bots panel is the visible one" (nil? panel-hidden))
+      (check! "the header names the view" (= "あなたの Bot" (str/trim (or current "")))))
+
+    (println "\n── onboarding is derived from the registry ──")
+    (p/let [tiles (.count (.locator page ".bots-tile"))
+            names (.allTextContents (.locator page ".bots-tile__name"))
+            usable (.count (.locator page ".bots-tile:not([disabled])"))]
+      (check! (str "the service grid rendered " tiles " connectors") (= 8 tiles))
+      (check! "it names the real connectors, not placeholders"
+              (and (some #(= "Gmail" %) names) (some #(= "GitHub" %) names)))
+      (check! "connectors with no enabled tool are shown disabled, not dropped"
+              (and (pos? usable) (< usable tiles))))
+
+    ;; The same set, by job (ADR-0094). The check that matters is not that the
+    ;; rows render — it is that the two views share ONE selection: a slot chip
+    ;; appearing because a tile was clicked is the only evidence that
+    ;; `botsState.picked` is the single answer both of them read.
+    (println "\n── apps are also chosen by the job they do ──")
+    (p/let [rows (.count (.locator page ".bots-slot"))
+            titles (.allTextContents (.locator page ".bots-slot__title"))
+            selects (.count (.locator page ".bots-slot__select"))
+            chips-before (.count (.locator page ".bots-slot__chip"))
+            ;; Read out of the DOM rather than named here. Which connectors are
+            ;; offerable depends on the OAuth clients THIS machine has
+            ;; configured, so a hard-coded id would make this test pass or fail
+            ;; on a fact about the developer's environment rather than about
+            ;; the picker.
+            offerable (.evaluate
+                       page
+                       "() => { const o = document.querySelector(
+                          '.bots-slot__select option:not([disabled]):not([value=\"\"])');
+                        return o ? o.value : null; }")
+            _ (when offerable
+                (.selectOption (.locator page ".bots-slot__select >> nth=0") offerable))
+            _ (.waitForTimeout page 300)
+            chips-after (.count (.locator page ".bots-slot__chip"))
+            pressed (.count (.locator page ".bots-tile[aria-pressed='true']"))]
+      (check! (str "the picker offers " rows " job rows") (pos? rows))
+      (check! "the rows are named by job, not by vendor"
+              (some #(= "カレンダー" %) titles))
+      (check! "each row offers a select" (= rows selects))
+      ;; A FAILED check rather than a skip when nothing is offerable: the grid
+      ;; assertions above already require at least one usable connector, so an
+      ;; environment with none is one this suite cannot measure — and saying so
+      ;; is not the same as saying the picker works.
+      (check! "at least one app is offerable, so the next two mean something"
+              (some? offerable))
+      (check! "choosing in a slot adds a chip" (= (inc chips-before) chips-after))
+      (check! "and the grid below shows the same app selected" (= 1 pressed)))
+
+    (println "\n── the avatar picker ──")
+    (p/let [_ (.fill page "#bots-service-search" "gmail")
+            _ (.waitForTimeout page 300)
+            filtered (.count (.locator page ".bots-tile"))
+            _ (.click page ".bots-tile")
+            _ (.waitForTimeout page 300)
+            next-disabled (.isDisabled page "#bots-services-next")
+            _ (.click page "#bots-services-next")
+            _ (.waitForTimeout page 800)
+            colors (.count (.locator page "#bots-color-row .bots-swatch"))
+            glyphs (.count (.locator page "#bots-glyph-row .bots-swatch"))
+            suggestions (.count (.locator page ".bots-suggestion"))]
+      (check! "search narrows the grid" (= 1 filtered))
+      (check! "Next is enabled once something is picked" (not next-disabled))
+      (check! "clicking a tile is the same selection the slot rows read"
+              (= 2 (.count (.locator page ".bots-slot__chip"))))
+      (check! "ten colours" (= 10 colors))
+      (check! "eight glyphs" (= 8 glyphs))
+      (check! "a suggestion is offered for the picked connector" (pos? suggestions))
+      (check! "detailed permission flags stay out of the create step"
+              (zero? (.count (.locator page "#bots-browser, #bots-omakase, #bots-writes")))))
+
+    (println "\n── making a Bot ──")
+    (p/let [_ (.click page (str "#bots-color-row .bots-swatch >> nth=2"))
+            _ (.click page (str "#bots-glyph-row .bots-swatch >> nth=7"))
+            _ (.waitForTimeout page 200)
+            preview-color (.getAttribute (.locator page "#bots-avatar-preview") "data-color")
+            preview-glyph (.getAttribute (.locator page "#bots-avatar-preview") "data-glyph")
+            _ (.fill page "#bots-name" "workspace worker")
+            _ (.fill page "#bots-brief" "毎朝わたしの受信箱を見て、返事が要るものと待てるものを分けて。")
+            _ (.click page "#bots-create")
+            _ (.waitForTimeout page 2500)
+            rail (.count (.locator page ".bots-rail__item"))
+            rail-name (.textContent page ".bots-rail__name")
+            thread-hidden (.getAttribute (.locator page "#bots-thread") "hidden")
+            thread-name (.textContent page "#bots-titlebar-name")
+            avatar-color (.getAttribute (.locator page "#bots-titlebar-avatar") "data-color")
+            avatar-status (.getAttribute (.locator page "#bots-titlebar-avatar") "data-status")
+            eye-content (.evaluate page
+                                   "getComputedStyle(document.querySelector('#bots-titlebar-avatar'), '::before').content")
+            pupil-content (.evaluate page
+                                     "getComputedStyle(document.querySelector('#bots-titlebar-avatar'), '::after').content")]
+      (check! "the picker changes the preview" (and (= "orange" preview-color)
+                                                    (= "drop" preview-glyph)))
+      (check! "the Bot appears in the rail" (= 1 rail))
+      (check! "under the name it was given" (= "workspace worker" (str/trim (or rail-name ""))))
+      (check! "and the thread opened on it" (and (nil? thread-hidden)
+                                                 (= "workspace worker" (str/trim (or thread-name "")))))
+      (check! "carrying the colour that was picked" (= "orange" avatar-color))
+      (check! "carrying the server-derived status into its movement" (some? avatar-status))
+      (check! "the face has eyes and pupils" (and (= "\"\"" eye-content)
+                                                   (= "\"\"" pupil-content))))
+
+    (println "\n── right-click on a Bot opens the rail menu ──")
+    (p/let [_ (.evaluate page
+                         "document.querySelector('.bots-rail-menu') && (document.querySelector('.bots-rail-menu').hidden = true)")
+            before-hidden (.evaluate page
+                                     "(() => { const m = document.querySelector('.bots-rail-menu'); return !m || m.hidden; })()")
+            _ (.click page ".bots-rail__item")
+            _ (.waitForTimeout page 200)
+            after-left (.evaluate page
+                                  "(() => { const m = document.querySelector('.bots-rail-menu'); return !m || m.hidden; })()")
+            _ (.click page ".bots-rail__item" #js {:button "right"})
+            _ (.waitForTimeout page 300)
+            after-right (.evaluate page
+                                   "(() => { const m = document.querySelector('.bots-rail-menu'); return m && !m.hidden; })()")
+            labels (.allTextContents (.locator page "#bots-rail-menu [role='menuitem']"))
+            danger (.evaluate page
+                              "getComputedStyle(document.querySelector('#bots-rail-menu .bots-rail-menu__item--danger')).color")
+            _ (.evaluate page
+                         "([...document.querySelectorAll('#bots-rail-menu [role=menuitem]')]
+                           .find((node) => node.textContent.trim() === '会話IDをコピー') || {}).click()")
+            _ (.waitForTimeout page 400)
+            status (.textContent page "#bots-thread-status-line")
+            _ (.press (.-keyboard page) "Escape")]
+      (check! "the menu is closed before a right click" before-hidden)
+      (check! "a left click does not open the menu" after-left)
+      (check! "a right click opens the menu" after-right)
+      (check! "the menu names the same actions"
+              (= ["ピン留め"
+                  "1個のBotを新しいセクションに移動"
+                  "未読にする"
+                  "プロフィールを編集"
+                  "複製"
+                  "テンプレートとして共有"
+                  "会話IDをコピー"
+                  "サイドバーから非表示"
+                  "1個のBotを削除"]
+                 (mapv str/trim labels)))
+      (check! "delete is painted as a danger action"
+              (or (str/includes? (or danger "") "rgb(224")
+                  (str/includes? (or danger "") "rgb(196")
+                  (str/includes? (or danger "") "rgb(186"))))
+      (check! "copying the conversation ID is a real action"
+              (str/includes? (or status "") "会話ID"))))
+
+    (println "\n── scheduled work stays scoped to the selected Bot ──")
+    (p/let [titlebar-visible (.isVisible page "#bots-titlebar-context")
+            identity-visible (.isVisible page "#bots-titlebar-identity")
+            new-visible (.isVisible page "#bots-new")
+            routines-visible (.isVisible page "#bots-routines")
+            _ (.click page "#bots-routines")
+            _ (.waitForTimeout page 300)
+            routines-panel-visible (.isVisible page "#bots-routines-panel")
+            routine-create-visible (.isVisible page "#bots-routine-create")
+            handoff-controls (.count (.locator page "#bots-handoff-send"))]
+      (check! "the selected Bot lives in the app titlebar" (and titlebar-visible identity-visible))
+      (check! "new Bot is a titlebar action" new-visible)
+      (check! "scheduled work is a compact titlebar action" routines-visible)
+      (check! "the selected Bot's scheduled work opens in its own panel"
+              (and routines-panel-visible routine-create-visible))
+      (check! "Bot-to-Bot handoff remains outside the human control surface"
+              (zero? handoff-controls))
+      (.click page "#bots-routines-close"))
+
+    (println "\n── quality is scored without turning missing evidence green ──")
+    (p/let [quality-visible (.isVisible page "#bots-quality")
+            _ (.click page "#bots-quality")
+            _ (.waitForTimeout page 300)
+            panel-visible (.isVisible page "#bots-quality-panel")
+            score-count (.count (.locator page ".bots-quality-score"))
+            gate-count (.count (.locator page ".bots-quality-gate"))
+            status (.textContent page "#bots-quality-status")
+            note (.textContent page "#bots-quality-note")
+            _ (.click page "#bots-quality-close")]
+      (check! "quality is a compact titlebar action" quality-visible)
+      (check! "the quality panel opens" panel-visible)
+      (check! "stability, successful-output quality and effective quality are separate"
+              (= 3 score-count))
+      (check! "all acceptance gates are visible" (= 9 gate-count))
+      (check! "the current baseline is not presented as PASS"
+              (not (str/includes? (or status "") "PASS")))
+      (check! "the fixed-suite sample count is explained"
+              (str/includes? (or note "") "固定評価")))
+
+    (println "\n── the phone layout remains one application viewport ──")
+    (p/let [_ (.waitForTimeout page 300)
+            rail-visible (.isVisible page ".bots-rail")
+            rail-direction (.evaluate page
+                                      "getComputedStyle(document.querySelector('.bots-rail__list')).flexDirection")
+            stacked (.evaluate page
+                               "(() => {
+                                  const items = [...document.querySelectorAll('.bots-rail__item')];
+                                  if (items.length < 2) return true;
+                                  const a = items[0].getBoundingClientRect();
+                                  const b = items[1].getBoundingClientRect();
+                                  return b.top > a.top && Math.abs(a.left - b.left) < 8;
+                                })()")
+            composer-visible (.isVisible page ".bots-composer")
+            composer-box (.boundingBox (.locator page ".bots-composer"))
+            viewport-height (.evaluate page "window.innerHeight")
+            document-height (.evaluate page "document.documentElement.scrollHeight")]
+      (check! "the Bot picker stacks vertically at 390px"
+              (and rail-visible (= "column" rail-direction) stacked))
+      (check! "the composer remains visible without document scrolling"
+              (and composer-visible
+                   composer-box
+                   (<= (+ (.-y composer-box) (.-height composer-box)) viewport-height)))
+      (check! "the document itself does not scroll vertically"
+              (<= document-height viewport-height)))
+
+    ;; This message asks for the inbox, so the Bot has to reach for a Gmail
+    ;; tool, and reaching for one nobody authorized is what produces the card.
+    ;; The card is no longer a precondition of the turn — a Bot with an
+    ;; unauthorized connector answers ordinary messages — so what is checked
+    ;; here depends on the model actually calling the tool. If this ever fails
+    ;; with prose instead of a card, read the transcript before touching the
+    ;; assertion: a Bot that answers a question about mail without trying to
+    ;; read any mail is the defect, not the check.
+    (println "\n── a turn that needs Gmail, and the card it comes back with ──")
+    (p/let [_ (.fill page "#bots-input" "受信箱を見て、返事が要るものを教えて")
+            _ (.waitForTimeout page 200)
+            ;; send is never greyed for an empty prompt any more (shinkansen.audit
+            ;; :idle-disabled, cloud-kotoba-dds.composer 2026-09-16); an empty
+            ;; submit is a no-op the handler ignores
+            send-disabled (.isDisabled page "#bots-send")
+            _ (.click page "#bots-send")
+            _ (.waitForTimeout page 3000)
+            messages (.count (.locator page "#bots-messages .ck-bots__bubble"))
+            person (.count (.locator page "#bots-messages .ck-bots__bubble[data-role='person']"))
+            card-count (.count (.locator page ".bots-card"))
+            card-title (.textContent page ".bots-card__title")
+            scopes (.count (.locator page ".bots-card__scopes li"))
+            button-label (.textContent page ".bots-card .tool-button")
+            status (.textContent page "#bots-titlebar-status")]
+      (check! "Send is enabled (never greyed for an empty prompt)" (not send-disabled))
+      (check! "both turns are in the thread" (and (= 2 messages) (= 1 person)))
+      (check! "the Bot came back with a card, not just prose" (= 1 card-count))
+      (check! "the card names the service" (str/includes? (or card-title "") "Gmail"))
+      (check! "and the scopes it would be granted, so the ask is consent"
+              (pos? scopes))
+      (check! "with an authorize button" (str/includes? (or button-label "") "認証"))
+      (check! "and the Bot reports itself as waiting for a connection"
+              (str/includes? (or status "") "接続待ち")))
+
+    (println "\n── the reach panel ──")
+    (p/let [_ (.click page "#bots-thread-tools")
+            _ (.waitForTimeout page 400)
+            panel (.textContent page "#bots-thread-panel")]
+      (check! "it states the reach in tools" (str/includes? (or panel "") "届く範囲"))
+      (check! "and says writes are not permitted for this Bot"
+              (str/includes? (or panel "") "読み取りのみ")))
+
+    (println "\n── the state a single-page app has to keep ──")
+    (p/let [_ (.evaluate page "window.__botsProbe = 'kept'")
+            _ (.click page ".local-nav__item[data-view='plugins']")
+            _ (.waitForTimeout page 600)
+            _ (.click page ".local-nav__item[data-view='bots']")
+            _ (.waitForTimeout page 1200)
+            probe (.evaluate page "window.__botsProbe")
+            thread-name (.textContent page "#bots-titlebar-name")
+            messages (.count (.locator page "#bots-messages .ck-bots__bubble"))]
+      (check! "crossing views did not reload the document" (= "kept" probe))
+      (check! "the Bot is still selected after crossing"
+              (= "workspace worker" (str/trim (or thread-name ""))))
+      (check! "and its conversation is still there" (= 2 messages)))
+
+    ;; Under target/ rather than /tmp: it is a build output of this repository
+    ;; and belongs where the other ones are, and where .gitignore already covers
+    ;; it.
+    (p/let [path (or js/process.env.BOTS_VIEW_SCREENSHOT "target/bots-view.png")
+            _ (.screenshot page #js {:path path :fullPage false})]
+      (println (str "\nscreenshot: " path)))
+
+    (println "\n── console ──")
+    ;; No exclusions. There was one — `GET /api/identity/domain-verifications`
+    ;; 403'd on every load because it asked for an `Origin` header a browser
+    ;; does not send on a same-origin GET — and this harness is how that was
+    ;; found. It is fixed, so the exclusion is gone rather than kept as a
+    ;; standing allowance: a list of errors we have agreed to ignore is how a
+    ;; console check stops checking.
+    (check! (str "no console errors" (when (seq @console-errors)
+                                       (str ": " (pr-str (take 5 @console-errors)))))
+            (empty? @console-errors))
+
+    (p/do
+      (.close browser)
+      (println (str "\n" (if (empty? @failures) "ALL CHECKS PASSED"
+                             (str (count @failures) " FAILED: "
+                                  (str/join " | " @failures)))))
+      (when (seq @failures) (js/process.exit 1)))))
+
+(-main)

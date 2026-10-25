@@ -1,0 +1,116 @@
+(ns cloud.itonami.app.awai-bundle-node-test
+  (:require ["node:crypto" :as crypto]
+            ["node:fs" :as fs]
+            ["node:path" :as path]
+            [ipld.dag-pb :as dag-pb]
+            [protobuf.wire :as protobuf]
+            [kotoba.test :refer [deftest is]]
+            [kotoba.protocol.cid :as cid]
+            [cloud.itonami.app.awai-bundle-node :as bundle]
+            [cloud.itonami.app.awai-content-store-node :as content-store]
+            [cloud.itonami.app.awai-install-store-node :as install-store]))
+
+(def unixfs-schema
+  {1 {:name :type :type :enum}
+   2 {:name :data :type :bytes}
+   3 {:name :filesize :type :uint64}
+   4 {:name :blocksizes :type :uint64 :repeated true}})
+
+(defn- sha256 [bytes]
+  (-> (.createHash crypto "sha256")
+      (.update bytes)
+      (.digest)))
+
+(defn- cid-for-codec [codec-code bytes]
+  (str "b"
+       (cid/base32-encode
+        (concat [1 codec-code 18 32]
+                (array-seq (sha256 bytes))))))
+
+(defn- store-block! [data-root block-cid bytes]
+  (let [result (content-store/store-verified-block!
+                {:data-root data-root :cid block-cid :bytes bytes})]
+    (when-not (= :stored (:decision result))
+      (throw (ex-info "fixture block store failed" result)))
+    block-cid))
+
+(defn- unixfs-node [type data links file-size block-sizes]
+  (let [unixfs (protobuf/encode
+                unixfs-schema
+                (cond-> {:type type}
+                  data (assoc :data data)
+                  (some? file-size) (assoc :filesize file-size)
+                  (seq block-sizes) (assoc :blocksizes block-sizes)))]
+    (dag-pb/encode {:data unixfs :links links})))
+
+(defn- fixture-bundle [data-root]
+  (let [html (.from js/Buffer "<!doctype html><title>Awai</title>" "utf8")
+        file-cid (cid-for-codec 85 html)
+        _ (store-block! data-root file-cid html)
+        file-link {:hash (cid/base32-decode (subs file-cid 1))
+                   :name "index.html"
+                   :tsize (.-byteLength html)}
+        root-bytes (unixfs-node 1 nil [file-link] nil nil)
+        root-cid (cid-for-codec 112 root-bytes)]
+    (store-block! data-root root-cid root-bytes)
+    {:html html :file-cid file-cid :root-cid root-cid}))
+
+(defn- with-data-root [f]
+  (let [target (.resolve path "target")
+        root (.join path target
+                    (str "awai-bundle-node-" (.randomUUID crypto)))]
+    (.mkdirSync fs target #js {:recursive true})
+    (.mkdirSync fs root #js {:mode 448})
+    (try
+      (f root)
+      (finally (.rmSync fs root #js {:recursive true :force true})))))
+
+(deftest materializes-an-entry-from-cid-verified-unixfs
+  (with-data-root
+    (fn [data-root]
+      (let [{:keys [html file-cid root-cid]} (fixture-bundle data-root)
+            result (bundle/materialize-entry data-root root-cid "index.html")]
+        (is (= :materialized (:decision result)))
+        (is (= root-cid (:bundle-cid result)))
+        (is (= file-cid (:entry-cid result)))
+        (is (= "text/html; charset=utf-8" (:content-type result)))
+        (is (= (.-byteLength html) (:byte-count result)))
+        (is (= (.toString html "utf8") (.toString (:bytes result) "utf8")))))))
+
+(deftest rejects-traversal-and-materializes-single-file-bundles
+  (with-data-root
+    (fn [data-root]
+      (let [{:keys [html root-cid]} (fixture-bundle data-root)
+            file-cid (cid-for-codec 85 html)
+            traversal (bundle/materialize-entry data-root root-cid "../index.html")
+            raw-root (bundle/materialize-entry data-root file-cid "index.html")]
+        (is (= :refuse (:decision traversal)))
+        (is (= :invalid-entry-path (:error traversal)))
+        (is (= :materialized (:decision raw-root)))
+        (is (= file-cid (:entry-cid raw-root)))
+        (is (= (.toString html "utf8")
+               (.toString (:bytes raw-root) "utf8")))))))
+
+(deftest refuses-a-missing-or-cid-mismatched-staged-block
+  (with-data-root
+    (fn [data-root]
+      (let [{:keys [root-cid]} (fixture-bundle data-root)
+            missing-cid (cid-for-codec 112 (.from js/Buffer "absent" "utf8"))
+            missing (bundle/materialize-entry data-root missing-cid "index.html")
+            filename (-> (.createHash crypto "sha256")
+                         (.update root-cid "utf8")
+                         (.digest "hex"))
+            corrupt-path (.join path data-root "awai-apps" "content" filename)
+            _written (.writeFileSync fs corrupt-path
+                                     (.from js/Buffer "corrupt" "utf8"))
+            _permissioned (.chmodSync fs corrupt-path 384)
+            corrupt (bundle/materialize-entry data-root root-cid "index.html")]
+        (is (= :refuse (:decision missing)))
+        (is (= :verified-content-block-unavailable (:error corrupt)))))))
+
+(deftest node-install-store-distinguishes-a-missing-installation
+  (with-data-root
+    (fn [data-root]
+      (is (= {:decision :missing}
+             (install-store/read-installation
+              data-root "net.kotoba.murakumo"))))))

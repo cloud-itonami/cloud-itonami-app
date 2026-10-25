@@ -21,6 +21,14 @@ private material.
   source control.
 - A `did:web` setting is not proof of domain control. Deployments must verify
   DNS/HTTPS ownership and publish the DID document before enabling it.
+- A service credential a person types — an API token, an account coordinate —
+  is never carried by a conversation (ADR-0093). A Bot names it from a closed
+  catalogue and never receives it; the value is posted to one endpoint, stored
+  in the macOS Keychain, and resolved at the call site, so nothing that reaches
+  a model has held it. A credential pasted into the composer while a request is
+  open is refused before anything is written, rather than recorded. This is a
+  boundary on **service** credentials and does not relax the human-
+  authentication boundary below.
 
 ## Workspace human-authentication boundary (ADR-2608302125)
 

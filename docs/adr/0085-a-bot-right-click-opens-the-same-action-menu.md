@@ -55,7 +55,7 @@ before the date groups.
   `81a29545a81ae9054993028f1ca05818c26d6c89`, patched in place and restarted):
   150 rail items; left-click does not open the menu; right-click labels match
   the list above byte-for-byte; delete is `rgb(236, 0, 0)`.
-- Playwright `test/browser/bots_view.cljs` asserts the same labels. It was not
+- Playwright `test/browser/bots_view.cljk` asserts the same labels. It was not
   re-run against this live process: the demo identity cookie is unauthenticated
   here.
 

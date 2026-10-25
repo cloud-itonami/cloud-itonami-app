@@ -97,7 +97,7 @@ resident workforce は capacity 1 なので、backoff する request はその�
 
 ## Verification
 
-- `clojure -M:test`: 1,989 tests / 11,710 assertions / 0 failures
+- `kbb -M:test`: 1,989 tests / 11,710 assertions / 0 failures
   （この変更前は 1,981 / 11,684 / 0）。
 - `bin/test-portable-cljs`: 57 tests / 230 assertions / 0 failures。
   判断は JVM と ClojureScript の両方で実行される。

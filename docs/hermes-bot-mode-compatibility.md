@@ -1,5 +1,8 @@
 # Hermes Agent Bot Mode compatibility
 
+Itonami agent is the Hermes agent and the Itonami desktop is the bots-first
+Hermes desktop: see ADR-0143 for the names and the full compatibility contract.
+
 ## Full profile migration
 
 `itonami bots import hermes` now uses the resident API's
@@ -13,12 +16,19 @@ Credentials, provider/account bindings and source tool authority are listed as
 `rebind-required`. Staging does not create or enable a Bot and does not widen a
 grant. See ADR-0088.
 
+A profile's `itonami.edn` (ids, org placement) crosses as provenance, the
+imported Bot's did is the profile's did when this fleet minted that profile
+and no other owner holds it (otherwise the Bot keeps its own did), and
+`bots/export-hermes-profile` turns an imported Bot back into `SOUL.md`,
+`config.yaml`, `profile.yaml` and `itonami.edn` (ADR-0088 amendment
+2026-10-14).
+
 Cloud Itonami exposes a Hermes-shaped transport for its resident Bots. The
 identity mapping is one-to-one:
 
 | Hermes | Cloud Itonami |
 |---|---|
-| profile | Bot id |
+| profile | Itonami profile (the Bot's id; the Bot is the profile in the roster) |
 | canonical `Bot Chat` session | that Bot's durable conversation |
 | run | durable Bot turn |
 | steer | queued follow-up at the next safe model/tool boundary |
@@ -48,9 +58,53 @@ the first pinned visible Bot, then the oldest visible Bot.
 | POST | `/v1/runs/{id}/approval` | implemented through Itonami approval authority |
 | POST | `/v1/runs/{id}/steer` | implemented through bounded follow-ups |
 | POST | `/v1/runs/{id}/stop` | implemented through native cancellation |
+| GET | `/health` | the resident's health plus `status`/`platform`/`runtime` (ADR-0143) |
+| GET | `/v1/health` | Hermes health shape, no session (ADR-0143) |
+| GET | `/v1/capabilities` | only implemented endpoints and features, no session (ADR-0143) |
+| GET | `/v1/models` | every visible Bot as a model id = its profile id (ADR-0143) |
+| POST | `/v1/chat/completions` | OpenAI completion; last user message is the turn, `model` picks the Bot; `stream: true` sends chunks then `[DONE]` (ADR-0143) |
+| GET | `/v1/skills` | profile skills, imported skills, enabled tools (ADR-0143) |
+| GET | `/api/profiles/{profile}/export` | the Bot's Itonami profile (= Hermes profile files, `object: itonami.profile`), credential-free; USER.md/MEMORY.md not exported (ADR-0143) |
 
 The `itonami hermes ...` CLI covers profile/session discovery and run start,
 status, steer, stop and approval.
+
+## Two residents serve this surface
+
+| Resident | Where | Turn |
+|---|---|---|
+| JVM application server (`server.cljk` + `hermes_compat.cljk`) | `kbb -M:server` | the full `bots.cljk` loop: tools, held writes, approval cards, workspace, peers |
+| JVM-free resident (`signin_server.cljk` + `hermes_gateway.cljk`, kbb engine) | `launchd cloud.itonami.app.local`, port 1338 since 2026-09-15 | one streamed chat completion over the Bot's durable conversation, no tools |
+
+Both answer every route above with the same envelopes and the same
+refusal literals, and both write the same `:bots :conversations` /
+`:bots :turn-history` rows into `data/state.edn`, so a turn taken through
+either is the other's history. Where they differ:
+
+- **approval** — the JVM-free turn runs no tools, so no write is ever held:
+  `POST /v1/runs/{id}/approval` answers `409 approval-not-pending` for every
+  run (the JVM literal for "nothing is held"), never an emulated approval.
+- **steer** — the JVM-free turn's only model boundary is the end of the
+  current provider call; a queued follow-up becomes the next call (at most
+  3 per run; a 4th is `409 steer-budget-spent`, a steer after close is
+  `409 run-finished`).
+- **provider** — murakumo only, resolved per ADR-2607173100; no
+  `MURAKUMO_API_KEY` in the resident means `503 provider-unauthenticated`
+  before any request leaves. No fallback provider.
+- **auth** — the same application session, from the cookie or
+  `Authorization: Bearer`; a cookie session with a foreign `Origin` cannot
+  mutate (`403 origin`).
+
+Tests, on the kbb engine (the classpath and `NBB_CLJK_ROOTS` are the ones
+`scripts/itonami-app-resident.cljk` gives the resident):
+
+```
+kbb --backend sci --classpath src:test:<text>/src test/cloud/itonami/app/hermes_gateway_test.cljk
+kbb --backend sci --classpath <resident classpath>:test test/cloud/itonami/app/hermes_gateway_http_test.cljk
+```
+
+The second spawns the resident against a scratch store and a stub provider
+and prints `SCANNED<TAB>n` exchanges; `n=0` is not clean.
 
 ## Authority and compatibility boundary
 

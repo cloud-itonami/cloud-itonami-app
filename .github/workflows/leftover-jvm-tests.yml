@@ -1,5 +1,5 @@
 # LEFTOVER JVM suite. Not the default CI path. Not a rename of `ci.yml`.
-# Rank 1 #2 is blocked until default CI is not `clojure -M`.
+# Rank 1 #2 is blocked until default CI is not `kbb -M`.
 # This workflow is workflow_dispatch only so PR/push CI does not run it.
 name: leftover-jvm-tests
 
@@ -27,11 +27,11 @@ jobs:
       - name: Resolve standalone dependencies
         run: clojure -P
       - name: Leftover JVM test
-        run: clojure -M:test
+        run: kbb -M:test
       - name: Leftover JVM lint
-        run: clojure -M:lint
+        run: kbb -M:lint
       - name: Leftover repository-profile audit
         if: matrix.os == 'ubuntu-latest'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: clojure -M -m cloud.itonami.app.repository-profile-ci
+        run: kbb -M -m cloud.itonami.app.repository-profile-ci

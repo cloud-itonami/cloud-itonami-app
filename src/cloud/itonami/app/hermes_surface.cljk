@@ -1,0 +1,231 @@
+(ns cloud.itonami.app.hermes-surface
+  "The rest of the Hermes Agent API surface over Cloud Itonami Bots — the part
+  `hermes_gateway`/`hermes_compat` did not cover: health, capabilities, models,
+  OpenAI chat completions, skills, and a Bot → Hermes profile export.
+
+  ADR-0143: Itonami agent IS a Hermes agent. A Hermes client (the Hermes
+  desktop, the `hermes` CLI in remote mode, any OpenAI client) talks to the
+  Itonami resident with the upstream wire shapes, and every Bot is a Hermes
+  profile. Pure data in, wire maps out: no clock, socket or store here — both
+  residents (`signin_server.cljk`, `server.cljk`) supply the Bot rows and the
+  run, and send what this returns.
+
+  Identity is unchanged from the gateway: Hermes profile == Bot id (or the
+  imported Hermes profile id). On the OpenAI routes the request's `model`
+  names the profile, so an OpenAI client picks a Bot the way it picks a model;
+  `hermes-agent` (upstream's own model id) or no model selects the default Bot."
+  (:require [kotoba.lang.text :as str]))
+
+(def platform "hermes-agent")
+(def runtime "cloud-itonami")
+
+(def endpoints
+  "Upstream `_CAPABILITY_ENDPOINTS` names this surface implements. Advertised
+  only when implemented: a capability list that names a 404 is a lie."
+  [["health" "GET" "/health"]
+   ["models" "GET" "/v1/models"]
+   ["chat_completions" "POST" "/v1/chat/completions"]
+   ["runs" "POST" "/v1/runs"]
+   ["run_status" "GET" "/v1/runs/{run_id}"]
+   ["run_events" "GET" "/v1/runs/{run_id}/events"]
+   ["run_approval" "POST" "/v1/runs/{run_id}/approval"]
+   ["run_steer" "POST" "/v1/runs/{run_id}/steer"]
+   ["run_stop" "POST" "/v1/runs/{run_id}/stop"]
+   ["skills" "GET" "/v1/skills"]
+   ["sessions" "GET" "/api/sessions"]
+   ["session_create" "POST" "/api/sessions"]
+   ["session" "GET" "/api/sessions/{session_id}"]
+   ["session_update" "PATCH" "/api/sessions/{session_id}"]
+   ["session_delete" "DELETE" "/api/sessions/{session_id}"]
+   ["session_messages" "GET" "/api/sessions/{session_id}/messages"]
+   ["session_chat" "POST" "/api/sessions/{session_id}/chat"]
+   ["session_chat_stream" "POST" "/api/sessions/{session_id}/chat/stream"]
+   ["profiles" "GET" "/api/profiles"]
+   ["profile_export" "GET" "/api/profiles/{profile}/export"]])
+
+(def paths
+  "Inner paths (after `/p/<profile>`) this namespace answers."
+  #{"/health" "/v1/health" "/v1/capabilities" "/v1/models" "/v1/chat/completions" "/v1/skills"})
+
+(defn surface-path? [p]
+  (boolean (or (contains? paths p)
+               (re-matches #"/api/profiles/[^/]+/export" (str p)))))
+
+(defn public-path?
+  "Upstream serves these without auth; everything else needs the session."
+  [p]
+  (contains? #{"/health" "/v1/health" "/v1/capabilities"} p))
+
+;; ---------- health / capabilities ----------
+
+(defn health [version resident]
+  {:status "ok" :platform platform :runtime runtime
+   :resident resident :version version})
+
+(defn capabilities
+  "`hermes.api_server.capabilities` with only what this resident does.
+  `tool-execution` is `\"server\"` on the JVM resident (the full Bot loop) and
+  `\"none\"` on the tool-less JVM-free one."
+  [{:keys [resident tool-execution auth-required?]}]
+  {:object "hermes.api_server.capabilities"
+   :platform platform
+   :runtime runtime
+   :model "itonami-bot"
+   :auth {:type "bearer" :required (boolean auth-required?)}
+   :runtime_info {:mode "server_agent" :resident resident
+                  :tool_execution (or tool-execution "server") :split_runtime false
+                  :description "Each Hermes profile is a Cloud Itonami Bot; tools, approvals and accounts stay under Itonami's Bot authority."}
+   :features {:chat_completions true :chat_completions_streaming true
+              :responses_api false :responses_streaming false
+              :run_submission true :profiles true :profile_export true
+              :cron_jobs false :session_fork false :artifacts false
+              :browser_extension_control {:enabled false}}
+   :endpoints (into {} (for [[n m p] endpoints] [n {:method m :path p}]))})
+
+;; ---------- models ----------
+
+(defn models
+  "Every visible Bot as an OpenAI model id (its Hermes profile id), so an
+  OpenAI client chooses a Bot by `model`. `profile-rows` is the `/api/profiles`
+  `:data` vector."
+  [profile-rows now]
+  {:object "list"
+   :data (vec (for [row profile-rows]
+                {:id (:id row) :object "model" :created (long now)
+                 :owned_by runtime :permission []
+                 :root (or (:model row) (:id row)) :parent nil
+                 :bot_id (:bot_id row) :name (:name row)
+                 :enabled (boolean (:enabled row))}))})
+
+;; ---------- OpenAI chat completions ----------
+
+(defn- content-text [content]
+  (cond (string? content) content
+        (sequential? content) (str/join "\n" (keep #(when (= "text" (:type %)) (:text %)) content))
+        :else ""))
+
+(defn chat-request
+  "OpenAI `/v1/chat/completions` body → `{:profile :input :instructions
+  :stream?}` or a refusal map. The Bot keeps its own durable conversation, so
+  only the LAST user message is the turn; system messages become this turn's
+  instructions. `path-profile` (from `/p/<profile>`) wins over `model`."
+  [body path-profile]
+  (let [msgs (:messages body)
+        user (last (filter #(= "user" (:role %)) msgs))
+        text (str/trim (content-text (:content user)))
+        system (->> msgs (filter #(contains? #{"system" "developer"} (:role %)))
+                    (map (comp str/trim content-text :content)) (remove str/blank?) (str/join "\n"))
+        model (some-> (:model body) str str/trim not-empty)]
+    (cond
+      (not (sequential? msgs))
+      {:refuse :hermes/invalid-input :message "messages must be an array"}
+      (str/blank? text)
+      {:refuse :hermes/invalid-input :message "Missing a non-empty user message."}
+      :else
+      {:profile (or path-profile (when-not (#{"hermes-agent" "itonami-bot"} model) model))
+       :input text
+       :instructions (not-empty system)
+       :stream? (true? (:stream body))})))
+
+(defn run-body
+  "The `/v1/runs` body a chat request becomes (the gateway's input contract)."
+  [{:keys [input instructions]}]
+  (cond-> {:input input} instructions (assoc :instructions instructions)))
+
+(defn completion
+  [{:keys [id model created output usage]}]
+  {:id (str "chatcmpl-" id) :object "chat.completion" :created (long created) :model model
+   :choices [{:index 0 :finish_reason "stop"
+              :message {:role "assistant" :content (str output)}}]
+   :usage (merge {:prompt_tokens 0 :completion_tokens 0 :total_tokens 0} usage)})
+
+(defn completion-chunk
+  "One `chat.completion.chunk`. `delta` nil with `finish` set is the last one."
+  [{:keys [id model created delta finish role?]}]
+  {:id (str "chatcmpl-" id) :object "chat.completion.chunk" :created (long created) :model model
+   :choices [{:index 0
+              :delta (cond-> {} role? (assoc :role "assistant") delta (assoc :content delta))
+              :finish_reason finish}]})
+
+(defn run-event->chunks
+  "A gateway run frame → zero or more completion chunks."
+  [frame base]
+  (case (:event frame)
+    "run.started" [(completion-chunk (assoc base :role? true))]
+    "assistant.delta" [(completion-chunk (assoc base :delta (:delta frame)))]
+    "run.completed" [(completion-chunk (assoc base :finish "stop"))]
+    ("run.failed" "run.cancelled") [(completion-chunk (assoc base :finish (if (= "run.failed" (:event frame)) "error" "stop")))]
+    []))
+
+;; ---------- skills ----------
+
+(defn- profile-skill-ids
+  "Skill ids from a Bot profile's files (`skills/<id>/SKILL.md`)."
+  [profile-files]
+  (sort (keep #(second (re-matches #"skills/([^/]+)/SKILL\.md" %)) (keys profile-files))))
+
+(defn skills
+  "Upstream `/v1/skills` rows (name, description, category) for one Bot: the
+  skills in its persistent profile, those its Hermes import carried, then its
+  enabled connector tools. `profile-files` is the Bot profile's `:files` map
+  when the resident has one."
+  ([bot] (skills bot nil))
+  ([bot profile-files]
+   (let [named (fn [s] (if (map? s) s {:name (str s)}))
+         own (for [id (profile-skill-ids profile-files)] {:name id :category "itonami-profile"})
+         imported (map named (or (:skills bot) (get-in bot [:hermes-import :skills])))
+         tools (for [t (or (:tools bot) [])] {:name (str (if (map? t) (:name t) t)) :category "itonami-tool"})
+         rows (for [s (concat own imported tools)]
+                {:name (:name s) :description (or (:description s) "")
+                 :category (or (:category s) "hermes-import")})]
+     {:object "list" :data (vec (vals (into (array-map) (map (juxt :name identity)) rows)))})))
+
+;; ---------- Bot → Hermes profile ----------
+
+(defn- yq
+  "A YAML double-quoted scalar (JSON string syntax is valid YAML)."
+  [s]
+  (str "\"" (-> (str s) (str/replace "\\" "\\\\") (str/replace "\"" "\\\"") (str/replace "\n" "\\n")) "\""))
+
+(defn profile-export
+  "A Bot's Itonami profile, credential-free — which is a Hermes profile: the files `hermes profile import`
+  reads (SOUL.md, profile.yaml, config.yaml, skills/<id>/SKILL.md). The Bot's
+  persistent profile supplies SOUL.md and skills when the resident has it
+  (`profile-files`); otherwise SOUL.md is built from the brief. USER.md and
+  MEMORY.md are about the owner and stay home, and accounts, connector grants,
+  wallets and approvals never leave Itonami — listed, not sent, the same
+  contract as the import direction (ADR-0088)."
+  ([bot] (profile-export bot nil))
+  ([bot profile-files]
+   (let [profile (or (get-in bot [:hermes-import :profile-id]) (:id bot))
+         model (or (not-empty (str (:model bot))) "mishima")
+         soul (or (not-empty (get profile-files "SOUL.md"))
+                  (str "# " (:name bot) "\n\n" (str/trim (str (:brief bot))) "\n"))
+         skill-files (into {} (filter #(re-matches #"skills/[^/]+/SKILL\.md" (key %))) profile-files)]
+     ;; An Itonami profile IS a Hermes profile (ADR-0143): same files, so the
+     ;; object names Itonami and the layout says what a Hermes client reads.
+     {:object "itonami.profile"
+      :layout "hermes-profile"
+      :hermes_compatible true
+      :profile profile
+      :bot_id (:id bot)
+      :files (merge {"SOUL.md" soul
+                     "profile.yaml" (str "description: " (yq (or (not-empty (str (:role bot))) (:name bot))) "\n"
+                                         "description_auto: false\n")
+                     "config.yaml" (str "model:\n"
+                                        "  provider: murakumo\n"
+                                        "  default: " (yq model) "\n"
+                                        "  base_url: https://api.murakumo.cloud/v1\n")}
+                    skill-files)
+      :not_exported (vec (filter #(contains? profile-files %) ["USER.md" "MEMORY.md"]))
+      :rebind_required ["accounts" "connector grants" "wallet signer" "approval policy"]})))
+
+(defn delta-increment
+  "The JVM resident's `assistant.delta` may carry the accumulated text so far
+  or just the new piece (see hermes_compat's relay contract). → `[increment
+  accumulated]`: a payload that extends what was seen is accumulated."
+  [seen payload]
+  (let [payload (str payload)]
+    (if (and (seq seen) (str/starts-with? payload seen))
+      [(subs payload (count seen)) payload]
+      [payload (str seen payload)])))

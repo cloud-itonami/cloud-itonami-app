@@ -1,0 +1,22 @@
+(require '[cloud.itonami.app.bots :as bots]
+         '[cloud.itonami.app.provider :as provider]
+         '[cloud.itonami.app.http-client :as http])
+(def admitted (#'bots/profile-review-provider
+               {:id "murakumo" :kind :openai-compatible :base-url "https://unused.invalid/v1"
+                :context-window-tokens {"test" 4096}
+                :max-transient-retries 2 :model-fallbacks {"test" "other-pool"}
+                :capacity-fallbacks {"test" "capacity-pool"}}))
+(def calls (atom []))
+(with-redefs [http/request (fn [request]
+                            (swap! calls conj request)
+                            {:status 503 :body "{\"error\":{\"code\":\"network_queue_timeout\"}}"})]
+  (assert (= :provider/http-error
+             (try (provider/agent-turn admitted {:model "test" :messages [] :text-only? true}) nil
+                  (catch Exception e (:type (ex-data e))))))
+  (assert (= 1 (count @calls)))
+  (assert (= 240 (:timeout-seconds (first @calls)))))
+(assert (= :profile/provider-denied
+           (try (#'bots/profile-review-provider {:id "openrouter"}) nil
+                (catch Exception e (:type (ex-data e))))))
+(println "Learning admission passed: transient failure sends once, no alternate model call, Murakumo-only")
+(shutdown-agents)

@@ -12,9 +12,59 @@
 # red scan. A fingerprint silences exactly one finding at one line of one commit
 # and nothing else, and a new DID has to be added here by somebody who looked.
 
-# test/cloud/itonami/app/credential_http_test.clj:29
-a6b86ad192e4fbfaac43ebd89dd7545340f05b6f:test/cloud/itonami/app/credential_http_test.clj:generic-api-key:29
-# test/cloud/itonami/app/credential_sd_jwt_test.clj:11
+# test/cloud/itonami/app/credential_http_test.cljk:29
+
+# test/cloud/itonami/app/credential_sd_jwt_test.cljk:11
+
+# test/cloud/itonami/app/credential_test.cljk:21
+
+# The same three did:key lines, as they were named BEFORE the cljk rename
+# (4a3a71fc, 2026-09-11). `gitleaks git` scans the whole reachable history,
+# so the pre-rename commits still carry the .clj paths and the .cljk
+# fingerprints above do not match them. Same findings, old names — added
+# 2026-09-13 after every CI run since the rename went red.
+
+8b1dc9f15ce5b5fb8e8a59701152a0927bc41687:test/cloud/itonami/app/credential_test.clj:generic-api-key
+
+# Fingerprint format for gitleaks v8.28 `git` scans: commit:file:ruleID:LINE.
+# (The `:***` suffixes this file carried until 2026-09-13 never matched anything.)
+# did:key DIDs are the identifier itself — no private half; same three lines
+# before and after the cljk rename (4a3a71fc), hence both file names.
+fd00122126c26eb51f705d9b42cb518759e580e1:test/cloud/itonami/app/credential_sd_jwt_test.cljk:generic-api-key:11
+a6b86ad192e4fbfaac43ebd89dd7545340f05b6f:test/cloud/itonami/app/credential_http_test.cljk:generic-api-key:29
+8b1dc9f15ce5b5fb8e8a59701152a0927bc41687:test/cloud/itonami/app/credential_test.cljk:generic-api-key:21
 fd00122126c26eb51f705d9b42cb518759e580e1:test/cloud/itonami/app/credential_sd_jwt_test.clj:generic-api-key:11
-# test/cloud/itonami/app/credential_test.clj:21
+a6b86ad192e4fbfaac43ebd89dd7545340f05b6f:test/cloud/itonami/app/credential_http_test.clj:generic-api-key:29
 8b1dc9f15ce5b5fb8e8a59701152a0927bc41687:test/cloud/itonami/app/credential_test.clj:generic-api-key:21
+
+# Synthetic credential-shaped text used to assert profile rejection; never a key.
+63c42cc3ca1a959c4150dc330afca135739af1f6:test/cloud/itonami/app/bots_test.cljk:generic-api-key:5959
+
+# Public did:key zero-seed test vector in the 2026-09-24 Hermes migration notes.
+# These identify a derived public key; the zero seed is explicitly synthetic.
+0d904a5b7ac9badfb7055d0ca6277d5dbb50d95e:hermes/profiles/itonami/skills/java-kotoba-migration/references/kotoba-guest-porting.md:generic-api-key:121
+0d904a5b7ac9badfb7055d0ca6277d5dbb50d95e:hermes/profiles/itonami/skills/java-kotoba-migration/SKILL.md:generic-api-key:174
+
+# The same public zero-seed did:key vector, copied into the marketing profile
+# by 9a740007. Reviewed both source lines; these contain public identifiers,
+# not private keys. Keep exact commit/file/rule/line fingerprints.
+9a7400074ba2cc3047994a6f903405d1a0b04705:hermes/profiles/itonami-mktg/skills/java-kotoba-migration/references/kotoba-guest-porting.md:generic-api-key:121
+9a7400074ba2cc3047994a6f903405d1a0b04705:hermes/profiles/itonami-mktg/skills/java-kotoba-migration/SKILL.md:generic-api-key:174
+
+# Re-saved public zero-seed DID vectors; identical to the existing allowances above.
+d8c308948ae0faf09e09406df9bf29fdc303a0dc:hermes/profiles/itonami-mktg/skills/java-kotoba-migration/references/kotoba-guest-porting.md:generic-api-key:121
+d8c308948ae0faf09e09406df9bf29fdc303a0dc:hermes/profiles/itonami-mktg/skills/java-kotoba-migration/SKILL.md:generic-api-key:174
+
+# Awai app-plane fixtures use public did:key identifiers as publisher identities;
+# the DID encodes public key material only. The envelope test also uses an
+# intentionally malformed did:key string to prove publisher-mismatch rejection.
+# The line-7 apps fixture predates this PR; the remaining exact fingerprints are
+# the app-plane commit under review. No private key or signing seed is present.
+4112a72c27e2a44dbaff5e905a39e982f83bf70c:test/cloud/itonami/app/awai_apps_test.cljk:generic-api-key:7
+2cc76af623ed141d2b35371b5895366d5cf580cb:test/cloud/itonami/app/awai_graph_authority_test.cljk:generic-api-key:7
+2cc76af623ed141d2b35371b5895366d5cf580cb:test/cloud/itonami/app/awai_install_bridge_test.cljk:generic-api-key:18
+2cc76af623ed141d2b35371b5895366d5cf580cb:test/cloud/itonami/app/awai_envelope_test.cljk:generic-api-key:166
+2cc76af623ed141d2b35371b5895366d5cf580cb:test/cloud/itonami/app/awai_install_store_test.cljk:generic-api-key:12
+2cc76af623ed141d2b35371b5895366d5cf580cb:test/cloud/itonami/app/awai_real_peer_integration_run.cljk:generic-api-key:23
+2cc76af623ed141d2b35371b5895366d5cf580cb:test/cloud/itonami/app/awai_install_bridge_client_run.cljk:generic-api-key:24
+2cc76af623ed141d2b35371b5895366d5cf580cb:test/cloud/itonami/app/awai_apps_test.cljk:generic-api-key:74

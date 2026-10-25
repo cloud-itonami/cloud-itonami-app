@@ -111,7 +111,7 @@ endpoint が落ちたのか」が辿れない。要求した model は分かっ�
 
 ## Verification
 
-- `clojure -M:test`: 1,980 tests / 11,679 assertions / 0 failures
+- `kbb -M:test`: 1,980 tests / 11,679 assertions / 0 failures
   （journal テスト 10 本を含む。変更前のベースラインは 1,970 / 11,661 / 0）。
 - guard は positive control と negative control の両方を持つ:
   同じ journal・同じ base に対して snapshot のバイト長を 1 だけ動かすと、

@@ -1,0 +1,135 @@
+(ns cloud.itonami.app.hermes-migration-test
+  "The optimistic lock on a LIVE Hermes home.
+
+  `stage!` inventories the source, exports for ~25 minutes, inventories again,
+  and refuses when the two revisions differ. Measured 2026-09-01 (ADR-2609012300)
+  that refusal fired on every attempt: `cron/jobs.json` is rewritten by the cron
+  ticker about every two minutes with byte-identical content, and the inventory
+  hashed its mtime. `hermes pause` halts dispatch, not the ticker, so there was
+  no way to hold the source still for long enough.
+
+  These tests pin the distinction the fix rests on: an mtime that moved with no
+  edit must NOT move the revision, and an edit must."
+  (:require [kotoba.io :as kio] [kotoba.io :as io]
+            [kotoba.test :refer [deftest is testing]]))
+
+(def ^:private inventory
+  "The private inventory under test, reached by var so the namespace keeps its
+  own boundary."
+  (do (require 'cloud.itonami.app.hermes-migration)
+      (resolve 'cloud.itonami.app.hermes-migration/profile-inventory)))
+
+(defn- temp-dir []
+  (kio/temp-dir "hermes-migration-test"))
+
+(defn- write! [root relative content]
+  (let [f (io/file root relative)]
+    (io/make-parents f)
+    (spit f content)
+    f))
+
+(defn- revision [root]
+  (get-in (inventory {:id "default" :root root}) [:source :revision]))
+
+(defn- touch!
+  "Move a file's mtime without changing a byte, the way the cron ticker does."
+  [f]
+  (let [before (io/last-modified f)
+        moved (+ before 240000)]
+    (is (io/set-last-modified f moved) "the fixture must be able to move an mtime")
+    (is (not= before (io/last-modified f)) "the mtime must actually have moved")))
+
+;; The `default` profile exports a whitelist of portable roots rather than the
+;; whole home, so a fixture has to put its files where that whitelist looks.
+;; `cron/` and `config.yaml` are both on it; a file outside it is invisible to
+;; the inventory, which is why the control below uses `config.yaml`.
+
+(deftest ticker-rewritten-jobs-json-does-not-move-the-revision
+  (let [root (temp-dir)
+        jobs (write! root "cron/jobs.json" "{\"jobs\":[{\"name\":\"a\"}]}")]
+    (write! root "config.yaml" "provider: openrouter\n")
+    (let [before (revision root)]
+      (touch! jobs)
+      (is (= before (revision root))
+          "a jobs.json whose bytes did not change must not move the revision")
+      (testing "and the guarantee it protects is still in force"
+        (spit jobs "{\"jobs\":[{\"name\":\"a\"},{\"name\":\"b\"}]}")
+        (is (not= before (revision root))
+            "an edited jobs.json must move the revision")))))
+
+(deftest mtime-still-matters-for-reviewed-configuration
+  (let [root (temp-dir)
+        config (write! root "config.yaml" "provider: openrouter\n")]
+    (write! root "cron/jobs.json" "{\"jobs\":[]}")
+    (let [before (revision root)]
+      (touch! config)
+      (is (not= before (revision root))
+          (str "only the ticker-rewritten files are content-hashed; a touched "
+               "config.yaml must still move the revision, or this fix would "
+               "have widened into 'ignore every mtime'")))))
+
+(deftest a-volatile-file-is-outside-the-lock-entirely
+  (let [root (temp-dir)]
+    (write! root "cron/jobs.json" "{\"jobs\":[]}")
+    (let [before (revision root)
+          heartbeat (write! root "cron/ticker_heartbeat" "1")]
+      (is (= before (revision root))
+          "ticker_heartbeat is volatile: appearing must not move the revision")
+      (spit heartbeat "2")
+      (is (= before (revision root))
+          "nor must changing it"))))
+
+(deftest scoped-preview-selects-one-real-profile
+  (let [root (temp-dir)
+        preview (resolve 'cloud.itonami.app.hermes-migration/preview)]
+    (write! root "config.yaml" "provider: local\n")
+    (write! root "profiles/wiki-patent-crawl/config.yaml" "provider: local\n")
+    (write! root "profiles/unrelated/config.yaml" "provider: local\n")
+    (let [one (preview {:home root :profile-id "wiki-patent-crawl"})]
+      (is (= ["wiki-patent-crawl"] (mapv :id (:profiles one))))
+      (is (= "wiki-patent-crawl" (get-in one [:source :profile-id])))
+      (is (= 1 (get-in one [:summary :profiles])))
+      (is (= false (get-in one [:safety :copies-grants]))))
+    (doseq [id ["../unrelated" "" "missing-profile" 17]]
+      (is (try (preview {:home root :profile-id id}) false
+               (catch Exception _ true))))))
+
+(deftest scoped-source-lock-is-unaffected-by-other-profile-edits
+  (let [root (temp-dir)
+        preview (resolve 'cloud.itonami.app.hermes-migration/preview)]
+    (write! root "profiles/wiki-patent-crawl/config.yaml" "provider: local\n")
+    (write! root "profiles/unrelated/config.yaml" "provider: local\n")
+    (let [opts {:home root :profile-id "wiki-patent-crawl"}
+          before (get-in (preview opts) [:source :revision])]
+      (write! root "profiles/unrelated/config.yaml" "provider: changed\n")
+      (is (= before (get-in (preview opts) [:source :revision])))
+      (write! root "profiles/wiki-patent-crawl/config.yaml" "provider: changed\n")
+      (is (not= before (get-in (preview opts) [:source :revision]))))))
+
+(deftest identity-only-stage-does-not-export-credentials-persona-or-history
+  (let [root (temp-dir) data (temp-dir)
+        preview (resolve 'cloud.itonami.app.hermes-migration/preview)
+        stage (resolve 'cloud.itonami.app.hermes-migration/stage!)
+        provision (resolve 'cloud.itonami.app.hermes-migration/provision!)]
+    (write! root "profiles/wiki-patent-crawl/config.yaml" "provider: local\n")
+    (let [manifest (preview {:home root :profile-id "wiki-patent-crawl"})
+          staged (stage {:home root :data-dir data :manifest manifest :identity-only? true})]
+      (is (= "staged" (:status staged)))
+      (is (= "identity-only" (:import-mode staged)))
+      (is (= [[]] (mapv :artifacts (:profiles staged))))
+      (is (= false (get-in staged [:safety :copies-conversations])))
+      (is (try (provision {:manifest staged :carry-over-permissions true}) false
+               (catch Exception _ true))))))
+
+(deftest scoped-stage-never-inventories-unrelated-profile-content
+  (let [root (temp-dir) data (temp-dir)
+        preview (resolve 'cloud.itonami.app.hermes-migration/preview)
+        stage (resolve 'cloud.itonami.app.hermes-migration/stage!)
+        original @inventory calls (atom [])]
+    (write! root "profiles/wiki-patent-crawl/config.yaml" "provider: local\n")
+    (write! root "profiles/unrelated/config.yaml" "provider: local\n")
+    (let [m (preview {:home root :profile-id "wiki-patent-crawl"})]
+      (with-redefs-fn {inventory (fn [profile] (swap! calls conj (:id profile)) (original profile))}
+        #(stage {:home root :data-dir data :manifest m :identity-only? true}))
+      (is (seq @calls))
+      (is (every? #{"wiki-patent-crawl"} @calls)))))

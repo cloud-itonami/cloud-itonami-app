@@ -5,7 +5,7 @@
 ## Context
 
 The runtime rule (ADR-0065, ADR-2608095000, ADR-0049, and the workspace
-CLAUDE.md) says new code goes on ClojureScript or Kotoba and `:clj` is a frozen
+AGENTS.md) says new code goes on ClojureScript or Kotoba and `:clj` is a frozen
 compat layer. A PreToolUse hook enforces the *new* half — it refuses a new
 `.clj` outright. Nothing measured the *stock*, so "how much is left" was
 answerable only by counting files by extension.
@@ -23,7 +23,7 @@ before this was understood:
 
 ## Decision
 
-**Measure the require graph, not the extensions.** `scripts/jvm-exit-report.cljs`
+**Measure the require graph, not the extensions.** `scripts/jvm-exit-report.cljk`
 (nbb, no JVM) walks it and reports three sets: portable today, blocked by an
 in-repo namespace *with what is blocking it*, and **unmeasured** because a
 dependency lives outside this repository. The third set exists because the
@@ -93,7 +93,7 @@ binding the var a real caller binds. The fix is not a better alias:
 `host-bounds/require-cap!` takes the grant set as an **argument**, so the failure
 cannot be expressed.
 
-**A suite that does not compile reports success.** Twice, `clojure -M:test`
+**A suite that does not compile reports success.** Twice, `kbb -M:test`
 exited 0 having run zero tests — once on `*print-fn*` (ClojureScript-only) and
 once on a patch that deleted two helpers along with the function between them.
 The exit code is not the signal; the absence of a `Ran N tests` line is. Check

@@ -1,0 +1,178 @@
+(ns awai-real-peer-integration-run
+  "Exercise the Itonami install and cell adapters against a live local Awai HTTP API.
+
+  Args: <app-cell-fixture.json> <peer-api-origin> <owner-only-token-file>."
+  (:require ["node:crypto" :as crypto]
+            ["node:fs" :as fs]
+            ["node:os" :as os]
+            ["node:path" :as path]
+            [clojure.string :as str]
+            [kotoba.protocol.install :as install]
+            [cloud.itonami.app.awai-apps :as apps]
+            [cloud.itonami.app.awai-install-bridge :as bridge]))
+
+(def failures (atom []))
+(defn check [condition label]
+  (println (str (if condition "PASS " "FAIL ") label))
+  (when-not condition (swap! failures conj label)))
+
+(def app-id "net.kotoba.murakumo")
+(def release-cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4")
+(def manifest-cid "bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny")
+(def binding-cid "bafkreihbfo374yy4mz2w3sli2azqfw3ea73cnr3jm5gzqvub7wsh57uoxa")
+(def publisher-did "did:key:z6MkoPd1PVGGf5gTMGy4nZNrBMszzfaeaNmZfSzgAZZNhDWq")
+
+(defn- content-path [root block-cid]
+  (.join path root
+         (-> (crypto/createHash "sha256")
+             (.update block-cid "utf8")
+             (.digest "hex"))))
+
+(defn- slurp-token [token-file]
+  (str/trim (.readFileSync fs token-file "utf8")))
+
+(defn- app-installation [cell-id bundle-cid]
+  (let [capabilities [bridge/cell-read-capability bridge/cell-write-capability]]
+    {:schema apps/installation-schema
+     :install-lock {:schema install/install-lock-schema
+                    :app-id app-id
+                    :version "1.0.0"
+                    :channel "stable"
+                    :publisher-did publisher-did
+                    :release-sequence 1
+                    :release-cid release-cid
+                    :manifest-cid manifest-cid
+                    :bundle-cid manifest-cid
+                    :cells [{:id cell-id :dna-cid bundle-cid}]
+                    :requested-caps capabilities}
+     :origin {:domain "murakumo.cloud"
+              :binding-cid binding-cid
+              :binding-sequence 1
+              :binding-expires-at 2000000000
+              :dns-proof-checked-at 1800000000
+              :dns-proof-expires-at 1900000000}
+     :approved-caps capabilities
+     :installed-at 1800000001}))
+
+(defn- dispatch-cell! [record runtime-facts capability request endpoint token-file & [fetch-fn]]
+  (bridge/dispatch-cell-operation!
+   (cond-> {:installation record
+            :runtime-facts runtime-facts
+            :capability capability
+            :request request
+            :endpoint endpoint
+            :token-file token-file}
+     fetch-fn (assoc :fetch-fn fetch-fn))))
+
+(defn- verify-cell-io! [record runtime-facts cell-id endpoint token-file entries]
+  (-> (dispatch-cell! record runtime-facts bridge/cell-write-capability
+                      {:cell-id cell-id :entry-hex (get-in entries [0 "entry-hex"])}
+                      endpoint token-file)
+      (.then
+       (fn [first-write]
+         (check (and (= :completed (:decision first-write))
+                     (= :submitted (get-in first-write [:result :decision]))
+                     (= "accepted" (get-in first-write [:result :entry-decision]))
+                     (not (str/includes? (pr-str first-write) (slurp-token token-file))))
+                "Itonami sends the signed entry through its capability-gated adapter and Awai accepts it")
+         first-write))
+      (.then
+       (fn [_]
+         (dispatch-cell! record runtime-facts bridge/cell-write-capability
+                         {:cell-id cell-id :entry-hex (get-in entries [1 "entry-hex"])}
+                         endpoint token-file)))
+      (.then
+       (fn [second-write]
+         (check (= "accepted" (get-in second-write [:result :entry-decision]))
+                "Awai accepts the second signed write in the predecessor chain")
+         second-write))
+      (.then
+       (fn [_]
+         (dispatch-cell! record runtime-facts bridge/cell-write-capability
+                         {:cell-id cell-id :entry-hex (get-in entries [2 "entry-hex"])}
+                         endpoint token-file)))
+      (.then
+       (fn [bad-write]
+         (check (= "rejected" (get-in bad-write [:result :entry-decision]))
+                "Awai validator rejects the fixture's broken signature")
+         (dispatch-cell! record runtime-facts bridge/cell-read-capability
+                         {:cell-id cell-id :entry-type "note/create"}
+                         endpoint token-file)))
+      (.then
+       (fn [read-result]
+         (let [texts (set (map #(get-in % [:body :text])
+                               (get-in read-result [:result :entries])))]
+           (check (and (= :completed (:decision read-result))
+                       (= :read (get-in read-result [:result :decision]))
+                       (= #{(get-in entries [0 "text"])
+                            (get-in entries [1 "text"])} texts))
+                  "Itonami reads both accepted notes back from the same Awai cell")
+           read-result)))))
+
+(defn- run! [fixture-path api-origin token-file]
+  (let [fixture (js->clj (js/JSON.parse (.readFileSync fs fixture-path "utf8")))
+        bundle-cid (get fixture "bundle-cid")
+        cell-id (get fixture "dna-name")
+        blocks (get fixture "blocks")
+        entries (get fixture "entries")
+        raw-root (.mkdtempSync fs (.join path (.tmpdir os)
+                                          "itonami-awai-real-peer-"))
+        root (.realpathSync fs raw-root)
+        content-root (.join path root "content")
+        record (app-installation cell-id bundle-cid)
+        cids (mapv #(get % "cid") blocks)
+        _ (.mkdirSync fs content-root #js {:mode 448})
+        _ (.chmodSync fs content-root 448)
+        _ (doseq [{block-cid "cid" encoded "bytes-base64"} blocks]
+            (let [bytes (.from js/Buffer encoded "base64")
+                  output (content-path content-root block-cid)]
+              (.writeFileSync fs output bytes #js {:mode 384})
+              (.chmodSync fs output 384)))
+        stage-endpoint (str api-origin "/v2/stage-dna-block")
+        install-endpoint (str api-origin "/v2/install-dna")
+        cell-endpoint (str api-origin "/v2/cell-entries")
+        installation-result {:decision :found :installation record}
+        content-stage {:decision :content-staged :verified-cids cids}
+        runtime-facts {:verified-cids (install/required-content-cids (:install-lock record))
+                       :host-supported [bridge/cell-read-capability
+                                        bridge/cell-write-capability]
+                       :domain-status :cached-offline}]
+    (-> (bridge/stage-authorized-dna-blocks!
+         {:installation-result installation-result
+          :cell-id cell-id
+          :bundle-cid bundle-cid
+          :content-stage content-stage
+          :content-root content-root
+          :endpoint stage-endpoint
+          :install-endpoint install-endpoint
+          :token-file token-file})
+        (.then
+         (fn [installed]
+           (check (and (= :installed (:decision installed))
+                       (= bundle-cid (:bundle-cid installed))
+                       (= cell-id (:cell-id installed))
+                       (= (count cids) (:block-count installed))
+                       (contains? (set (:staged-cids installed)) bundle-cid))
+                  "Itonami transfers every CID-verified bundle block and installs the exact app cell on the live Awai API")
+           (when-not (= :installed (:decision installed))
+             (throw (js/Error. (str "real Awai install failed: " (pr-str installed)))))
+           (verify-cell-io! record runtime-facts cell-id cell-endpoint token-file entries)))
+        (.catch (fn [error]
+                  (println "itonami-awai-real-peer: FAILED" (.-message error))
+                  (.exit js/process 1)))
+        (.finally (fn []
+                    (.rmSync fs raw-root #js {:recursive true :force true})
+                    (if (seq @failures)
+                      (.exit js/process 1)
+                      (println "itonami-awai-real-peer: all integration checks passed")))))))
+
+(let [args (take-last 3 (js->clj (.-argv js/process)))
+      fixture-path (nth args 0 nil)
+      api-origin (nth args 1 nil)
+      token-file (nth args 2 nil)]
+  (if-not (and fixture-path api-origin token-file
+               (.isAbsolute path fixture-path)
+               (.isAbsolute path token-file))
+    (do (println "usage: kbb ... awai_real_peer_integration_run.cljk <fixture.json> <http://127.0.0.1:port> <token-file>")
+        (.exit js/process 64))
+    (run! fixture-path api-origin token-file)))

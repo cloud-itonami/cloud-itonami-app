@@ -1,0 +1,110 @@
+[{:db/id -1
+  :adr/id "adr-2609073800-the-cli-can-get-a-passkey-session"
+  :adr/title "The CLI can get a Passkey session, and the QR did not scan"
+  :adr/status "accepted"
+  :adr/date "2026-09-07"
+  :adr/related "adr-2609071800-thirty-three-bots-were-pinned-to-a-model-that-requires-payment"
+  :adr/body "## The report
+
+`/model` answered 「model routing は human session が必要です (HTTP 403)」. The
+ask: itonami を開いた時に passkey 認証か web3 wallet 接続を必須にして、did の作成
+のため。passkey は ウェブリダイレクトか、qr を表示して、よみとって、接続。
+
+## The 403 is correct, and the CLI had no way out of it
+
+`require-human-session!` refuses `:kind :agent`. An agent session is rooted in
+being able to read a file in the data directory, and model routing, money and
+wallet sit behind a Passkey for that reason. The CLI only ever held an agent
+token (`auth login`), so every one of those routes was 403 with nothing the
+operator could do from here.
+
+## Nearly all of it already existed on the server
+
+Measured live against this install, not read off the source:
+
+- `POST /api/auth/itonami/start {:handoff true}` returns a real authorization
+  URL (`https://auth.itonami.cloud/authorize?…` with PKCE) AND a claim token,
+  and opens the system browser itself.
+- `POST /api/auth/itonami/handoff {:handoff …}` exchanges that claim for a
+  session once the person has finished. No session is required and none can be
+  -- the claim token is the whole authority, single-use and short-lived, and
+  every refusal returns the same `{:ready? false}` so a poller that guesses
+  learns nothing from the shape of the answer.
+
+That is a device flow, already built, already deployed. What was missing was a
+client for it.
+
+## What the CLI does now
+
+`/login`, and the same flow on open when there is no Passkey session: start,
+print the URL (the server has usually opened the browser already), poll the
+claim endpoint every two seconds for three minutes, and store the returned
+token.
+
+The ceremony happens in a browser because that is the only place WebAuthn
+happens. This CLI never sees the passkey, never sees a password, and never
+fills the form.
+
+Two Keychain accounts, not one. `session-token` is the agent's; the new
+`human-session-token` is the Passkey session. Overwriting one with the other
+would make `auth login` quietly revoke a Passkey session, or a Passkey login
+quietly take the MCP server's token away. Requests prefer the Passkey session
+-- not a preference but a fact: there is nothing an agent token can do that a
+Passkey session cannot, and a great deal it cannot.
+
+`/whoami-session` says which one is in use, since a 403 is otherwise the first
+time anyone finds out.
+
+## It is not a hard gate, and that is deliberate
+
+The instruction said 必須. It runs on open. It does not BLOCK.
+
+A browser that will not open, a laptop with no network, a person who wants to
+read `/help` first -- none of those is a reason to make the CLI unusable, and a
+required step that can fail for reasons outside the room is a lock-out waiting
+to happen. So it runs, says exactly what stays 403 if it does not finish, and
+`/login` does it again.
+
+## Web3 wallet cannot be the alternative here
+
+`POST /api/wallet/connect/start` calls `require-human-session!` itself.
+Connecting a wallet is something you do once you ALREADY have a Passkey
+session; it is not another way to get one. The instruction offered the two as
+alternatives, and on this server they are not: SIWE is there (`wallet.siwe`,
+`/api/wallet/connect/start` and `/finish`), behind the Passkey.
+
+Attaching a wallet after sign-in is a separate, smaller piece of work and is
+not done here.
+
+## The QR was written, measured, and NOT shipped
+
+Neither `qrencode` nor any QR npm package is on this machine, and the app runs
+from a source tree with one dev dependency -- so a QR meant writing one. It was
+written: byte mode, level L, versions 1-10, Reed-Solomon over GF(256).
+
+`zbarimg` IS on this machine, which is a decoder, so it could be checked the
+only way an encoder is worth checking: encode, render to PNG, decode, compare
+to the input. Seven inputs across five versions.
+
+**0 of 7 decoded.** It renders something that looks exactly like a QR code and
+is not one. Three real bugs were found and fixed against that oracle -- the
+format word's second copy written at `size-29+i` instead of `size-15+i`, the
+timing pattern striped over the alignment patterns from version 7, version
+information counting down from `size-11` instead of up -- and a fourth: the
+format reservation covering index 6 on both axes and blanking a timing module.
+It still decodes nothing.
+
+Reed-Solomon matches the published `HELLO WORLD` vector, the format words match
+the published level-L table for all eight masks, the codewords are right, all
+208 data modules of a version-1 symbol are filled, and both format copies read
+back correctly out of the finished matrix. The remaining fault is somewhere in
+the data placement or the mask, and it has not been found.
+
+So it is not in the release. Shipping a picture that looks like a QR and does
+not scan is worse than not having one: the operator would point a phone at it
+and conclude their phone was broken. The redirect -- which the instruction
+offered as the alternative and which is measured working -- is what ships.
+
+The oracle is the part worth keeping: encode → PNG → `zbarimg --raw` → compare.
+Anyone finishing this should start by running it, not by reading the encoder.
+"}]

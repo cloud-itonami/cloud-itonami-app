@@ -1,0 +1,7 @@
+[{:db/id -1
+  :adr/id "adr-2609141600-marketplace-public-bots-install"
+  :adr/title "Marketplace public bots: an installable catalog, a human-session install surface, and a dougaka publish path that survives PDS_HUMAN_AUTH_ONLY"
+  :adr/status "accepted"
+  :adr/date "2026-09-14"
+  :adr/body "The marketplace Bot tab installs an OFFER from a small hand-written catalog (resources/itonami-public-bots.edn) validated by a portable catalog module (public_bot_catalog.cljk). An install is a propose, not an automation: the route requires a human session plus same-origin + CSRF, then creates the bot as the session's colleague via bots/create! and records provenance. Catalog entries: mangaka, animeka, dougaka, gameka. dougaka publishes to aozora through the auth.aozora.app wallet ceremony (EIP-191 personal_sign by an EOA derived from the channel seed), because the production PDS runs PDS_HUMAN_AUTH_ONLY=1 and answers 410 LegacyLoginDisabled to every cacao_b64 createSession (measured 2026-09-14). The catalog offer is a separate plane from the funding directory (shared/bots-ui public_bots)."
+  :adr/evidence "portable catalog test: 4 tests / 52 assertions / 0 fail / 0 error (kbb). dougaka suite: 37 tests / 161 assertions / 0 fail including 3 new SIWE tests. E2E measured against the production surface: auth.aozora.app begin/finish 200 with a session JWT; putRecord + blob upload + deleteRecord succeeded on a throwaway did:pkh repo, then every test record was deleted."}]

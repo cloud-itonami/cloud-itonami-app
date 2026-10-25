@@ -23,7 +23,7 @@ The HTTP server remains JVM. The native http-ingress kit is still
 
 ## Decision
 
-The default test suite (`clojure -M:test`) executes `policy.kotoba`'s
+The default test suite (`kbb -M:test`) executes `policy.kotoba`'s
 native-crossable export (`loopback-host?`) as a signed kexe on the host ISA,
 differentially against the same compile's KIR interpreter.
 

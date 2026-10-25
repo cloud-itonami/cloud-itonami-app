@@ -1130,10 +1130,24 @@ A grant used to be `{principal-id role}` in this server's state: nothing
 outside the process could check it, nothing expired, and the only evidence
 that alice had let bob read a document was that this server said so.
 
-A grant now also mints a CACAO (CAIP-74) — a SIWE statement naming an
-audience, a `drive:<id>#<verb>` resource and an expiry, signed with Ed25519.
-It can be verified without asking this server, it stops being true on its
-own, and `cacao.core/verify-chain` is already there for re-granting.
+A grant now also mints a Biscuit (`cloud.itonami.app.share-grant`): the
+sharer's token over `kotoba://drive/<id>/*`, attenuated by one block to
+`kotoba://drive/<id>/<verb>`, addressed to the grantee (`holder`) and bounded
+by an expiry, every block signed with Ed25519 under the Drive issuer's did.
+It can be verified without asking this server and stops being true on its
+own. Re-granting is further attenuation by the holder: a later block may
+narrow the verb or the expiry, and a block naming another holder makes the
+token confer nothing (`:holder-readdressed`, `biscuit.kotoba/->delegated`).
+The decision is `authority.chain`'s, `:strict?`, so a block that claims more
+than it was given refuses the token (`:escalation-attempted`).
+
+Until 2026-09-24 the grant was a CACAO (CAIP-74) with `cacao.core/verify-chain`
+named for re-granting. Superproject adr-2609241800 ended that: a CACAO is
+accepted only at an Authn exchange, and new delegation is never written in it.
+`capability/verify-grant` refuses a CACAO share by name (`:cacao-not-accepted`).
+A share recorded as CACAO keeps its ACL entry and its expiry, is shown to the
+owner as `format: "cacao"`, unverified, and is reissued as a Biscuit when the
+owner shares it again.
 
 **The expiry is real, not decorative.** `documents/honour-capabilities` drops
 lapsed grants from the workspace before `drive` is asked anything, so
@@ -1463,6 +1477,13 @@ relevance queries. Writes replace the state file atomically.
   secret. Public state omits both.
 - UI authority: the surface declares intent but owns no network or filesystem
   capability.
+- Bot identity: a Bot's did and signing seed derive from the one fleet seed.
+  An imported Hermes Bot derives them from its source profile id
+  (`:bot/identity-key`, ADR-0088 amendment 2026-10-14) only when the profile's
+  record states the did this fleet derives for that id and no other
+  (owner, organization) already holds the key; otherwise it keeps the did of
+  its own Bot id and the import binding records why. A profile's name alone
+  never claims a fleet identity, and no two owners share one.
 - Prompt retention: chats are stored locally by design. Deleting a session
   removes the ordered transcript; compaction/retraction of its historical
   datoms is not yet implemented and the UI does not claim secure erasure.
@@ -1477,5 +1498,5 @@ relevance queries. Writes replace the state file atomically.
 4. Add memory distillation and relevance retrieval over kgraph.
 5. Add schedules/watchers after tool isolation is available.
 6. Add a function-call compatibility suite. (Streaming has one:
-   `test/cloud/itonami/app/openai_compat_test.clj` reads the SSE frames over
+   `test/cloud/itonami/app/openai_compat_test.cljk` reads the SSE frames over
    real HTTP, in both modes.)

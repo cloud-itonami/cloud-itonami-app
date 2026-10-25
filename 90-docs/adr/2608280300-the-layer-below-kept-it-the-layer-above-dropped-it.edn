@@ -75,7 +75,7 @@ alias の 2 つのスロットで tool 呼び出しの成否が偏っている�
 
 ## Verification
 
-- `clojure -M:test`: 1,998 tests / 11,768 assertions / 0 failures。
+- `kbb -M:test`: 1,998 tests / 11,768 assertions / 0 failures。
 - `error-message` から 3 つの detail を外すと、新テストの 4 assertion が
   赤くなることを確認した。
 - `parse-arguments` の arity 変更で既存テストが 1 本落ちたので、新しい

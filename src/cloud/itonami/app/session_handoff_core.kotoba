@@ -57,7 +57,7 @@
 ;; all-scalar record, `if`. Facts arrive as a record because a bare `:bool`
 ;; parameter is a backend gap (compiler ADR-0219).
 ;;
-;; Parity: test/cloud/itonami/app/session_handoff_kotoba_parity_test.clj
+;; Parity: test/cloud/itonami/app/session_handoff_kotoba_parity_test.cljk
 
 (ns session-handoff-core
   (:schemas {;; What the host has established about one presented claim token.

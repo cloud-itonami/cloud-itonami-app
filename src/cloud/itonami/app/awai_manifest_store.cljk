@@ -1,0 +1,58 @@
+(ns cloud.itonami.app.awai-manifest-store
+  "Fetch, validate, and persist a public manifest named by an Awai release."
+  (:require [cloud.itonami.app.awai-content :as content]
+            [cloud.itonami.app.awai-content-store :as content-store]
+            [cloud.itonami.app.awai-manifest :as manifest]))
+
+(defn fetch-release-manifest!
+  "Fetch a candidate's manifest only from its accepted, SPKI-pinned content
+  origins; verify its DAG-CBOR CID and Kotoba app schema; then persist the
+  verified block in the private content store. The candidate must come from
+  the independently verified local Awai registry snapshot."
+  [candidate now]
+  (cond
+    (not= :candidate (:decision candidate))
+    {:decision :refuse :error :domain-candidate-not-ready}
+
+    (not (and (string? (:manifest-cid candidate))
+              (string? (:app-id candidate))
+              (string? (:publisher-did candidate))
+              (vector? (:content-origin-records candidate))))
+    {:decision :refuse :error :invalid-manifest-fetch-scope}
+
+    (not (nat-int? now))
+    {:decision :refuse :error :invalid-clock}
+
+    :else
+    (try
+      (let [fetched (content/fetch-verified-block
+                    (:manifest-cid candidate)
+                    (:content-origin-records candidate)
+                    (:app-id candidate)
+                    (:publisher-did candidate)
+                    now
+                    manifest/maximum-manifest-bytes)]
+        (if-not (= :verified (:decision fetched))
+          {:decision (:decision fetched)
+           :error (:error fetched)
+           :fetch-result (dissoc fetched :bytes)}
+          (let [verified (manifest/verify-block (:manifest-cid candidate)
+                                                (:bytes fetched)
+                                                (:app-id candidate))]
+            (if-not (= :verified (:decision verified))
+              verified
+              (let [stored (content-store/store-verified-block!
+                            {:cid (:manifest-cid candidate)
+                             :bytes (:bytes fetched)})]
+                (if (and (= :stored (:decision stored))
+                         (true? (:durable? stored))
+                         (= (:manifest-cid candidate) (:cid stored))
+                         (some? (:receipt stored)))
+                  (assoc verified
+                         :storage-receipt (:receipt stored)
+                         :origin-host (:origin-host fetched))
+                  {:decision :unavailable
+                   :error :manifest-storage-failed
+                   :storage-result stored})))))
+      (catch Exception _
+        {:decision :unavailable :error :manifest-fetch-failed}))))

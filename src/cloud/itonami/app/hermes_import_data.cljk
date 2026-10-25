@@ -1,0 +1,202 @@
+(ns cloud.itonami.app.hermes-import-data
+  "Read the bounded, content-addressed part of a staged Hermes bundle.
+
+  A manifest path is never trusted by itself: every file is resolved below the
+  migration directory, required to be a regular file, and checked against the
+  sha256 recorded when it was staged.  This namespace has no authority to
+  create a Bot or grant a tool; it only projects portable source evidence."
+  (:require [kotoba.json :as json]
+            [clojure.java.io :as io]
+            [kotoba.lang.text :as str])
+  (:import [java.io File]
+           [java.nio.file Files LinkOption]
+           [java.security MessageDigest]))
+
+(def ^:private max-context-chars (* 64 1024))
+(def ^:private max-session-lines 20000)
+
+(defn- hex [bytes]
+  (apply str (map #(format "%02x" (bit-and % 0xff)) bytes)))
+
+(defn- sha256-file [^File file]
+  (let [digest (MessageDigest/getInstance "SHA-256")
+        buffer (byte-array 65536)]
+    (with-open [input (io/input-stream file)]
+      (loop []
+        (let [n (.read input buffer)]
+          (when (pos? n)
+            (.update digest buffer 0 n)
+            (recur)))))
+    (hex (.digest digest))))
+
+(defn artifact [profile kind]
+  (some #(when (= kind (:kind %)) %) (:artifacts profile)))
+
+(defn verified-artifact-file
+  "Resolve and verify one artifact below data-dir/bot-imports/<migration-id>."
+  [data-dir migration-id artifact]
+  (when-not (and (re-matches #"hermes-[A-Za-z0-9_-]{1,100}" (str migration-id))
+                 (map? artifact)
+                 (= "staged" (:state artifact))
+                 (string? (:path artifact))
+                 (not (str/blank? (:sha256 artifact))))
+    (throw (ex-info "Hermes import artifact is not a staged content-addressed file."
+                    {:type :bot-import/invalid-artifact})))
+  (let [root (.getCanonicalFile (io/file data-dir "bot-imports" (str migration-id)))
+        file (.getCanonicalFile (io/file root (:path artifact)))
+        root-path (str (.getPath root) File/separator)]
+    (when-not (and (str/starts-with? (.getPath file) root-path)
+                   (Files/isRegularFile (.toPath file)
+                                        (into-array LinkOption
+                                                    [LinkOption/NOFOLLOW_LINKS])))
+      (throw (ex-info "Hermes import artifact escaped or is missing."
+                      {:type :bot-import/artifact-missing})))
+    (when-not (= (:sha256 artifact) (sha256-file file))
+      (throw (ex-info "Hermes import artifact digest changed after staging."
+                      {:type :bot-import/artifact-changed})))
+    file))
+
+(defn runtime-context [data-dir migration-id profile]
+  (when-let [record (artifact profile "hermes-runtime-context")]
+    (let [text (slurp (verified-artifact-file data-dir migration-id record))]
+      (subs text 0 (min max-context-chars (count text))))))
+
+(defn sessions
+  "Return the redacted source sessions for one imported profile.
+
+  The source exporter writes one JSON object per line. A corrupt line fails the
+  import instead of silently dropping history. The hard line limit prevents a
+  malicious manifest from turning a compatibility request into unbounded work."
+  [data-dir migration-id profile]
+  (when-let [record (artifact profile "hermes-session-export")]
+    (with-open [reader (io/reader
+                        (verified-artifact-file data-dir migration-id record))]
+      (let [rows (doall (take (inc max-session-lines) (line-seq reader)))]
+        (when (> (count rows) max-session-lines)
+          (throw (ex-info "Hermes session export exceeds the admitted line count."
+                          {:type :bot-import/session-limit})))
+        (->> rows
+             (remove str/blank?)
+             (mapv #(json/read-str % :key-fn keyword)))))))
+
+(defn seed-messages
+  "Project the latest useful source conversation into Itonami's live transcript.
+
+  Full redacted history stays in the bundle and compatibility API. Only the
+  last user/assistant messages of the most recently active session become
+  ambient model context; old tool results never become new authority."
+  [session-rows max-messages max-message-chars]
+  (let [selected (last (sort-by #(str (or (:last_active %)
+                                          (:updated_at %)
+                                          (:created_at %) ""))
+                                session-rows))]
+    (->> (:messages selected)
+         (keep (fn [message]
+                 (let [role (case (str (:role message))
+                              "user" :person
+                              "assistant" :bot
+                              nil)
+                       content (:content message)
+                       text (cond
+                              (string? content) content
+                              (sequential? content)
+                              (->> content
+                                   (keep #(when (map? %) (or (:text %) (:content %))))
+                                   (str/join "\n"))
+                              :else nil)]
+                   (when (and role (not (str/blank? (str text))))
+                     {:role role
+                      :text (subs (str text) 0
+                                  (min max-message-chars (count (str text))))
+                      :at (or (:timestamp message) (:created_at message))}))))
+         (take-last max-messages)
+         vec)))
+
+;; ── the way back: an imported Bot as a Hermes profile ───────────────────
+;;
+;; Root ADR-2610141512: an agent is one identity whether Hermes or this
+;; application is running it, so an imported Bot has to be able to become a
+;; Hermes profile again without losing who it was. What goes back is what came
+;; across plus what the Bot now is: the persona the import projected, the
+;; model the Bot runs, and the profile's itonami record with the Bot's did.
+;; Never credentials, keys or grants -- none of those crossed in, and an
+;; export is not a second door for them.
+
+(def itonami-profile-schema "cloud.itonami.profile.v2")
+
+(defn context-document
+  "One source file's text out of a staged runtime-context projection, as the
+  source had it, or nil.
+
+  The projection writes `## <path>\\n\\n<text>\\n\\n` per file, so the two
+  newlines it added are removed and nothing else. When an archive held the
+  name more than once the shallowest path is the profile's own file."
+  [context file]
+  (->> (re-seq #"(?ms)^## ([^\n]+\.md|[^\n]*\.cursorrules)\n\n(.*?)(?=^## (?:[^\n]+\.md|[^\n]*\.cursorrules)\n\n|\z)"
+               (or context ""))
+       (filter (fn [[_ path _]]
+                 (or (= path file) (str/ends-with? path (str "/" file)))))
+       (sort-by (fn [[_ path _]] (count (re-seq #"/" path))))
+       (some (fn [[_ _ text]]
+               (if (str/ends-with? text "\n\n")
+                 (subs text 0 (- (count text) 2))
+                 text)))))
+
+(defn- yaml-scalar
+  "A plain YAML scalar when the value is an ordinary identifier, otherwise a
+  double-quoted one (JSON string syntax is valid YAML). `yes`, `off`, `null`
+  and the like are quoted: plain, YAML would read them as something else."
+  [value]
+  (let [text (str value)]
+    (if (and (re-matches #"[A-Za-z][A-Za-z0-9._/@+-]*" text)
+             (not (contains? #{"y" "n" "yes" "no" "on" "off" "true" "false" "null"}
+                             (str/lower text))))
+      text
+      (json/write-str text))))
+
+(defn export-profile-files
+  "The files of a Hermes profile directory for an imported Bot: a map of
+  relative path to text. Pure -- the caller reads the binding, the verified
+  runtime context and the did.
+
+  * `SOUL.md` -- the persona the import projected from the source, verbatim
+    (absent when the source had none)
+  * `config.yaml` -- `model.provider` / `model.default` from the Bot; nothing
+    else, and no credential of any kind
+  * `profile.yaml` -- the description
+  * `itonami.edn` -- the carried itonami record, with `:ids :did` set to the
+    Bot's did. A profile that came without one gets the minimal record, since
+    the Bot now has a did to state."
+  [{:keys [bot runtime-context did] import-binding :binding}]
+  (let [profile-id (or (get-in bot [:bot/hermes-profile :id])
+                       (:profile-id import-binding))
+        carried (or (get-in bot [:bot/hermes-profile :itonami])
+                    (:itonami-profile import-binding))
+        soul (context-document runtime-context "SOUL.md")
+        provider (:bot/provider-id bot)
+        model (:bot/model bot)
+        record (cond-> (merge {:itonami/schema itonami-profile-schema
+                               :profile/id profile-id
+                               :profile/hermes-compatible true}
+                              carried)
+                 did (assoc-in [:ids :did] did))]
+    (cond-> {"config.yaml"
+             (str "# Exported from Cloud Itonami Bot " (:bot/id bot) ".\n"
+                  "# Credentials, provider keys and grants are never exported.\n"
+                  (when (or provider model)
+                    (str "model:\n"
+                         (when provider (str "  provider: " (yaml-scalar provider) "\n"))
+                         (when model (str "  default: " (yaml-scalar model) "\n")))))
+             "profile.yaml"
+             (str "description: "
+                  (yaml-scalar (or (:profile/description carried)
+                                   (:bot/brief bot)
+                                   profile-id))
+                  "\n")
+             "itonami.edn"
+             (str ";; itonami profile (cloud.itonami.profile.v2). Additive to the Hermes layout:\n"
+                  ";; Hermes ignores this file; removing it returns the profile to plain Hermes.\n"
+                  (binding [*print-namespace-maps* false]
+                    (pr-str (into (sorted-map) record)))
+                  "\n")}
+      soul (assoc "SOUL.md" soul))))

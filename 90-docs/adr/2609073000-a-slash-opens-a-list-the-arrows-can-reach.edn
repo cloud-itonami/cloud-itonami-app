@@ -1,0 +1,77 @@
+[{:db/id -1
+  :adr/id "adr-2609073000-a-slash-opens-a-list-the-arrows-can-reach"
+  :adr/title "A slash opens a list the arrows can reach"
+  :adr/status "accepted"
+  :adr/date "2026-09-07"
+  :adr/related "adr-2609062800-the-input-area-is-an-editor-not-a-readline adr-2609072600-the-repository-brings-its-own-slash-commands"
+  :adr/body "## What was asked
+
+Owner instruction, 2026-09-07, against a screenshot of Claude Code's `/` menu:
+slash を入れた時点で autocomplete、候補を表示、選択できるように.
+
+## Where it lives
+
+In `itonami-editor`, next to the key semantics, because that is what it is: a
+list is only useful if the arrows reach it, and the arrows already mean two
+other things.
+
+`candidates` is a function of the buffer and a command list carried in the
+editor state, so the whole thing -- what opens the list, what narrows it, what
+each key does while it is up -- is testable without a registry or a terminal.
+The registry is handed in once at startup; it does not change after that.
+
+## When the list is open
+
+While the caret is inside the first word of a one-line buffer that starts with
+`/`. Once a space is typed the operator has moved on to arguments, and a list
+that keeps covering the screen while they type them is a list that has to be
+dismissed rather than one that helps.
+
+Matching is prefix first, then substring. A prefix is what the operator is
+typing: `/st` offers `/status` and `/steer` before `/timestamps`, which has
+`st` in the middle. The substring half is not decoration -- it is how `/pin`
+finds `/west-pin-advance`, and it is also why `/west-pin-advance` appears at
+the END of `/st`.
+
+## What the keys do while it is up
+
+- **↑ ↓** move the selection. Everywhere else Up means history or the line
+  above; over a half-typed command name history would throw the name away and
+  there is no line above a one-line `/word`. It stops at the ends rather than
+  wrapping.
+- **Tab** completes to the selection.
+- **Enter** completes a partial name, and SENDS one that is already whole.
+  Completing `/help` to `/help ` and asking for a second Enter would be the
+  menu getting in the way of the commonest case there is.
+- **Esc** dismisses the list, and it stays dismissed until the word changes --
+  otherwise it comes back on the next keystroke and the key looks broken.
+
+A query that matches nothing shows no list, and Enter then sends the line, so
+the operator gets the server's own answer rather than a menu that ate the key.
+
+## On the screen
+
+The list is rows of the block, between the rule and the input, so it reads as
+belonging to what is being typed. Same reason as the progress line and the
+streamed tail: a list drawn as lines of its own has to be told where the block
+is, and disagrees with it the moment either moves.
+
+Eight candidates are shown and the rest are COUNTED (`+53 more — 続けて入力する
+と絞り込みます`). A list that silently stops at eight teaches an operator that
+the ninth command does not exist.
+
+The status bar names the keys that are live while the list is up (`↑↓ 選択 /
+tab · enter 補完 / esc 閉じる`) instead of the ones the menu has taken.
+
+## Measured
+
+On a pty against this workspace, where the registry is 61 commands: `/` shows
+eight with `+53 more`; `/we` narrows to one; ↓ then Tab completes to
+`/west-pin-advance ` and closes the list.
+
+Four controls, each failing the check it breaks by name: arrows kept meaning
+history; Enter always completing and never sending; the list cut at eight
+without saying so; and -- from the first run -- four expectations of mine that
+were wrong about `/west-pin-advance` matching `/st`, which the tests caught
+before the code did.
+"}]

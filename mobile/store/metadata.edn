@@ -1,0 +1,203 @@
+;; Store listing DRAFT for cloud.itonami.app (App Store + Google Play).
+;;
+;; Nothing here has been uploaded or submitted, and no store console has been
+;; signed in to. Every answer below is derived from what the app measurably
+;; does at the commit that adds this file (mobile/src, mobile/shell-policy.edn,
+;; the generated kotoba-shell projects, services/app-edge). Lines marked
+;; :uncertain / ;; UNCERTAIN need an owner decision before submission.
+;;
+;; Limits checked by hand: App Store name/subtitle <= 30, keywords <= 100
+;; bytes-ish (comma separated, no spaces needed), promo <= 170, description
+;; <= 4000; Play title <= 30, short <= 80, full <= 4000.
+{:app/id "cloud.itonami.app"
+ :app/version "0.4.2"
+
+ ;; ── accounts (owner decision, 2026-10-14) ──────────────────────────────
+ :accounts
+ {:apple {:account :personal
+          :seller "Jun Kawasaki"
+          ;; UNCERTAIN: a personal account shows "Jun Kawasaki" as seller while
+          ;; itonami.cloud names Awai Network LLC as the service operator. Not a
+          ;; rule violation, but the privacy policy should say who publishes
+          ;; the iOS app (see :gaps). EU DSA: a personal account that declares
+          ;; trader status publishes the owner's address/phone in the EU store.
+          :copyright "© 2026 Jun Kawasaki"}
+  :google {:account :organization
+           :developer-name "Awai Network LLC"
+           :contact-email "j@awai.network"
+           :copyright "© 2026 Awai Network LLC"}}
+
+ ;; ── URLs (measured on itonami.cloud, 2026-10-14) ───────────────────────
+ :urls
+ {:privacy-policy "https://itonami.cloud/legal/privacy/"   ; 200, real policy page
+  :terms "https://itonami.cloud/legal/terms/"              ; 200, real terms page
+  :marketing "https://itonami.cloud/"                      ; 200 (ja: /ja/)
+  ;; UNCERTAIN: there is no dedicated support page. /support, /contact and
+  ;; /privacy answer 200 but serve the home page (SPA fallback), so they are
+  ;; NOT used. The home page footer carries support@itonami.cloud, as does
+  ;; /legal/company.md. Apple requires the Support URL to lead to contact
+  ;; information: the home page does, but a real /support page is better.
+  :support "https://itonami.cloud/"
+  :support-email "support@itonami.cloud"}
+
+ ;; ── listing text ────────────────────────────────────────────────────────
+ :listing
+ {:ja
+  {:name "Cloud Itonami"
+   :subtitle "営みの actor 目録を手のひらで"
+   :promotional-text "cloud-itonami が公開する約 1,300 の actor を、名前・領域・国コード・役割で検索。サインイン不要で、各 actor の宣言をそのまま読めます。"
+   :description "Cloud Itonami は、cloud-itonami（営み）が公開している actor の目録をスマートフォンで引くためのアプリです。アカウントもサインインも要りません。
+
+■ できること
+・約 1,300 の actor を、名前・領域・国コードなどで検索
+・役割（産業 ISIC・職業 ISCO・法域・自治体の条例・業界団体のコンプライアンスなど）で絞り込み
+・actor ごとに、役割・領域・ガバナー・必要な技術・社会的インパクト・ISIC などの宣言を一覧表示
+・コマンド画面で、デスクトップの itonami CLI と同じコマンド表を引く（コマンドの実行には、デスクトップで認証済みの itonami と対になった端末が必要です）
+
+■ プライバシー
+・アカウント、広告、解析ツール、トラッキングはありません
+・端末から送るのは検索の条件だけです
+・コマンド画面で保存する接続先と token は、この端末の中にだけ保存されます
+
+■ お問い合わせ
+support@itonami.cloud"
+   :keywords "itonami,営み,actor,目録,ディレクトリ,ISIC,ISCO,業種,職業,コンプライアンス,自治体,エージェント,bot"
+   :whats-new "最初の公開版です。actor の検索、役割での絞り込み、詳細表示、アプリ情報を備えています。"
+   :play {:title "Cloud Itonami"
+          :short-description "cloud-itonami の actor 目録を検索・絞り込み・詳細表示。サインイン不要。"}}
+
+  ;; UNCERTAIN: the app's UI is Japanese only (ADR-0143 §4: no second locale
+  ;; yet). An English listing for a Japanese-only UI is allowed, but the
+  ;; description says so, and a reviewer outside Japan will see Japanese.
+  :en
+  {:name "Cloud Itonami"
+   :subtitle "Browse the itonami actor fleet"
+   :promotional-text "Search about 1,300 public cloud-itonami actors by name, domain, country code and role, and read what each one declares. No account needed."
+   :description "Cloud Itonami is a pocket directory of the actors that cloud-itonami (itonami, \"the work of living\") publishes. No account and no sign-in are needed.
+
+What you can do
+- Search about 1,300 actors by name, domain or country code
+- Narrow the list by role: industry (ISIC), occupation (ISCO), jurisdiction, municipal ordinance, industry-association compliance and more
+- Open any actor to read what its blueprint declares: role, domain, governor, required technologies, social impact, ISIC code and more
+- Look up the same command table the desktop itonami CLI uses (running commands requires a device paired with an authenticated desktop itonami)
+
+Privacy
+- No account, no ads, no analytics, no tracking
+- The only thing the app sends is your search conditions
+- The ingress address and token you can save on the command screen stay on this device
+
+The app's interface is in Japanese.
+
+Support: support@itonami.cloud"
+   :keywords "itonami,actor,directory,catalog,ISIC,ISCO,industry,occupation,compliance,municipal,agent,bot"
+   :whats-new "First release: actor search, role filter, actor details and an about screen."
+   :play {:title "Cloud Itonami"
+          :short-description "Search and browse the public cloud-itonami actor directory. No sign-in."}}}
+
+ ;; ── classification ──────────────────────────────────────────────────────
+ :category {:apple {:primary "Business" :secondary "Reference"}
+            :google {:category "Business" :tags ["Directory" "Reference"]}}
+
+ ;; Apple's age-rating questionnaire: every content descriptor "None", no
+ ;; unrestricted web access (the WebView never navigates off the bundle;
+ ;; endpoints are shown as text), no user-generated content, no chat, no
+ ;; gambling, no medical/wellness content. => 4+.
+ ;; Google (IARC): no violence, sexuality, language, controlled substances,
+ ;; gambling, user interaction or location sharing. => Everyone / PEGI 3 / USK 0.
+ ;; UNCERTAIN: a PAIRED device's コマンド pane prints whatever the owner's own
+ ;; ingress answers. That is the owner's own account data, not UGC from others.
+ :age-rating {:apple "4+" :google "Everyone"}
+
+ :pricing {:price :free :in-app-purchases false :ads false}
+
+ ;; ── privacy, from actual behaviour ──────────────────────────────────────
+ ;;
+ ;; What leaves the device:
+ ;;  1. GET https://cloud-itonami-app-edge.04-feasts-minded.workers.dev
+ ;;     /api/fleet/search?limit=50[&text=…][&role=…] and /api/fleet/facets?field=role.
+ ;;     No cookie, no auth header, no device id. The query text is in the URL.
+ ;;     The Worker has `observability: {enabled: true}` (services/app-edge/
+ ;;     wrangler.jsonc), so Cloudflare Workers Logs keep request URLs, and
+ ;;     Cloudflare edge logs keep the IP, for a limited time.
+ ;;  2. Only if the user pairs the device on the コマンド pane: requests to the
+ ;;     ingress they entered (default https://agent.itonami.cloud) with
+ ;;     `Authorization: Bearer <token>`. Passkey-gated writes are refused on the
+ ;;     client and never sent.
+ ;; What stays on the device:
+ ;;  - the pairing {:base :token} as JSON in WebView localStorage under
+ ;;    "cloud.itonami.mobile.pairing.v1". NOT the Keychain/Keystore: the bridge
+ ;;    policy is deny-all (mobile/shell-policy.edn). Removed with the app.
+ ;; No SDKs, no analytics, no ads, no advertising id, no location, no contacts,
+ ;; no camera/mic, no tracking (ATT not needed).
+ :apple-app-privacy
+ {:tracking false
+  ;; Conservative answer while Workers observability is on. If it is turned
+  ;; off for this Worker (or search params are excluded from logs), the honest
+  ;; answer becomes :data-not-collected. UNCERTAIN: owner decision.
+  :data-collected
+  [{:type "Search History"
+    :linked-to-user false
+    :used-for-tracking false
+    :purposes ["App Functionality"]
+    :note "search text and chosen role, in the edge request URL, retained only in Cloudflare request logs"}]
+  :alternative-if-logs-disabled :data-not-collected
+  ;; The pairing token is an access credential the user types in; it is sent
+  ;; only to the ingress the user chose, i.e. to the owner's own service.
+  ;; UNCERTAIN: Apple has no "credential" data type; "Other Data, App
+  ;; Functionality, linked" is the cautious disclosure if paired use is
+  ;; considered part of the shipped app.
+  :paired-use {:type "Other Data" :linked-to-user true :used-for-tracking false
+               :purposes ["App Functionality"] :uncertain true}}
+
+ :google-data-safety
+ {:collects-or-shares-data true      ; false if Workers logs are disabled (see above)
+  :data-types
+  [{:category "App activity" :type "In-app search history"
+    :collected true :shared false :ephemeral false :required false
+    :purposes ["App functionality"]}]
+  :encrypted-in-transit true         ; every endpoint is HTTPS
+  ;; android:usesCleartextTraffic="false" (:android/cleartext-traffic? false,
+  ;; kotoba-lang/shell PR #36).
+  :deletion-request-mechanism :not-applicable   ; no account, nothing tied to a user
+  :account-creation false
+  :independent-security-review false
+  :families-policy false}
+
+ ;; ── export compliance ───────────────────────────────────────────────────
+ ;; The app uses only the OS's HTTPS (URLSession/WebKit, Android WebView); it
+ ;; contains no proprietary or non-standard cryptography. Apple: answer "uses
+ ;; encryption: yes, exempt (standard HTTPS)" or set
+ ;; ITSAppUsesNonExemptEncryption = NO in Info.plist. Set by
+ ;; :ios/uses-non-exempt-encryption? false (kotoba-lang/shell PR #36), so App
+ ;; Store Connect does not ask per build. No ERN/CCATS needed. France
+ ;; declaration not needed.
+ :export-compliance {:uses-encryption true :exempt true
+                     :basis "standard HTTPS via OS networking only"
+                     :info-plist-key-set true}
+
+ :review-notes
+ {:en "No account or sign-in is needed. Open the app: the フリート (Fleet) tab lists ~1,300 public actors read live from our edge. Use the search field or the 役割 (role) menu, then tap 詳しく見る (details). 情報 (About) shows support and privacy information. The コマンド (Command) tab is an optional companion to our desktop CLI; it sends nothing until a device is paired, and pairing is not needed to review the app."
+  :demo-account nil}
+
+ :screenshots
+ {:ios-6.9 ["screenshots/ios/01-fleet.png" "screenshots/ios/02-role-filter.png"
+            "screenshots/ios/03-actor-detail.png" "screenshots/ios/04-about.png"]  ; 1320x2868
+  :android-phone ["screenshots/android/01-fleet.png" "screenshots/android/02-role-filter.png"
+                  "screenshots/android/03-actor-detail.png" "screenshots/android/04-about.png"] ; 1080x2160 (2:1, Play max), Pixel 7 API 35 with `wm size 1080x2160`
+  ;; iPhone only (UIDeviceFamily [1], :ios/device-family [:iphone]), so no
+  ;; iPad screenshots are required. Retaken 2026-10-14 on an iPhone 17 Pro Max
+  ;; simulator (iOS 26.5) and a Pixel 7 API 35 emulator against the live edge,
+  ;; with the kotoba-lang/shell PR #36 scaffold (no Android title bar).
+  :ipad-13 nil}
+
+ :art {:app-store-icon "art/ios-appstore-1024.png"           ; 1024, opaque
+       :play-icon "art/play-icon-512.png"                    ; 512, opaque
+       :play-feature-graphic "art/play-feature-graphic-1024x500.png"
+       :android-adaptive {:foreground "art/android-adaptive-foreground-432.png"
+                          :background "art/android-adaptive-background-432.png"}}
+
+ :gaps
+ ["Privacy policy (2026-07-24) covers the B2B service and names Awai Network LLC; it does not mention the mobile app or the iOS publisher (Jun Kawasaki). Add a short mobile-app section."
+  "No dedicated support page on itonami.cloud (/support is the home page)."
+  "Decide on Workers observability for cloud-itonami-app-edge: it is what turns the privacy answer from 'Data Not Collected' into 'Search History'."
+  "UI is Japanese only; English listing is a translation of the store text, not of the app."]}

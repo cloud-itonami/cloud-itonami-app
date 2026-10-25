@@ -55,7 +55,7 @@ truncated answer, which a client cannot distinguish from a short success.
   and the deferral is the reason. Sending the headers up front is the obvious
   simplification and it silently converts every pre-stream refusal into a
   `200` empty answer.
-- `test/cloud/itonami/app/openai_compat_test.clj` reads the frames over real
+- `test/cloud/itonami/app/openai_compat_test.cljk` reads the frames over real
   HTTP — content type, chunk order, `[DONE]`, and the `403`-under-`stream`
   case — because a wire format is not testable through the Clojure API.
 - Function calling, embeddings and the Responses API remain unimplemented, and

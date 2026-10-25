@@ -1,0 +1,208 @@
+(ns cloud.itonami.app.public-bot-catalog
+  "The Marketplace's installable public bots.
+
+  A catalog entry is an OFFER, not an installed thing. Reading this namespace
+  answers 'what could I add'; installing is `install!`, which creates a fresh
+  Bot in the caller's own organization through the same `bots/create!` the
+  new-Bot form uses — one creation path, so an install cannot carry an
+  authority the form cannot.
+
+  The catalog is a hand-written resource (see the header of
+  `resources/itonami-public-bots.edn`), so it can drift. The schema check
+  below fails loudly on drift rather than rendering half-cards: an entry
+  missing what the installer needs is an exception, not a missing card.
+
+  A second, generated resource adds the agent templates of
+  cloud-itonami/itonami-registry (`resources/itonami-registry-bots.edn`,
+  written by `scripts/sync-itonami-registry.cljk` from one pinned registry
+  commit with every folder checksum verified). The registry grants nothing,
+  so a registry offer whose install defaults turn any capability on is
+  refused here, and its brief points at the template's SOUL.md at that
+  commit. Without the generated resource the catalog is the hand-written one."
+  (:require [kotoba.lang.edn :as edn]
+            [kotoba.lang.text :as str])
+  ;; `bots` is the JVM-side creation path. The portable half (parse, validate,
+  ;; `find-bot`) must stay runnable under ClojureScript, where `bots` cannot
+  ;; load — a portable judgement that needed the JVM would be a `.clj` file
+  ;; with a longer name. On the JVM the require is unconditional at load.
+  #?(:clj (:require [cloud.itonami.app.bots :as bots])))
+
+(def ^:private resource-name "itonami-public-bots.edn")
+(def schema "cloud.itonami.app.public-bot-catalog.v1")
+(def ^:private registry-resource-names
+  "Generated registry offers, merged in this order: cloud-itonami/itonami-registry,
+  then upstream fathah/hermes-registry (ADR-0143: Itonami bots read the Hermes
+  registry too)."
+  ["itonami-registry-bots.edn" "hermes-registry-bots.edn"])
+(def registry-schema "cloud.itonami.app.itonami-registry-bots.v1")
+(declare install-attributes)
+
+(defn- require-field [entry field]
+  (when (str/blank? (str (get entry field)))
+    (throw (ex-info (str "public bot catalog entry is missing " field)
+                    {:type :public-bot-catalog/invalid-entry
+                     :id (:id entry) :field field}))))
+
+(defn- validate-catalog [catalog]
+  (when-not (map? catalog)
+    (throw (ex-info "public bot catalog resource is not a map"
+                    {:type :public-bot-catalog/invalid-catalog})))
+  (when-not (= schema (:schema catalog))
+    (throw (ex-info "public bot catalog schema mismatch"
+                    {:type :public-bot-catalog/schema-mismatch
+                     :expected schema :actual (:schema catalog)})))
+  (let [entries (:bots catalog)]
+    (when-not (and (vector? entries) (seq entries))
+      (throw (ex-info "public bot catalog has no bots"
+                      {:type :public-bot-catalog/empty})))
+    (doseq [entry entries]
+      (doseq [field [:id :name :avatar :role :brief :author :entry-url
+                     :installed-surface :install]]
+        (require-field entry field))
+      (let [defaults (:defaults (:install entry))]
+        (when-not (map? defaults)
+          (throw (ex-info "public bot install defaults must be a map"
+                          {:type :public-bot-catalog/invalid-entry
+                           :id (:id entry) :field :install}))))
+      (when-not (re-matches #"^[a-z0-9][a-z0-9-]{0,63}$" (str (:id entry)))
+        (throw (ex-info "public bot id must be a lowercase slug"
+                        {:type :public-bot-catalog/invalid-entry
+                         :id (:id entry) :field :id})))
+      (install-attributes entry))
+    (when-not (= (count entries) (count (set (map :id entries))))
+      (throw (ex-info "public bot catalog has duplicate ids"
+                      {:type :public-bot-catalog/duplicate-ids}))))
+  catalog)
+
+(defn- validate-registry
+  "The generated registry resource: pinned to one commit, every offer inert."
+  [reg]
+  (when-not (= registry-schema (:schema reg))
+    (throw (ex-info "itonami registry offers schema mismatch"
+                    {:type :public-bot-catalog/schema-mismatch
+                     :expected registry-schema :actual (:schema reg)})))
+  (when-not (re-matches #"[0-9a-f]{40}" (str (get-in reg [:registry :commit])))
+    (throw (ex-info "itonami registry offers must name one registry commit"
+                    {:type :public-bot-catalog/registry-unpinned})))
+  (validate-catalog {:schema schema :bots (:bots reg)})
+  (doseq [entry (:bots reg)]
+    (when (some true? (vals (get-in entry [:install :defaults])))
+      (throw (ex-info "a registry offer may not turn a capability on"
+                      {:type :public-bot-catalog/registry-grants :id (:id entry)})))
+    ;; A template is pinned to the registry commit; an Itonami profile entry is
+    ;; pinned to its owning repository's commit, recorded by the registry.
+    (when-not (or (= (get-in reg [:registry :commit]) (get-in entry [:profile-source :revision]))
+                  (and (= "profile" (get-in entry [:registry :type]))
+                       (re-matches #"[0-9a-f]{40}" (str (get-in entry [:profile-source :revision])))
+                       (= (get-in entry [:registry :profile-commit]) (get-in entry [:profile-source :revision]))))
+      (throw (ex-info "a registry offer must pin its profile to the registry commit"
+                      {:type :public-bot-catalog/registry-unpinned :id (:id entry)}))))
+  reg)
+
+(defn merge-catalogs
+  "Hand-written offers first, then the registry's. An id offered by both is an
+  error, not a silent override."
+  [catalog reg]
+  (if-not reg
+    catalog
+    (let [merged (into (vec (:bots catalog)) (:bots reg))]
+      (when-not (= (count merged) (count (set (map :id merged))))
+        (throw (ex-info "public bot catalog and a registry offer the same id"
+                        {:type :public-bot-catalog/duplicate-ids})))
+      (-> catalog
+          (assoc :bots merged)
+          (update :registries (fnil conj []) (:registry reg))))))
+
+(defonce ^:private portable-source (atom nil))
+(defonce ^:private portable-registry-sources (atom {}))
+
+;; JVM hosts read the resource from the classpath; the resource ships with the
+;; release, so this namespace does not depend on a west checkout beside it.
+#?(:clj
+   (defn- read-catalog []
+     (let [loader (.. Thread currentThread getContextClassLoader)
+           regs (keep #(some-> (.getResource loader %) slurp edn/read-string validate-registry)
+                      registry-resource-names)]
+       (if-some [url (.getResource loader resource-name)]
+         (reduce merge-catalogs (validate-catalog (edn/read-string (slurp url))) regs)
+         (throw (ex-info (str "public bot catalog resource missing: " resource-name)
+                         {:type :public-bot-catalog/catalog-missing})))))
+   :cljs
+   (defn- read-catalog []
+     ;; The portable build hands the text in through `set-portable-source!`;
+     ;; reading it here would reach past the host boundary.
+     (if-some [text @portable-source]
+       (reduce merge-catalogs (validate-catalog (edn/read-string text))
+               (keep #(some-> (get @portable-registry-sources %) edn/read-string validate-registry)
+                     registry-resource-names))
+       (throw (ex-info (str "public bot catalog resource missing: " resource-name)
+                       {:type :public-bot-catalog/catalog-missing})))))
+
+(defn set-portable-source!
+  "Hosts without a classpath hand the catalog text in. Passing nil clears."
+  [text]
+  (reset! portable-source text)
+  nil)
+
+(defn set-portable-registry-source!
+  "Hosts without a classpath hand a generated registry resource in by name
+  (optional; one of `registry-resource-names`)."
+  [resource text]
+  (swap! portable-registry-sources assoc resource text)
+  nil)
+
+(def catalog
+  "Parsed catalog. Delayed so a malformed resource fails on first use with the
+  validation exception, not at load time where the reader would win."
+  (delay (read-catalog)))
+
+(defn bots [] (:bots @catalog))
+
+(defn find-bot [id]
+  (some #(when (= id (:id %)) %) (bots)))
+
+(defn install-attributes
+  "Carry the offered role and immutable owner instructions into a fresh Bot.
+  Profile metadata adds instructions, never credentials or capabilities."
+  [entry]
+  (let [source (:profile-source entry)
+        {:keys [repository revision path file]} source
+        file (or file "SOUL.md")]
+    (when source
+      (when-not (and (string? repository)
+                     (re-matches #"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" repository)
+                     (string? revision) (re-matches #"[0-9a-f]{40}" revision)
+                     (string? path) (re-matches #"[A-Za-z0-9_/-]+" path)
+                     (not (str/starts-with? path "/"))
+                     (re-matches #"[A-Za-z0-9_.-]+\.md" file))
+        (throw (ex-info "public bot profile source must be a pinned repository path"
+                        {:type :public-bot-catalog/invalid-entry :id (:id entry)
+                         :field :profile-source}))))
+    (merge {:name (:name entry)
+            :avatar (:avatar entry)
+            :brief (str (:brief entry)
+                        (when source
+                          (str "\nCanonical role instructions (pinned source): https://github.com/"
+                               repository "/blob/" revision "/" path "/" file
+                               "\nRead this role before research; preserve its evidence and publication contract.")))}
+           (select-keys (get-in entry [:install :defaults])
+                        [:writes? :browser? :computer? :peers? :omakase? :coding?]))))
+
+#?(:clj
+   (defn install!
+     "Create a fresh Bot in the caller's organization from a catalog entry.
+
+  The bot's name, avatar and role come from the entry; a pinned owner profile
+  is appended to its brief when offered. Capability
+  defaults come from the entry but every one of them is a DEFAULT the
+  existing creation path already applies to a hand-made bot — nothing here
+  widens what `bots/create!` can grant. Connectors, accounts and wallet
+  signer stay ungranted, exactly as the form's path leaves them."
+     [configuration session bot-id]
+     (let [entry (or (find-bot bot-id)
+                     (throw (ex-info "public bot is not in the catalog"
+                                     {:type :public-bot-catalog/unknown-bot
+                                      :id bot-id})))
+           attributes (install-attributes entry)]
+       (bots/create! configuration session
+                     attributes))))

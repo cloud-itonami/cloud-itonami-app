@@ -69,7 +69,7 @@ measurement is not rewritten.
   `model-fallbacks` source all name `murakumo-main`.
 - Tests this session: `config-test` + `bots-test` with
   `CLOUD_ITONAMI_DATA_DIR` unset — 157 tests, 687 assertions, 0
-  failures. Full `clojure -M:test` was not run.
+  failures. Full `kbb -M:test` was not run.
 - `local-murakumo` default branch: merge `9e4f054` of `1325cee`.
   JS entry rewrites POST `/v1/chat/completions` and `/v1/messages`
   with model `qwen3.8-27b-fastmtp-aggressive` to `murakumo-main`.

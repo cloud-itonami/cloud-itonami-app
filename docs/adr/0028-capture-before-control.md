@@ -69,7 +69,7 @@ approval semantics. Promotion between them requires a separate explicit design.
 
 ## Implementation
 
-- `src/cloud/itonami/app/capture.clj`
+- `src/cloud/itonami/app/capture.cljk`
 - `GET/POST /api/captures`
 - `GET /api/captures/chronicle`
 - `POST /api/captures/chronicle/capture`

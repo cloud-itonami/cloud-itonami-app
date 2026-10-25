@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; MCP stdio host. Does not spawn java or clojure.
 ;;
 ;; Protocol admission is the guest export `protocol-ok?` from `mcp_main.wasm`.

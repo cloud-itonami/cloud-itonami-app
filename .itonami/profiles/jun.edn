@@ -1,0 +1,10 @@
+;; jun's profile for this repository. Selected when the LOCAL install says
+;; `ITONAMI_PROFILE_AS=jun` (or carries `:profile {:as "jun"}`) — this file
+;; does not assert who is running the CLI, it offers a profile to whoever
+;; calls themselves that.
+{:profile/schema "cloud.itonami.app.repo-profile.v1"
+ :profile/id "cloud-itonami-app-jun"
+ :profile/for "jun"
+ :bot/name "cloud-itonami-app (jun)"
+ :bot/brief "あなたは cloud-itonami/cloud-itonami-app の現在地を測り、jun に対して 1 件だけ提案する。itonami の front end と resident。"
+ :bot/context-refs [{:kind "repo" :target "cloud-itonami/cloud-itonami-app"}]}

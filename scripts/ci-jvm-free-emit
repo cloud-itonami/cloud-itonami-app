@@ -6,6 +6,10 @@ set -euo pipefail
 root="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
+# Portable agency tool qualification runs at the existing CI/fleet entrypoint.
+# No extra hosted workflow or service is introduced for these Bot roles.
+node --test test/agency-tools.test.mjs
+
 # nbb lives in this app's node_modules. Put it on PATH before the JVM filter.
 if [[ -d "$root/node_modules/.bin" ]]; then
   PATH="$root/node_modules/.bin:$PATH"
@@ -28,8 +32,42 @@ pin_sha() {
 
 amu_sha="$(pin_sha :amu)"
 lang_sha="$(pin_sha :kotoba-lang)"
+kbb_sha="$(pin_sha :kbb)"
 echo "compiler freeze kotoba-lang@${lang_sha}"
 echo "amu emit frontend @${amu_sha}"
+
+# kbb: the launcher this cutover runs everything through (kotoba-lang/kotoba
+# bin/kbb) plus its engine (kotoba-lang/org-babashka-nbb — nbb with .cljk
+# classpath resolution). Pinned to the :kbb entry in compiler-pin.edn (the kbb
+# cutover merge); kbb is a launcher here, not a runtime bump.
+kbb_home="${KBB_CHECKOUT:-$root/target/kbb-checkout}"
+if [[ ! -x "$kbb_home/bin/kbb" ]]; then
+  rm -rf "$kbb_home"
+  git clone --depth 5 https://github.com/kotoba-lang/kotoba.git "$kbb_home"
+  git -C "$kbb_home" fetch --depth 20 origin "$kbb_sha"
+  git -C "$kbb_home" checkout --detach "$kbb_sha"
+fi
+engine="${KBB_ENGINE:-$kbb_home/../org-babashka-nbb/cli.js}"
+if [[ ! -f "$engine" ]]; then
+  engine_dir="$root/target/kbb-engine-checkout"
+  if [[ ! -f "$engine_dir/cli.js" ]]; then
+    rm -rf "$engine_dir"
+    git clone --depth 5 https://github.com/kotoba-lang/org-babashka-nbb.git "$engine_dir"
+  fi
+  engine="$engine_dir/cli.js"
+fi
+export KBB_ENGINE="$engine"
+PATH="$kbb_home/bin:$PATH"
+export PATH
+# Force the amu emitter: without this bin/kotoba probes for a native kotoba
+# CLI on PATH, and the kotoba launcher the kbb checkout ships cannot run on a
+# JVM-free runner (its own path needs the JVM; measured 2026-09-13, CI failed
+# with "native kotoba CLI did not emit" after a 30-dep classpath refusal).
+export KOTOBA_EMITTER=amu
+if [[ ! -f "$KBB_ENGINE" ]]; then
+  echo "kbb engine missing: $KBB_ENGINE" >&2
+  exit 1
+fi
 
 checkout="${AMU_CHECKOUT:-$root/target/amu-checkout}"
 if [[ ! -x "$checkout/bin/amu" ]]; then
@@ -56,7 +94,7 @@ if command -v java >/dev/null 2>&1 || command -v clojure >/dev/null 2>&1; then
   exit 1
 fi
 
-nbb --classpath bin bin/compile-amu
+kbb --backend sci --classpath bin bin/compile-amu
 
 for artifact in server_main.wasm mcp_main.wasm server_main.kexe mcp_main.kexe; do
   path="$root/target/amu/$artifact"
@@ -82,7 +120,7 @@ measure() {
   local entry="$1"
   local out="$2"
   local json
-  json="$(nbb --classpath bin bin/kotoba compile "$entry" --target wasm --output "$out" --json)"
+  json="$(kbb --backend sci --classpath bin bin/kotoba compile "$entry" --target wasm --output "$out" --json)"
   echo "$json"
   echo "$json" | grep -q '"ok?":true\|"kotoba.cli/ok?":true' || {
     # nbb clj->js keywordizes :kotoba.cli/ok? to "ok?" or "kotoba.cli/ok?"
@@ -120,7 +158,7 @@ measure src/cloud/itonami/app/mcp_main.kotoba "$root/target/amu/mcp_main.wasm"
 
 CLOUD_ITONAMI_PORT="${CLOUD_ITONAMI_PORT:-17338}"
 export CLOUD_ITONAMI_PORT
-nbb --classpath bin scripts/verify-no-java
+kbb --backend sci --classpath bin scripts/verify-no-java
 
 echo "ci-jvm-free-emit: ok (kexe verify Linux remains HOLD; not faked)"
 echo "ci-jvm-free-emit: bin/kotoba adapter :compile/emitted is not production kotoba v0.6.29"

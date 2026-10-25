@@ -1,0 +1,18 @@
+(require '[cloud.itonami.app.bots :as bots] '[cloud.itonami.app.hermes-compat :as hermes])
+(let [owner {:user-id "u" :organization-id "o"}
+      base {:bot/owner "u" :bot/organization "o" :bot/enabled? true :bot/model "mishima" :bot/provider-id "murakumo"}
+      partition {:bots {"bot-owned" (assoc base :bot/id "bot-owned")
+                        "bot-other-user" (assoc base :bot/id "bot-other-user" :bot/owner "other")
+                        "bot-other-org" (assoc base :bot/id "bot-other-org" :bot/organization "other")}
+                 :hermes-import-bindings {"bot-owned" {:profile-id "producer" :session-ids ["prior"]}}}]
+  (with-redefs-fn {#'bots/snapshot (constantly partition)
+                  #'bots/routing-index (constantly {})
+                  #'bots/overview (fn [& _] (throw (ex-info "Screen catalog must not run" {})))}
+    (fn []
+      (assert (= ["bot-owned"] (mapv :id (:bots (bots/runtime-bindings {} owner)))))
+      (doseq [id ["bot-owned" "producer" "prior"]]
+        (assert (= "bot-owned" (:id (hermes/resolve-bot {} owner id)))))
+      (doseq [id ["bot-other-user" "bot-other-org"]]
+        (assert (= :hermes/not-found (try (hermes/resolve-bot {} owner id) nil
+                                         (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+(println "Native runtime binding smoke passed: tenant isolation and zero screen catalog calls")

@@ -1,0 +1,312 @@
+(ns cloud.itonami.app.hermes-roundtrip-test
+  "Hermes profile -> Bot -> Hermes profile (root ADR-2610141512).
+
+  An agent is one identity whichever runtime is running it. These tests take a
+  profile directory shaped like the real ones -- SOUL.md, a murakumo
+  config.yaml, an itonami.edn v2 record -- through the real preview, stage and
+  provision (only the Hermes exporter binary is replaced, by tar), export it
+  back, and require that nothing naming the agent changed on the way: the
+  persona, the ids (the did above all), the org placement and the model.
+
+  The did is checked against an independent computation,
+  did:key(Ed25519(SHA-256(seed || 0x00 || profile-id))), over a fixed test
+  seed -- not against `bot-identity`, which is what is under test."
+  (:require [kotoba.io :as kio]
+            [clojure.java.io :as io]
+            [kotoba.lang.edn :as edn]
+            [kotoba.lang.text :as str]
+            [kotoba.test :refer [deftest is testing]]
+            [ed25519.core :as ed]
+            [cloud.itonami.app.bots :as bots]
+            [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.hermes-migration :as migration]
+            [cloud.itonami.app.policy :as policy]
+            [cloud.itonami.app.store :as store])
+  (:import [java.io File]
+           [java.security MessageDigest]))
+
+(def ^:private alice {:user-id "alice" :organization-id "org-1" :kind :passkey})
+(def ^:private bob {:user-id "bob" :organization-id "org-2" :kind :passkey})
+
+(def ^:private test-seed (byte-array (range 32)))
+
+(defn- independent-did
+  "did:key(Ed25519(SHA-256(seed || 0x00 || key-id))), computed here."
+  [^String key-id]
+  (let [digest (MessageDigest/getInstance "SHA-256")]
+    (.update digest ^bytes test-seed)
+    (.update digest (byte-array 1))
+    (.update digest (.getBytes key-id "UTF-8"))
+    (ed/did-key-from-seed (.digest digest))))
+
+(def ^:private configuration
+  {:providers [{:id "murakumo" :default-model "mishima" :models ["mishima"]}]})
+
+(defn- with-store
+  "A throwaway data dir holding the test seed, an empty store, and murakumo
+  admitted the way bots-test admits it, without a reviewed provider entry."
+  [f]
+  (let [data-dir (kio/temp-dir "hermes-roundtrip-data")
+        previous @store/state]
+    (with-open [out (io/output-stream (io/file data-dir "bot-identity.seed"))]
+      (.write out ^bytes test-seed))
+    (try
+      (reset! store/state (store/initial-state))
+      (with-redefs [config/data-dir (fn [] data-dir)
+                    store/transact! (fn [f & args] (apply swap! store/state f args))
+                    policy/select-provider
+                    (fn [_ id]
+                      (when (= "murakumo" (or id "murakumo"))
+                        {:id "murakumo" :default-model "mishima"
+                         :models ["mishima"]}))]
+        (f data-dir))
+      (finally (reset! store/state previous)))))
+
+(def ^:private soul
+  ;; The `## Rules` heading must stay inside SOUL.md: the runtime context is
+  ;; itself `## <path>` sections, and only a path heading may end one.
+  (str "# 村雲 eng\n\nYou keep cloud-murakumo-api healthy.\n\n"
+       "## Rules\n\n- Ask before deploying.\n"))
+
+(def ^:private murakumo-config
+  "model:\n  provider: murakumo\n  base_url: https://api.murakumo.cloud/v1\n  default: mishima\n")
+
+(def ^:private org-keys
+  [:itonami/schema :profile/id :profile/description :profile/hermes-compatible
+   :agent/kind :org/world :org/path :org/unit :org/github :invocation
+   :awai/business :authority])
+
+(defn- murakumo-itonami []
+  {:itonami/schema "cloud.itonami.profile.v2"
+   :profile/id "murakumo-eng"
+   :profile/description "murakumo eng"
+   :profile/hermes-compatible true
+   :agent/kind :worker
+   :org/world :awai
+   :org/path [:etzhayyim :awai :cloud-murakumo]
+   :org/unit :cloud-murakumo
+   :org/github "network-awai"
+   :invocation :resident
+   :awai/business :cloud-murakumo
+   :ids {:repo "network-awai/cloud-murakumo-api"
+         :yakuwari/id "yakuwari-murakumo-eng"
+         :did (independent-did "murakumo-eng")}
+   :authority {:default-decision :approval-required
+               :source :yakuwari :ref "yakuwari.edn"}
+   ;; Source-host keys: they describe where Hermes runs it and do not cross.
+   :runtime {:engine :itonami-agent :scheduler :itonami}
+   :placement {:mode :p2p :order [:peer :local]}
+   :bundle {:cid "bafkrei-test" :files 3 :skills []}
+   :cron? true})
+
+(defn- hermes-home!
+  "A Hermes home with the given named profiles ({id {relative content}})."
+  [profiles]
+  (let [home (kio/temp-dir "hermes-roundtrip-home")
+        exporter (io/file home "hermes-agent" "venv" "bin" "hermes")]
+    ;; stage! requires an exporter binary; the exports themselves are rebound.
+    (io/make-parents exporter)
+    (spit exporter "#!/bin/sh\nexit 0\n")
+    (.setExecutable exporter true)
+    (spit (io/file home "USER.md") "default profile user\n")
+    (doseq [[id files] profiles
+            [relative content] files]
+      (let [file (io/file home "profiles" id relative)]
+        (io/make-parents file)
+        (spit file content)))
+    home))
+
+(defn- tar! [^File output ^File dir entry]
+  (let [process (-> (ProcessBuilder. ^java.util.List
+                                     ["/usr/bin/tar" "-czf" (.getPath output)
+                                      "-C" (.getPath dir) entry])
+                    (.redirectErrorStream true)
+                    .start)]
+    (slurp (.getInputStream process))
+    (is (zero? (.waitFor process)) "the fixture archive must build")))
+
+(defn- import!
+  "Real preview -> stage -> provision. The profile archive is a plain tar of
+  the profile directory, which the real runtime-context projection then
+  reads; sessions are empty."
+  ([home data-dir migration-id] (import! home data-dir migration-id alice))
+  ([home data-dir migration-id session]
+  (let [preview (migration/preview {:home home :migration-id migration-id})]
+    (binding [migration/*export-profile!*
+              (fn [_ root profile-id output]
+                (if (= "default" profile-id)
+                  (tar! output root "USER.md")
+                  (tar! output (io/file root "profiles") profile-id)))
+              migration/*export-sessions!*
+              (fn [_ _ output] (spit output ""))]
+      (let [staged (migration/stage! {:home home :data-dir data-dir
+                                      :manifest preview})]
+        {:preview preview
+         :provisioned (migration/provision! {:configuration configuration
+                                             :session session
+                                             :data-dir data-dir
+                                             :manifest staged})})))))
+
+(defn- profile [manifest id]
+  (some #(when (= id (:id %)) %) (:profiles manifest)))
+
+(defn- config-lines [text]
+  (set (remove #(str/starts-with? % "#") (str/split-lines text))))
+
+(deftest a-hermes-profile-survives-the-round-trip-with-its-identity
+  (with-store
+    (fn [data-dir]
+      (let [itonami (murakumo-itonami)
+            profile-did (independent-did "murakumo-eng")
+            home (hermes-home!
+                  {"murakumo-eng"
+                   {"SOUL.md" soul
+                    "config.yaml" murakumo-config
+                    "profile.yaml" "description: murakumo eng\n"
+                    "itonami.edn"
+                    (str ";; itonami profile (cloud.itonami.profile.v2).\n"
+                         (pr-str itonami) "\n")}})
+            {:keys [preview provisioned]} (import! home data-dir "hermes-roundtrip")
+            carried (select-keys itonami (conj org-keys :ids))
+            bot-id (:bot-id (profile provisioned "murakumo-eng"))]
+        (testing "the manifest record carries the non-secret subset, nothing else"
+          (is (= carried (:itonami-profile (profile preview "murakumo-eng"))))
+          (is (= carried (:itonami-profile (profile provisioned "murakumo-eng"))))
+          (is (nil? (:warnings (profile preview "murakumo-eng")))))
+        (testing "the binding carries it too, and nothing was withheld"
+          (let [import-binding (bots/hermes-import-binding alice bot-id)]
+            (is (= carried (:itonami-profile import-binding)))
+            (is (nil? (:identity-key-withheld import-binding)))))
+        (testing "the imported Bot answers to the profile's did"
+          (is (= profile-did (:did (bots/wallet-principal alice bot-id))))
+          (is (= profile-did
+                 (some #(when (= bot-id (:id %)) (:did %))
+                       (:bots (bots/overview nil alice))))
+              "the public view names the same did")
+          (is (str/includes? bot-id "bot-")
+              "the row id is still the migration-scoped id; only the name moved"))
+        (let [{:keys [files did] :as exported} (bots/export-hermes-profile alice bot-id)
+              record (edn/read-string (get files "itonami.edn"))]
+          (testing "export names the same agent"
+            (is (= "murakumo-eng" (:profile-id exported)))
+            (is (= profile-did did)))
+          (testing "the persona comes back byte for byte"
+            (is (= soul (get files "SOUL.md"))))
+          (testing "the ids come back, the did equal to the profile's"
+            (is (= (:ids itonami) (:ids record)))
+            (is (= profile-did (get-in record [:ids :did]))))
+          (testing "the org placement and authority reference come back"
+            (is (= (select-keys itonami org-keys) (select-keys record org-keys))))
+          (testing "source-host keys did not cross either way"
+            (is (not-any? #(contains? record %) [:runtime :placement :bundle :cron?])))
+          (testing "the model comes back and nothing else is in config.yaml"
+            (is (= #{"model:" "  provider: murakumo" "  default: mishima"}
+                   (config-lines (get files "config.yaml")))))
+          (testing "the description comes back"
+            (is (= "description: \"murakumo eng\"\n" (get files "profile.yaml"))))
+          (testing "the exported directory reads back as the same record"
+            (let [dir (kio/temp-dir "hermes-roundtrip-export")]
+              (doseq [[relative text] files]
+                (spit (io/file dir relative) text))
+              (is (= carried (:itonami-profile (migration/itonami-profile dir)))))))
+        (testing "a re-import under a new migration id is the same agent"
+          (let [again (import! home data-dir "hermes-roundtrip-again")
+                again-id (:bot-id (profile (:provisioned again) "murakumo-eng"))]
+            (is (not= bot-id again-id) "a second migration makes a second Bot row")
+            (is (= profile-did (:did (bots/wallet-principal alice again-id)))
+                "but not a second did")))
+        (testing "a Bot that was not imported keeps the did of its own id"
+          (let [plain (bots/create! nil alice {:name "plain" :connectors []})]
+            (is (nil? (:bot/identity-key plain)))
+            (is (= (independent-did (:bot/id plain))
+                   (:did (bots/wallet-principal alice (:bot/id plain)))))))))))
+
+(defn- withheld [session bot-id]
+  (:identity-key-withheld (bots/hermes-import-binding session bot-id)))
+
+(deftest a-profile-without-an-itonami-record-still-imports-and-exports
+  (with-store
+    (fn [data-dir]
+      (let [home (hermes-home!
+                  {"plain-agent" {"SOUL.md" soul "config.yaml" murakumo-config}
+                   "broken-agent" {"SOUL.md" soul "config.yaml" murakumo-config
+                                   "itonami.edn" "{:profile/id \"broken-agent\" :ids {:did"}})
+            {:keys [preview provisioned]} (import! home data-dir "hermes-roundtrip-plain")]
+        (testing "no record is no record, and an unreadable one is a warning"
+          (is (nil? (:itonami-profile (profile preview "plain-agent"))))
+          (is (nil? (:warnings (profile preview "plain-agent"))))
+          (is (nil? (:itonami-profile (profile preview "broken-agent"))))
+          (is (= ["itonami-profile-unreadable"]
+                 (mapv :kind (:warnings (profile preview "broken-agent"))))))
+        (doseq [id ["plain-agent" "broken-agent"]]
+          (testing (str id " imports and exports under the did of its own Bot id")
+            (let [bot-id (:bot-id (profile provisioned id))
+                  {:keys [files did]} (bots/export-hermes-profile alice bot-id)]
+              (is (some? bot-id) "the import did not fail")
+              (is (= :no-profile-did (withheld alice bot-id))
+                  "no stated did, no claim on the profile's name")
+              (is (= (independent-did bot-id) did))
+              (is (= soul (get files "SOUL.md")))
+              (is (= #{"model:" "  provider: murakumo" "  default: mishima"}
+                     (config-lines (get files "config.yaml"))))
+              (is (= {:itonami/schema "cloud.itonami.profile.v2"
+                      :profile/id id
+                      :profile/hermes-compatible true
+                      :ids {:did (independent-did bot-id)}}
+                     (edn/read-string (get files "itonami.edn")))
+                  "the minimal record states the did the Bot has"))))))))
+
+(deftest the-profile-did-is-claimed-only-when-this-fleet-minted-it-and-nobody-else-holds-it
+  (with-store
+    (fn [data-dir]
+      (let [record (fn [id ids]
+                     (str (pr-str (assoc (murakumo-itonami) :profile/id id :ids ids))
+                          "\n"))
+            home (hermes-home!
+                  {"murakumo-eng"
+                   {"SOUL.md" soul "config.yaml" murakumo-config
+                    "itonami.edn" (record "murakumo-eng"
+                                          {:repo "network-awai/cloud-murakumo-api"
+                                           :did (independent-did "murakumo-eng")})}
+                   "no-did-agent"
+                   {"SOUL.md" soul "config.yaml" murakumo-config
+                    "itonami.edn" (record "no-did-agent" {:repo "network-awai/no-did"})}
+                   "copied-agent"
+                   ;; A copied record: it states the did this fleet derives
+                   ;; for a different profile id.
+                   {"SOUL.md" soul "config.yaml" murakumo-config
+                    "itonami.edn" (record "copied-agent"
+                                          {:repo "network-awai/copied"
+                                           :did (independent-did "murakumo-eng")})}})
+            first-import (:provisioned (import! home data-dir "hermes-gate-alice"))
+            alice-bot (:bot-id (profile first-import "murakumo-eng"))
+            alice-did (:did (bots/wallet-principal alice alice-bot))]
+        (testing "a matching did is claimed"
+          (is (= (independent-did "murakumo-eng") alice-did))
+          (is (nil? (withheld alice alice-bot))))
+        (testing "a record without a did does not claim the name"
+          (let [bot-id (:bot-id (profile first-import "no-did-agent"))]
+            (is (= :no-profile-did (withheld alice bot-id)))
+            (is (= (independent-did bot-id)
+                   (:did (bots/wallet-principal alice bot-id))))))
+        (testing "a record whose did this fleet did not derive for that id does not"
+          (let [bot-id (:bot-id (profile first-import "copied-agent"))]
+            (is (= :did-mismatch (withheld alice bot-id)))
+            (is (= (independent-did bot-id)
+                   (:did (bots/wallet-principal alice bot-id))))
+            (is (not= (independent-did "copied-agent")
+                      (:did (bots/wallet-principal alice bot-id))))))
+        (testing "another owner importing the same profile does not share its did"
+          (let [second-import (:provisioned (import! home data-dir "hermes-gate-bob" bob))
+                bob-bot (:bot-id (profile second-import "murakumo-eng"))
+                bob-did (:did (bots/wallet-principal bob bob-bot))]
+            (is (some? bob-bot) "the import itself still succeeds")
+            (is (= :claimed-by-other-owner (withheld bob bob-bot)))
+            (is (not= alice-did bob-did))
+            (is (= (independent-did bob-bot) bob-did))))
+        (testing "the first owner re-importing keeps the claim"
+          (let [again (:provisioned (import! home data-dir "hermes-gate-alice-again"))
+                again-bot (:bot-id (profile again "murakumo-eng"))]
+            (is (not= alice-bot again-bot))
+            (is (nil? (withheld alice again-bot)))
+            (is (= alice-did (:did (bots/wallet-principal alice again-bot))))))))))

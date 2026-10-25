@@ -1,0 +1,214 @@
+(ns cloud.itonami.app.awai-content-store-node
+  "Node host port for private, content-addressed Awai app blocks.
+
+  This mirrors the JVM store's CID checks and owner-only durability contract
+  so the active Node host can persist verified blocks without loading the
+  legacy JVM server namespace. Paths and bytes stay in the host adapter."
+  (:require ["node:crypto" :as crypto]
+            ["node:fs" :as fs]
+            ["node:path" :as path]
+            [kotoba.protocol.cid :as cid]))
+
+(def maximum-block-bytes (* 16 1024 1024))
+(def supported-codecs #{:raw :dag-pb :dag-cbor})
+(def directory-mode 448) ; 0700
+(def file-mode 384)      ; 0600
+
+(defn- fail! [error]
+  (throw (ex-info (name error) {:error error})))
+
+(defn- valid-cid? [value]
+  (and (string? value)
+       (<= 1 (count value) 512)
+       (let [{:keys [codec error]} (cid/parse-cid value)]
+         (and (not error) (contains? supported-codecs codec)))))
+
+(defn- owner-only? [stat]
+  (let [uid-reader (.-getuid js/process)]
+    (and (fn? uid-reader)
+         (= (.-uid stat) (.getuid js/process))
+         (zero? (bit-and (.-mode stat) 63)))))
+
+(defn- safe-ancestors? [directory]
+  (loop [current (.resolve path directory)]
+    (let [parent (.dirname path current)
+          stat (try
+                 (.lstatSync fs current)
+                 (catch :default error
+                   (when-not (= "ENOENT" (.-code error))
+                     (throw error))
+                   nil))]
+      (cond
+        (nil? stat) (if (= current parent) false (recur parent))
+        (.isSymbolicLink stat) false
+        (= current parent) true
+        :else (recur parent)))))
+
+(defn- ensure-private-directory! [directory]
+  (when-not (and (string? directory) (.isAbsolute path directory))
+    (fail! :absolute-content-store-required))
+  (when-not (safe-ancestors? directory)
+    (fail! :unsafe-content-store-path))
+  (.mkdirSync fs directory #js {:recursive true :mode directory-mode})
+  (let [stat (.lstatSync fs directory)]
+    (when (or (not (safe-ancestors? directory))
+              (.isSymbolicLink stat)
+              (not (.isDirectory stat)))
+      (fail! :unsafe-content-store-path))
+    (.chmodSync fs directory directory-mode)
+    (when-not (owner-only? (.lstatSync fs directory))
+      (fail! :unsafe-content-store-permissions)))
+  directory)
+
+(defn- content-root [data-root]
+  (when (or (= "win32" (.-platform js/process))
+            (not (and (string? data-root) (.isAbsolute path data-root))))
+    (fail! :absolute-posix-data-root-required))
+  (let [base (.resolve path data-root)
+        app-root (.resolve path base "awai-apps")
+        root (.resolve path app-root "content")]
+    (ensure-private-directory! app-root)
+    (ensure-private-directory! root)))
+
+(defn- cid-key [block-cid]
+  (-> (crypto/createHash "sha256")
+      (.update block-cid "utf8")
+      (.digest "hex")))
+
+(defn- block-path [root block-cid]
+  (let [target (.resolve path root (cid-key block-cid))]
+    (when-not (= root (.dirname path target))
+      (fail! :unsafe-content-path))
+    target))
+
+(defn- byte-view? [value]
+  (instance? js/Uint8Array value))
+
+(defn- cid-matches-bytes? [block-cid bytes]
+  (let [digest (-> (crypto/createHash "sha256")
+                   (.update bytes)
+                   (.digest))]
+    (cid/digest-matches-cid? block-cid (vec (array-seq digest)))))
+
+(defn- lstat-or-nil [target]
+  (try
+    (.lstatSync fs target)
+    (catch :default error
+      (if (= "ENOENT" (.-code error))
+        nil
+        (throw error)))))
+
+(defn- read-block-file [block-cid target]
+  (let [flags (bit-or (.-O_RDONLY (.-constants fs))
+                      (.-O_NOFOLLOW (.-constants fs)))
+        before (lstat-or-nil target)]
+    (when (or (nil? before)
+              (.isSymbolicLink before)
+              (not (.isFile before))
+              (not (owner-only? before))
+              (> (.-size before) maximum-block-bytes))
+      (fail! :unsafe-content-block))
+    (let [fd (.openSync fs target flags)]
+      (try
+        (let [opened (.fstatSync fs fd)
+              bytes (.readFileSync fs fd)
+              after (lstat-or-nil target)]
+          (when (or (not (.isFile opened))
+                    (not (owner-only? opened))
+                    (> (.-size opened) maximum-block-bytes)
+                    (nil? after)
+                    (.isSymbolicLink after)
+                    (not= (.-dev opened) (.-dev after))
+                    (not= (.-ino opened) (.-ino after))
+                    (not (cid-matches-bytes? block-cid bytes)))
+            (fail! :content-cid-mismatch))
+          bytes)
+        (finally (.closeSync fs fd))))))
+
+(defn- block-file-valid? [block-cid target]
+  (try
+    (read-block-file block-cid target)
+    true
+    (catch :default _ false)))
+
+(defn- sync-directory! [directory]
+  (let [fd (.openSync fs directory "r")]
+    (try
+      (.fsyncSync fs fd)
+      (finally (.closeSync fs fd)))))
+
+(defn- write-block! [root block-cid bytes]
+  (let [target (block-path root block-cid)
+        temporary (.resolve path root
+                            (str "." (cid-key block-cid) "."
+                                 (.randomUUID crypto) ".tmp"))
+        fd (.openSync fs temporary "wx" file-mode)]
+    (try
+      (.writeFileSync fs fd bytes)
+      (.fsyncSync fs fd)
+      (finally (.closeSync fs fd)))
+    (try
+      (.renameSync fs temporary target)
+      (.chmodSync fs target file-mode)
+      (sync-directory! root)
+      (finally
+        (try (.unlinkSync fs temporary) (catch :default _ nil)))))
+  nil)
+
+(defn store-verified-block!
+  "Persist one CID-matching block below data-root with owner-only mode.
+
+  A durable receipt is returned only after forcing the temporary file, atomic
+  rename, directory sync, and verified readback."
+  [{:keys [data-root cid bytes]}]
+  (cond
+    (not (valid-cid? cid))
+    {:decision :refuse :error :invalid-cid}
+
+    (not (and (byte-view? bytes)
+              (<= 0 (.-byteLength bytes) maximum-block-bytes)))
+    {:decision :refuse :error :invalid-block-bytes}
+
+    (not (cid-matches-bytes? cid bytes))
+    {:decision :refuse :error :cid-mismatch}
+
+    :else
+    (try
+      (let [root (content-root data-root)
+            target (block-path root cid)
+            target-stat (lstat-or-nil target)]
+        (when (and target-stat (not (block-file-valid? cid target)))
+          (fail! :corrupt-existing-content-block))
+        (when-not target-stat
+          (write-block! root cid bytes))
+        (when-not (block-file-valid? cid target)
+          (fail! :content-store-readback-failed))
+        {:decision :stored
+         :durable? true
+         :cid cid
+         :receipt {:schema "itonami.app.content-store-receipt.v1"
+                   :byte-count (.-byteLength bytes)
+                   :storage :local-owner-only-content-addressed}})
+      (catch :default error
+        {:decision :unavailable
+         :error (or (:error (ex-data error))
+                    :content-store-write-failed)}))))
+
+(defn read-verified-block
+  "Read one owner-only block for host use after rechecking its CID."
+  [data-root block-cid]
+  (if-not (valid-cid? block-cid)
+    {:decision :refuse :error :invalid-cid}
+    (try
+      (let [root (content-root data-root)
+            target (block-path root block-cid)
+            target-stat (lstat-or-nil target)]
+        (if target-stat
+          {:decision :verified
+           :cid block-cid
+           :bytes (read-block-file block-cid target)}
+          {:decision :unavailable :error :content-block-missing}))
+      (catch :default error
+        {:decision :unavailable
+         :error (or (:error (ex-data error))
+                    :content-store-unavailable)}))))

@@ -105,7 +105,7 @@ Origin and CSRF.
 - **The selector is only as good as the element.** `commentSelectorFor` prefers
   `id`, then a `data-` attribute this application actually renders, then class,
   and only then `nth-of-type` — the one part that says nothing about what the
-  element is. `test/browser/comment_mode.cljs` asserts the property that matters:
+  element is. `test/browser/comment_mode.cljk` asserts the property that matters:
   the selector the client wrote **resolves to a real element**. A selector that
   matched nothing would still serialise, still post, and still send a Bot to
   search for a string that was never on the screen.
@@ -133,7 +133,7 @@ Origin and CSRF.
   that server — both because `com.sun.net.httpserver` is what serves this app
   today. They move when it moves (ADR-0065, ADR-2608081500); nothing in this
   feature holds them there, and it added no new `.clj`.
-- **`scripts/jvm-exit-report.cljs` came out of this.** Asked how far the app is
+- **`scripts/jvm-exit-report.cljk` came out of this.** Asked how far the app is
   from running without a JVM, the only available answer was a file count by
   extension, and that count is wrong in both directions. The script walks the
   require graph instead and reports three sets: portable today, blocked by an

@@ -8,7 +8,7 @@ on:
 permissions:
   contents: read
 
-# Default required path is JVM-free emit. It does not run clojure -M:test.
+# Default required path is JVM-free emit. It does not run kbb -M:test.
 # Leftover JVM suite lives in leftover-jvm-tests.yml (workflow_dispatch only).
 # Do not rename that leftover into this file and pretend it is gone.
 
@@ -20,13 +20,39 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # bb (babashka) is required by the kbb engine's lib/nbb_deps.js, which
+      # execSync's `bb --config ... uberjar` to build the nbb deps classpath
+      # jar. bb is a GraalVM static binary — it does not put java/clojure on
+      # PATH, so the JVM-free constraint holds; scripts/path-without-jvm only
+      # filters java|javac|clojure|clj. Fixes the 2026-09-15..18 CI red streak
+      # (/bin/sh: 1: bb: not found, exit 127) that silently skipped
+      # windows-launch-smoke via `needs`.
+      - name: Install babashka (bb) for the engine's deps download
+        uses: DeLaGuardo/setup-clojure@13
+        with:
+          bb: latest
       - name: Install nbb host
         run: npm ci
+      - name: Human approval contract (host fixture)
+        run: bb scripts/test-human-approval-contract.cljk src/cloud/itonami/app/bots.cljk
+      - name: Enterprise sales cost model
+        run: python3 -m unittest discover -s test -p itonami_sales_cost_model_test.py
       - name: JVM-free emit + guest load (no java/clojure)
         run: bash scripts/ci-jvm-free-emit
         # No actions/setup-java. PATH is reconstructed without java/clojure.
         # kexe verify on Linux is HOLD and must not be faked as :ok.
         # bin/kotoba is this app's compile adapter, not production kotoba v0.6.29.
+
+
+      - name: Publish guest artifacts for the windows smoke
+        uses: actions/upload-artifact@v4
+        with:
+          name: amu-guest
+          path: |
+            target/amu/server_main.wasm
+            target/amu/mcp_main.wasm
+            target/amu/browser-host.mjs
+          if-no-files-found: error
 
   secret-scan:
     runs-on: ubuntu-latest
@@ -40,75 +66,96 @@ jobs:
           cache: false
       - name: Install gitleaks
         run: go install github.com/zricethezav/gitleaks/v8@v8.28.0
-      - name: Scan Git history
-        run: gitleaks git --redact --no-banner
+      # Checkout fetches all refs so the PR base and head are available, but
+      # scanning every fetched ref lets an unrelated open branch fail this PR.
+      # Scan every commit introduced by this push or pull request instead.
+      - name: Scan commits introduced by this event
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: gitleaks git --redact --no-banner --log-opts="${BASE_SHA}..${HEAD_SHA}"
 
-  # Smoke-tests the Windows launch path end to end: jar build, launcher exe
-  # build, packaged layout, first-boot health. The 2026-09-03 v0.4.1 report
-  # (UnsupportedOperationException 'posix:permissions' on agent-enrollment.key,
-  # localhost:1338 never answering) was invisible to the Linux-only jobs above.
+  # Smoke-tests the Windows launch path end to end: kbb + engine + guest-wasm
+  # server, first-boot health on 1338. This is the run path the resident
+  # actually uses since adr-2609112000. The OLD smoke ran the JVM uberjar;
+  # that path cannot boot since the cljk rename (src is .cljk; JVM
+  # clojure.main reads .clj/.cljc only) — a product-level breakage tracked
+  # separately, not masked by pointing this smoke at the kbb path it has
+  # always exercised on Linux.
   windows-launch-smoke:
+    needs: amu-jvm-free-emit
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Authenticate git deps (private kotoba-lang repos)
-        run: git config --global url."https://x-access-token:${{ github.token }}@github.com/".insteadOf "https://github.com/"
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-node@v4
         with:
-          distribution: temurin
-          java-version: "21"
-      - uses: DeLaGuardo/setup-clojure@13.4
+          node-version: "22"
+      - name: Install app runtime dependencies
+        run: npm ci
+      # The engine's lib/nbb_deps.js also invokes `bb` on Windows; install it
+      # here too so the smoke does not fail on a missing bb.
+      - name: Install babashka (bb) for the engine's deps download
+        uses: DeLaGuardo/setup-clojure@13
         with:
-          cli: latest
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.24"
-          cache: false
-      - name: Build the app jar
-        run: clojure -T:build uber
-      - name: Assemble the packaged layout
+          bb: latest
+      - name: Install kbb launcher + engine (pinned)
         shell: bash
         run: |
           set -euo pipefail
-          layout="$PWD/target/release/windows-stage/Cloud Itonami"
-          mkdir -p "$layout"
-          cp target/release/cloud-itonami-app.jar "$layout/cloud-itonami-app.jar"
-          cp packaging/windows/README.txt "$layout/README.txt"
-          # Launcher, cross-compiled exactly as scripts/build-windows-release does.
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
-            go build -trimpath -ldflags "-s -w" \
-            -o "$layout/CloudItonami.exe" packaging/windows/launcher/main.go
-          # CI-only JVM server shim (the real server binary is packaged elsewhere).
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
-            go build -trimpath \
-            -o "$layout/cloud-itonami-server.exe" packaging/windows/smoke/main.go
+          KBB_SHA=a755ec25a07637bab9ab97edab1ab1257418c558
+          git clone --depth 5 https://github.com/kotoba-lang/kotoba.git target/kbb
+          git -C target/kbb fetch --depth 20 origin "$KBB_SHA"
+          git -C target/kbb checkout --detach "$KBB_SHA"
+          git clone --depth 5 https://github.com/kotoba-lang/org-babashka-nbb.git target/engine
+          echo "KBB_ENGINE=$PWD/target/engine/cli.js" >> "$GITHUB_ENV"
+          echo "$PWD/target/kbb/bin" >> "$GITHUB_PATH"
+      - name: Download the guest wasm emitted by the linux job
+        uses: actions/download-artifact@v4
+        with:
+          name: amu-guest
+          path: target/amu
+      - name: Warm launch dependencies with bounded retries
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if kbb --backend sci --classpath bin -e '(println :ci-deps-ready)'; then
+              exit 0
+            fi
+            if [[ "$attempt" == 3 ]]; then
+              echo "::error::Windows launch dependencies failed after 3 attempts"
+              exit 1
+            fi
+            sleep 5
+          done
       - name: Launch and wait for /health
         shell: bash
         run: |
           set -euo pipefail
-          layout="$PWD/target/release/windows-stage/Cloud Itonami"
           data_dir="$PWD/target/release/ci-data"
           mkdir -p "$data_dir"
           export CLOUD_ITONAMI_DATA_DIR="$data_dir"
-          cd "$layout"
-          ./CloudItonami.exe &
+          export CLOUD_ITONAMI_PORT=1338
+          kbb --backend sci --classpath bin bin/cloud-itonami-server &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
           ok=0
-          for attempt in $(seq 1 240); do
-            if curl -fsS http://127.0.0.1:1338/health >/dev/null 2>&1; then
+          health_deadline=$((SECONDS + 120))
+          while (( SECONDS < health_deadline )); do
+            if curl --connect-timeout 2 --max-time 5 -fsS http://127.0.0.1:1338/health >/dev/null 2>&1; then
               ok=1
               break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo "::error::Windows launch process exited before readiness"
+              exit 1
             fi
             sleep 1
           done
           if [[ "$ok" != 1 ]]; then
             echo "::error::Windows launch smoke test failed: /health never returned 200"
-            echo "--- server.log ---"
-            cat "$data_dir/logs/server.log" || true
-            echo "--- launcher-error.log ---"
-            cat "$data_dir/logs/launcher-error.log" || true
             exit 1
           fi
-          curl -fsS http://127.0.0.1:1338/health
+          curl --connect-timeout 2 --max-time 5 -fsS http://127.0.0.1:1338/health
           echo ""
-          echo "Windows launch smoke test: /health returned 200"
-
+          echo "Windows launch smoke test: /health returned 200 (kbb guest-wasm run path)"

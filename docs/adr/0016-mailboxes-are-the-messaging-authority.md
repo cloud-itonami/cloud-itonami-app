@@ -155,3 +155,35 @@ select an arbitrary recipient mailbox.
   AO bearer transport, Signal profile browser implementation, and signal-key/ratchet
   lifecycle handling.
 - Result: recorded in this ADR and ready for handoff/closure.
+
+
+### Bot conversations use the same ledger (2026-09-13)
+
+Direct Bot chats and Bot groups bind to an ordinary Messenger conversation ID.
+Their history is read through the recipient mailbox, including for model context.
+The group UI uses the existing `/api/messenger/conversations/:id/messages` GET
+and POST endpoints, the `cloud.itonami.app.messenger.v1` schema and ordinary
+human/Bot sender identities. Direct chat streaming remains an execution adapter;
+it reads and writes the same ledger rather than a second messaging protocol.
+
+Existing owner-bound local Bot dialogues are adopted lazily, with stable IDs and
+original timestamps. Adoption translates their previously admitted participants
+into exact sender rules only when a rule is absent; an explicit denial is never
+overwritten. This is migration of existing local admission, not implicit trust
+from Messenger membership. Conversations created through Messenger retain all
+of their existing trust decisions. Legacy Bot records remain a compatibility
+cache for execution cards; immutable Messenger text is authoritative.
+
+A plaintext owner message admitted to an owned Bot can queue a bounded reply in
+the same conversation. The standard POST accepts an optional idempotency key;
+retrying the same request neither duplicates the message nor repeats execution.
+Changing content under that key is rejected. Pending replies survive restart;
+interrupted running replies are recorded as failed and are not automatically
+replayed. Group replies serialize with scheduled discussions. Quarantined and
+sealed messages never become plaintext model input. Group speech grants no tool
+authority, and direct replies retain existing capability and secret-input gates.
+
+The adapter currently wakes Bots for their owner's conversations. Adding other
+human participants does not automatically delegate their authority or enable
+Bot execution for them. Signal envelopes remain opaque; the Bot adapter does
+not decrypt them or describe local plaintext chats as E2EE.

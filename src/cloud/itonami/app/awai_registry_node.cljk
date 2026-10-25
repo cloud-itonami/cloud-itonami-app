@@ -1,0 +1,161 @@
+(ns cloud.itonami.app.awai-registry-node
+  "Bounded Node/Nbb adapter for the local Awai peer-host snapshot.
+
+  This is a local, unauthenticated read-only discovery route. The peer endpoint
+  is restricted to one explicit loopback URL; redirects, oversized bodies, malformed
+  projections, and any invalid signed envelope fail closed. A single peer's
+  accepted-state claim remains a discovery fact, not multi-peer finality."
+  (:require [cloud.itonami.app.awai-apps :as apps]
+            [cloud.itonami.app.awai-envelope :as envelope]))
+
+(def schema "awai.app-registry.read.v3")
+(def maximum-records 1024)
+(def maximum-snapshot-bytes (* 16 1024 1024))
+(def maximum-entry-bytes 4096)
+
+(defn- unavailable [reason]
+  {:http-status 503
+   :body {:status "unavailable" :reason reason}})
+
+(defn- endpoint-url [value]
+  (try
+    (let [url (js/URL. value)
+          port (when-not (empty? (.-port url))
+                 (js/parseInt (.-port url) 10))]
+      (when (and (= "http:" (.-protocol url))
+                 (= "127.0.0.1" (.-hostname url))
+                 (number? port) (<= 1 port 65535)
+                 (= "/v2/app-registry" (.-pathname url))
+                 (empty? (.-username url))
+                 (empty? (.-password url))
+                 (empty? (.-search url))
+                 (empty? (.-hash url)))
+        url))
+    (catch :default _ nil)))
+
+(defn- bounded-json! [response]
+  (let [content-length (.get (.-headers response) "content-length")
+        declared-size (when content-length (js/Number content-length))]
+    (if (and declared-size (> declared-size maximum-snapshot-bytes))
+      (js/Promise.reject (js/Error. "snapshot-too-large"))
+      (let [reader (.getReader (.-body response))
+            decoder (js/TextDecoder.)
+            chunks (atom [])
+            total (atom 0)]
+        (letfn [(read-next []
+                  (-> (.read reader)
+                      (.then
+                       (fn [result]
+                         (if (.-done result)
+                           (let [bytes (js/Uint8Array. @total)]
+                             (loop [remaining @chunks offset 0]
+                               (when-let [chunk (first remaining)]
+                                 (.set bytes chunk offset)
+                                 (recur (rest remaining)
+                                        (+ offset (.-length chunk)))))
+                             (js->clj (js/JSON.parse (.decode decoder bytes))
+                                      :keywordize-keys true))
+                           (let [chunk (.-value result)
+                                 size (+ @total (.-length chunk))]
+                             (when (> size maximum-snapshot-bytes)
+                               (throw (js/Error. "snapshot-too-large")))
+                             (swap! total + (.-length chunk))
+                             (swap! chunks conj chunk)
+                             (read-next)))))
+                      (.catch
+                       (fn [error]
+                         (-> (.cancel reader)
+                             (.catch (fn [_] nil)))
+                         (js/Promise.reject error)))))]
+          (read-next))))))
+
+(defn- valid-record-envelope? [dna-cid record]
+  (and (map? record)
+       (= #{:cid :type :sequence :body :envelope-hex} (set (keys record)))
+       (string? (:envelope-hex record))
+       (<= 2 (count (:envelope-hex record)) (* 2 maximum-entry-bytes))
+       (even? (count (:envelope-hex record)))
+       (re-matches #"[0-9a-f]+" (:envelope-hex record))
+       (:ok? (envelope/verify-record dna-cid record))))
+
+(def candidate-wire-keys
+  [:domain :app-id :publisher-did :channel :decision :reason :revocation-status
+   :binding-cid :binding-sequence :binding-expires-at :release-cid
+   :release-sequence :manifest-cid :content-origin-cids
+   :content-origin-records])
+
+(defn candidate->wire
+  "Project a locally verified candidate to the bounded install-adapter shape.
+
+  The selected signed origin bodies are public Awai registry facts. Keep them
+  available to the local host so its content adapter can fetch from the exact
+  accepted pins; do not substitute ambient gateways or return unselected
+  origins."
+  [candidate]
+  (select-keys candidate candidate-wire-keys))
+
+(defn- snapshot-result [snapshot]
+  (let [records (:records snapshot)
+        now (quot (.now js/Date) 1000)]
+    (cond
+      (not (and (map? snapshot)
+                (= #{:schema :dna-cid :records} (set (keys snapshot)))
+                (= schema (:schema snapshot))
+                (string? (:dna-cid snapshot))
+                (vector? records)
+                (<= (count records) maximum-records)))
+      (unavailable "invalid-peer-snapshot")
+
+      (not (every? #(valid-record-envelope? (:dna-cid snapshot) %) records))
+      (unavailable "unverified-peer-envelope")
+
+      :else
+      (let [trusted {:status "ok"
+                     :trust "independently-verified-awai-envelopes"
+                     :snapshot snapshot}
+            resolved (apps/registry-domain-candidates trusted now)]
+        (if (= :candidates (:decision resolved))
+          {:http-status 200
+           ;; Keep authenticated records in the host return value for local
+           ;; install-plan resolution. The HTTP registry route serializes only
+           ;; `:body`, so these verification facts are never exposed there.
+           :verified-snapshot snapshot
+           :verified-candidates (:candidates resolved)
+           :body {:status "ok"
+                  :trust (:trust trusted)
+                  :accepted-state-source "single-local-peer"
+                  :dna-cid (:dna-cid snapshot)
+                  :registry-record-count (count records)
+                  :candidates (mapv candidate->wire (:candidates resolved))}}
+          (unavailable (name (or (:error resolved) :registry-resolution-failed))))))))
+
+(defn registry-response!
+  "Read and independently verify one configured loopback Awai snapshot.
+
+  Returns a Promise of `{:http-status n :body map}` for the active Node host."
+  []
+  (let [configured (some-> (aget js/process.env "ITONAMI_AWAI_REGISTRY_URL")
+                           str)
+        url (when configured (endpoint-url configured))]
+    (cond
+      (or (nil? configured) (empty? configured))
+      (js/Promise.resolve (unavailable "unconfigured"))
+
+      (nil? url)
+      (js/Promise.resolve (unavailable "invalid-local-endpoint"))
+
+      :else
+      (-> (js/fetch (.-href url)
+                    #js {:method "GET"
+                         :redirect "error"
+                         :headers #js {"accept" "application/json"}
+                         :signal (js/AbortSignal.timeout 2500)})
+          (.then (fn [response]
+                   (if (= 200 (.-status response))
+                     (bounded-json! response)
+                     (js/Promise.reject (js/Error. "peer-host-unavailable")))))
+          (.then snapshot-result)
+          (.catch (fn [error]
+                    (if (= "snapshot-too-large" (.-message error))
+                      (unavailable "snapshot-too-large")
+                      (unavailable "peer-host-unavailable"))))))))

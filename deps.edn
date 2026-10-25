@@ -1,6 +1,90 @@
 {:paths ["src" "resources"]
  :deps
- {org.clojure/clojure {:mvn/version "1.12.5"}
+ {
+        ;; kotoba.test (clojure.test-compatible surface), not clojure.test --
+        ;; scripts/migrate-clojure-test-to-kotoba-test.cljk. Explicit floor.
+        io.github.kotoba-lang/test {:git/url "https://github.com/kotoba-lang/test.git"
+                                    :git/sha "2ab4885f99fd25552d380d0f6b0b54c5a72eb7ae"}
+        ;; kotoba.image replaced java.awt.image.BufferedImage / javax.imageio here (2026-09-25).
+        ;; An explicit floor: tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/image {:git/sha "ed0b4dc89268073384c9493bdc80fa72dc17500b"}
+        ;; kotoba.netcap.tls-host replaced javax.net.ssl here (2026-09-25). An explicit
+        ;; floor: tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/netcap {:git/sha "5426a8ae26f71bd9d298e4d2425e7b7c948dfea2"}
+        ;; kotoba.lang.error replaced clojure.lang.ExceptionInfo here (2026-09-25).
+        ;; An explicit floor: tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/error {:git/sha "838dec56c9a5b74f9eec825a2fb28bda157f8cd3"}
+        ;; kotoba.http.form-urlencoded replaced java.net.URLEncoder/URLDecoder here
+        ;; (2026-09-24). An explicit floor: tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/http-parse-url {:git/sha "8ad2f9680111e50168b4078a64601dc9296158d7"}
+        ;; kotoba.bytes replaced java.util.Base64 here (2026-09-24). An explicit
+        ;; floor: tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/bytes {:git/sha "d5259f35ab7c4f5a66e63ca29ed4dcf7ba3f1ac5"}
+        ;; kotoba.io replaced clojure.java.io here (2026-09-24). An explicit floor:
+        ;; kotoba.io carries clojure.java.io's file/as-file/as-relative-path/
+        ;; make-parents/delete-file from 98045c7, and tools.deps takes the NEWEST
+        ;; sha it is shown.
+        io.github.kotoba-lang/io {:git/sha "72dde04b4c32854d70d17a670b277f8f7957a784"}
+        ;; kotoba.json replaced clojure.data.json here (2026-09-24). An explicit
+        ;; floor: kotoba.json/read-str and /write-str first exist at 9c11ad1, and
+        ;; tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/json {:git/sha "9c11ad189e64907700e8b4eb9b26f40336bffa01"}
+        ;; kotoba.pprint replaced clojure.pprint here (2026-09-24): the same
+        ;; bytes (cljs.pprint transcribed). An explicit floor; tools.deps takes the
+        ;; NEWEST sha it is shown.
+        io.github.kotoba-lang/pprint {:git/sha "5c9d4aea71d6caac529fffcf361aba0f87ee485e"}
+        ;; kotoba replaced JVM interop here (2026-09-24). An explicit
+        ;; floor: tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/coll {:git/sha "f74e248f0a07e8ae572885f50fab6bdb39dc24be"}
+        io.github.kotoba-lang/cloud-kotoba-dds
+  ;; the Bots workspace pattern (bots.cljk + styles/bots-css + the renderer)
+  ;; that #/bots is built on since 2026-09-16
+  {:git/url "https://github.com/kotoba-lang/cloud-kotoba-dds.git"
+   :git/sha "af6169d4aee90ed2e8654e547c20b8a767e8c270"}
+  ;; the browser contract the rail's rows dispatch through (data-action /
+  ;; shinkansen.on) and the runtime web.cljk inlines
+  io.github.kotoba-lang/shinkansen
+  {:git/url "https://github.com/kotoba-lang/shinkansen.git"
+   :git/sha "301e50d8f75ada14edf6ec4bba7c01e70e624c30"}
+
+        ;; kotoba.lang.text, not clojure.string. Pinned as an explicit floor:
+        ;; tools.deps takes the NEWEST sha it is shown, so without a floor here
+        ;; this repo silently rides whatever a sibling happens to name.
+        io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}
+        ;; The command surface -- cloud.itonami.app.commands / .repo-profile
+        ;; and the three tables (commands.edn, cli-aliases.edn, defaults.edn).
+        ;; Moved out on 2026-09-15 so the CLI, the mobile bundle and this app
+        ;; read ONE copy: dev/gen_commands.cljk writes the registry into that
+        ;; repository's checkout, commands-test compares the routes with the
+        ;; copy at THIS sha, so a new route fails the suite until the registry
+        ;; is regenerated there and this sha advances. cloud-itonami-cli pins
+        ;; the same sha in its nbb.edn.
+        io.github.cloud-itonami/cloud-itonami-commands {:git/sha "9bd4ec8d8c5bf75e6404e890aaf9e5a907c1df43"}
+        ;; kotoba.lang.http.host.jvm -- the workspace's single java.net.http
+        ;; site, which `cloud.itonami.app.http-client` delegates to. 36
+        ;; namespaces require that shim, so without this coordinate the
+        ;; application does not load at all: measured 2026-09-09, the shim had
+        ;; required `kotoba.net.jvm-host` since 2026-09-07 and no such
+        ;; namespace existed anywhere. Adds no transitive HTTP client --
+        ;; java.net.http is in the JDK; the sibling json/text deps are
+        ;; first-party and zero-dep, and text is the same sha pinned above.
+        io.github.kotoba-lang/http {:git/sha "d54e2a23f05856dd2d5fbf01a7336a5fbd8b4a8e"}
+        ;; One promise type across both runtimes, for the move off the JVM.
+        ;; host/jvm's async transport returns a CompletableFuture and
+        ;; host/node's returns a js/Promise; promesa treats them as the same
+        ;; thing, which is what lets `http-client-async` be one .cljc file
+        ;; rather than two implementations under one name.
+        ;;
+        ;; Not a new idea in this repository: mobile/scripts/verify-browser.cljk
+        ;; already requires promesa.core, and nbb bundles it -- so this
+        ;; coordinate only completes on the JVM what the ClojureScript side
+        ;; already had. kotoba-lang/async is channels, a different model, and
+        ;; not a substitute.
+        funcool/promesa {:mvn/version "12.0.1"}
+        ;; Embedded DNSSEC validation for Awai domain binding TXT proofs.
+        ;; Pin a release after CVE-2024-25638 and KeyTrap fixes.
+        dnsjava/dnsjava {:mvn/version "3.6.5"}
+       org.clojure/clojure {:mvn/version "1.12.5"}
   ;; 回遊 — the shared visit-telemetry vocabulary. Used here for the LOCAL
   ;; workspace counters only: nothing this library touches is transmitted
   ;; (see cloud.itonami.app.kaiyu-local). Zero deps.
@@ -15,12 +99,28 @@
   ;; App identity: raw CIDv1 + :kotoba.app/* manifest (zero runtime deps).
   io.github.kotoba-lang/kotoba-protocol
   {:git/url "https://github.com/kotoba-lang/kotoba-protocol.git"
-   :git/sha "782a199849a425065e7685f76338ec5e534184e8"}
-  ;; L2 graph CID: protocol.graph overlay + chain.core/commit! (ADR-2608145400).
+   ;; Shared Awai app identity, install, capability-consent, and offline-launch policy.
+   :git/sha "3aadfbcb31c4e995276993af9c0d80520b33c1b8"}
+  ;; Shared host content traversal for canonical DAG-CBOR and UnixFS DAG-PB.
+  ;; Match the compiler test pins so chain.core and the host use one IPLD codec.
+  io.github.kotoba-lang/io-multiformats
+  {:git/url "https://github.com/kotoba-lang/io-multiformats.git"
+   :git/sha "e7ae323d3ccbb9aacc92edfd2f3dda20d9b90eed"}
+  io.github.kotoba-lang/io-ipld
+  {:git/url "https://github.com/kotoba-lang/io-ipld.git"
+   :git/sha "c7b8f76b707ec22fa1692907201d44db54d98f13"}
+  ;; The app bundle reader decodes UnixFS Data metadata from DAG-PB blocks.
+  ;; Keep the wire decoder explicit instead of relying on io-ipld's transitives.
+  io.github.kotoba-lang/dev-protobuf
+  {:git/url "https://github.com/kotoba-lang/dev-protobuf.git"
+   :git/sha "cfd0b29997abbcae918ec5e90fddd621dbfb97b6"}
+  ;; L2 graph history verification. This pin adds chain.authorized on top of
+  ;; chain.core's causal CID/parent verification; Itonami still supplies the
+  ;; graph-scoped grant resolver and must state evaluation time/revocation.
   ;; Protocol does not hash and does not depend on chain.
   io.github.kotoba-lang/chain
   {:git/url "https://github.com/kotoba-lang/chain.git"
-   :git/sha "9646b8b858085fdb1172482ce9ce77d6739c75de"}
+   :git/sha "1ef235acf428e9b436cef9532d5794567437e835"}
   ;; IPNS latest pointer: real IPNS Record + delegated DHT routing.
   ;; Exclude ipns's ed25519 / dag-cbor so cacao's org-ietf-* copies of the
   ;; same namespaces (ed25519.core, cbor.core) win.
@@ -44,8 +144,8 @@
   ;; Pinned to the kir the pinned compiler emits for. They have to match: KIR
   ;; is a versioned document, and an interpreter reading a shape its emitter
   ;; did not write is exactly the failure the artifact was supposed to remove.
-  io.github.kotoba-lang/kotoba-kir
-  {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
+  io.github.kotoba-lang/osaho
+  {:git/url "https://github.com/kotoba-lang/osaho.git"
    :git/sha "da24cae65e82f91352c5b96b0c58f21a52911277"}
   ;; A second implementation executes the persisted portable Datalog corpus
   ;; during cutover qualification; normal Agent queries remain on langchain.db.
@@ -128,11 +228,13 @@
   {:git/url "https://github.com/kotoba-lang/com-microsoft-graph.git"
    :git/sha "fd36c90a864f8cddd957f91fd7a83d1c540e2aa3"}
   io.github.kotoba-lang/com-slack
-  {:git/url "https://github.com/kotoba-lang/com-slack.git"
-   :git/sha "e78e185bab52ffef6478500a6f747a99469e9eff"}
+  {:git/url "https://github.com/cloud-itonami/itonami-registry.git"
+   :git/sha "72ddcbad097f921ee4fecef39528419133e91494"
+   :deps/root "compat/com-slack"}
   io.github.kotoba-lang/com-notion
-  {:git/url "https://github.com/kotoba-lang/com-notion.git"
-   :git/sha "d2b2469f14b571fefe45f579343b18ba3ba028de"}
+  {:git/url "https://github.com/cloud-itonami/itonami-registry.git"
+   :git/sha "3f3f3ea9361d0602224ebdd2aeb1baa874c0bb40"
+   :deps/root "compat/com-notion"}
   io.github.kotoba-lang/com-google-chat
   {:git/url "https://github.com/kotoba-lang/com-google-chat.git"
    :git/sha "8b5b0154a630d2f0d54fa451b5bc89ddfa0a6486"}
@@ -144,7 +246,7 @@
    :git/sha "9e56e4bb037dbe48b2c1b4e40d4832b7474f6ea8"}
   io.github.kotoba-lang/process
   {:git/url "https://github.com/kotoba-lang/process.git"
-   :git/sha "f261f1e7853d26c2bf53b2236e3b7d454598ac28"}
+   :git/sha "db49ea936e53d0bc698be0db79bf96ad86b5f7d0"}
   io.github.kotoba-lang/shell
   {:git/url "https://github.com/kotoba-lang/shell.git"
    :git/sha "2fec11589465e3960ece9b8101c13ab79080dcea"}
@@ -205,9 +307,10 @@
   ;; :dev alias overrides this to a :local/root, so this gap only appears in a
   ;; plain `-M:test` run — which is how it appeared: filecoin.clj is already on
   ;; main (landed as untracked WIP) and cannot load there.
-;; A grant is a signed, expiring, offline-verifiable capability rather than
-  ;; a row only this server can interpret. CAIP-74 over Ed25519, with chain
-  ;; verification already in the library for when a grantee may re-grant.
+;; CAIP-74 (CACAO). No longer the Drive share format (superproject
+  ;; adr-2609241800: shares are Biscuits, cloud.itonami.app.share-grant); still
+  ;; required by cloud.itonami.app.kotobase-federation, and it is what brings
+  ;; ed25519.core (org-ietf-ed25519) onto this classpath.
   io.github.kotoba-lang/org-chainagnostic-cacao
   {:git/url "https://github.com/kotoba-lang/org-chainagnostic-cacao.git"
    :git/sha "3aaab02fb993a1d0b716c8fc1aefe37e4e3ab850"}
@@ -452,9 +555,13 @@
   {:git/url "https://github.com/kotoba-lang/authority.git"
    :git/sha "232eef9b7969aa5990f9b5e48b1184f078500781"}
 
+  ;; 12148e0 (2026-09-24) is a floor: it folds `holder` across blocks in
+  ;; biscuit.kotoba/->delegated. Drive shares (cloud.itonami.app.share-grant)
+  ;; address the grantee in the SECOND block, which 039378d did not read --
+  ;; every share answered :holder-absent there (share-grant-test, measured).
   io.github.kotoba-lang/org-biscuitsec
   {:git/url "https://github.com/kotoba-lang/org-biscuitsec.git"
-   :git/sha "039378d4b6fcebacc6fa54a1dfdbc8a12f2b3530"}
+   :git/sha "12148e029497614f916b8745ac1b2871e2668ef1"}
   ;; (`authentication` / `authorization` are declared once at the top of this
   ;; map, as `authentication-email` + `authorization` at these same SHAs. The
   ;; ADR-0014 replay re-added them here under the pre-rename key, which is a
@@ -524,8 +631,9 @@
   ;; Bumped for github.connector (ADR-2608097000). github.workflow, which this
   ;; app already used, is unchanged by that commit.
   io.github.kotoba-lang/com-github
-  {:git/url "https://github.com/kotoba-lang/com-github.git"
-   :git/sha "b27e8834a48cc4eecdc1169f8c224817d181ee0d"}
+  {:git/url "https://github.com/cloud-itonami/itonami-registry.git"
+   :git/sha "37cd0ef7984521aa85f4a4e354f2069bc1653e01"
+   :deps/root "compat/com-github"}
   ;; Durable organizational roles and desired-capacity reconciliation. Kanban
   ;; work in this app supplies goals; yakuwari remains the authority for how
   ;; many bounded AgentRuns a role should keep alive and which capabilities
@@ -548,9 +656,18 @@
   io.github.kotoba-lang/hil
   {:git/url "https://github.com/kotoba-lang/hil.git"
    :git/sha "75f5b9ed3ed00161f331f868a224d3a71e5db00e"}
+  ;; FLOOR, with the reason next to it: `jp-go-dds.dark` landed upstream in
+  ;; 794ec5c (2026-08-04) and the previous pin here was 277e8c3 (2026-07-26),
+  ;; so `appearance/dark-css` would not compile against it -- the namespace is
+  ;; simply absent. tools.deps picks the newest sha it is SHOWN, and nothing
+  ;; else in this closure names this library, so a fix upstream never arrives
+  ;; until this line moves. `manifest/west.yml` pins the same sha, so the
+  ;; checkout and this coordinate agree; west pins are gated, this one is not.
+  ;; 2026-09-16: 4a315c5 for `jp-go-dds.behavior` (the dialogs' focus trap /
+  ;; focus return that the App overlay and the settings sheet stand on).
   io.github.kotoba-lang/jp-go-digital-design-system
   {:git/url "https://github.com/kotoba-lang/jp-go-digital-design-system.git"
-   :git/sha "277e8c38648a3030014637d11fcbefc4f5535ae7"}
+   :git/sha "4a315c581569b8d8a60e1ceaa421d8413f35398e"}
 
   ;; Filecoin: PieceCID v2 addressing + the on-chain read surface + the
   ;; provider transfer surface. Deliberately NOT a storage backend — see
@@ -563,7 +680,7 @@
    :git/sha "67147752a8486715f2e049756446a92ffe0816f5"}
   io.github.kotoba-lang/io-filecoin-transport
   {:git/url "https://github.com/kotoba-lang/io-filecoin-transport.git"
-   :git/sha "b0f434c81f778c00321af9572da2346a5e0fc5c7"}}
+   :git/sha "a0e665dd8bcbff1e7de6bd485bd80d93c5e6893e"}}
 
  :aliases
  {:build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.8"}}
@@ -575,7 +692,7 @@
   ;; RESTORED 2026-09-03 (PR #270 deleted them; measured same day the guest-wasm
   ;; path they point at cannot run: browser-host.mjs exists in no checkout and
   ;; no release, and the nbb host has never started). The launchd plist on the
-  ;; operator workstation runs `clojure -M:server` against ~/.cloud-itonami/current
+  ;; operator workstation runs `kbb -M:server` against ~/.cloud-itonami/current
   ;; and the running resident was started from an alias-bearing release — a
   ;; restart against current would brick under KeepAlive (run-path verifier,
   ;; scripts/verify-itonami-run-path.cljs: configured-launch-alias-absent).
@@ -601,8 +718,9 @@
   ;; Regenerate the shipped decision-core KIR. Combine with :test, which
   ;; carries the compiler; a later alias's :main-opts wins:
   ;;
-  ;;   clojure -M:test:gen
+  ;;   kbb -M:test:gen
   :gen {:main-opts ["-m" "cloud.itonami.app.kotoba-oracle-gen"]}
+  :collection-test {:extra-paths ["test"] :main-opts ["-m" "collection-nbb"]}
   :test {:extra-paths ["test"]
          :extra-deps {datascript/datascript {:mvn/version "1.7.8"}
                       ;; JVM host for kexe artifacts. TEST-ONLY: the default
@@ -643,33 +761,54 @@
          ;; `[:option :string]` instead of `option-some?-of`. `compiler.git`
          ;; redirects at GitHub to `kotoba-lang/amu`.
          ;;
+         ;; ADVANCED 2026-09-07 to amu main tip `78cdc2e`, which carries
+         ;; kotoba-sema `3378b1d3` (13 commits past `fcd4e35`, the commit that
+         ;; landed the pure S-expression heads `lam`/`app`/`ref`/`perform` in
+         ;; the frontend). The previous pin's kotoba-sema `1b83233` (2026-08-13)
+         ;; predates the pure heads, so the parity suite could not admit a
+         ;; decision core written in the pure S-expr form. This advance admits
+         ;; them (see `pure_head_probe_test.clj`). The holds below were
+         ;; re-verified against the new compiler's transitive pins — see each
+         ;; comment.
+         ;;
          ;; `io-multiformats` is named here for a reason that is not optional.
          ;; The compiler pin above drags its own, OLDER `io-multiformats`
          ;; (`b3b157e6`) into the tree, and resolution silently preferred it over
          ;; the `dc520032` this app already resolves — which removed
          ;; `mf/sha384` and made `org-w3-rdf-canon` fail to LOAD, so the entire
          ;; test suite died before a single assertion ran. Measured 2026-08-08:
-         ;; `clojure -M:test -e "(println :ok)"` → `No such var: mf/sha384`.
+         ;; `kbb -M:test -e "(println :ok)"` → `No such var: mf/sha384`.
          ;; Holding it at the app's own pin keeps the parity gate from changing
-         ;; what every other test in this repo is compiled against.
+         ;; what every other test in this repo is compiled against. amu `78cdc2e`
+         ;; names `561fe7df` (newer); the app's own `e7ae323d` is still held so
+         ;; the rest of the suite keeps compiling against the pin it was
+         ;; measured on.
          ;;
          ;; `io-ipld` is the same class of hold. Compiler 1644b32 names
-         ;; `14b53ae` (`ipld.link` → `multiformats.base32`). Newest-wins
-         ;; would replace chain's hasher pin `45917645` (uses
-         ;; `multiformats.core`). `14b53ae` cannot load against the
-         ;; `dc520032` override: that pin folded base32 into core and has
-         ;; no `multiformats.base32` ns. Compiler source does not require
-         ;; ipld; chain.core/commit! does.
-         :override-deps
-         {io.github.kotoba-lang/compiler
-          {:git/url "https://github.com/kotoba-lang/compiler.git"
-           :git/sha "1644b326eefa0951a6343cee9aff88fe9ba745e2"}
-          ;; kototama-native's own deps.edn names a newer kir. Newest-wins
+                  ;; `14b53ae` (`ipld.link` → `multiformats.base32`). Newest-wins
+                  ;; would replace chain's hasher pin `45917645` (uses
+                  ;; `multiformats.core`). `14b53ae` cannot load against the
+                  ;; `dc520032` override: that pin folded base32 into core and has
+                  ;; no `multiformats.base32` ns. Compiler source does not require
+                  ;; ipld; chain.core/commit! does. amu `78cdc2e` names `1a2e10cf`;
+                  ;; the app's own `c7b8f76b` is still held for the same reason.
+                  :override-deps
+                  {io.github.kotoba-lang/compiler
+                   {:git/url "https://github.com/kotoba-lang/compiler.git"
+                    :git/sha "78cdc2e18aa82625230c0b2332e59c5417994b57"}
+                   ;; kototama-native's own deps.edn names a newer kir. Newest-wins
           ;; would silently upgrade the interpreter every test loads, and
           ;; the shipped `*.kir.edn` were emitted for this pin. Hold it.
-          io.github.kotoba-lang/kotoba-kir
-          {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
-           :git/sha "da24cae65e82f91352c5b96b0c58f21a52911277"}
+          ;; ADVANCED 2026-09-07 to `b021a0d1` (amu main's pin for 78cdc2e):
+          ;; the new compiler's frontend references `kir/host-stack-exhausted?`,
+          ;; which does not exist in `da24cae6` — measured `No such var:
+          ;; kir/host-stack-exhausted?` at the old hold. amu's own comment
+          ;; makes this mandatory: "THIS PIN IS NOT OPTIONAL WHEN THE
+          ;; KOTOBA-SEMA PIN MOVES" (frontend admits `pop` and KIR traps
+          ;; `:unknown-function` if left behind).
+          io.github.kotoba-lang/osaho
+          {:git/url "https://github.com/kotoba-lang/osaho.git"
+           :git/sha "b021a0d179fb983e8ad7da702252cfa764cd2fc2"}
           io.github.kotoba-lang/io-multiformats
           {:git/url "https://github.com/kotoba-lang/io-multiformats.git"
            :git/sha "e7ae323d3ccbb9aacc92edfd2f3dda20d9b90eed"}
@@ -727,7 +866,7 @@
     io.github.kotoba-lang/html {:local/root "../../kotoba-lang/html"}
     io.github.kotoba-lang/css {:local/root "../../kotoba-lang/css"}
     io.github.kotoba-lang/oauth {:local/root "../../kotoba-lang/oauth"}
-    io.github.kotoba-lang/com-github {:local/root "../../kotoba-lang/com-github"}
+    io.github.kotoba-lang/com-github {:local/root "../itonami-registry/compat/com-github"}
     io.github.kotoba-lang/yakuwari {:local/root "../../kotoba-lang/yakuwari"}
     io.github.kotoba-lang/agent {:local/root "../../kotoba-lang/agent"}
     io.github.kotoba-lang/hil {:local/root "../../kotoba-lang/hil"}

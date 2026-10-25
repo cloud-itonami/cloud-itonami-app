@@ -1,0 +1,65 @@
+(ns cloud.itonami.app.awai-manifest-node
+  "Node host port for reading a release-pinned public app manifest.
+
+  This is a read-only preview adapter. It verifies the registry-selected
+  content origins, manifest CID, and closed Kotoba app schema, then persists
+  the verified block in the private host content store. It does not authorize
+  domain installation or expose bundle bytes to app code."
+  (:require [cloud.itonami.app.awai-content-node :as content]
+            [cloud.itonami.app.awai-content-store-node :as content-store]
+            [cloud.itonami.app.awai-manifest :as manifest]))
+
+(defn fetch-release-manifest!
+  "Fetch and privately cache a candidate's immutable manifest block.
+
+  `candidate` must be the local Awai registry reader's independently
+  envelope-verified projection. The content adapter accepts only the signed
+  origin records selected by that release."
+  [data-root candidate]
+  (cond
+    (not= :candidate (:decision candidate))
+    (js/Promise.resolve {:decision :refuse :error :domain-candidate-not-ready})
+
+    (not (and (string? (:manifest-cid candidate))
+              (string? (:app-id candidate))
+              (string? (:publisher-did candidate))
+              (vector? (:content-origin-records candidate))))
+    (js/Promise.resolve {:decision :refuse
+                         :error :invalid-manifest-fetch-scope})
+
+    :else
+    (-> (content/fetch-verified-block!
+         (:manifest-cid candidate)
+         (:content-origin-records candidate)
+         (:app-id candidate)
+         (:publisher-did candidate)
+         manifest/maximum-manifest-bytes)
+        (.then
+         (fn [fetched]
+           (if-not (= :verified (:decision fetched))
+             {:decision (:decision fetched)
+              :error (:error fetched)
+              :fetch-result (dissoc fetched :bytes)}
+             (let [verified (manifest/verify-block
+                             (:manifest-cid candidate)
+                             (:bytes fetched)
+                             (:app-id candidate))]
+               (if-not (= :verified (:decision verified))
+                 verified
+                 (let [stored (content-store/store-verified-block!
+                               {:data-root data-root
+                                :cid (:manifest-cid candidate)
+                                :bytes (:bytes fetched)})]
+                   (if (and (= :stored (:decision stored))
+                            (true? (:durable? stored))
+                            (= (:manifest-cid candidate) (:cid stored))
+                            (some? (:receipt stored)))
+                     (assoc verified
+                            :storage-receipt (:receipt stored)
+                            :origin-host (:origin-host fetched))
+                     {:decision :unavailable
+                      :error :manifest-storage-failed
+                      :storage-result stored})))))))
+        (.catch (fn [_]
+                  {:decision :unavailable
+                   :error :manifest-fetch-failed})))))

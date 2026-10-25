@@ -1,0 +1,47 @@
+{:adr/title "Clojure  から Kotoba へのリファクタリング"
+ :adr/number 260907
+ :adr/status "proposed"
+ :adr/context
+ "org-wide に Clojure (clj/cljc/cljs) ファイルは 46,802 件ある。この中で
+  - clj: 11,773 件
+  - cljc: 29,092 件
+  - cljs: 5,939 件
+  に Kotoba (.kotoba) は 2,577 件のみ。
+  
+  cloud-itonami/cloud-itonami-app は 233 件の Clojure ファイルを持ち、
+  中核アプリケーションとして移行優先度が高い。
+
+  kotoba の pure S-expr コアとしての完成度 (2026-09-07 実測、grammar
+  authority + surface-status + 裏付けテストを突き合わせ):
+  - 7 特殊形式 は全 7 件 admitted 済み。
+    lam/app/ref/perform/handle はコンパイラ経路で wasm32 到達。
+  - rel/query は KIR まで (kgraph lowering 由来の継承 gap)。wasm32 未達。
+  - query は point read であって関係 algebra ではない。pattern form は未実装。
+  - Step 2 (alpha-normalisation) 未着地: .cljk と pure で同一 Definition CID はまだ。
+  - perform/handle は非対: perform は host 応答の capability effect、
+    handle は :abort の消去のみ (capability call を包めない)。
+  
+  実測される移行済み 21 .kotoba (2070 行) はすべて clojure-shaped の
+  native-word slice (:i64/:bool/:string) に自家制限しており、
+  pure の 7 head はまだ使っていない。"
+
+ :adr/decision
+ "1. cloud-itonami/cloud-itonami-app を最初の移行対象とする
+  2. src/cloud/itonami/app を中心に、段階的に Kotoba へ移行
+  3. 移行単位は namespace 別ではなく、functional slice 別
+  4. 既存テストは維持し、Kotoba 版を追加するアプローチ
+  5. 移行 slice には lam/app/ref/perform の 4 head (wasm32 到達・identity
+     実測済み) を積極的に使う。rel/query/handle は wasm32 未達または
+     意味論未確定のため現行 slice では使わない
+  6. ref はモジュール自身の top-level 定義名を参照する時だけ admitted。"
+
+ :adr/consequences
+ ["移行により JVM 依存を削減可能"
+  "kotoba-native 等のネイティブバックエンド対応が進む"
+  "テスト基盤の維持・移行が必要"
+  "gradual migration のため、両形式のコードが一定期間混在する"
+  "現在の移行率 9% は clojure-shaped word-typed slice への移行を測っており、
+   pure コアの 7 head はまだ使っていない。両者を区別して報告する"]
+
+ :adr/referenced-by
+ ["adr/260907-migration-plan"]}

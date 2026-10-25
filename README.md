@@ -24,6 +24,14 @@ The policy is fail-closed throughout: nothing is admitted by default, and a
 provider that fails any condition denies rather than falling back to another.
 See ADR-2608130100 for why this replaced "local-first".
 
+A service credential a Bot needs but cannot obtain for itself — a Cloudflare
+API token, an account id — is asked for as a **card in the thread with a field
+on it**, never in prose. The value goes to one endpoint, is stored in the macOS
+Keychain, and is resolved at the moment of the call; the Bot names it and never
+holds it, and the conversation records that it was stored rather than what was
+stored. Pasting one into the composer while a request is open is refused rather
+than recorded. See [ADR-0093](docs/adr/0093-a-credential-is-a-card-not-a-message.md).
+
 The repository is the tenant-neutral application. `gftd.ai` is represented by
 the optional [`profiles/gftd.edn`](profiles/gftd.edn) distribution profile, not
 by a fork of the application.
@@ -41,6 +49,25 @@ Verifiable Presentations, and Developer ID notarization remain separate
 responsibilities — the presentation gap is structural, not unfinished work: a
 Passkey signs its own `authenticatorData || clientDataHash` and cannot produce a
 Data Integrity proof.
+
+The shared external Awai-app lifecycle coordinator is an initial host-side
+policy slice in `cloud.itonami.app.awai-apps`, including per-operation
+capability authorization, host-adapter dispatch, and protected local install
+records. Local registry, DNSSEC, and content-origin adapters now exist in
+source, and the authenticated marketplace can inspect accepted candidates and
+check a domain binding proof. A separate launcher now has a loopback-only,
+explicit-consent install route that can call the token-protected Awai cell
+bridge; it has not passed a successful end-to-end installation. Isolated app
+execution is now available for a locally installed, CID-verified bundle in a
+per-app `.localhost` iframe with a restrictive CSP and browser sandbox;
+network access and host capabilities are disabled. This has only been exercised
+with a local fixture. Update consent, a host-capability bridge, and the public
+`itonami.app` gateway remain unconnected. See
+[`docs/awai-app-runtime.md`](docs/awai-app-runtime.md).
+The named public-domain inventory and staged migration gates are in
+[`docs/awai-app-domain-inventory.md`](docs/awai-app-domain-inventory.md); its
+Cloudflare snapshot is read-only and does not establish a complete external
+domain inventory.
 
 Wallet creation is Passkey-first: the first verified P-256 public key names a
 deterministic ERC-4337 counterfactual account, so no injected wallet extension
@@ -70,6 +97,21 @@ enabled by default. The resident remains the authority for Goals, Assignments,
 context envelopes, grants, approval and replay. See
 [ADR-0077](docs/adr/0077-open-agent-interoperability-uses-mcp-a2a-and-agntcy-slim.md).
 
+## Bot workspace
+
+The desktop UI follows the Bot workspace at [app.itonami.cloud](https://app.itonami.cloud/):
+account access at the upper left, a Bot list beside the conversation, a persistent
+wallet entry, and a searchable Plugins view. Additional workspace tools remain in
+「その他の機能」. Moving between these views preserves the current draft.
+
+Enter inserts a newline; Command+Enter or Control+Enter sends. IME composition
+never triggers this shortcut. The wallet entry displays the current principal's
+account, independently of the selected Bot's wallet.
+
+The desktop continues to use its own resident, authenticated session, connection
+permissions, and credential storage. Matching the web UI does not import a web
+session or a web plugin grant into the desktop application.
+
 ## Requirements
 
 - macOS 14 or later for the native shell, EventKit, and Keychain integrations
@@ -83,7 +125,7 @@ The run path is the nbb hosts that load the guest wasm
 `:server`, `:mcp`, or `:cli` aliases. Java and the Clojure CLI remain
 leftover for `:test`, `:gen`, `:repository`, `:ao-messenger`, `:lint`,
 and `:build`. Default CI is `amu-jvm-free-emit` (java/clojure off PATH).
-`clojure -M:test` is leftover (`.github/workflows/leftover-jvm-tests.yml`,
+`kbb -M:test` is leftover (`.github/workflows/leftover-jvm-tests.yml`,
 workflow_dispatch only).
 
 Pure tests and the loopback web surface also run on Linux.
@@ -160,7 +202,7 @@ and the signer certificate SHA-256 matches the current installation.
 ## Run
 
 ```bash
-nbb --classpath bin bin/cloud-itonami-server
+kbb --backend sci --classpath bin bin/cloud-itonami-server
 open http://localhost:1338
 ```
 
@@ -175,7 +217,7 @@ AMU=<amu launcher> bin/kotoba compile src/cloud/itonami/app/mcp_main.kotoba --ta
 ADAPTER-EMIT HOLD: the file on disk plus the **app-local** adapter
 envelope (`cloud-itonami-app/bin/kotoba`). That is not `:compile/emitted`
 from the Release/v0.6.29 kotoba CLI. Production pin stays
-`:git/tag v0.6.29`. The amu canary (`nbb --classpath bin bin/compile-amu`)
+`:git/tag v0.6.29`. The amu canary (`kbb --backend sci --classpath bin bin/compile-amu`)
 also writes sealed `.kexe` plus provenance. KEXE is not a Mach-O executable.
 
 `bin/cloud-itonami-app` opens the web surface as an application window — no tab
@@ -198,7 +240,7 @@ Until that is fixed, use the launcher's own documented fallback, which is the
 same surface in an application window:
 
 ```bash
-nbb --classpath bin bin/cloud-itonami-server &
+kbb --backend sci --classpath bin bin/cloud-itonami-server &
 open -na "Google Chrome" --args --app="http://localhost:1338/" \
   --window-size=430,860 --window-position=140,60
 ```
@@ -239,10 +281,10 @@ do not start the app server and never edit a checkout.
 > the reason, so the gap is a named entry rather than a silence.
 
 ```bash
-bin/itonami bots refactor scan --root /path/to/com-junkawasaki --limit 25
-bin/itonami bots refactor inspect --root /path/to/com-junkawasaki \
+itonami bots refactor scan --root /path/to/com-junkawasaki --limit 25
+itonami bots refactor inspect --root /path/to/com-junkawasaki \
   --repo itonami --limit 8
-bin/itonami bots refactor start --root /path/to/com-junkawasaki \
+itonami bots refactor start --root /path/to/com-junkawasaki \
   --repo itonami --id bot-...
 ```
 
@@ -296,13 +338,45 @@ does not falsely mark it configured.
 
 ## `itonami` — the command line, without opening the app
 
-`bin/itonami` runs any of the app's operations from any directory. It starts no
-JVM: it is an nbb client that resolves a command to a method and a path, carries
-the agent session, and prints what the server said.
+`itonami` runs any of the app's operations from any directory. It starts no
+JVM: it is a client on the kbb engine that resolves a command to a method and a
+path, carries the agent session, and prints what the server said.
 
-It does **not** start a server. The resident is launchd's
-(`dev.cloud-itonami.app`), and `up` / `down` say so rather than pretending to
-supervise it.
+It lives in [cloud-itonami-cli](https://github.com/cloud-itonami/cloud-itonami-cli)
+(`bin/itonami` there), not here: the copy this repository carried after the
+2026-09-07 split was deleted on 2026-09-15, once it had drifted from the one that
+ships. What the CLI and this app share — `cloud.itonami.app.commands`,
+`cloud.itonami.app.repo-profile` and the three tables — is
+[cloud-itonami-commands](https://github.com/cloud-itonami/cloud-itonami-commands),
+a dependency both pin by sha (`deps.edn` here, `nbb.edn` there). Adding a route
+here means regenerating the registry into that repository
+(`kbb --backend sci --classpath src dev/gen_commands.cljk`, writes into
+`../cloud-itonami-commands`), landing it, and advancing the sha in `deps.edn`;
+`commands-test` fails until the sha is advanced.
+
+It does **not** start a server. `up` / `down` do not supervise the controller.
+
+### Production controller ownership
+
+Production runs on Murakumo host `judah`, LaunchDaemon
+`system/cloud.itonami.controller`, port 1438. The local Mac's former
+`dev.cloud-itonami.app` is retired. Do not install, enable, bootstrap, or
+kickstart that local label when deploying UI or server changes: it starts a
+second scheduler against the old local state, even if the cloud service is healthy.
+A failed local port 1338 check does not mean the production controller is down;
+check the remote service and the tunnel separately.
+
+Deploy a tested, clean controller package to `judah` under
+`~/.cloud-itonami/releases/`, verify its manifest and file checksums, then stop
+`system/cloud.itonami.controller` before changing `~/.cloud-itonami/current`
+and bootstrapping the same system service. Verify readiness and actual resumed
+jobs. Keep the local label disabled and unloaded. Changing ownership requires
+an explicit migration; never restore the local scheduler as a connection repair.
+
+Operational handoff: on `judah`, `~/.cloud-itonami/MIGRATION.md`; on the operator
+Mac, `~/Documents/Itonami/controller-migration-2026-09-09/STATUS.md`.
+The native launcher may start a local development server, so it is not a
+production recovery command.
 
 Two name sources, one resolver (`cloud.itonami.app.commands`, `.cljc`, shared
 with the JVM side): the generated registry in
@@ -313,17 +387,17 @@ Exit codes are the contract: **0** answered, **1** the server refused or a flag
 is missing, **2** could not answer — no server, no session, no such command.
 
 ```bash
-bin/itonami status                # where the server is, and whether you can act
-bin/itonami commands              # every command, with the coverage counts
-bin/itonami commands drive        # just the ones matching "drive"
+itonami status                # where the server is, and whether you can act
+itonami commands              # every command, with the coverage counts
+itonami commands drive        # just the ones matching "drive"
 
-bin/itonami auth login --label claude-code
-bin/itonami bots list
-bin/itonami bots task --id bot-1 --text "調べて"
-bin/itonami workspace inbox
-bin/itonami workspace drive search --q invoice
-bin/itonami workspace drive documents rename --document doc-1 --title "New"
-bin/itonami esign envelopes show env-1          # positional path parameters work too
+itonami auth login --label claude-code
+itonami bots list
+itonami bots task --id bot-1 --text "調べて"
+itonami workspace inbox
+itonami workspace drive search --q invoice
+itonami workspace drive documents rename --document doc-1 --title "New"
+itonami esign envelopes show env-1          # positional path parameters work too
 ```
 
 For a local MCP client, configure the stdio command as `bin/itonami-mcp`.
@@ -347,7 +421,7 @@ fallen behind, so `itonami commands` reports real coverage rather than a claim.
 Regenerate after adding a route:
 
 ```bash
-nbb --classpath src dev/gen_commands.cljs
+kbb --backend sci --classpath src dev/gen_commands.cljk
 ```
 
 Flags the registry does not know about are passed through; `--json '{…}'` sends a
@@ -427,21 +501,21 @@ reads GitHub Projects v2 through `gh`. Mail is filed against them by
 deterministic rules (ADR-0019).
 
 ```bash
-bin/itonami projects create --project finance --title "Finance"
-bin/itonami projects list
+itonami projects create --project finance --title "Finance"
+itonami projects list
 
 # rules: sender, sender domain, subject substring, or a classify label.
 # every clause must hold; the first matching rule wins.
-bin/itonami mail projects rules --project finance --label finance
-bin/itonami mail projects rules --project travel  --from-domain jal.com
+itonami mail projects rules --project finance --label finance
+itonami mail projects rules --project travel  --from-domain jal.com
 
-bin/itonami mail projects apply        # -> {:assigned 20 :unmatched 88 …}
-bin/itonami mail projects              # rules + per-project counts
-bin/itonami mail projects unassigned   # the pile no rule caught, senders ranked
-bin/itonami projects mail --project finance
+itonami mail projects apply        # -> {:assigned 20 :unmatched 88 …}
+itonami mail projects              # rules + per-project counts
+itonami mail projects unassigned   # the pile no rule caught, senders ranked
+itonami projects mail --project finance
 
-bin/itonami mail projects assign --message <id> --project travel
-bin/itonami mail projects unassign --message <id>
+itonami mail projects assign --message <id> --project travel
+itonami mail projects unassign --message <id>
 ```
 
 Nothing is moved and nothing is deleted: assignment is a third plane over the
@@ -492,8 +566,8 @@ needs `chmod -R u+w` before `rm -rf`.
 The annexed bodies exist on one disk until you push them (ADR-0022):
 
 ```bash
-bin/itonami projects push --project finance     # git annex copy --to b2
-bin/itonami projects remote --project finance   # annexed / pushed / unpushed
+itonami projects push --project finance     # git annex copy --to b2
+itonami projects remote --project finance   # annexed / pushed / unpushed
 ```
 
 The special remote is `encryption=none` **because the content is already age
@@ -748,7 +822,7 @@ set the sandbox IDs from `.env.example`. The explicit confirmation is mandatory:
 
 ```sh
 CLOUD_ITONAMI_GITHUB_SANDBOX_CONFIRM=1 \
-clojure -M -m cloud.itonami.app.github-projects-sandbox
+kbb -M -m cloud.itonami.app.github-projects-sandbox
 ```
 
 The probe reads the current basis, writes the configured sandbox Status option,
@@ -864,6 +938,30 @@ Turns are synchronous and bounded — 8 model turns and 12 tool calls per
 message. A Bot also answers on a schedule when a routine has been made from an
 executed trace; the tick uses a live session and never mints one.
 
+### Registry offers (Itonami Registry and the Hermes registry)
+
+The Marketplace Bot tab also offers the agents of two registries that share the
+Hermes registry layout: [cloud-itonami/itonami-registry](https://github.com/cloud-itonami/itonami-registry)
+and upstream Hermes' [fathah/hermes-registry](https://github.com/fathah/hermes-registry)
+(ADR-0143: an Itonami Bot reads the Hermes registry). Each becomes a generated
+resource pinned to one registry commit:
+
+```bash
+kbb --backend sci scripts/sync-itonami-registry.cljk --source itonami   # resources/itonami-registry-bots.edn
+kbb --backend sci scripts/sync-itonami-registry.cljk --source hermes    # resources/hermes-registry-bots.edn
+kbb --backend sci scripts/sync-itonami-registry.cljk --source hermes --check   # fails when stale
+```
+
+Files are read from git objects at that commit and every folder checksum in the
+registry's `index.json` is verified before an offer is written. A registry entry
+grants nothing: its offer installs with every capability off, and the new Bot's
+brief points at the entry's profile file at that commit (`templates/hermes/SOUL.md`
+in the Itonami registry, `AGENT.md` in the Hermes registry). Hermes registry ids
+are qualified `hermes-<id>`. The catalog refuses an offer that turns a capability
+on, is not pinned to its commit, or reuses an id (the generator skips ids the
+hand-written catalog curates and lists them as `:curated-elsewhere`). Skills, MCP
+definitions and workflows are not Bots and are not offered here yet.
+
 ### Startup workforces
 
 `会社Bot` reconciles the governed `network-awai/loop-yakuwari` registry into
@@ -890,7 +988,7 @@ MCP exposes `workforce_status` as read-only operational evidence. Provisioning
 is human-only because it creates durable Bots and jobs; an agent session cannot
 use MCP to widen or install its own workforce.
 
-The view is covered by `test/browser/bots_view.cljs`, which drives it in a real
+The view is covered by `test/browser/bots_view.cljk`, which drives it in a real
 browser against a running server; the JVM suite cannot see the client.
 
 ## Background worker runs
@@ -1256,7 +1354,7 @@ The stdio MCP server publishes these as tools — but only when it can resolve a
 ```bash
 security add-generic-password -s cloud-itonami-app.mcp -a session-token -w
 export CLOUD_ITONAMI_MCP_SESSION=…   # takes precedence over the Keychain
-nbb --classpath bin bin/itonami-mcp
+kbb --backend sci --classpath bin bin/itonami-mcp
 ```
 
 | tool | |
@@ -1357,8 +1455,8 @@ and every test drives an injected transport. See
 Set a named profile or an EDN file path:
 
 ```bash
-CLOUD_ITONAMI_PROFILE=gftd nbb --classpath bin bin/cloud-itonami-server
-CLOUD_ITONAMI_PROFILE=/secure/path/company.edn nbb --classpath bin bin/cloud-itonami-server
+CLOUD_ITONAMI_PROFILE=gftd kbb --backend sci --classpath bin bin/cloud-itonami-server
+CLOUD_ITONAMI_PROFILE=/secure/path/company.edn kbb --backend sci --classpath bin bin/cloud-itonami-server
 ```
 
 Profiles contain branding and non-secret service coordinates. Secrets remain
@@ -1377,7 +1475,7 @@ The included itonami profile turns email sign-in on and points it at
 
 ```bash
 CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN=<bearer> CLOUD_ITONAMI_PROFILE=itonami \
-  nbb --classpath bin bin/cloud-itonami-server
+  kbb --backend sci --classpath bin bin/cloud-itonami-server
 ```
 
 Email sign-in stays off in the shipped defaults, and that is not an oversight.
@@ -1398,7 +1496,7 @@ alias overrides them with sibling `kotoba-lang` checkouts for the west
 workspace:
 
 ```bash
-clojure -M:dev:test
+kbb -M:dev:test
 ```
 
 Do not commit `:local/root` dependencies to the release dependency map.
@@ -1423,8 +1521,8 @@ Repository-backed private state follows
 Operator flow:
 
 ```bash
-clojure -M:repository preflight
-clojure -M:repository migrate data/state.edn
+kbb -M:repository preflight
+kbb -M:repository migrate data/state.edn
 - DataLad receives only CID-named ciphertext blocks and verifies the configured
   remote before the Kotobase head advances;
 - `repository-storage/commit-workspace!` and `hydrate-workspace!` are the host
@@ -1437,20 +1535,20 @@ After initializing Kagi, creating/configuring the DataLad dataset and placing
 the Kotobase token in the process credential environment, the operator flow is:
 
 ```bash
-clojure -M:repository migrate data/state.edn
+kbb -M:repository migrate data/state.edn
 # edit data/workspace/<opaque-user-storage-id>/state.edn
-clojure -M:repository publish
-clojure -M:repository hydrate
-clojure -M:repository rotate-vmk
-clojure -M:repository measure 20
-clojure -M:repository drill 20 config/repository-production-evidence.edn
-clojure -M:repository usage
-clojure -M:repository qualify config/repository-production-evidence.edn
-clojure -M:repository audit secret-fixture-marker
-clojure -M:repository profiles
+kbb -M:repository publish
+kbb -M:repository hydrate
+kbb -M:repository rotate-vmk
+kbb -M:repository measure 20
+kbb -M:repository drill 20 config/repository-production-evidence.edn
+kbb -M:repository usage
+kbb -M:repository qualify config/repository-production-evidence.edn
+kbb -M:repository audit secret-fixture-marker
+kbb -M:repository profiles
 # Registered actors receive this owner's state path and their fixed stream.
-clojure -M:repository actor swachh ../swachh-actor \
-  clojure -M:dev:run-repository z-001 25
+kbb -M:repository actor swachh ../swachh-actor \
+  kbb -M:dev:run-repository z-001 25
 ```
 
 `publish` fails closed for missing/unfinished DataLad transport, locked Kagi,
@@ -1503,7 +1601,7 @@ and [the tenant model](docs/tenant-model.md).
 
 ## Verify
 
-Default CI gate (no `clojure -M`):
+Default CI gate (no `kbb -M`):
 
 ```bash
 AMU=<amu launcher> bash scripts/ci-jvm-free-emit
@@ -1512,8 +1610,8 @@ AMU=<amu launcher> bash scripts/ci-jvm-free-emit
 Leftover JVM suite (not the required path):
 
 ```bash
-clojure -M:test
-clojure -M:lint
+kbb -M:test
+kbb -M:lint
 ```
 
 ## License
@@ -1521,3 +1619,31 @@ clojure -M:lint
 Code in this repository is available under Apache License 2.0. Dependencies
 remain under their respective licenses; see [NOTICE](NOTICE) and
 [the dependency policy](docs/dependencies.md).
+
+### Continuing Bot work and shared conversations
+
+The Bots sidebar includes shared conversations. Create a conversation, select up
+to eight owned Bots, and join through its composer. Peer messages and replies
+between two Bots also appear in a shared thread. A submitted UI message has a
+request id, is persisted, and runs asynchronously; an interrupted discussion keeps
+its partial history instead of replaying the person's message. Each UI or
+scheduled discussion gives each member one turn. Tools still run in the Bot's
+own work conversation, not in the shared discussion.
+
+Each shared conversation can enable a periodic discussion with a topic and an
+interval of 5–10080 minutes. The existing resident controller timer starts due
+discussions and retains their status. The controller must remain running.
+Resident work uses a bounded waiting queue (default eight) independently from
+inference concurrency (default one), yields after three model turns, and stops a
+resident tick after eight actions on the same unverified step. This preserves
+receipts and gives waiting Bots a chance to run; it does not promise every
+schedule can meet its cadence when demand exceeds model capacity.
+
+Bots can retain learned procedures with `skill_propose`, citing a completed turn
+and an actual host tool receipt. `skill_use` explicitly selects a procedure for
+a later trial. Only a completed trial with the named tool's successful receipt
+validates it; failed trials suspend it. The learning disclosure shows candidates,
+validated procedures and suspended procedures. Validation is an execution check,
+not independent proof of every claim in the procedure. Skills never change
+permissions, provider credentials or approval policy. Sources, validation receipts
+and trial outcomes remain associated with the owning Bot.

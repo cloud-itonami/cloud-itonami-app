@@ -1,0 +1,277 @@
+(ns awai-install-bridge-client-run
+  "Local adapter smoke using a deterministic fetch peer; no network listener."
+  (:require ["node:crypto" :as crypto]
+            ["node:fs" :as fs]
+            ["node:os" :as os]
+            ["node:path" :as path]
+            [clojure.string :as str]
+            [ipld.core :as ipld]
+            [multiformats.core :as mf]
+            [kotoba.protocol.install :as install]
+            [cloud.itonami.app.awai-apps :as apps]
+            [cloud.itonami.app.awai-install-bridge :as bridge]))
+
+(def failures (atom []))
+(defn check [condition label]
+  (println (str (if condition "PASS " "FAIL ") label))
+  (when-not condition (swap! failures conj label)))
+
+(def app-id "net.kotoba.murakumo")
+(def cell-id "net.kotoba.murakumo.notes")
+(def release-cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4")
+(def manifest-cid "bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny")
+(def binding-cid "bafkreihbfo374yy4mz2w3sli2azqfw3ea73cnr3jm5gzqvub7wsh57uoxa")
+(def publisher-did "did:key:z6MkoPd1PVGGf5gTMGy4nZNrBMszzfaeaNmZfSzgAZZNhDWq")
+(def bundle-bytes (ipld/encode {"dna" "notes"}))
+(def bundle-cid (ipld/cid bundle-bytes))
+(def raw-bytes (.encode (js/TextEncoder.) "DNA dependency block"))
+(def raw-cid (mf/cidv1-raw raw-bytes))
+(def token (apply str (repeat 64 "d")))
+
+(defn- installation-record []
+  {:schema apps/installation-schema
+   :install-lock {:schema install/install-lock-schema
+                  :app-id app-id
+                  :version "1.0.0"
+                  :channel "stable"
+                  :publisher-did publisher-did
+                  :release-sequence 1
+                  :release-cid release-cid
+                  :manifest-cid manifest-cid
+                  :bundle-cid manifest-cid
+                  :cells [{:id cell-id :dna-cid bundle-cid}]
+                  :requested-caps []}
+   :origin {:domain "murakumo.cloud"
+            :binding-cid binding-cid
+            :binding-sequence 1
+            :binding-expires-at 2000000000
+            :dns-proof-checked-at 1800000000
+            :dns-proof-expires-at 1900000000}
+   :approved-caps []
+   :installed-at 1800000001})
+
+(defn- cell-capability-record []
+  (let [capabilities [bridge/cell-read-capability bridge/cell-write-capability]]
+    (-> (installation-record)
+        (assoc :approved-caps capabilities)
+        (assoc-in [:install-lock :requested-caps] capabilities))))
+
+(defn- content-path [root cid]
+  (.join path root
+         (-> (crypto/createHash "sha256")
+             (.update cid "utf8")
+             (.digest "hex"))))
+
+(defn- response [status body]
+  #js {:status status
+       :text (fn [] (js/Promise.resolve (js/JSON.stringify (clj->js body))))})
+
+(defn- run-cell-operation-checks! [token-file fake-fetch events]
+  (let [record (cell-capability-record)
+        runtime-facts {:verified-cids
+                       (install/required-content-cids (:install-lock record))
+                       :host-supported [bridge/cell-read-capability
+                                        bridge/cell-write-capability]
+                       :domain-status :cached-offline}
+        common {:installation record
+                :runtime-facts runtime-facts
+                :endpoint "http://127.0.0.1:43181/v2/cell-entries"
+                :token-file token-file
+                :fetch-fn fake-fetch}
+        read-result
+        (bridge/dispatch-cell-operation!
+         (assoc common
+                :capability bridge/cell-read-capability
+                :request {:cell-id cell-id :entry-type "note/create"}))]
+    (-> (js/Promise.resolve read-result)
+        (.then
+         (fn [read]
+           (check (and (= :completed (:decision read))
+                       (= :read (get-in read [:result :decision]))
+                       (= "fixture note"
+                          (get-in read [:result :entries 0 :body :text])))
+                  "approved app reads accepted cell entries through the protected host adapter")
+           (check (not (str/includes? (pr-str read) token))
+                  "cell read result never returns the local Awai bearer token")
+           (-> (js/Promise.resolve
+                (bridge/dispatch-cell-operation!
+                 (assoc common
+                        :capability bridge/cell-write-capability
+                        :request {:cell-id cell-id :entry-hex "aabb"})))
+               (.then
+                (fn [write]
+                  (check (and (= :completed (:decision write))
+                              (= :submitted (get-in write [:result :decision]))
+                              (= "accepted" (get-in write [:result :entry-decision]))
+                              (some #{[:cell-write cell-id "aabb"]} @events))
+                         "approved app forwards one declared-cell envelope and reflects the peer response")
+                  (let [before-refusal-count (count @events)
+                        denied (bridge/dispatch-cell-operation!
+                                (assoc common
+                                       :installation (installation-record)
+                                       :capability bridge/cell-read-capability
+                                       :request {:cell-id cell-id
+                                                 :entry-type "note/create"}))
+                        out-of-scope (bridge/dispatch-cell-operation!
+                                      (assoc common
+                                             :capability bridge/cell-read-capability
+                                             :request {:cell-id "net.kotoba.murakumo.other"
+                                                       :entry-type "note/create"}))]
+                    (check (and (= :refuse (:decision denied))
+                                (= :capability-not-granted (:error denied)))
+                           "an unapproved cell capability is refused before the adapter runs")
+                    (-> (js/Promise.resolve out-of-scope)
+                        (.then
+                         (fn [refused]
+                           (check (= :refuse (get-in refused [:result :decision]))
+                                  "a declared-app cell scope mismatch is refused locally")
+                           (check (= before-refusal-count (count @events))
+                                  "unapproved and out-of-scope operations never reach the peer adapter")))))))))))))
+
+(defn- report! []
+  (println (str "itonami-awai-bridge-client: "
+                (if (empty? @failures) "all checks passed"
+                    (str (count @failures) " FAILED"))))
+  (when (seq @failures) (.exit js/process 1)))
+
+(let [raw-root (.mkdtempSync fs (.join path (.tmpdir os)
+                                     "itonami-awai-bridge-client-"))
+      root (.realpathSync fs raw-root)
+      config-dir (.join path root "config")
+      app-root (.join path root "awai-apps")
+      content-root (.join path app-root "content")
+      token-file (.join path config-dir "install.token")
+      _ (.mkdirSync fs config-dir #js {:mode 448})
+      _ (.mkdirSync fs app-root #js {:mode 448})
+      _ (.mkdirSync fs content-root #js {:mode 448})
+      _ (.chmodSync fs config-dir 448)
+      _ (.chmodSync fs app-root 448)
+      _ (.chmodSync fs content-root 448)
+      _ (.writeFileSync fs token-file (str token "\n") #js {:mode 384})
+      _ (.chmodSync fs token-file 384)
+      _ (.writeFileSync fs (content-path content-root bundle-cid)
+                        bundle-bytes #js {:mode 384})
+      _ (.writeFileSync fs (content-path content-root raw-cid)
+                        raw-bytes #js {:mode 384})
+      _ (.chmodSync fs (content-path content-root bundle-cid) 384)
+      _ (.chmodSync fs (content-path content-root raw-cid) 384)
+      events (atom [])
+      authorized? (atom true)
+      fake-fetch
+      (fn [url options]
+        (let [parsed-url (js/URL. url)
+              request-path (.-pathname parsed-url)
+              method (.-method options)
+              headers (.-headers options)
+              auth (aget headers "authorization")
+              body (when (.-body options)
+                     (js->clj (js/JSON.parse (.-body options))
+                              :keywordize-keys true))]
+          (when-not (and (= "Bearer dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                            auth)
+                         (nil? (aget headers "origin"))
+                         (contains? #{"GET" "POST"} method))
+            (reset! authorized? false))
+          (case request-path
+            "/v2/cell-entries"
+            (case method
+              "GET"
+              (do
+                (swap! events conj [:cell-read (.get (.-searchParams parsed-url) "cell-id")])
+                (js/Promise.resolve
+                 (response 200
+                           {:schema "awai.cell.entries.read.v1"
+                            :cell-id cell-id
+                            :entry-type "note/create"
+                            :ordering "cid-lexical-pagination-only"
+                            :entries [{:cid raw-cid
+                                       :agent (apply str (repeat 64 "e"))
+                                       :sequence 0
+                                       :previous-cid nil
+                                       :timestamp 1800000001
+                                       :type "note/create"
+                                       :body {:text "fixture note"}}]
+                            :next-cursor nil})))
+
+              "POST"
+              (do
+                (swap! events conj [:cell-write (:cell-id body) (:entry-hex body)])
+                (js/Promise.resolve
+                 (response 201 {:schema "awai.cell.entry.submit.v1"
+                                :cell-id cell-id
+                                :cid raw-cid
+                                :decision "accepted"})))
+
+              (js/Promise.resolve (response 405 {:error "method"})))
+
+            "/v2/stage-dna-block"
+            (let [bytes (.from js/Buffer (:bytes-base64 body) "base64")]
+              (swap! events conj [:stage (:cid body)])
+              (let [expected (cond
+                               (= bundle-cid (:cid body)) bundle-bytes
+                               (= raw-cid (:cid body)) raw-bytes
+                               :else nil)]
+                (js/Promise.resolve
+                 (if (and expected
+                          (= (:bytes-base64 body) (.toString bytes "base64"))
+                          (= (vec (array-seq bytes))
+                             (vec (array-seq expected))))
+                   (response 201 {:decision "stored" :cid (:cid body)})
+                   (response 409 {:decision "refuse"})))))
+
+            "/v2/install-dna"
+            (do
+              (swap! events conj [:install (:cell-id body)])
+              (js/Promise.resolve
+               (response 201 {:decision "installed"
+                              :cell-id (:cell-id body)
+                              :bundle-cid (:bundle-cid body)
+                              :validator-cid raw-cid
+                              :verified-cids [bundle-cid raw-cid]})))
+
+            (js/Promise.resolve (response 404 {:error "not found"})))))]
+  (-> (bridge/stage-authorized-dna-blocks!
+       {:installation-result {:decision :found
+                              :installation (installation-record)}
+        :cell-id cell-id
+        :bundle-cid bundle-cid
+        :content-stage {:decision :content-staged
+                        :verified-cids [bundle-cid raw-cid]}
+        :content-root content-root
+        :endpoint "http://127.0.0.1:43181/v2/stage-dna-block"
+        :install-endpoint "http://127.0.0.1:43181/v2/install-dna"
+        :token-file token-file
+        :fetch-fn fake-fetch})
+      (.then
+       (fn [result]
+         (check (= :installed (:decision result))
+                "client stages verified blocks then installs the exact DNA scope")
+         (check (= [[:stage bundle-cid] [:stage raw-cid] [:install cell-id]]
+                   @events)
+                "client completes every block stage before the install call")
+         (check @authorized?
+                "client sends bearer auth without a browser Origin header")
+         (check (= #{bundle-cid raw-cid} (set (:staged-cids result)))
+                "install result lists the blocks staged by this operation")
+         (-> (bridge/stage-authorized-dna-blocks!
+              {:installation-result {:decision :found
+                                     :installation (installation-record)}
+               :cell-id "net.kotoba.murakumo.other"
+               :bundle-cid bundle-cid
+               :content-stage {:decision :content-staged
+                               :verified-cids [bundle-cid raw-cid]}
+               :content-root content-root
+               :endpoint "http://example.invalid:43181/v2/stage-dna-block"
+               :install-endpoint "http://127.0.0.1:43181/v2/install-dna"
+               :token-file token-file
+               :fetch-fn fake-fetch})
+             (.then (fn [refused]
+                      (check (= :refuse (:decision refused))
+                             "undeclared cells are refused before block transfer")
+                      (run-cell-operation-checks! token-file fake-fetch events))))))
+      (.then report!)
+      (.catch (fn [error]
+                (println "itonami-awai-bridge-client: FAILED" (.-message error))
+                (.exit js/process 1)))
+      (.finally (fn []
+                  (.rmSync fs raw-root #js {:recursive true :force true})))))

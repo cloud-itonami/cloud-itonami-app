@@ -19,7 +19,7 @@
 ;; What crosses is booleans the host has already decided and three counts. No
 ;; keywords, no sets.
 ;;
-;; Parity: test/cloud/itonami/app/approval_kotoba_parity_test.clj
+;; Parity: test/cloud/itonami/app/approval_kotoba_parity_test.cljk
 
 (ns approval-core
   (:schemas {;; One decision's eligibility, as ten facts the host establishes.

@@ -34,7 +34,7 @@
 ;;
 ;; Same native word-typed slice as `handoff_core.kotoba`.
 ;;
-;; Parity: test/cloud/itonami/app/peer_kotoba_parity_test.clj
+;; Parity: test/cloud/itonami/app/peer_kotoba_parity_test.cljk
 
 (ns peer-core
   (:schemas {;; What the host has established about two Bots.

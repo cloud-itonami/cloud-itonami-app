@@ -1,0 +1,160 @@
+(ns cloud.itonami.app.awai-content-store
+  "Host-private, content-addressed storage for verified Awai app blocks.
+
+  Blocks live below the Itonami data directory, outside classpath resources
+  and web roots. Every write and read is checked against its CID. The store
+  exposes no path through the app runtime API."
+  (:require [clojure.java.io :as io]
+            [kotoba.protocol.cid :as cid]
+            [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.secure-file :as secure-file])
+  (:import [java.nio ByteBuffer]
+           [java.nio.charset StandardCharsets]
+           [java.nio.channels FileChannel]
+           [java.nio.file CopyOption FileAlreadyExistsException Files LinkOption
+            OpenOption Path StandardCopyOption StandardOpenOption]
+           [java.nio.file.attribute FileAttribute]
+           [java.security MessageDigest]
+           [java.util HexFormat UUID]))
+
+(def maximum-block-bytes (* 16 1024 1024))
+(def ^:private supported-codecs #{:raw :dag-pb :dag-cbor})
+(def ^:private byte-array-class (class (byte-array 0)))
+(def ^:private nofollow-options
+  (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+
+(defn- valid-cid? [value]
+  (and (string? value)
+       (<= 1 (count value) 512)
+       (let [{:keys [codec error]} (cid/parse-cid value)]
+         (and (not error) (contains? supported-codecs codec)))))
+
+(defn- cid-key [value]
+  (.formatHex (HexFormat/of)
+              (.digest (MessageDigest/getInstance "SHA-256")
+                       (.getBytes ^String value StandardCharsets/UTF_8))))
+
+(defn- content-root ^Path []
+  (let [data-root (.toPath (.getCanonicalFile (io/file (config/data-dir))))
+        app-root (.resolve data-root "awai-apps")
+        root (.resolve app-root "content")]
+    (doseq [path [app-root root]]
+      (when (Files/isSymbolicLink path)
+        (throw (ex-info "Awai content store path may not be a symlink"
+                        {:type :awai-content-store/unsafe-path})))
+      (Files/createDirectories path (make-array FileAttribute 0))
+      (when (or (Files/isSymbolicLink path)
+                (not (Files/isDirectory path nofollow-options)))
+        (throw (ex-info "Awai content store path is not a private directory"
+                        {:type :awai-content-store/unsafe-path})))
+      ;; Reuse Itonami's cross-platform owner-only permission policy. The
+      ;; data directory itself belongs to other stores and is left untouched.
+      (secure-file/harden! path "rwx------"))
+    root))
+
+(defn- block-path ^Path [^Path root block-cid]
+  ;; Hash the textual multibase CID for a path-safe filename. CIDs may use
+  ;; base64 multibase alphabets that contain filesystem separators.
+  (let [target (.normalize (.resolve root (cid-key block-cid)))]
+    (when-not (= root (.getParent target))
+      (throw (ex-info "CID escaped the Awai content store"
+                      {:type :awai-content-store/unsafe-cid})))
+    target))
+
+(defn- cid-matches-bytes? [block-cid ^bytes bytes]
+  (let [digest (.digest (MessageDigest/getInstance "SHA-256") bytes)
+        digest-bytes (mapv #(bit-and (int %) 0xff) digest)]
+    (cid/digest-matches-cid? block-cid digest-bytes)))
+
+(defn- block-file-valid? [block-cid ^Path path]
+  (and (not (Files/isSymbolicLink path))
+       (Files/isRegularFile path nofollow-options)
+       (<= (Files/size path) maximum-block-bytes)
+       (cid-matches-bytes? block-cid (Files/readAllBytes path))))
+
+(defn- write-temporary-block! [^Path root block-cid ^bytes bytes]
+  (let [temporary (.resolve root (str "." (cid-key block-cid) "."
+                                        (UUID/randomUUID) ".tmp"))]
+    (try
+      (secure-file/create-file! temporary)
+      (with-open [channel (FileChannel/open
+                           temporary
+                           (into-array OpenOption [StandardOpenOption/WRITE]))]
+        (let [buffer (ByteBuffer/wrap bytes)]
+          (while (.hasRemaining buffer)
+            (.write channel buffer))
+          (.force channel true)))
+      (try
+        (Files/move temporary
+                    (block-path root block-cid)
+                    (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE]))
+        (catch FileAlreadyExistsException _ nil))
+      (finally
+        (Files/deleteIfExists temporary)))))
+
+(defn store-verified-block!
+  "Persist one already fetched block after independently checking its CID.
+
+  Returns a durable receipt only after an owner-only temp file is forced to
+  disk, atomically moved into the CID path, and read back with a matching CID.
+  Errors are structured and never disclose local filesystem paths."
+  [{:keys [cid bytes]}]
+  (cond
+    (not (valid-cid? cid))
+    {:decision :refuse :error :invalid-cid}
+
+    (not (and (instance? byte-array-class bytes)
+              (<= (alength ^bytes bytes) maximum-block-bytes)))
+    {:decision :refuse :error :invalid-block-bytes}
+
+    (not (cid-matches-bytes? cid bytes))
+    {:decision :refuse :error :cid-mismatch}
+
+    :else
+    (try
+      (let [root (content-root)
+            target (block-path root cid)
+            exists? (Files/exists target nofollow-options)]
+        (when (and exists? (not (block-file-valid? cid target)))
+          (throw (ex-info "Existing Awai content block failed CID verification"
+                          {:type :awai-content-store/corrupt-existing-block})))
+        (when-not exists?
+          (write-temporary-block! root cid bytes))
+        (secure-file/harden! target "rw-------")
+        (with-open [channel (FileChannel/open
+                             target
+                             (into-array OpenOption [StandardOpenOption/WRITE]))]
+          (.force channel true))
+        (when-not (block-file-valid? cid target)
+          (throw (ex-info "Stored Awai content block failed CID readback"
+                          {:type :awai-content-store/readback-failed})))
+        {:decision :stored
+         :durable? true
+         :cid cid
+         :receipt {:schema "itonami.app.content-store-receipt.v1"
+                   :byte-count (alength ^bytes bytes)
+                   :storage :local-owner-only-content-addressed}})
+      (catch Exception error
+        {:decision :unavailable
+         :error (or (:type (ex-data error))
+                    :awai-content-store/write-failed)}))))
+
+(defn read-verified-block
+  "Read one block for host use after rechecking the CID and local file shape.
+
+  The returned bytes are for the host loader only. Do not expose this function
+  as a web route or pass its result to app code before a valid install record
+  and sandbox decision exist."
+  [block-cid]
+  (if-not (valid-cid? block-cid)
+    {:decision :refuse :error :invalid-cid}
+    (try
+      (let [root (content-root)
+            target (block-path root block-cid)]
+        (if (block-file-valid? block-cid target)
+          {:decision :verified
+           :cid block-cid
+           :bytes (Files/readAllBytes target)}
+          {:decision :unavailable :error :content-block-missing-or-corrupt}))
+      (catch Exception _
+        {:decision :unavailable :error :content-store-unavailable}))))

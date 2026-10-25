@@ -1,0 +1,92 @@
+model:
+  provider: murakumo
+  base_url: https://api.murakumo.cloud/v1
+  default: mishima
+  max_tokens: 8192
+  context_length: 131072
+providers:
+  murakumo:
+    base_url: https://api.murakumo.cloud/v1
+    api_mode: chat_completions
+    stale_timeout_seconds: 600
+    request_timeout_seconds: 900
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+fallback_providers: []
+auxiliary:
+  free_only: true
+  vision:
+    provider: murakumo
+    base_url: https://api.murakumo.cloud/v1
+    model: qwen3-vl-2b-instruct
+    reasoning_effort: none
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  web_extract:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  compression:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    reasoning_effort: none
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  skills_hub:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  approval:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  mcp:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  title_generation:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    reasoning_effort: none
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+  triage_specifier:
+    base_url: https://api.murakumo.cloud/v1
+    model: mishima
+    provider: murakumo
+    key_env: CUSTOM_PROVIDER_MURAKUMO_KEY
+    fallback_chain: []
+_config_version: 46
+mcp_servers:
+  cloud-itonami-app:
+    command: /bin/sh
+    args:
+    - -c
+    - cd "~/github/cloud-itonami/cloud-itonami-app" && exec /opt/homebrew/bin/kbb
+      --backend sci --classpath bin bin/itonami-mcp
+    env:
+      CLOUD_ITONAMI_DATA_DIR: ~/.cloud-itonami/data
+    connect_timeout: 120.0
+dashboard:
+  turn_isolation: true
+context_file_max_chars: 120000
+agent:
+  max_turns: 500
+  run_budget_seconds: 600
+cron:
+  bot_chat_delivery_timeout_seconds: 900
+  max_parallel_jobs: 12
+
+compression:
+  threshold_tokens: 20000
+  proactive_prune_tokens: 16000
+  tail_mode: lean

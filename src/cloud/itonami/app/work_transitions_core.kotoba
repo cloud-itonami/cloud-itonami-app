@@ -19,7 +19,7 @@
 ;; that adding a state is a visible edit here and in the parity corpus instead
 ;; of a silent omission from a chain.
 ;;
-;; Parity: test/cloud/itonami/app/work_transitions_kotoba_parity_test.clj
+;; Parity: test/cloud/itonami/app/work_transitions_kotoba_parity_test.cljk
 
 (ns work-transitions-core
   (:export [status-backlog status-ready status-leased status-running

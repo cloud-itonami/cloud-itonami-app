@@ -71,7 +71,7 @@ snapshot について記録されていたその形を、**journal で再現し�
 
 ## Verification
 
-- `clojure -M:test`: 1,992 tests / 11,716 assertions / 0 failures
+- `kbb -M:test`: 1,992 tests / 11,716 assertions / 0 failures
   （この修正前は 1,989 / 11,710 / 0）。
 - 回帰テストは修正前のコードで赤くなることを確認した。しかも**本番と同一の
   拒否理由**で: `:fs/content-too-large`, `state.journal.edn`,

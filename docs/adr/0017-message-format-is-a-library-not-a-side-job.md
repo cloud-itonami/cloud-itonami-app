@@ -13,7 +13,7 @@ inside that library.
 `kotoba-lang/org-ietf-mime` already existed and did all of it — RFC 5322,
 RFC 2045–2047, RFC 8601 — and had done since ADR-2607263000 D8. It was
 never looked for. The workspace rule is to search before concluding
-something is absent (`nbb scripts/repo-search.cljs`), and the rule exists
+something is absent (`kbb --backend sci scripts/repo-search.cljk`), and the rule exists
 because 4,000 repositories are not all checked out; this is the failure it
 was written for.
 

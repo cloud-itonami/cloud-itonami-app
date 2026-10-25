@@ -1,0 +1,74 @@
+{:format :kotoba.kir/v4,
+ :signature nil,
+ :functions
+ [{:name mode-of,
+   :params [name],
+   :result [:option :string],
+   :effects #{},
+   :body
+   (if
+    (string=? name "dark")
+    (option-some-of [:option :string] "dark")
+    (if
+     (string=? name "night")
+     (option-some-of [:option :string] "dark")
+     (if
+      (string=? name "8bit")
+      (option-none-of [:option :string])
+      (if
+       (string=? name "8-bit")
+       (option-none-of [:option :string])
+       (if
+        (string=? name "eightbit")
+        (option-none-of [:option :string])
+        (if
+         (string=? name "eight-bit")
+         (option-none-of [:option :string])
+         (if
+          (string=? name "pixel")
+          (option-none-of [:option :string])
+          (if
+           (string=? name "retro")
+           (option-none-of [:option :string])
+           (if
+            (string=? name "grok")
+            (option-none-of [:option :string])
+            (if
+             (string=? name "grob")
+             (option-none-of [:option :string])
+             (if
+              (string=? name "dark-chat")
+              (option-none-of [:option :string])
+              (if
+               (string=? name "chat-dark")
+               (option-none-of [:option :string])
+               (if
+                (string=? name "light")
+                (option-some-of [:option :string] "light")
+                (if
+                 (string=? name "default")
+                 (option-some-of [:option :string] "light")
+                 (if
+                  (string=? name "dads")
+                  (option-some-of [:option :string] "light")
+                  (option-none-of [:option :string])))))))))))))))),
+   :param-types [:string]}
+  {:name next-of,
+   :params [mode],
+   :result :string,
+   :effects #{},
+   :body (if (string=? mode "light") "dark" "light"),
+   :param-types [:string]}
+  {:name plane-cloud?,
+   :params [name],
+   :result :bool,
+   :effects #{},
+   :body (string=? name "cloud"),
+   :param-types [:string]}],
+ :oracle-value nil,
+ :schema-identities nil,
+ :exports [mode-of next-of plane-cloud?],
+ :schemas nil,
+ :effects #{},
+ :blocks [],
+ :entry nil}

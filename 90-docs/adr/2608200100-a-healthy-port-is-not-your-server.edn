@@ -16,7 +16,7 @@ Three data directories existed on this machine. One server.
 |---|---|
 | `~/.cloud-itonami/data` | the resident server, PID 3550, `CLOUD_ITONAMI_DATA_DIR` in its environment |
 | `<checkout>/data` | `bin/itonami` run from the repository checkout |
-| `~/.cloud-itonami/app/data` | a bare `clojure -M:cli` or `-M:server` in the resident app directory |
+| `~/.cloud-itonami/app/data` | a bare `kbb -M:cli` or `-M:server` in the resident app directory |
 
 Each holds its own `agent-enrollment.key`. Presented to the running server
 (label omitted, so nothing is minted and the key check is the only thing that
@@ -40,7 +40,7 @@ Three things hid the real shape.
 printing `data-dir: <checkout>/data`. That output is a lie of exactly the kind
 this repository refuses elsewhere: it names a store it is not reading.
 
-**`clojure -M:server` in the checkout did not start anything.** It exits with
+**`kbb -M:server` in the checkout did not start anything.** It exits with
 `BindException: Address already in use` — recorded four times in
 `~/.cloud-itonami/data/server.log` and once in `target-server.log`. The
 operator has started a server; the process answering 1338 is a different one.
@@ -83,7 +83,7 @@ are registered.
    directory is `~/.cloud-itonami/app`, the store is `~/.cloud-itonami/data`.
    `bin/itonami` already applied this rule by exporting the variable, which
    covered commands run through the launcher and nothing else — a bare
-   `clojure -M:cli` in the same directory created the third store above. The
+   `kbb -M:cli` in the same directory created the third store above. The
    rule belongs where 'which store is mine' is answered. It sits below both
    explicit answers, so an operator who names a directory still gets it.
 
