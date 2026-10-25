@@ -1,0 +1,190 @@
+(ns cloud.itonami.app.dapp-publish-gate
+  "The action-specific authorization policy that admits one dapp publication.
+
+  ADR-0081 made Human Passport evidence-only: verifying it grants no
+  capability. ADR-0145 is the separate ADR that lets the DApps Store
+  publication action consume that stored evidence — and only that action.
+  This namespace is that policy: a pure decision over an already persisted
+  trust record plus the publication request. It verifies nothing on chain,
+  contacts nothing, persists nothing, and never widens authority.
+
+  Fail closed: any missing, malformed, stale or unreadable input refuses the
+  publication. A refusal returns `{:allowed? false :reason <keyword>}`;
+  `admit!` turns the same refusal into a typed exception. The caller must not
+  publish unless `:allowed?` is true — there is no partial admission."
+  (:require [kotoba.lang.text :as str]))
+
+(def action "dapp.publish")
+
+;; One immutable source revision (git SHA) and one sha256 per published file,
+;; matching itonami-registry's pinned-commit / per-file sha256 shape.
+(def revision-pattern #"(?i)^[0-9a-f]{40}$")
+(def sha256-pattern #"(?i)^[0-9a-f]{64}$")
+(def repo-pattern #"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$")
+;; Lexical ordering of same-shape instants is chronological ordering:
+;; epoch-second strings compare numerically, ISO-8601 UTC strings lexically.
+(def instant-pattern #"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
+(def epoch-pattern #"^\d+$")
+
+(defn- blank? [value]
+  (or (nil? value)
+      (and (string? value) (str/blank? value))))
+
+(defn- instant
+  "Normalize a comparable instant to {:kind :epoch|:iso :value s}, or nil
+  when the shape is unknown. Unknown shapes never compare as fresh."
+  [value]
+  (cond
+    (number? value) {:kind :epoch :value (str (long value))}
+    (string? value)
+    (cond
+      (re-matches epoch-pattern value) {:kind :epoch :value value}
+      (re-matches instant-pattern value) {:kind :iso :value value}
+      :else nil)
+    :else nil))
+
+(defn- instant-order
+  "Compare two instants: :before / :same / :after, or nil when either side is
+  unreadable or the two shapes differ."
+  [a b]
+  (let [x (instant a)
+        y (instant b)]
+    (when (and x y (= (:kind x) (:kind y)))
+      (let [c (compare (:value x) (:value y))]
+        (cond
+          (and (= :epoch (:kind x)) (not= 0 c))
+          ;; epoch strings of different digit lengths: compare numerically
+          (if (< (Long/parseLong (:value x)) (Long/parseLong (:value y)))
+            :before :after)
+          (neg? c) :before
+          (pos? c) :after
+          :else :same)))))
+
+(defn- refusal [reason detail]
+  {:allowed? false
+   :action action
+   :reason reason
+   :detail detail
+   :grants-capability? false})
+
+(defn- listing-problem
+  "nil when the listing carries one immutable revision and one sha256 per
+  file; otherwise the refusal to return."
+  [{:keys [repo revision files]}]
+  (cond
+    (blank? repo)
+    (refusal :dapp-publish/listing-incomplete {:field :repo})
+
+    (not (string? repo))
+    (refusal :dapp-publish/repo-malformed {:field :repo})
+
+    (not (re-matches repo-pattern repo))
+    (refusal :dapp-publish/repo-malformed {:field :repo :value repo})
+
+    (blank? revision)
+    (refusal :dapp-publish/listing-incomplete {:field :revision})
+
+    (not (and (string? revision) (re-matches revision-pattern revision)))
+    (refusal :dapp-publish/revision-malformed {:field :revision})
+
+    (not (map? files))
+    (refusal :dapp-publish/listing-incomplete {:field :files})
+
+    (empty? files)
+    (refusal :dapp-publish/listing-incomplete {:field :files})
+
+    (some (fn [[path digest]]
+            (or (blank? path)
+                (not (string? digest))
+                (not (re-matches sha256-pattern digest))))
+          files)
+    (refusal :dapp-publish/digest-malformed {:field :files})
+
+    :else nil))
+
+(defn evidence-record
+  "The latest stored Human Passport record for a principal, or nil.
+  The snapshot shape is the one `cloud.itonami.app.humanity-trust` persists:
+  [:trust :external :human-passport principal-id] → {uid record, :latest uid}."
+  [snapshot principal-id]
+  (when-not (blank? principal-id)
+    (let [bundle (get-in snapshot [:trust :external :human-passport principal-id])
+          uid (get bundle :latest)]
+      (when (and uid (not= :latest uid))
+        (get bundle uid)))))
+
+(defn evaluate
+  "Pure admission decision for one dapp publication.
+
+  Inputs:
+    snapshot — the store snapshot carrying the persisted step-up evidence
+    request  — {:principal-id s :listing {:repo :revision :files} :now x}
+
+  `:now` is compared against the evidence's `:valid-until` only when both
+  share one instant shape (epoch seconds or ISO-8601 UTC). A shape mismatch
+  is unreadable and refuses; it never admits."
+  [snapshot {:keys [principal-id listing now] :as request}]
+  (cond
+    (not (map? request))
+    (refusal :dapp-publish/request-malformed {})
+
+    (blank? principal-id)
+    (refusal :dapp-publish/principal-required {})
+
+    (not (map? listing))
+    (refusal :dapp-publish/listing-incomplete {:field :listing})
+
+    :else
+    (let [record (evidence-record snapshot principal-id)
+          decision (:decision record)]
+      (cond
+        (nil? record)
+        (refusal :dapp-publish/no-trust-evidence {})
+
+        (and (some? (:subject-principal record))
+             (not= principal-id (:subject-principal record)))
+        (refusal :dapp-publish/evidence-subject-mismatch {})
+
+        (not (:allowed? decision))
+        (refusal :dapp-publish/evidence-not-allowed
+                 {:reason (:reason decision)})
+
+        (blank? (:valid-until decision))
+        (refusal :dapp-publish/evidence-expiry-missing {})
+
+        (nil? now)
+        (refusal :dapp-publish/evidence-time-unreadable {})
+
+        (nil? (instant-order now (:valid-until decision)))
+        (refusal :dapp-publish/evidence-time-unreadable
+                 {:valid-until (:valid-until decision)})
+
+        (contains? #{:after :same} (instant-order now (:valid-until decision)))
+        (refusal :dapp-publish/evidence-expired
+                 {:valid-until (:valid-until decision)})
+
+        :else
+        (or (listing-problem listing)
+            {:allowed? true
+             :action action
+             :reason :dapp-publish/admitted
+             :grants-capability? false
+             :evidence {:attestation-uid (:attestation-uid record)
+                        :subject-principal (:subject-principal record)
+                        :policy-id (:policy-id decision)
+                        :claim-id (:claim-id decision)
+                        :valid-until (:valid-until decision)}
+             :listing {:repo (:repo listing)
+                       :revision (:revision listing)
+                       :files (count (:files listing))}})))))
+
+(defn admit!
+  "Same decision as `evaluate`; a refusal is thrown as a typed ex-info whose
+  :type is the refusal reason. Nothing is persisted — the caller performs the
+  publication and its own recording."
+  [snapshot request]
+  (let [decision (evaluate snapshot request)]
+    (when-not (:allowed? decision)
+      (throw (ex-info (str "dapp publication refused: " (name (:reason decision)))
+                      (assoc decision :type (:reason decision)))))
+    decision))

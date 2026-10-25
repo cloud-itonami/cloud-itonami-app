@@ -97,6 +97,7 @@
             [cloud.itonami.app.did-web-http-test]
             [cloud.itonami.app.trust-discovery-http-test]
             [cloud.itonami.app.humanity-trust-test]
+            [cloud.itonami.app.dapp-publish-gate-test]
             [cloud.itonami.app.humanity-trust-http-test]
             [cloud.itonami.app.human-work-test]
             [cloud.itonami.app.human-work-assurance-test]
@@ -351,6 +352,7 @@
     cloud.itonami.app.did-web-http-test
     cloud.itonami.app.trust-discovery-http-test
     cloud.itonami.app.humanity-trust-test
+    cloud.itonami.app.dapp-publish-gate-test
     cloud.itonami.app.humanity-trust-http-test
     cloud.itonami.app.human-work-test
     cloud.itonami.app.human-work-assurance-test
