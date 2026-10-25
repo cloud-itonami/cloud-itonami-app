@@ -43,7 +43,6 @@ hermes/profiles/itonami/skills/wellbecoming-replication/SKILL.md:
 8. Evidence: one PR per spawn, measured results only.
 
 The safeguards live in each profile's own SOUL.md, not only in linked
-documents. The charter text for itonami is pending the owner's approval to
-land in SOUL.md (the file is owner-gated); until then yakuwari.edn and the
-skill carry the contract and itonami remains propose-only for anything the
-charter would have permitted.
+documents. The charter text landed in hermes/profiles/itonami/SOUL.md with the
+owner's approval (2026-10-25); yakuwari.edn remains the authority and the skill
+carries the procedure.
