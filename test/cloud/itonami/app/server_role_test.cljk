@@ -1,0 +1,77 @@
+(ns cloud.itonami.app.server-role-test
+  "Runs on the JVM and on ClojureScript, the same portability claim as
+  `cloud.itonami.app.app-did-test` (`bin/test-portable-cljs` is the second
+  half).
+
+  These are the 8-question controls of the `:server-role` observation
+  surface: both directions (every delegated decision reads
+  `:transport-only`; a single host-computed decision reads `:decides`), the
+  absence direction is a named absence and never a reading, the value shape
+  is pinned to the two keyword literals, and unknown provenance is not
+  delegation (fail-closed toward the violation literal)."
+  (:require #?(:clj [kotoba.test :refer [deftest is testing]]
+               :cljs [cljs.test :refer [deftest is testing]])
+            [clojure.string :as str]
+            [cloud.itonami.app.server-role :as server-role]))
+
+;; ── the reading: exactly the pinned literal ─────────────────────────────────
+
+(deftest the-reading-is-the-pinned-keyword-literal
+  (testing "value shape is pinned to the contract's two keyword literals"
+    (is (= #{:transport-only :decides} server-role/role-values)))
+  (testing "the delegated boundary reads :transport-only (positive direction)"
+    (is (= :transport-only (server-role/role-of [:guest-export])))
+    (is (= :transport-only (server-role/role-of [:guest-export :guest-export])))
+    (is (= ":server-role :transport-only"
+           (server-role/run-log-line [:guest-export]))))
+  (testing "the host-computed boundary reads :decides (negative direction)"
+    (is (= :decides (server-role/role-of [:host])))
+    (is (= ":server-role :decides"
+           (server-role/run-log-line [:host]))))
+  (testing "each reading line carries its own literal verbatim and not the other's"
+    (let [t (server-role/run-log-line [:guest-export])
+          d (server-role/run-log-line [:host])]
+      (is (str/includes? t ":server-role :transport-only"))
+      (is (not (str/includes? t ":decides")))
+      (is (str/includes? d ":server-role :decides"))
+      (is (not (str/includes? d ":transport-only"))))))
+
+;; ── fail-closed: one host decision dominates ────────────────────────────────
+
+(deftest one-host-decision-dominates-a-delegated-majority
+  (testing "the role is the conservative reading regardless of order"
+    (is (= :decides (server-role/role-of [:guest-export :host])))
+    (is (= :decides (server-role/role-of [:host :guest-export])))
+    (is (= :decides (server-role/role-of
+                     [:guest-export :guest-export :host :guest-export])))
+    (is (= ":server-role :decides"
+           (server-role/run-log-line [:guest-export :host])))))
+
+(deftest unknown-provenance-is-not-delegation
+  (testing "a provenance that is not exactly :guest-export has not proven delegation"
+    (is (= :decides (server-role/role-of [:fallback])))
+    (is (= :decides (server-role/role-of [:guest-export :fallback])))
+    (is (= :decides (server-role/role-of ["guest-export"])))))
+
+;; ── absence: a named absence, never a reading ───────────────────────────────
+
+(deftest unobserved-is-an-absence-never-a-reading
+  (testing "an unexercised boundary has no reading (nil, not a default)"
+    (is (nil? (server-role/role-of [])))
+    (is (nil? (server-role/role-of nil))))
+  (testing "the absence line names the reason and carries no role literal"
+    (is (= server-role/absent-line (server-role/run-log-line [])))
+    (is (= server-role/absent-line (server-role/run-log-line nil)))
+    (let [absent (server-role/run-log-line [])]
+      (is (str/includes? absent ":server-role/boundary-unobserved"))
+      (is (not (str/includes? absent ":transport-only")))
+      (is (not (str/includes? absent ":decides"))))))
+
+(deftest a-reading-line-and-an-absence-line-are-never-both
+  (testing "the three line shapes partition the output (never both in one line)"
+    (doseq [provenances [nil [] [:guest-export] [:host] [:guest-export :host]]]
+      (let [line (server-role/run-log-line provenances)
+            reading? (boolean (re-find #":server-role :(transport-only|decides)\b" line))
+            absent? (str/includes? line "absent")]
+        (is (not= reading? absent?))
+        (is (= (some? (server-role/role-of provenances)) reading?))))))

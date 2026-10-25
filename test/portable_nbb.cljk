@@ -19,6 +19,8 @@
             [cloud.itonami.app.public-bot-catalog :as public-bot-catalog]
             [cloud.itonami.app.public-bot-catalog-test]
             [cloud.itonami.app.hermes-surface-test]
+            [cloud.itonami.app.app-did-test]
+            [cloud.itonami.app.server-role-test]
             [cloud.itonami.app.appearance-test]
             [cloud.itonami.app.collection-tools-test]
             [cloud.itonami.app.domain-name-test]
@@ -55,6 +57,8 @@
 
 (t/run-tests 'cloud.itonami.app.public-bot-catalog-test
              'cloud.itonami.app.hermes-surface-test
+             'cloud.itonami.app.app-did-test
+             'cloud.itonami.app.server-role-test
              'cloud.itonami.app.collection-tools-test
              'cloud.itonami.app.appearance-test
              'cloud.itonami.app.domain-name-test
