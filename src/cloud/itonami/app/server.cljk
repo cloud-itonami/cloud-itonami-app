@@ -7674,8 +7674,24 @@
 
             (and (= method "GET") (= path "/api/v1/dapps/publications"))
             (send! exchange 200
-                   {:publications (dapp-publish/publications (store/snapshot))}
+                   {:publications (dapp-publish/presentation
+                                   (store/snapshot)
+                                   (str (java.time.Instant/now)))}
                    {"Cache-Control" "no-store"})
+
+            (and (= method "POST") (= path "/api/v1/dapps/reports"))
+            (let [session (require-human-session! exchange)
+                  body (read-json-limited exchange 8192 keyword)]
+              (require-origin! exchange configuration)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (dapp-publish/submit-report!
+                      {:repo (:repo body)
+                       :revision (:revision body)
+                       :reason (:reason body)
+                       :detail (:detail body)}
+                      (str (java.time.Instant/now)))
+                     {"Cache-Control" "no-store"}))
 
             :else
             (send! exchange 404 {:error {:type "not_found"}}))

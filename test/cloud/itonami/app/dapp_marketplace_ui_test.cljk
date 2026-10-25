@@ -1,0 +1,39 @@
+(ns cloud.itonami.app.dapp-marketplace-ui-test
+  "The marketplace DApps tab renders badges from the published record and
+  nothing else (ADR-0144 / JUN-426). These are source assertions over
+  `interaction.js`, the same shape `web-script-test` uses."
+  (:require [kotoba.io :as io]
+            [kotoba.lang.text :as str]
+            [kotoba.test :refer [deftest is testing]]))
+
+(def ^:private js
+  (delay (slurp (io/file "resources/cloud/itonami/app/interaction.js"))))
+
+(deftest badges-come-from-the-published-record
+  (testing "the label is rendered from the row, never invented here"
+    (is (str/includes? @js "row['tier-label']"))
+    (is (str/includes? @js "row['reviewed-at']"))
+    (is (str/includes? @js "row['composite-digest']"))
+    (is (not (str/includes? @js "'本人確認済み'"))
+        "the badge label lives in dapp_publish/tier-labels, not in the UI")
+    (is (not (str/includes? @js "\"本人確認済み\""))
+        "the badge label lives in dapp_publish/tier-labels, not in the UI")))
+
+(deftest the-three-derating-patterns-are-enforced
+  (testing "unreviewed: a card with no row warns and claims nothing"
+    (is (str/includes? @js "未審査: 説明用 metadata のみ")))
+  (testing "expired: record warnings are rendered verbatim"
+    (is (str/includes? @js "row.warnings")))
+  (testing "quarantined: the card is not shown at all"
+    (is (str/includes? @js "'quarantined'"))
+    (is (str/includes? @js "row.state === 'quarantined'"))))
+
+(deftest the-report-button-reaches-the-runbook-intake
+  (is (str/includes? @js "'/api/v1/dapps/reports'"))
+  (is (str/includes? @js "identityHeaders()"))
+  (testing "the report alone never changes the listing — the UI says so"
+    (is (str/includes? @js "受付のみで掲載状態は変わりません"))))
+
+(deftest the-published-record-is-fetched-fail-closed
+  (is (str/includes? @js "'/api/v1/dapps/publications'"))
+  (is (str/includes? @js "dappRows = []; // fail closed")))

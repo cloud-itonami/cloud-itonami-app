@@ -9,10 +9,15 @@
   `submit-with!` takes its snapshot, clock and persist! as arguments so the
   whole decision is testable without a store; `submit!` is the production
   binding to `cloud.itonami.app.store`."
-  (:require [cloud.itonami.app.dapp-publish-gate :as gate]
+  (:require [kotoba.lang.text :as str]
+            [cloud.itonami.app.dapp-publish-gate :as gate]
             [cloud.itonami.app.dapp-review :as review]))
 
 (def schema "cloud.itonami.app.dapp-publication.v1")
+
+(defn- blank? [value]
+  (or (nil? value)
+      (and (string? value) (str/blank? value))))
 
 (defn- refusal! [type message data]
   (throw (ex-info message (assoc data :type type))))
@@ -43,11 +48,13 @@
                   (str "dapp review refused: "
                        (name (or (:reason record) :dapp-review/refused)))
                   {:findings (:findings record)}))
-      (let [publication {:schema schema
-                         :published-at now
-                         :principal-id principal-id
-                         :admission (:evidence admission)
-                         :review record}]
+      (let [publication (cond-> {:schema schema
+                                 :published-at now
+                                 :principal-id principal-id
+                                 :admission (:evidence admission)
+                                 :review record}
+                         (:identity-credential request)
+                         (assoc :identity-credential (:identity-credential request)))]
         (when persist! (persist! publication))
         publication))))
 
@@ -56,6 +63,102 @@
   [snapshot]
   (vec (sort-by :published-at
                 (vals (get-in snapshot [:dapps :publications])))))
+
+;; ─── presentation (JUN-426): the badge source ─────────────────────────
+;;
+;; Every label the marketplace shows is computed here from the published
+;; record. The UI renders these values and owns none of its own: a badge that
+;; is not in a record cannot appear on a card.
+
+(def ^:private tier-labels
+  {"human-verified" "本人確認済み"
+   "unverified" "未審査"})
+
+(defn- admission-fresh?
+  "The stored Human Passport step-up is still within its valid-until."
+  [admission now]
+  (let [order (gate/instant-order now (:valid-until admission))]
+    (contains? #{:before} order)))
+
+(defn- presentation-row
+  "One display row for one publication record."
+  [publication quarantine-ids now]
+  (let [review (:review publication)
+        admission (:admission publication)
+        listing (:listing review)
+        id (:composite-digest review)
+        fresh? (admission-fresh? admission now)
+        identity? (some? (:identity-credential publication))
+        quarantined? (contains? quarantine-ids id)
+        tier (if (and fresh? identity?) "human-verified" "unverified")
+        warnings (cond-> []
+                   (not fresh?) (conj "Human Passport 証拠の有効期限切れ（再検証が必要）")
+                   (not identity?) (conj "本人確認（identity credential）未接続 — 未審査扱い")
+                   quarantined? (conj "通報を受理し調査中（quarantine）"))]
+    {:id id
+     :name (:name listing)
+     :repo (:repo listing)
+     :revision (get-in review [:artifact :revision])
+     :tier tier
+     :tier-label (if quarantined? "審査停止（調査中）" (get tier-labels tier))
+     :state (if quarantined? "quarantined" "published")
+     :reviewed-at (:reviewed-at review)
+     :composite-digest (:composite-digest review)
+     :evidence (cond-> ["human-passport-step-up"]
+                 identity? (conj "identity-credential"))
+     :warnings warnings}))
+
+(defn presentation
+  "The display rows behind GET /api/v1/dapps/publications. A card with no row
+  is unreviewed by definition; a row's labels are the record's values."
+  [snapshot now]
+  (let [quarantine-ids (set (keys (get-in snapshot [:dapps :quarantine])))]
+    (->> (publications snapshot)
+         (map #(presentation-row % quarantine-ids now))
+         (sort-by :repo)
+         vec)))
+
+;; ─── reports (JUN-425/426): the intake the runbook starts from ─────────
+
+(def report-schema "cloud.itonami.app.dapp-report.v1")
+
+(defn report-with!
+  "Record one fraud report. `persist!` is injected; the record is what the
+  runbook's triage step picks up. A report never changes a listing by
+  itself — quarantine is a separate, human decision."
+  [{:keys [now persist!]} {:keys [repo revision reason detail]}]
+  (when (blank? repo)
+    (refusal! :dapp-publish/listing-incomplete {:field :repo}))
+  (when-not (and (string? revision) (re-matches gate/revision-pattern revision))
+    (refusal! :dapp-publish/revision-malformed {:field :revision}))
+  (when (blank? reason)
+    (refusal! :dapp-report/reason-required {}))
+  (let [report {:schema report-schema
+                :report/id (str "report:"
+                                (review/sha256-of (str now "|" repo "|" revision "|" reason)))
+                :repo repo
+                :revision revision
+                :reason (subs (str reason) 0 (min 256 (count (str reason))))
+                :detail (when-not (blank? detail)
+                          (subs (str detail) 0 (min 1024 (count (str detail)))))
+                :reported-at now
+                :status "received"}]
+    (when persist! (persist! report))
+    report))
+
+(defn submit-report!
+  "Production binding for the report intake."
+  [request now]
+  (require 'cloud.itonami.app.store)
+  (let [store-transact! (resolve 'cloud.itonami.app.store/transact!)]
+    (report-with!
+     {:now now
+      :persist!
+      (fn [report]
+        (store-transact!
+         (fn [state]
+           (assoc-in state [:dapps :reports (:report/id report)] report))))}
+     request)))
 
 (defn submit!
   "Production binding: the store snapshot is the gate's evidence source and

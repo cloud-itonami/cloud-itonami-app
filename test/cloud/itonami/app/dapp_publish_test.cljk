@@ -113,3 +113,72 @@
                                        contents)]
     (is (= :dapp-publish/listing-incomplete (:refused result)))
     (is (nil? persisted))))
+
+;; ─── presentation rows: the badge source (JUN-426) ────────────────────
+
+(defn- snapshot-with-publication [publication & [quarantine?]]
+  (let [id (get-in publication [:review :composite-digest])]
+    (cond-> {:dapps {:publications {id publication}}}
+      quarantine? (assoc-in [:dapps :quarantine id] {:status "under-investigation"}))))
+
+(deftest presentation-rows-come-from-the-record-only
+  (let [[publication _] (run-submit snapshot (listing-for contents) contents)
+        rows (publish/presentation (snapshot-with-publication publication) now)]
+    (is (= 1 (count rows)))
+    (let [row (first rows)]
+      ;; eKYC (JUN-421) 未接続なので Human Passport 単独では human-verified にならない
+      (is (= "unverified" (:tier row)))
+      (is (= "未審査" (:tier-label row)))
+      (is (= "published" (:state row)))
+      (is (= "sha256:40883f2bf885b19d5bf2e75d103f9c288a216a7e5682449fea47b6fda6183556"
+             (:composite-digest row)))
+      (is (some #(re-find #"本人確認" %) (:warnings row))))))
+
+(deftest an-identity-credential-makes-the-human-verified-badge
+  (let [[publication _] (run-submit snapshot (listing-for contents) contents)
+        with-id (assoc publication :identity-credential {:credential/id "cred-1"})
+        row (first (publish/presentation (snapshot-with-publication with-id) now))]
+    (is (= "human-verified" (:tier row)))
+    (is (= "本人確認済み" (:tier-label row)))
+    (is (= ["human-passport-step-up" "identity-credential"] (:evidence row)))
+    (is (= [] (:warnings row)))))
+
+(deftest expired-evidence-derates-to-unverified-with-a-warning
+  (let [[publication _] (run-submit snapshot (listing-for contents) contents)
+        with-id (assoc publication :identity-credential {:credential/id "cred-1"})
+        later "2026-12-25T00:00:00Z"
+        row (first (publish/presentation (snapshot-with-publication with-id) later))]
+    (is (= "unverified" (:tier row)))
+    (is (some #(re-find #"有効期限切れ" %) (:warnings row)))))
+
+(deftest quarantine-derates-immediately
+  (let [[publication _] (run-submit snapshot (listing-for contents) contents)
+        rows (publish/presentation
+              (snapshot-with-publication publication true) now)
+        row (first rows)]
+    (is (= "quarantined" (:state row)))
+    (is (= "審査停止（調査中）" (:tier-label row)))
+    (is (some #(re-find #"quarantine" %) (:warnings row)))))
+
+;; ─── reports: the intake the runbook starts from ──────────────────────
+
+(deftest a-report-is-recorded-and-changes-nothing-by-itself
+  (let [persisted (atom nil)
+        report (publish/report-with!
+                {:now now :persist! #(reset! persisted %)}
+                {:repo "etzhayyim/actor-example" :revision revision
+                 :reason "なりすまし" :detail "公式と誤認させる記述"})]
+    (is (= publish/report-schema (:schema report)))
+    (is (= "received" (:status report)))
+    (is (= report @persisted))
+    (is (re-find #"^report:[0-9a-f]{64}$" (:report/id report)))))
+
+(deftest malformed-reports-are-refused
+  (doseq [[label request]
+          [[:no-reason {:repo "a/b" :revision revision :reason "  "}]
+           [:bad-revision {:repo "a/b" :revision "nope" :reason "詐欺"}]
+           [:no-repo {:repo "" :revision revision :reason "詐欺"}]]]
+    (is (thrown? kerror/ExceptionInfo
+                 (publish/report-with! {:now now :persist! (fn [_] (throw (Exception. "must not")))}
+                                       request))
+        (name label))))

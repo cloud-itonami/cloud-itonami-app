@@ -43,7 +43,7 @@
       :else nil)
     :else nil))
 
-(defn- instant-order
+(defn instant-order
   "Compare two instants: :before / :same / :after, or nil when either side is
   unreadable or the two shapes differ."
   [a b]
