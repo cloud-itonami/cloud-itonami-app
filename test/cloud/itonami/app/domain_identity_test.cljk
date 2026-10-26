@@ -1,0 +1,135 @@
+(ns cloud.itonami.app.domain-identity-test
+  "Runs on the JVM and on ClojureScript, the same portability claim as
+  `cloud.itonami.app.app-did-test` and `cloud.itonami.app.server-role-test`
+  (`bin/test-portable-cljs` is the second half).
+
+  These are the 8-question controls of the `:domain-identity?` observation
+  surface: both directions (identity that does not move with the domain input
+  reads `:domain-identity? false`; identity that moves with it reads
+  `:domain-identity? true`), the absence direction is a named absence and
+  never a reading, the value shape is pinned to the two boolean literals, and
+  a disagreement — including a resolution that succeeds on only one side —
+  fails closed toward the violation literal."
+  (:require #?(:clj [kotoba.test :refer [deftest is testing]]
+               :cljs [cljs.test :refer [deftest is testing]])
+            [clojure.string :as str]
+            [cloud.itonami.app.domain-identity :as domain-identity]))
+
+;; The DID and the manifest pair are the real published values (derivable from
+;; the `:kotoba.app/latest` IPNS name in resources/cloud/itonami/app/kotoba.app.edn);
+;; identity-b's bundle CID is an unrelated well-known CIDv1 fixture — the two
+;; identities differ only in the bundle CID so the disagreement is observable.
+(def ^:private identity-a
+  {:did "did:key:z6MknanuUzTgZ91DX1mTgjVY1dBy9QhgyWEKCAAjGCS3s9SY"
+   :bundle-cid "bafkreiabxxpmnzydzr2iidu7u63mdrcai2a56b6r4qz2rdjzv4lv7fgbny"})
+
+(def ^:private identity-b
+  {:did "did:key:z6MknanuUzTgZ91DX1mTgjVY1dBy9QhgyWEKCAAjGCS3s9SY"
+   :bundle-cid "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"})
+
+;; ── the reading: exactly the pinned literal ─────────────────────────────────
+
+(deftest the-reading-is-the-pinned-boolean-literal
+  (testing "value shape is pinned to the contract's two boolean literals"
+    (is (= #{true false} domain-identity/domain-identity-values)))
+  (testing "identity that does not move with the domain input reads false (condition ④ holding)"
+    (is (= false (domain-identity/domain-identity-of identity-a identity-a)))
+    (is (= ":domain-identity? false"
+           (domain-identity/run-log-line identity-a identity-a))))
+  (testing "identity that moves with the domain input reads true (the violation literal)"
+    (is (= true (domain-identity/domain-identity-of identity-a identity-b)))
+    (is (= true (domain-identity/domain-identity-of identity-b identity-a)))
+    (is (= ":domain-identity? true"
+           (domain-identity/run-log-line identity-a identity-b))))
+  (testing "each reading line carries its own literal verbatim and not the other's"
+    (let [f (domain-identity/run-log-line identity-a identity-a)
+          t (domain-identity/run-log-line identity-a identity-b)]
+      (is (str/includes? f ":domain-identity? false"))
+      (is (not (str/includes? f ":domain-identity? true")))
+      (is (str/includes? t ":domain-identity? true"))
+      (is (not (str/includes? t ":domain-identity? false"))))))
+
+;; ── fail-closed: any disagreement reads the violation literal ───────────────
+
+(deftest any-disagreement-fails-closed-toward-the-violation-literal
+  (testing "a resolution that succeeds on only one side is identity moving with the domain input"
+    (is (= true (domain-identity/domain-identity-of identity-a nil)))
+    (is (= true (domain-identity/domain-identity-of nil identity-a)))
+    (is (= ":domain-identity? true"
+           (domain-identity/run-log-line identity-a nil))))
+  (testing "a bundle CID that moved is a disagreement even when the DID did not"
+    (is (= true (domain-identity/domain-identity-of identity-a identity-b))))
+  (testing "an unresolved side is not a default identity"
+    (is (= true (domain-identity/domain-identity-of identity-a {:did "did:key:z6MknanuUzTgZ91DX1mTgjVY1dBy9QhgyWEKCAAjGCS3s9SY"})))))
+
+;; ── absence: a named absence, never a reading ───────────────────────────────
+
+(deftest unresolved-on-both-sides-is-an-absence-never-a-reading
+  (testing "neither side resolved has no reading (nil, not a default)"
+    (is (nil? (domain-identity/domain-identity-of nil nil)))
+    (is (nil? (domain-identity/domain-identity-of {} {})))
+    (is (nil? (domain-identity/domain-identity-of
+               {:did "nope" :bundle-cid "baf…"}
+               {:did "nope" :bundle-cid "baf…"}))))
+  (testing "the absence line names the reason and carries no boolean literal"
+    (is (= domain-identity/absent-line (domain-identity/run-log-line nil nil)))
+    (let [absent (domain-identity/run-log-line nil nil)]
+      (is (str/includes? absent ":domain-identity/identity-unresolved"))
+      (is (not (str/includes? absent ":domain-identity? true")))
+      (is (not (str/includes? absent ":domain-identity? false"))))))
+
+(deftest a-reading-line-and-an-absence-line-are-never-both
+  (testing "the three line shapes partition the output (never both in one line)"
+    (doseq [[with without] [[identity-a identity-a]
+                           [identity-a identity-b]
+                           [identity-a nil]
+                           [nil nil]
+                           [nil identity-a]]]
+      (let [line (domain-identity/run-log-line with without)
+            reading? (boolean (re-find #":domain-identity\? (true|false)\b" line))
+            absent? (str/includes? line "absent")]
+        (is (not= reading? absent?))
+        (is (= (some? (domain-identity/domain-identity-of with without)) reading?))))))
+
+;; ── the resolution entry point: identity is the signed manifest's ───────────
+
+(def ^:private signed-manifest
+  {:kotoba.app/latest "k51qzi5uqu5dj6z20sjzztyay81591voe6yofukl0ylsmug9euf934z1g04erd"
+   :kotoba.app/bundle-cid "bafkreiabxxpmnzydzr2iidu7u63mdrcai2a56b6r4qz2rdjzv4lv7fgbny"})
+
+(deftest identity-resolves-from-the-signed-manifest-and-not-the-domain-input
+  (testing "the domain input is one Location input among others and moves nothing"
+    (let [hostile (domain-identity/plane-identity
+                   {:manifest signed-manifest :domain-input "evil.example"})
+          absent (domain-identity/plane-identity
+                  {:manifest signed-manifest :domain-input nil})]
+      (is (= hostile absent))
+      (is (some? absent))
+      (is (= false (domain-identity/domain-identity-of hostile absent)))))
+  (testing "the resolved identity is the signer DID plus the bundle CID"
+    (let [id (domain-identity/plane-identity
+              {:manifest signed-manifest :domain-input "evil.example"})]
+      (is (str/starts-with? (:did id) "did:key:z"))
+      (is (= (:kotoba.app/bundle-cid signed-manifest) (:bundle-cid id))))))
+
+(deftest plane-identity-fails-closed-and-never-invents
+  (testing "a missing or malformed part resolves no identity at all"
+    (is (nil? (domain-identity/plane-identity {:manifest nil :domain-input nil})))
+    (is (nil? (domain-identity/plane-identity
+               {:manifest (dissoc signed-manifest :kotoba.app/latest)
+                :domain-input nil})))
+    (is (nil? (domain-identity/plane-identity
+               {:manifest (dissoc signed-manifest :kotoba.app/bundle-cid)
+                :domain-input nil})))
+    (is (nil? (domain-identity/plane-identity
+               {:manifest (assoc signed-manifest :kotoba.app/bundle-cid "QmNotBaf")
+                :domain-input nil}))))
+  (testing "an unresolved identity on both sides is the absence, not a default"
+    (is (= domain-identity/absent-line
+           (domain-identity/run-log-line
+            (domain-identity/plane-identity
+             {:manifest (dissoc signed-manifest :kotoba.app/latest)
+              :domain-input "evil.example"})
+            (domain-identity/plane-identity
+             {:manifest (dissoc signed-manifest :kotoba.app/latest)
+              :domain-input nil}))))))

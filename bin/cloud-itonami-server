@@ -29,6 +29,7 @@
             [cloud.itonami.app.awai-registry-node :as awai-registry]
             [cloud.itonami.app.awai-sandbox-policy :as awai-sandbox-policy]
             [cloud.itonami.app.app-did :as app-did]
+            [cloud.itonami.app.domain-identity :as domain-identity]
             [cloud.itonami.app.server-role :as server-role]
             [kotoba.lang.edn :as edn]
             [kotoba.protocol.cid :as app-cid]
@@ -132,6 +133,17 @@
       (catch :default _
         (json-response res 503 {:error {:type "launcher-asset/unavailable"}})))))
 
+;; ── :domain-identity? observation surface (KOT-15「実測経路の確定」を受けての実装) ──
+;; One measurement event resolves the plane identity twice through the same
+;; entry point (`domain-identity/plane-identity`) — once with the event's
+;; domain input and once with the domain input neutralized — and prints the
+;; pinned boolean literal. The comparison and the line shapes are pinned in
+;; `cloud.itonami.app.domain-identity`. Nothing here resolves a domain and
+;; nothing here decides an install — this block only observes whether the
+;; domain input moved the identity.
+
+(declare emit-domain-identity!)
+
 (defn- domain-proof-response! [res request-url]
   (let [parameters (.-searchParams request-url)
         domain-values (.getAll parameters "domain")
@@ -140,7 +152,12 @@
     (if (or (not= 1 (.-size parameters)) (not (string? domain)))
       (json-response res 400 {:status "refused"
                               :reason "one-domain-query-parameter-required"})
-      (-> (awai-registry/registry-response!)
+      (do
+        ;; The measurement event: this request's domain input is one Location
+        ;; input among others. The run log records whether it moved the
+        ;; identity — before any registry or DNS answer can be read as one.
+        (emit-domain-identity! domain)
+        (-> (awai-registry/registry-response!)
           (.then
            (fn [registry]
              (if (not= 200 (:http-status registry))
@@ -198,7 +215,7 @@
            (fn [_]
              (json-response res 503 {:status "unavailable"
                                      :domain domain
-                                     :reason "registry-unavailable"})))))))
+                                     :reason "registry-unavailable"}))))))))
 
 (defn- amano-expected-heads [domain candidate]
   (sorted-map
@@ -1393,10 +1410,33 @@
       (println line))
     line))
 
+(defn- emit-domain-identity!
+  "One `:domain-identity?` measurement event (KOT-15 残条件「:domain-identity?
+  実測経路の確定」を受けての観測面の配線). Resolve the plane identity with this
+  event's domain input and with the domain input neutralized, and print the
+  pinned boolean literal (or the named absence). The run log is append-only
+  and the last domain-identity line is the run's reading.
+  `domain-input` is one Location input among others — a domain string, or nil
+  when the event has none."
+  [domain-input]
+  (let [manifest (try (edn/read-string (fs/readFileSync (app-manifest-path) "utf8"))
+                      (catch :default _ nil))
+        with-domain (domain-identity/plane-identity
+                     {:manifest manifest :domain-input domain-input})
+        without-domain (domain-identity/plane-identity
+                        {:manifest manifest :domain-input nil})]
+    (print-run-log-line!
+     (domain-identity/run-log-line with-domain without-domain))))
+
 (defn -main [& _]
   ;; The :app-did surface is the first thing in the run log — the literal
   ;; must exist even if the guest later fails to load.
   (emit-app-did!)
+  ;; The :domain-identity? surface speaks next: the startup event resolves
+  ;; identity with no domain input at all and records that the identity moved
+  ;; nothing (or the named absence). Later domain inputs (the domain-proof
+  ;; route) append their own events; the last line wins.
+  (emit-domain-identity! nil)
   ;; The :server-role surface speaks too, before any boundary decision: the
   ;; boundary is named unobserved (a reason literal, never a reading). The
   ;; role literal appears only after a decision was actually measured.

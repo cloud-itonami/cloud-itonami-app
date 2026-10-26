@@ -1,0 +1,152 @@
+(ns cloud.itonami.app.domain-identity
+  "The `:domain-identity?` observation surface (KOT-15 残条件「:domain-identity?
+  実測経路の確定」を受けての観測面の実装)。
+
+  `:domain-identity?` is one of the 4 確定 conditions (root
+  `manifest/awai-app-plane.kotoba` ④「身元は app DID + bundle CID。domain は
+  Location の 1 つであって身元ではない」). The measurement path is pinned in
+  root `manifest/awai-app-plane-qual.kotoba`
+  `:awai-app-plane-qual/domain-identity-path`: **identity resolution of the
+  launched app plane** — identity is the signed app manifest signer DID plus
+  the bundle CID, and a domain is one Location input among others. The boolean
+  literal must appear **verbatim in a run log**, and the value shape is the
+  boolean literal `true` or `false` and nothing else. A domain-proof response,
+  TLS/binding behavior and 「the app keeps running without a domain」 are
+  **not** a `:domain-identity?` reading — the reading exists only as the
+  emitted literal (`:never-inferred`).
+
+  ## What is measured at the boundary
+
+  The observable is the **sensitivity of the resolved identity to the domain
+  input**. One measurement event resolves the plane identity twice through the
+  same entry point (`plane-identity`) — once with the event's domain input
+  (a Location input among others) and once with the domain input neutralized —
+  and compares the two outcomes:
+
+    false — both resolutions agree. Identity is a function of the signed
+            manifest (signer DID + bundle CID) only; the domain input moved
+            nothing. This is condition ④ holding.
+    true  — the two outcomes disagree in any part: a different identity, or a
+            resolution that succeeds on only one side. Identity moved with the
+            domain input (or the domain input broke it), so the domain is
+            behaving as identity. The mapping is fail-closed toward the
+            violation literal, exactly like `cloud.itonami.app.server-role`'s
+            `:decides`.
+    nil   — identity could not be resolved on either side. No reading exists
+            and the run log carries a named absence.
+
+  `plane-identity` derives identity from the signed manifest only — that is
+  condition ④'s derivation. Its input map carries the domain input so the
+  comparison runs through the same entry point a domain-dependent
+  implementation would use: if identity resolution ever starts consulting the
+  domain input, the comparison flips to `true` and the run log says so.
+
+  ## Run-log protocol (append-only; the last line wins)
+
+    `domain-identity absent :domain-identity/identity-unresolved`
+                                    — identity unresolved on both sides. A
+                                      named absence with a reason literal and
+                                      **never** a boolean literal.
+    `:domain-identity? false`       — the reading when identity does not move
+                                      with the domain input.
+    `:domain-identity? true`        — the reading once identity moves with
+                                      (or breaks on) the domain input.
+
+  The run log only grows, so the reading is the **last** of these lines.
+  Exactly like `cloud.itonami.app.app-did`, a reading line and an absence line
+  are not symmetric in what they may contain — an absence that looks like a
+  reading is how a missing measurement gets counted as one.
+
+  Nothing here holds or touches a private key, nothing here resolves a domain
+  and nothing here decides an install: this namespace only turns the observed
+  identity-vs-domain relation into the pinned literal. The measurement events
+  live in `bin/cloud-itonami-server`."
+  (:require [clojure.string :as str]
+            [cloud.itonami.app.app-did :as app-did]))
+
+(def domain-identity-values
+  "The pinned value shape of a `:domain-identity?` reading. Exactly these two
+  boolean literals; the enum is a two-source pin of the contract's
+  `:value-shape` (root manifest/awai-app-plane-qual.kotoba
+  `:awai-app-plane-qual/domain-identity-path`) and of the collector's
+  `:fact-rules` rows for `:domain-identity?`."
+  #{true false})
+
+(def absent-line
+  "The one absence shape. Its payload is a reason literal and it must never
+  contain a boolean literal."
+  "domain-identity absent :domain-identity/identity-unresolved")
+
+(defn resolved-identity?
+  "An identity map is exactly `{:did …, :bundle-cid …}` with the pinned value
+  shapes — a `did:key:z…` signer DID (the `cloud.itonami.app.app-did` vocab
+  pin) and a `baf` CIDv1 base32 bundle CID. Anything else has not resolved an
+  identity; nothing here infers a missing part from the other."
+  [identity]
+  (and (map? identity)
+       (app-did/did-key? (:did identity))
+       (string? (:bundle-cid identity))
+       (str/starts-with? (:bundle-cid identity) "baf")))
+
+(defn plane-identity
+  "Identity resolution of the launched app plane for one resolution event.
+  The input map is `{:manifest …, :domain-input …}`: the published app manifest
+  (the `:kotoba.app/*` datoms as edn, or nil when the host could not read one)
+  and the event's domain input (a Location input among others — a domain
+  string, or nil when the event has none).
+
+  The pinned identity (condition ④) is the signed manifest signer DID plus the
+  bundle CID. This derivation reads the manifest and does not read the domain
+  input: a domain is a Location input, not identity. Returns the identity map,
+  or nil when the identity does not resolve — a missing or unreadable
+  manifest, a manifest without `:kotoba.app/latest` or `:kotoba.app/bundle-cid`,
+  or a malformed part each return nil (fail-closed; no identity is invented).
+
+  The `:domain-input` key is part of the entry point on purpose: the
+  measurement compares this function's outcome across domain inputs, and a
+  future implementation that starts consulting `:domain-input` here is exactly
+  the regression the `:domain-identity?` literal must expose."
+  [{:keys [manifest]}]
+  (let [{:keys [ok? did]} (app-did/app-did-from-manifest manifest)
+        cid (when (map? manifest) (:kotoba.app/bundle-cid manifest))]
+    (when (and ok? (string? cid) (str/starts-with? cid "baf"))
+      {:did did :bundle-cid cid})))
+
+(defn domain-identity-of
+  "The two resolution outcomes of one measurement event (the event's domain
+  input, and the same event with the domain input neutralized) → the boolean
+  literal, or nil when identity could not be resolved on either side.
+
+  nil   — neither side resolved an identity (:unmeasured; never inferred)
+  false — both sides resolved the same identity: identity did not move with
+          the domain input (condition ④ holding)
+  true  — the outcomes disagree in any part — a different identity, or a
+          resolution that succeeds on only one side (identity needing the
+          domain input, or the domain input breaking identity). Fail-closed
+          toward the violation literal."
+  [with-domain without-domain]
+  (let [w (resolved-identity? with-domain)
+        x (resolved-identity? without-domain)]
+    (cond
+      (and w x) (not= with-domain without-domain)
+      (or w x) true
+      :else nil)))
+
+(defn run-log-line
+  "The one line the run-log writer prints for a `:domain-identity?` measurement
+  event. Exactly three shapes exist, and the absence shape is not allowed to
+  look like a reading:
+
+    \":domain-identity? false\"
+    \":domain-identity? true\"
+    \"domain-identity absent :domain-identity/identity-unresolved\"
+
+  The boolean literal is the line's payload and must match the pinned value
+  shape — a line whose reading is outside `domain-identity-values` has not
+  produced a reading."
+  [with-domain without-domain]
+  (let [reading (domain-identity-of with-domain without-domain)]
+    (if (nil? reading)
+      absent-line
+      (do (assert (contains? domain-identity-values reading))
+          (str ":domain-identity? " reading)))))

@@ -187,6 +187,7 @@
             [cloud.itonami.app.data-isolation-test]
             [cloud.itonami.app.app-did-test]
             [cloud.itonami.app.server-role-test]
+            [cloud.itonami.app.domain-identity-test]
             [cloud.itonami.app.did-test]
             [cloud.itonami.app.acme-test]
             [cloud.itonami.app.binding-sweep-test]
@@ -419,6 +420,7 @@
     cloud.itonami.app.data-isolation-test
     cloud.itonami.app.app-did-test
     cloud.itonami.app.server-role-test
+    cloud.itonami.app.domain-identity-test
     cloud.itonami.app.did-test
     cloud.itonami.app.acme-test
     cloud.itonami.app.binding-sweep-test
