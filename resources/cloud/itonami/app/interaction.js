@@ -13631,7 +13631,7 @@
       ['actor-ugachi','997d1eafacbadb7304b4855f407ea5cf413a5b69'],
       ['actor-uzu','888edab7b328041cfd2d49ebd273796966679d95'],
       ['actor-yosoku','1d155741ad3a2c8350679638f6742a5b5a886a80']
-    ].map(([name, revision]) => ({name, revision, repo: `etzhayyim/${name}`, brief: etzhayyimDappBrief}));
+    ].map(([name, revision]) => ({name, revision, repo: `cloud-itonami/${name}`, brief: etzhayyimDappBrief}));
     let appsLoadGeneration = 0;
     const appCard = (app, installedView = false) => {
       const card = make('article', 'market-card');
