@@ -742,9 +742,19 @@
 ;;
 ;; Provider policy is the app's: fail closed. The only admitted provider is
 ;; murakumo, resolved per ADR-2607173100 (env override → `murakumo-main`
-;; alias → the public boundary with the alias name); a missing
-;; MURAKUMO_API_KEY denies the turn with `provider_unauthenticated` before
-;; any request leaves — it does not fall back to another key.
+;; alias → the public boundary with the alias name). Murakumo here is the
+;; inference dapp on Awai Network / Itonami (naming per network-awai-apex ADR
+;; 0013 — naming alignment only; the wire stays api.murakumo.cloud until its
+;; own versioned migration), and the credential is that dapp's capability
+;; token — `mk1` carries sub/exp/scope (ADR-2608011400), obtained through the
+;; awai identity the session already proved (passkey or web3 wallet). It is
+;; one credential (ADR-0092 §5), resolved like every credential a person
+;; typed: the
+;; `MURAKUMO_API_KEY` environment variable first — an explicit export is
+;; deliberate — then the Keychain item `cloud-itonami-app.secret` /
+;; `murakumo-api-key`. With neither, the turn is denied with
+;; `provider_unauthenticated` before any request leaves — it does not fall
+;; back to another key or another provider.
 ;;
 ;; Auth: the same application session as every `/api/*` route here, from the
 ;; cookie or `Authorization: Bearer <token>` (the CLI form). Mutating routes
@@ -835,17 +845,56 @@
 
 ;; --- provider ---
 
-(defn- provider-target
-  "→ {:endpoint :model :via} or a refusal. Resolution per ADR-2607173100."
+(defn- keychain-read
+  "The password macOS Keychain keeps under `service`/`account`, or nil.
+
+  One item, both halves of its identity named in full — no listing, no
+  wildcard, no enumeration (identity/keychain-find's contract, spelled
+  locally because that namespace is JVM-side and this server is not).
+  stderr goes into the same captured pipe and is dropped: `security`
+  prints a password as part of its attribute dump under `-g`, and a
+  subprocess inheriting stderr once leaked a B2 key into a transcript
+  (ADR-2607152322). A missing `security` binary (non-macOS) is nil, not
+  an error."
+  [service account]
+  (try
+    (let [r (cp/spawnSync "security"
+                          (clj->js ["find-generic-password" "-s" service
+                                    "-a" account "-w"])
+                          #js {:encoding "utf8"
+                               :stdio #js ["ignore" "pipe" "pipe"]})]
+      (when (= 0 (.-status r))
+        (some-> (.-stdout r) str/trim not-empty)))
+    (catch :default _ nil)))
+
+(defn- resolve-murakumo-key
+  "The resident's one murakumo credential (ADR-0092 §5: no second
+  credential, no second authority), or nil — and nil means refuse, never
+  another provider.
+
+  Ladder is the app's: the environment first (an operator who exports it
+  is being explicit, and a stored item must not silently outrank that),
+  then the Keychain item `cloud-itonami-app.secret`/`murakumo-api-key`
+  that the secret catalogue names. `CLOUD_ITONAMI_NO_KEYCHAIN=1` skips
+  the Keychain rung so a no-credential test fixture cannot be answered by
+  a populated developer keychain."
   []
-  (let [key (some-> js/process.env.MURAKUMO_API_KEY not-empty)
+  (or (some-> js/process.env.MURAKUMO_API_KEY not-empty)
+      (when-not (= "1" js/process.env.CLOUD_ITONAMI_NO_KEYCHAIN)
+        (keychain-read "cloud-itonami-app.secret" "murakumo-api-key"))))
+
+(defn- provider-target
+  "→ {:endpoint :model :via} or a refusal. Key resolution is
+  `resolve-murakumo-key`; endpoint/model resolution per ADR-2607173100."
+  []
+  (let [key (resolve-murakumo-key)
         env-ep (some-> js/process.env.MURAKUMO_ENDPOINT not-empty)
         env-model (some-> js/process.env.MURAKUMO_MODEL not-empty)]
     (cond
       (nil? key)
       (js/Promise.resolve
        {:refuse :provider/unauthenticated
-        :message "murakumo は認証情報が無いので denied（MURAKUMO_API_KEY が resident に無い）。fallback はしない。"})
+        :message "murakumo は認証情報が無いので denied（MURAKUMO_API_KEY が env にも keychain にも無い）。fallback はしない。"})
 
       (and env-ep env-model)
       (js/Promise.resolve {:endpoint env-ep :model env-model :via :env :key key})
@@ -1019,9 +1068,9 @@
       (not (:enabled? bot)) {:refuse :bot/disabled
                              :message "この Bot は停止しています。"}
       ;; fail closed before a run exists: no key, no run, no fallback
-      (nil? (some-> js/process.env.MURAKUMO_API_KEY not-empty))
+      (nil? (resolve-murakumo-key))
       {:refuse :provider/unauthenticated
-       :message "murakumo は認証情報が無いので denied（MURAKUMO_API_KEY が resident に無い）。fallback はしない。"}
+       :message "murakumo は認証情報が無いので denied（MURAKUMO_API_KEY が env にも keychain にも無い）。fallback はしない。"}
       :else
       (let [run-id (str "run_" (str/replace (str (.randomUUID crypto)) "-" ""))]
         (swap! hermes-runs assoc run-id

@@ -1,0 +1,276 @@
+(ns gc-walk.core
+  (:export [form-end child-end range-eq find-value-end parse-i64 digits
+            digit-or0 iso-millis aged-past? over-cap? goal-job-action
+            run-droppable turn-keep mail-evict archive-full?]))
+
+;; The (B) walk assembly: EDN lexical + structural walk + entry extraction +
+;; scalar projection + the retention decision core (its semantics verified
+;; through the kototama lane's executable checksum) + the archive-need flag.
+;; Archive-before-drop (ADR-2608291500) is the HOST's write order: the host
+;; must persist every archive-full? row's full value to the cold archive
+;; BEFORE committing the hot-store drops. This module computes WHAT and
+;; WHEN (per row); the ordering is a host obligation, stated here so the
+;; contract travels with the code.
+
+(defn form-end [v :vector-i64 n :i64 start :i64] :i64
+  (loop [i start depth 0 instr 0 esc 0 cmt 0]
+    (if (>= i n)
+      -1
+      (let [c (vector-at v i)]
+        (cond
+          (= cmt 1)
+          (recur (+ i 1) depth instr 0 (if (= c 10) 0 1))
+
+          (= esc 1)
+          (recur (+ i 1) depth instr 0 0)
+
+          (= instr 1)
+          (cond
+            (= c 92) (recur (+ i 1) depth instr 1 0)
+            (= c 34) (recur (+ i 1) depth 0 0 0)
+            :else (recur (+ i 1) depth instr 0 0))
+
+          (= c 34)
+          (recur (+ i 1) depth 1 0 0)
+
+          (= c 59)
+          (recur (+ i 1) depth instr 0 1)
+
+          (or (= c 40) (= c 91) (= c 123))
+          (recur (+ i 1) (+ depth 1) instr 0 0)
+
+          (or (= c 41) (= c 93) (= c 125))
+          (if (= depth 1) (+ i 1) (recur (+ i 1) (- depth 1) instr 0 0))
+
+          :else
+          (recur (+ i 1) depth instr 0 0))))))
+
+(defn child-end [v :vector-i64 lo :i64 hi :i64 idx :i64] :i64
+  (loop [i lo depth 0 instr 0 esc 0 cmt 0 seen 0 s -1]
+    (if (>= i hi)
+      (if (and (>= s 0) (= seen idx)) hi -1)
+      (let [c (vector-at v i)
+            ws (or (= c 32) (= c 9) (= c 10) (= c 13) (= c 44))]
+        (cond
+          (= cmt 1)
+          (recur (+ i 1) depth instr 0 (if (= c 10) 0 1) seen s)
+
+          (= esc 1)
+          (recur (+ i 1) depth instr 0 0 seen s)
+
+          (= instr 1)
+          (cond
+            (= c 92) (recur (+ i 1) depth instr 1 0 seen s)
+            (= c 34) (if (and (= depth 0) (= seen idx))
+                       (+ i 1)
+                       (recur (+ i 1) depth 0 0 0 (+ seen 1) -1))
+            :else (recur (+ i 1) depth instr 0 0 seen s))
+
+          ws
+          (cond
+            (and (= depth 0) (>= s 0) (= seen idx)) i
+            (and (= depth 0) (>= s 0)) (recur (+ i 1) 0 0 0 0 (+ seen 1) -1)
+            :else (recur (+ i 1) depth 0 0 0 seen s))
+
+          (= c 34)
+          (if (= depth 0)
+            (recur (+ i 1) 0 1 0 0 seen i)
+            (recur (+ i 1) depth 1 0 0 seen s))
+
+          (or (= c 40) (= c 91) (= c 123))
+          (if (= depth 0)
+            (recur (+ i 1) 1 0 0 0 seen i)
+            (recur (+ i 1) (+ depth 1) 0 0 0 seen s))
+
+          (or (= c 41) (= c 93) (= c 125))
+          (if (= depth 1)
+            (if (= seen idx)
+              (+ i 1)
+              (recur (+ i 1) 0 0 0 0 (+ seen 1) -1))
+            (recur (+ i 1) (- depth 1) 0 0 0 seen s))
+
+          :else
+          (if (= depth 0)
+            (if (>= s 0)
+              (recur (+ i 1) 0 0 0 0 seen s)
+              (recur (+ i 1) 0 0 0 0 seen i))
+            (recur (+ i 1) depth 0 0 0 seen s)))))))
+
+(defn range-eq [v :vector-i64 a :i64 b :i64 k :vector-i64] :i64
+  (let [kn (vector-count k)]
+    (if (not= (- b a) kn)
+      0
+      (loop [i 0]
+        (cond
+          (= i kn) 1
+          (not= (vector-at v (+ a i)) (vector-at k i)) 0
+          :else (recur (+ i 1)))))))
+
+;; Map-entry extraction over the flat buffer: scan the children of [lo,hi) as
+;; key/value pairs; when a key child's bytes equal k (the caller passes the
+;; exact bytes, ':' included for keywords), return the END index of the
+;; following value child; -1 when absent. Value spans feed the scalar
+;; projection layer (finished-at, status, ...) that the retention core eats.
+(defn find-value-end [v :vector-i64 lo :i64 hi :i64 k :vector-i64] :i64
+  (loop [i lo depth 0 instr 0 esc 0 cmt 0 seen 0 s -1 match 0]
+    (if (>= i hi)
+      (if (and (>= s 0) (= match 1) (= (mod seen 2) 1))
+        hi
+        -1)
+      (let [c (vector-at v i)
+            ws (or (= c 32) (= c 9) (= c 10) (= c 13) (= c 44))]
+        (cond
+          (= cmt 1)
+          (recur (+ i 1) depth instr 0 (if (= c 10) 0 1) seen s match)
+
+          (= esc 1)
+          (recur (+ i 1) depth instr 0 0 seen s match)
+
+          (= instr 1)
+          (cond
+            (= c 92) (recur (+ i 1) depth instr 1 0 seen s match)
+            (= c 34) (if (= depth 0)
+                       (if (and (= (mod seen 2) 1) (= match 1))
+                         (+ i 1)
+                         (recur (+ i 1) depth 0 0 0 (+ seen 1) -1
+                                (if (= (mod seen 2) 0)
+                                  (range-eq v s (+ i 1) k)
+                                  match)))
+                       (recur (+ i 1) depth 0 0 0 seen s match))
+            :else (recur (+ i 1) depth instr 0 0 seen s match))
+
+          ws
+          (cond
+            (and (= depth 0) (>= s 0) (= (mod seen 2) 1) (= match 1)) i
+            (and (= depth 0) (>= s 0))
+            (recur (+ i 1) 0 0 0 0 (+ seen 1) -1
+                   (if (= (mod seen 2) 0) (range-eq v s i k) match))
+            :else (recur (+ i 1) depth 0 0 0 seen s match))
+
+          (= c 34)
+          (if (= depth 0)
+            (recur (+ i 1) 0 1 0 0 seen i match)
+            (recur (+ i 1) depth 1 0 0 seen s match))
+
+          (or (= c 40) (= c 91) (= c 123))
+          (if (= depth 0)
+            (recur (+ i 1) 1 0 0 0 seen i match)
+            (recur (+ i 1) (+ depth 1) 0 0 0 seen s match))
+
+          (or (= c 41) (= c 93) (= c 125))
+          (if (= depth 1)
+            (if (and (= (mod seen 2) 1) (= match 1))
+              (+ i 1)
+              (recur (+ i 1) 0 0 0 0 (+ seen 1) -1
+                     (if (= (mod seen 2) 0) (range-eq v s (+ i 1) k) match)))
+            (recur (+ i 1) (- depth 1) 0 0 0 seen s match))
+
+          :else
+          (if (= depth 0)
+            (if (>= s 0)
+              (recur (+ i 1) 0 0 0 0 seen s match)
+              (recur (+ i 1) 0 0 0 0 seen i match))
+            (recur (+ i 1) depth 0 0 0 seen s match)))))))
+
+(defn parse-i64 [v :vector-i64 lo :i64 hi :i64] :i64
+  (let [c0 (vector-at v lo)
+        neg (if (= c0 45) 1 0)
+        start (if (= neg 1) (+ lo 1) lo)]
+    (if (>= start hi)
+      -9223372036854775808
+      (loop [i start acc 0]
+        (if (>= i hi)
+          (if (= neg 1) (- 0 acc) acc)
+          (let [c (vector-at v i)]
+            (if (and (>= c 48) (<= c 57))
+              (recur (+ i 1) (+ (* acc 10) (- c 48)))
+              -9223372036854775808)))))))
+
+(defn digits [v :vector-i64 s :i64 n :i64] :i64
+  (loop [i 0 acc 0]
+    (if (>= i n)
+      acc
+      (recur (+ i 1) (+ (* acc 10) (- (vector-at v (+ s i)) 48))))))
+
+;; A digit at p, but only while p stays before the closing Z at zpos.
+(defn digit-or0 [v :vector-i64 p :i64 zpos :i64] :i64
+  (let [c (vector-at v p)]
+    (if (and (< p zpos) (>= c 48) (<= c 57)) (- c 48) 0)))
+
+;; ISO-8601 UTC instant (fixed-width YYYY-MM-DDTHH:MM:SS[.fff]Z) to epoch
+;; milliseconds: civil-date to days (era-based), then h/m/s/fraction. The
+;; fraction is truncated to milliseconds. Sentinel min-i64 when the shape is
+;; shorter than the fixed fields.
+(defn iso-millis [v :vector-i64 lo :i64 hi :i64] :i64
+  (if (< (- hi lo) 20)
+    -9223372036854775808
+    (let [y (digits v lo 4)
+          mo (digits v (+ lo 5) 2)
+          d (digits v (+ lo 8) 2)
+          hh (digits v (+ lo 11) 2)
+          mm (digits v (+ lo 14) 2)
+          ss (digits v (+ lo 17) 2)
+          zpos (- hi 1)
+          frac (if (and (> (- hi lo) 20) (= (vector-at v (+ lo 19)) 46))
+                 (+ (* 100 (digit-or0 v (+ lo 20) zpos))
+                    (* 10 (digit-or0 v (+ lo 21) zpos))
+                    (digit-or0 v (+ lo 22) zpos))
+                 0)
+          y2 (if (<= mo 2) (- y 1) y)
+          era (quot y2 400)
+          yoe (- y2 (* era 400))
+          m2 (if (> mo 2) (- mo 3) (+ mo 9))
+          doy (+ (quot (+ (* 153 m2) 2) 5) (- d 1))
+          doe (+ (+ (* yoe 365) (- (quot yoe 4) (quot yoe 100))) doy)
+          days (- (+ (* era 146097) doe) 719468)]
+      (+ (* 1000 (+ (* 60 (+ (* 60 (+ (* 24 days) hh)) mm)) ss)) frac))))
+
+(defn aged-past?
+  [has-date? :bool date-ms :i64 cutoff :i64] :bool
+  (and has-date? (< date-ms cutoff)))
+
+;; The per-bot cap bounds every row, undatable ones included; the host sorts
+;; undatable rows as oldest so they rank first among the capped.
+(defn over-cap?
+  [rank :i64 keep-per-bot :i64] :bool
+  (>= rank keep-per-bot))
+
+;; goal-job: not terminal is never a candidate; drop beats compact; compact
+;; only a kept, not-yet-compacted row that passed the compact cutoff.
+(defn goal-job-action
+  [terminal? :bool compacted? :bool aged-drop? :bool aged-compact? :bool
+   capped? :bool] :i64
+  (if (not terminal?)
+    0
+    (cond
+      (or aged-drop? capped?) 2
+      (and (not compacted?) aged-compact?) 1
+      :else 0)))
+
+;; A saved run is dead the moment its goal-job is terminal or gone; a pending
+;; approval card or a non-Goal run keeps the entry (the host ORs job-gone?
+;; with job-terminal? into job-dead?).
+(defn run-droppable
+  [goal? :bool pending-call? :bool job-dead? :bool] :bool
+  (and goal? (not pending-call?) job-dead?))
+
+;; A turn keeps its seat when undatable, among the newest keep-per-bot of its
+;; bot, or young enough for the SLO windows.
+(defn turn-keep
+  [has-started? :bool aged? :bool rank :i64 keep-per-bot :i64] :bool
+  (or (not has-started?) (not aged?) (not (over-cap? rank keep-per-bot))))
+
+;; Evicting a mail body is a cache decision: only when the snippet and
+;; metadata stay, the archive file is confirmed present, and the message is
+;; past the retention cutoff.
+(defn mail-evict
+  [has-body? :bool has-archive-path? :bool archived-file? :bool
+   aged? :bool] :bool
+  (and has-body? has-archive-path? archived-file? aged?))
+
+(defn archive-full?
+  [action :i64 compacted? :i64] :i64
+  (cond
+    (= action 1) 1
+    (and (= action 2) (= compacted? 0)) 1
+    :else 0))

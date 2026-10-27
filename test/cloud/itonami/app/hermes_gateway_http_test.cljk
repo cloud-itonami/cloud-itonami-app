@@ -390,7 +390,11 @@
                    (free-port)))
           (.then (fn [port]
                    (swap! ctx assoc :base2 (str "http://127.0.0.1:" port))
-                   (spawn-resident! app-dir port {})))
+                   ;; CLOUD_ITONAMI_NO_KEYCHAIN=1 keeps the Keychain rung of
+                   ;; the credential ladder out of this fixture: the contract
+                   ;; under test is "no credential anywhere → denied", and a
+                   ;; populated developer keychain must not answer it.
+                   (spawn-resident! app-dir port {"CLOUD_ITONAMI_NO_KEYCHAIN" "1"})))
           (.then (fn [{:keys [child]}]
                    (swap! ctx assoc :child2 child)
                    (call (:base2 @ctx) "POST" (str "/api/sessions/" bot-live "/chat") {:body {:input "x"}})))
