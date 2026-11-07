@@ -102,7 +102,7 @@
         ;; copy at THIS sha, so a new route fails the suite until the registry
         ;; is regenerated there and this sha advances. cloud-itonami-cli pins
         ;; the same sha in its nbb.edn.
-        io.github.cloud-itonami/cloud-itonami-commands {:git/sha "9bd4ec8d8c5bf75e6404e890aaf9e5a907c1df43"}
+        io.github.cloud-itonami/cloud-itonami-commands {:git/sha "e8fa41d764f34654fb6846c932355669553ae51a"}
         ;; kotoba.lang.http.host.jvm -- the workspace's single java.net.http
         ;; site, which `cloud.itonami.app.http-client` delegates to. 36
         ;; namespaces require that shim, so without this coordinate the
